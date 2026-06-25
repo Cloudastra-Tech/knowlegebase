@@ -1,0 +1,17 @@
+# ---- Stage 1: Simple RAG app (OpenAI + real Guardrails AI) ----
+# Each line is one tool. Comments explain WHY it's here.
+
+langchain                 # the "glue" framework that connects all the steps
+langgraph                 # builds the agent loop as a state graph (Phase 6)
+langchain-openai          # lets LangChain talk to OpenAI (embeddings + chat model)
+openai                    # the official OpenAI client (used under the hood)
+langchain-community       # extra loaders (e.g. reading PDFs / text files)
+langchain-chroma          # connects LangChain to the Chroma vector database
+chromadb                  # the vector database itself (stores embeddings, runs search)
+rank-bm25                 # keyword search (BM25) for hybrid retrieval — Stage 2
+requests                  # call free web APIs (Frankfurter, Wikipedia) — agent tools
+guardrails-ai             # the open-source safety library (validates input/output)
+streamlit                 # the chat UI you type into (runs in your browser)
+python-dotenv             # loads your secret API key from a .env file
+pypdf                     # reads text out of PDF files
+tiktoken                  # lets us SEE how text is split into tokens (Phase 1 concept)

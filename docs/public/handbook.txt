@@ -1,0 +1,23 @@
+Cloudastra Academy — Public Handbook
+
+About us:
+Cloudastra Academy was founded in 2021 and is based in India.
+We train small businesses and students to use AI tools without needing a data science team.
+The academy employs teachers and senior staff to run its programs.
+
+Refund policy:
+Customers can request a full refund within 30 days of purchase.
+After 30 days, refunds are given as account credit only.
+
+Support hours:
+Our support team is available Monday to Friday, 9am to 6pm IST.
+We do not offer phone support on weekends, but email is answered within 24 hours.
+
+Course pricing:
+The Starter plan costs 500 rupees per month and includes 1000 AI queries.
+The Pro plan costs 2000 rupees per month and includes unlimited AI queries.
+
+Student stipend (public information):
+Students enrolled in the AI Fellowship receive a monthly stipend of 3000 rupees.
+The stipend is paid on the 1st of every month for the duration of the 6-month program.
+Students must complete weekly assignments to remain eligible for the stipend.

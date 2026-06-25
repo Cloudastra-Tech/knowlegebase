@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/python.exe -c \"import requests; print\\('requests OK'\\)\")",
+      "Bash(./venv/Scripts/python.exe agent.py)",
+      "PowerShell(venv\\\\Scripts\\\\python.exe agent.py)"
+    ]
+  }
+}
