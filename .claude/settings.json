@@ -3,7 +3,9 @@
     "allow": [
       "Bash(./venv/Scripts/python.exe -c \"import requests; print\\('requests OK'\\)\")",
       "Bash(./venv/Scripts/python.exe agent.py)",
-      "PowerShell(venv\\\\Scripts\\\\python.exe agent.py)"
+      "PowerShell(venv\\\\Scripts\\\\python.exe agent.py)",
+      "PowerShell(venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\swastik\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-swastik-projects-genai\\\\7ccc02ee-70a9-42bc-8c0f-918f18bc5ddc\\\\scratchpad\\\\test_outline.py\")",
+      "PowerShell(venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\swastik\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-swastik-projects-genai\\\\7ccc02ee-70a9-42bc-8c0f-918f18bc5ddc\\\\scratchpad\\\\test_outline2.py\")"
     ]
   }
 }

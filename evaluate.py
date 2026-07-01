@@ -16,6 +16,7 @@ you can see how it works. Run:  python evaluate.py
 """
 
 import re
+import sys
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -27,6 +28,11 @@ load_dotenv()
 
 # A separate model used ONLY as the JUDGE (scores answers; doesn't write them).
 judge_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+# CI THRESHOLDS — minimum AVERAGE score (out of 10) each metric must hit.
+# If any average falls below its threshold, the run FAILS (exit code 1) so a
+# CI pipeline (e.g. GitHub Actions) catches a silent quality regression.
+THRESHOLDS = {"context": 6.0, "ground": 7.0, "answer": 7.0}
 
 # Test questions a public user might ask (these should all pass the guards).
 TEST_QUESTIONS = [
@@ -87,10 +93,27 @@ def main():
         print(f"{q[:36]:<38}{cr:>7}/10{gr:>7}/10{ar:>7}/10")
 
     n = len(TEST_QUESTIONS)
+    avg = {"context": totals[0] / n, "ground": totals[1] / n, "answer": totals[2] / n}
     print("-" * 65)
-    print(f"{'AVERAGE':<38}{totals[0]/n:>6.1f}/10{totals[1]/n:>6.1f}/10{totals[2]/n:>6.1f}/10")
+    print(f"{'AVERAGE':<38}{avg['context']:>6.1f}/10{avg['ground']:>6.1f}/10{avg['answer']:>6.1f}/10")
     print("\nHigher = better. Context=retrieval quality, Ground=no hallucination, "
           "Answer=addresses the question.")
+
+    # ---- CI gate: compare each average to its threshold ----
+    print("\nCI thresholds:")
+    failures = []
+    for key, label in (("context", "Context"), ("ground", "Ground"), ("answer", "Answer")):
+        need = THRESHOLDS[key]
+        got = avg[key]
+        ok = got >= need
+        print(f"  {label:<8} {got:>5.1f} / need {need:>4.1f}  ->  {'PASS' if ok else 'FAIL'}")
+        if not ok:
+            failures.append(label)
+
+    if failures:
+        print(f"\n[FAILED] EVAL FAILED - below threshold: {', '.join(failures)}")
+        sys.exit(1)        # non-zero exit -> CI marks the build as failed
+    print("\n[PASSED] EVAL PASSED - all metrics meet their thresholds.")
 
 
 if __name__ == "__main__":

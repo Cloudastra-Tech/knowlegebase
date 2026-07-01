@@ -22,7 +22,7 @@ role = "hr" if role_label == "HR / Admin" else "public"
 st.sidebar.caption(
     "Public users can't retrieve restricted documents (e.g. staff salaries). HR/Admin can."
 )
-st.sidebar.markdown("**Tools the agent can use:**\n\n🔍 search_docs\n\n🧮 calculator\n\n💱 convert_currency\n\n📖 wikipedia")
+st.sidebar.markdown("**Tools the agent can use:**\n\n🔍 search_docs\n\n🧮 calculator\n\n💱 convert_currency\n\n📖 wikipedia\n\n📚 search_outline\n\n📄 read_outline_doc")
 
 # ---- Build the AGENT for this role (cached per role) ----
 @st.cache_resource
@@ -52,13 +52,18 @@ if question:
             answer, trace = agent(question)
         st.markdown(answer)
 
-        # ---- Show the agent's tool calls (the "logging" / reasoning trace) ----
+        # ---- Show the agent's tool calls (collapsed; the ANSWER is the focus) ----
+        # We only show a SHORT preview of each tool result, so a full document
+        # read by read_outline_doc isn't dumped on screen — you see the clean
+        # AI answer above, and can expand here just to see which tools ran.
         if trace:
-            with st.expander(f"🛠️ Agent steps ({len(trace)} tool call(s))", expanded=True):
+            with st.expander(f"🛠️ Agent steps ({len(trace)} tool call(s))", expanded=False):
                 for i, step in enumerate(trace, 1):
+                    out = str(step["output"])
+                    preview = out[:300] + " …(trimmed)" if len(out) > 300 else out
                     st.markdown(f"**Step {i} — `{step['tool']}`**")
                     st.markdown(f"&nbsp;&nbsp;↳ input: `{step['input']}`")
-                    st.markdown(f"&nbsp;&nbsp;↳ result: {step['output']}")
+                    st.markdown(f"&nbsp;&nbsp;↳ result: {preview}")
         else:
             st.caption("_(answered directly — no tools needed)_")
 
