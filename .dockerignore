@@ -1,0 +1,13 @@
+# Keep the image small and NEVER bake secrets into it.
+.env
+venv/
+.venv/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.claude/
+*.md
+Dockerfile
+.dockerignore
+docker-compose.yml
