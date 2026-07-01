@@ -1,0 +1,16 @@
+# Run the app with: docker compose up --build
+# Reads secrets from your local .env (OPENAI_API_KEY, OUTLINE_*, CF_ACCESS_*).
+services:
+  knowledgebase:
+    build: .
+    image: cloudastra-knowledgebase
+    ports:
+      - "8501:8501"          # host:container  ->  open http://localhost:8501
+    env_file:
+      - .env                  # never committed; supplies all API keys
+    volumes:
+      - chroma_data:/app/chroma_db   # persist the vector DB across restarts
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
