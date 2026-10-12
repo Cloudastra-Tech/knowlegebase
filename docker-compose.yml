@@ -10,6 +10,7 @@ services:
       - .env                  # never committed; supplies all API keys
     volumes:
       - chroma_data:/app/chroma_db   # persist the vector DB across restarts
+      - ./docs:/app/docs             # docs edited in the UI live on the host (survive rebuilds)
     restart: unless-stopped
 
 volumes:

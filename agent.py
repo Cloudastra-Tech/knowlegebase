@@ -32,6 +32,7 @@ Run a quick demo:  python agent.py
 """
 
 import os
+import re
 import sys
 import requests
 from langchain_core.tools import tool
@@ -84,6 +85,21 @@ def _outline_doc_url(doc):
     return path if path.startswith("http") else f"{base}{path}"
 
 
+def _words(text):
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 3}
+
+
+def _chunks_used(answer, docs, min_overlap=0.3):
+    """The retrieved chunks the answer actually draws on.
+    Retrieval returns the top-k chunks even when only one is relevant, so we
+    keep a chunk only if a good share of the answer's words appear in it."""
+    answer_words = _words(answer)
+    if not answer_words or not docs:
+        return []
+    return [d for d in docs
+            if len(answer_words & _words(d.page_content)) / len(answer_words) >= min_overlap]
+
+
 def format_sources(sources):
     """Markdown 'Sources' list for the end of an answer ('' if nothing was read)."""
     if not sources:
@@ -112,10 +128,12 @@ def build_agent(role="public"):
     # ---- The TOOLS the agent can choose from --------------------------------
     @tool
     def search_docs(question: str) -> str:
-        """Search Cloudastra Academy's own documents: pricing, refund policy,
-        support hours, student stipend, staff. Use for anything about the academy."""
+        """Search the company's uploaded documents (the Documents screen):
+        policies (leave, refund, HR), handbooks, pricing, support hours, stipend,
+        FAQs, PDFs and any other files added there. Try this FIRST for any
+        question about the company, its policies or its products."""
         answer, docs = answer_question(question, retriever, rag_llm, role)
-        for d in docs:
+        for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
             if source:
                 cite(os.path.basename(source), "Company documents")
@@ -167,16 +185,33 @@ def build_agent(role="public"):
         even though it is Outline — treat all of those as THIS tool.)
         Returns the top matches as short SNIPPETS, each with a document id. To
         read the FULL content of the best match, follow up with read_outline_doc
-        using that id. Use for INTERNAL company knowledge — not public academy
-        facts (use search_docs) and not general world knowledge (use wikipedia)."""
+        using that id. Use for INTERNAL wiki knowledge; for uploaded company
+        documents use search_docs, and for general world knowledge use wikipedia."""
         try:
             data, err = _outline_post("documents.search",
                                       {"query": query, "limit": 5})
             if err:
                 return err
             results = (data or {}).get("data", [])
+
+            # Outline only returns docs containing ALL the words, so "Project X
+            # tech stack" can miss the doc about Project X. With few hits, search
+            # again with just the name in the query (its capitalised words).
+            name = " ".join(w for w in query.split() if w[:1].isupper())
+            if len(results) < 3 and name and name != query:
+                more, _ = _outline_post("documents.search", {"query": name, "limit": 5})
+                seen = {r.get("document", {}).get("id") for r in results}
+                results += [r for r in (more or {}).get("data", [])
+                            if r.get("document", {}).get("id") not in seen]
+
             if not results:
                 return "No matching documents found in the Outline wiki."
+
+            # Outline ranks by body text, so a long doc that merely MENTIONS the
+            # topic can outrank the doc ABOUT it. Put title matches first.
+            query_words = _words(query)
+            results.sort(key=lambda r: -len(query_words & _words(
+                r.get("document", {}).get("title", ""))))
 
             lines = []
             for r in results:
@@ -220,7 +255,9 @@ def build_agent(role="public"):
 
     SYSTEM = SystemMessage(content=(
         "You are a helpful assistant that solves multi-step questions by CHAINING tools.\n"
-        "- For Cloudastra Academy facts (prices, refund, support, stipend): search_docs.\n"
+        "- For company policies, handbooks, prices, refund, support, stipend, HR "
+        "rules, or anything in the uploaded company documents: search_docs FIRST. "
+        "If search_docs doesn't have the answer, then try search_outline.\n"
         "- The internal knowledge base is called Outline (at app.cloudastra.co), "
         "but people also call it 'Notion', 'the wiki', 'internal docs', "
         "'internal documentation', or 'our docs'. If the user mentions ANY of "
