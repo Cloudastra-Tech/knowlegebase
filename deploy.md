@@ -12,11 +12,13 @@ to deploy the app on a fresh Linux server. Commands are for **Ubuntu 22.04+**.
   (private matters — `docs/restricted/staff_salaries.txt` is committed).
 - An **OpenAI API key** (`sk-...`). Optionally Outline + Cloudflare Access values.
 
-> ⚠️ **Security note — the app has NO real login.** The "Public / HR-Admin" choice
-> in the UI is just a dropdown (`app.py`), so *anyone who can reach the URL can
-> select "HR / Admin" and read staff salaries.* This runbook exposes the app
-> directly on port 8501. Only do this on an internal / IP-restricted network. To
-> add a real password, put Caddy or Cloudflare Access in front (not covered here).
+> ⚠️ **Security note — login is username + password over plain HTTP.** The app
+> has its own login (accounts in `config/users.json`, created in step 4b). Once
+> signed in, anyone can still pick "HR / Admin" in the sidebar, so only give
+> accounts to people allowed to see restricted docs. Also, this
+> runbook serves it on port 8501 without HTTPS, so passwords cross the network
+> unencrypted. Put Caddy (automatic HTTPS) or Cloudflare Access in front before
+> exposing it to the internet. Signing in again is needed after a page refresh.
 
 ---
 
@@ -62,6 +64,19 @@ uses the OpenAI key). Watch it finish:
 docker compose logs -f
 # Wait for the Streamlit URL line, then Ctrl-C to stop tailing.
 ```
+
+## 4b. Create the first login
+
+No one can sign in until an account exists. Create one per person (it asks for
+the password, minimum 8 characters). Every account gets the same access:
+
+```bash
+docker compose exec knowledgebase python auth.py add admin
+```
+
+Add more people the same way. Also available:
+`python auth.py list`, `python auth.py remove <username>`. Accounts are stored in
+`./config/users.json` on the host (mounted into the container, gitignored).
 
 ## 5. Open the firewall
 
@@ -114,7 +129,7 @@ cd genai && docker compose ps              # STATUS: Up
 
 ## Managing documents from the UI
 
-Sign in as **HR / Admin** and pick **Documents** in the sidebar to view, edit, add,
+Pick **HR / Admin** in the sidebar, then **Documents** in the sidebar to view, edit, add,
 upload (TXT/PDF) or delete documents, then press **Re-index**. `docs/` is mounted
 from the host (`./docs:/app/docs`), so UI changes survive rebuilds — but they are
 **not committed to git**. A `git pull` that touches the same files may conflict;
