@@ -7,13 +7,19 @@ Follow it top to bottom. Each section = what to SAY + what to SHOW.
 
 ## 0. Before you start (setup — 1 minute)
 
-Open a terminal in the project folder and run:
+Create a login once (it asks for the password):
+
+```powershell
+venv\Scripts\python.exe auth.py add demo
+```
+
+Then open a terminal in the project folder and run:
 
 ```powershell
 venv\Scripts\streamlit run app.py
 ```
 
-It opens in the browser at **http://localhost:8501**.
+It opens in the browser at **http://localhost:8501**. Sign in with the account above.
 Keep the **terminal visible too** — it prints the agent's tool calls live (great for the demo).
 
 > 💡 If documents ever change, rebuild the DB first: `venv\Scripts\python.exe ingest.py`

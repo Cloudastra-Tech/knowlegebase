@@ -11,3 +11,4 @@ __pycache__/
 Dockerfile
 .dockerignore
 docker-compose.yml
+config/

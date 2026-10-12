@@ -11,6 +11,7 @@ services:
     volumes:
       - chroma_data:/app/chroma_db   # persist the vector DB across restarts
       - ./docs:/app/docs             # docs edited in the UI live on the host (survive rebuilds)
+      - ./config:/app/config         # login accounts (config/users.json), never baked into the image
     restart: unless-stopped
 
 volumes:

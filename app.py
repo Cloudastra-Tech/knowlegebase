@@ -10,10 +10,17 @@ wikipedia) and chains them. We show every tool call so you can SEE its reasoning
 
 import streamlit as st
 from agent import build_agent
+import auth
 import docs_admin
 
 # ---- Page setup ----
 st.set_page_config(page_title="Chat With Your Notes", page_icon="🤖")
+
+# ---- LOGIN: nothing below runs until someone signs in ----
+user = auth.require_login()
+st.sidebar.markdown(f"Signed in as **{user['name']}**")
+if st.sidebar.button("Sign out"):
+    auth.logout()
 
 # ---- Pick WHO is using the app (their role / permission level) ----
 role_label = st.sidebar.selectbox("Sign in as:", ["Public user", "HR / Admin"])
