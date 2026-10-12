@@ -16,7 +16,6 @@ The 4 things that happen here (this IS the RAG ingestion pipeline):
 """
 
 import os
-import shutil
 from dotenv import load_dotenv
 
 # LangChain pieces — each is one step of the pipeline
@@ -35,16 +34,6 @@ DB_FOLDER = "chroma_db"
 
 def main():
     # ----------------------------------------------------------------
-    # 0. CLEAN  —  delete the old database so we always rebuild fresh.
-    # ----------------------------------------------------------------
-    # WHY: Chroma ADDS to an existing DB, it doesn't replace it. Without this,
-    # re-running ingest leaves stale/duplicate chunks from old documents mixed
-    # in, which pollutes search. Wiping first guarantees the DB matches docs/.
-    if os.path.exists(DB_FOLDER):
-        print(f"0) Removing old database '{DB_FOLDER}' for a clean rebuild...")
-        shutil.rmtree(DB_FOLDER)
-
-    # ----------------------------------------------------------------
     # 1. LOAD  —  read the raw text from every file in the docs/ folder
     # ----------------------------------------------------------------
     # A "Document" in LangChain = the text + some metadata (like the filename).
@@ -58,7 +47,20 @@ def main():
 
     if not documents:
         print("   !! No documents found. Put a .txt or .pdf file in the 'docs' folder.")
-        return
+        return None
+
+    # ----------------------------------------------------------------
+    # 1b. CLEAN  —  empty the old collection so we always rebuild fresh.
+    # ----------------------------------------------------------------
+    # WHY: Chroma ADDS to an existing DB, it doesn't replace it. Without this,
+    # re-running ingest leaves stale/duplicate chunks from old documents mixed
+    # in, which pollutes search. We drop the collection (instead of deleting
+    # the folder) so this also works while the app has the DB open — the
+    # "Re-index" button in the UI — and when chroma_db is a Docker volume.
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    if os.path.exists(DB_FOLDER):
+        print(f"   Clearing the old collection in '{DB_FOLDER}' for a clean rebuild...")
+        Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings).delete_collection()
 
     # ----------------------------------------------------------------
     # 2. SPLIT  —  cut big text into small overlapping chunks
@@ -102,8 +104,6 @@ def main():
     # STORE: Chroma saves these vectors on your disk in the 'chroma_db' folder.
     print("3) Creating embeddings (calling OpenAI) and storing them in Chroma...")
 
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
     # This single call does the embedding AND the saving.
     Chroma.from_documents(
         documents=chunks,
@@ -113,6 +113,8 @@ def main():
 
     print(f"   -> Done! Your knowledge base is saved in the '{DB_FOLDER}' folder.")
     print("\nNext step: run  ->  streamlit run app.py")
+    return {"documents": len(documents), "chunks": len(chunks),
+            "restricted": n_restricted}
 
 
 if __name__ == "__main__":

@@ -10,11 +10,10 @@ wikipedia) and chains them. We show every tool call so you can SEE its reasoning
 
 import streamlit as st
 from agent import build_agent
+import docs_admin
 
 # ---- Page setup ----
 st.set_page_config(page_title="Chat With Your Notes", page_icon="🤖")
-st.title("🤖 Chat With Your Notes — Agent")
-st.caption("An AI agent that searches your docs, does math, converts currency, and looks things up.")
 
 # ---- Pick WHO is using the app (their role / permission level) ----
 role_label = st.sidebar.selectbox("Sign in as:", ["Public user", "HR / Admin"])
@@ -22,6 +21,17 @@ role = "hr" if role_label == "HR / Admin" else "public"
 st.sidebar.caption(
     "Public users can't retrieve restricted documents (e.g. staff salaries). HR/Admin can."
 )
+
+# ---- Documents screen (HR / Admin only) ----
+view = "Chat"
+if role == "hr":
+    view = st.sidebar.radio("Screen:", ["Chat", "Documents"], horizontal=True)
+if view == "Documents":
+    docs_admin.render()
+    st.stop()
+
+st.title("🤖 Chat With Your Notes — Agent")
+st.caption("An AI agent that searches your docs, does math, converts currency, and looks things up.")
 st.sidebar.markdown("**Tools the agent can use:**\n\n🔍 search_docs\n\n🧮 calculator\n\n💱 convert_currency\n\n📖 wikipedia\n\n📚 search_outline\n\n📄 read_outline_doc")
 
 # ---- Build the AGENT for this role (cached per role) ----

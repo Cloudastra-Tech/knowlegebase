@@ -109,7 +109,16 @@ cd genai && docker compose ps              # STATUS: Up
 | Restart | `docker compose restart` |
 | Deploy new code | `git pull && docker compose up -d --build` |
 | Rebuild vector DB from scratch | `docker compose down -v && docker compose up -d --build` |
+| Re-index after editing `docs/` by hand | `docker compose exec knowledgebase python ingest.py && docker compose restart` |
 | Shell into the container | `docker compose exec knowledgebase sh` |
+
+## Managing documents from the UI
+
+Sign in as **HR / Admin** and pick **Documents** in the sidebar to view, edit, add,
+upload (TXT/PDF) or delete documents, then press **Re-index**. `docs/` is mounted
+from the host (`./docs:/app/docs`), so UI changes survive rebuilds — but they are
+**not committed to git**. A `git pull` that touches the same files may conflict;
+commit them from the server or copy them back if you want them in the repo.
 
 ## Troubleshooting
 
