@@ -75,16 +75,50 @@ def _outline_post(endpoint, payload, timeout=15):
     return resp.json(), None
 
 
+def _outline_doc_url(doc):
+    """Full browser link to an Outline document (the API returns a relative path)."""
+    path = doc.get("url") or ""
+    if not path:
+        return None
+    base = os.getenv("OUTLINE_URL", "https://app.cloudastra.co").rstrip("/")
+    return path if path.startswith("http") else f"{base}{path}"
+
+
+def format_sources(sources):
+    """Markdown 'Sources' list for the end of an answer ('' if nothing was read)."""
+    if not sources:
+        return ""
+    lines = []
+    for i, s in enumerate(sources, 1):
+        name = f"[{s['title']}]({s['url']})" if s.get("url") else s["title"]
+        lines.append(f"{i}. {name} — _{s['provider']}_")
+    return "\n\n**Sources**\n\n" + "\n".join(lines)
+
+
 def build_agent(role="public"):
     """Create an agent for a given user role. Returns a run(question) function."""
     retriever, rag_llm = load_chain(role)
+
+    # CITATIONS: every tool that reads a document records it here. run() clears
+    # it per question and appends a "Sources" list built from it — so citations
+    # come from what was ACTUALLY read, not from what the model claims it read.
+    cited = []
+
+    def cite(title, provider, url=None):
+        entry = {"title": title, "provider": provider, "url": url}
+        if entry not in cited:
+            cited.append(entry)
 
     # ---- The TOOLS the agent can choose from --------------------------------
     @tool
     def search_docs(question: str) -> str:
         """Search Cloudastra Academy's own documents: pricing, refund policy,
         support hours, student stipend, staff. Use for anything about the academy."""
-        answer, _ = answer_question(question, retriever, rag_llm, role)
+        answer, docs = answer_question(question, retriever, rag_llm, role)
+        for d in docs:
+            source = d.metadata.get("source", "")
+            if source:
+                cite(os.path.basename(source), "Company documents")
         return answer
 
     @tool
@@ -170,6 +204,7 @@ def build_agent(role="public"):
             text = (doc.get("text") or "").strip()
             if not text:
                 return f"'{title}' has no readable text."
+            cite(title, "Outline wiki", _outline_doc_url(doc))
             # Cap very long docs so we don't blow up the token budget.
             if len(text) > 8000:
                 text = text[:8000] + "\n\n...(document truncated)"
@@ -204,14 +239,16 @@ def build_agent(role="public"):
         "    4. Answer ONLY the specific thing that was asked — concise and "
         "precise, using the exact details (names, numbers, terms) from the doc. "
         "Do NOT dump or summarize the whole document; just answer the question, "
-        "then cite the doc title. If the doc doesn't cover it, say so plainly.\n"
+        "If the doc doesn't cover it, say so plainly.\n"
         "   NEVER answer a wiki question from the short search snippets alone — "
         "the snippets only tell you WHICH doc to open, not the full answer.\n"
         "- IMPORTANT: search_docs only knows base facts in RUPEES. To get a price per "
         "year or in another currency, FIRST search_docs for the base MONTHLY rupee "
         "price, THEN use calculator for the math, THEN convert_currency for the currency.\n"
         "- Never ask search_docs for dollars or yearly totals directly — it can't do math.\n"
-        "- Use wikipedia only for general world knowledge, not company facts."
+        "- Use wikipedia only for general world knowledge, not company facts.\n"
+        "- Do NOT write your own 'Sources' list or mention document titles as "
+        "citations — the app appends a verified Sources list automatically."
     ))
 
     # ---- THE GRAPH ---------------------------------------------------------
@@ -242,6 +279,7 @@ def build_agent(role="public"):
         if not ok:
             return msg, []
 
+        cited.clear()      # citations are per question
         result = graph.invoke({"messages": [HumanMessage(content=user_input)]})
         messages = result["messages"]
 
@@ -262,6 +300,8 @@ def build_agent(role="public"):
         answer = messages[-1].content or "(no answer)"
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)
+        # CITATIONS: list every document the tools actually read.
+        answer += format_sources(cited)
         return answer, trace
 
     return run
