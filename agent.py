@@ -126,6 +126,10 @@ def build_agent(role="public"):
     # it per question and appends a "Sources" list built from it — so citations
     # come from what was ACTUALLY read, not from what the model claims it read.
     cited = []
+    # GUARD refusals: if a tool's safety check blocks the question (e.g. a public
+    # user asking for staff salary), we return that exact message to the user,
+    # instead of letting the agent keep searching and reword it as "not found".
+    blocked = []
 
     def cite(title, provider, url=None):
         entry = {"title": title, "provider": provider, "url": url}
@@ -140,6 +144,10 @@ def build_agent(role="public"):
         FAQs, PDFs and any other files added there. Try this FIRST for any
         question about the company, its policies or its products."""
         answer, docs = answer_question(question, retriever, rag_llm, role)
+        if not docs:                     # a guard refused before any search ran
+            blocked.append(answer)
+            return (f"BLOCKED BY ACCESS RULES: {answer} Do not search any other tool "
+                    "for this; just tell the user this message.")
         for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
             if source:
@@ -332,8 +340,10 @@ def build_agent(role="public"):
 
         with lock:
             cited.clear()      # citations are per question
+            blocked.clear()
             result = graph.invoke({"messages": [HumanMessage(content=user_input)]})
             sources = list(cited)
+            blocked_reply = list(blocked)
         messages = result["messages"]
 
         # Map each tool result back to its call id so we can pair them up.
@@ -351,6 +361,9 @@ def build_agent(role="public"):
                                   "output": str(out)})
 
         answer = messages[-1].content or "(no answer)"
+        if blocked_reply:                 # a guard refused: say exactly why
+            answer = blocked_reply[0]
+            sources = []
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)
         # CITATIONS: list every document the tools actually read.
