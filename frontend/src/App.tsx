@@ -3,6 +3,7 @@ import { ChevronDown, LogOut } from "lucide-react"
 
 import { ChatView } from "@/components/chat-view"
 import { DocsView } from "@/components/docs-view"
+import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LoginPage } from "@/components/login-page"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
+import { IndexStatusProvider } from "@/lib/index-status"
 import { cn } from "@/lib/utils"
 import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
 
@@ -78,6 +80,7 @@ export default function App() {
   ]
 
   return (
+    <IndexStatusProvider>
     <div className="flex h-svh flex-col">
       <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-12 max-w-6xl items-center gap-8 px-4">
@@ -106,6 +109,9 @@ export default function App() {
           </nav>
 
           <div className="ml-auto flex items-center gap-1">
+            <div className="mr-2">
+              <IndexStatusText />
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -154,6 +160,7 @@ export default function App() {
             </DropdownMenu>
           </div>
         </div>
+        <IndexProgressBar />
       </header>
 
       <main className="min-h-0 flex-1">
@@ -168,5 +175,6 @@ export default function App() {
         )}
       </main>
     </div>
+    </IndexStatusProvider>
   )
 }

@@ -26,6 +26,17 @@ export interface ChatReply {
   steps: Step[]
 }
 
+export interface IndexStatus {
+  status: "idle" | "indexing" | "error"
+  step: number
+  total: number
+  message: string
+  pending: boolean
+  summary: { documents: number; chunks: number; restricted: number } | null
+  error: string | null
+  finished_at: number | null
+}
+
 export interface Doc {
   access: Access
   name: string
@@ -116,7 +127,7 @@ export const api = {
   chat: (question: string) =>
     request<ChatReply>("/chat", { method: "POST", body: JSON.stringify({ question }) }),
 
-  listDocs: () => request<{ docs: Doc[]; changed: boolean }>("/docs"),
+  listDocs: () => request<{ docs: Doc[] }>("/docs"),
   readDoc: (d: Doc) => request<{ content: string }>(docPath(d)),
   createDoc: (name: string, access: Access, content: string) =>
     request<{ access: Access; name: string }>("/docs", {
@@ -132,11 +143,8 @@ export const api = {
     form.append("access", access)
     return request<{ saved: string[] }>("/docs/upload", { method: "POST", body: form })
   },
-  reindex: () =>
-    request<{ summary: { documents: number; chunks: number; restricted: number }; log: string }>(
-      "/reindex",
-      { method: "POST" },
-    ),
+  reindex: () => request<IndexStatus>("/reindex", { method: "POST" }),
+  indexStatus: () => request<IndexStatus>("/index/status"),
 
   // PDFs need the auth header, so fetch them as a blob instead of a plain link.
   async downloadDoc(d: Doc) {

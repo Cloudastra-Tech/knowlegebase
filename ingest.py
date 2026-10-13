@@ -32,12 +32,19 @@ DOCS_FOLDER = "docs"
 DB_FOLDER = "chroma_db"
 
 
-def main():
+def main(progress=None):
+    """Rebuild the vector DB from docs/. Returns a summary dict (None if no docs).
+    progress(step, total, message) — optional callback, e.g. for a UI progress bar."""
+    def report(step, message):
+        if progress:
+            progress(step, 4, message)
+
     # ----------------------------------------------------------------
     # 1. LOAD  —  read the raw text from every file in the docs/ folder
     # ----------------------------------------------------------------
     # A "Document" in LangChain = the text + some metadata (like the filename).
     print("1) Loading documents from the 'docs' folder...")
+    report(1, "Reading documents")
 
     txt_loader = DirectoryLoader(DOCS_FOLDER, glob="**/*.txt", loader_cls=TextLoader)
     pdf_loader = DirectoryLoader(DOCS_FOLDER, glob="**/*.pdf", loader_cls=PyPDFLoader)
@@ -72,6 +79,7 @@ def main():
     # chunk_overlap   = repeat a little text between pieces so we don't cut a
     #                   sentence in half and lose its meaning.
     print("2) Splitting documents into small chunks...")
+    report(2, "Splitting into chunks")
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
@@ -103,6 +111,7 @@ def main():
     #        that lets us search by meaning instead of by exact keywords.
     # STORE: Chroma saves these vectors on your disk in the 'chroma_db' folder.
     print("3) Creating embeddings (calling OpenAI) and storing them in Chroma...")
+    report(3, f"Embedding {len(chunks)} chunks")
 
     # This single call does the embedding AND the saving.
     Chroma.from_documents(
@@ -112,6 +121,7 @@ def main():
     )
 
     print(f"   -> Done! Your knowledge base is saved in the '{DB_FOLDER}' folder.")
+    report(4, "Done")
     print("\nNext step: run  ->  streamlit run app.py")
     return {"documents": len(documents), "chunks": len(chunks),
             "restricted": n_restricted}

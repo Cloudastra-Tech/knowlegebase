@@ -10,11 +10,9 @@ import {
   RefreshCw,
   Save,
   Trash2,
-  TriangleAlert,
   Upload,
 } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,6 +44,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { api, type Access, type Doc } from "@/lib/api"
+import { useIndexStatus } from "@/lib/index-status"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const sameDoc = (a: Doc | null, b: Doc | null) =>
@@ -290,7 +289,7 @@ function DocEditor({
     try {
       await api.saveDoc(doc, content)
       setOriginal(content)
-      toast.success(`Saved ${doc.name}`)
+      toast.success(`Saved ${doc.name} · updating the index`)
       onSaved()
     } catch (err) {
       toast.error(errorText(err))
@@ -302,7 +301,7 @@ function DocEditor({
   async function remove() {
     try {
       await api.deleteDoc(doc)
-      toast.success(`Deleted ${doc.name}`)
+      toast.success(`Deleted ${doc.name} · updating the index`)
       onDeleted()
     } catch (err) {
       toast.error(errorText(err))
@@ -386,17 +385,17 @@ function DocEditor({
 
 export function DocsView() {
   const [docs, setDocs] = useState<Doc[]>([])
-  const [changed, setChanged] = useState(false)
+  const { status: indexStatus, refresh: refreshIndex } = useIndexStatus()
+  const indexing = indexStatus?.status === "indexing"
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | Access>("all")
   const [selected, setSelected] = useState<Doc | null>(null)
-  const [reindexing, setReindexing] = useState(false)
 
   const refresh = useCallback(async (select?: { access: Access; name: string }) => {
     try {
       const data = await api.listDocs()
       setDocs(data.docs)
-      setChanged(data.changed)
+      refreshIndex()                    // a change just started a re-index
       setSelected((current) => {
         const wanted = select ?? current
         return data.docs.find((d) => sameDoc(d, wanted as Doc)) ?? null
@@ -406,24 +405,18 @@ export function DocsView() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [refreshIndex])
 
   useEffect(() => {
     refresh()
   }, [refresh])
 
   async function reindex() {
-    setReindexing(true)
     try {
-      const { summary } = await api.reindex()
-      toast.success(
-        `Re-indexed ${summary.documents} document(s) into ${summary.chunks} chunks. The assistant now uses the new content.`,
-      )
-      setChanged(false)
+      await api.reindex()
+      refreshIndex()
     } catch (err) {
       toast.error(errorText(err))
-    } finally {
-      setReindexing(false)
     }
   }
 
@@ -435,22 +428,16 @@ export function DocsView() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Documents</h2>
           <p className="text-sm text-muted-foreground">
-            Add, edit or remove what the assistant answers from.
+            Add, edit or remove what the assistant answers from. Changes are indexed
+            automatically.
           </p>
         </div>
-        <Button onClick={reindex} disabled={reindexing || !docs.length}>
-          {reindexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          {reindexing ? "Re-indexing…" : "Re-index documents"}
+        <Button variant="outline" onClick={reindex} disabled={indexing || !docs.length}>
+          {indexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {indexing ? "Indexing…" : "Re-index now"}
         </Button>
       </div>
 
-      {changed && (
-        <Alert>
-          <TriangleAlert />
-          <AlertTitle>The assistant can't see your latest changes yet</AlertTitle>
-          <AlertDescription>Press "Re-index documents" to make them searchable.</AlertDescription>
-        </Alert>
-      )}
 
       <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[320px_1fr]">
         <Card className="flex min-h-0 flex-col gap-3 py-4">

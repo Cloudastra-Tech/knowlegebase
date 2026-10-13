@@ -20,6 +20,8 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     DELETE /docs/{access}/{name}                                        (HR / Admin)
     POST   /docs/upload           multipart: files[], access            (HR / Admin)
     POST   /reindex               rebuild the search index              (HR / Admin)
+    GET    /index/status          background re-index progress
+Every document change re-indexes automatically in the background.
 
 The role (public / hr) is chosen in the UI and sent as "X-Role", exactly like
 the Streamlit dropdown — it is a demo switch, not a security boundary.
@@ -55,7 +57,18 @@ _sessions = {}            # token -> {"user": {...}, "expires": epoch}
 _failed_logins = {}       # username -> (count, locked_until)
 _agents = {}              # role -> agent run() function
 _agents_lock = threading.Lock()
-_state = {"docs_changed": False}
+
+# ---- Background re-indexing ----
+# Every document change schedules a re-index in a background thread; the UI polls
+# GET /api/index/status to show a progress bar. Changes made while an index is
+# running set `pending`, so one more pass runs right after (they are coalesced).
+_index = {"status": "idle", "step": 0, "total": 4, "message": "", "pending": False,
+          "summary": None, "error": None, "finished_at": None}
+_index_lock = threading.Lock()
+# Chat questions wait while the index is swapped, and the swap waits for
+# questions already running — so nobody searches a half-built index.
+_gate = threading.Condition()
+_gate_state = {"indexing": False, "active_chats": 0}
 
 
 # ---- Auth --------------------------------------------------------------------
@@ -134,7 +147,16 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
-    answer, trace, sources = get_agent(role)(question, with_sources=True)
+    with _gate:
+        if not _gate.wait_for(lambda: not _gate_state["indexing"], timeout=120):
+            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
+        _gate_state["active_chats"] += 1
+    try:
+        answer, trace, sources = get_agent(role)(question, with_sources=True)
+    finally:
+        with _gate:
+            _gate_state["active_chats"] -= 1
+            _gate.notify_all()
     steps = [{"tool": t["tool"], "input": t["input"],
               "output": t["output"][:STEP_PREVIEW_CHARS]
               + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
@@ -160,14 +182,61 @@ def _existing_path(access, name):
     return path
 
 
+def _index_progress(step, total, message):
+    with _index_lock:
+        _index.update(step=step, total=total, message=message)
+
+
+def _run_index():
+    """Background worker: re-index until no more changes are pending."""
+    while True:
+        with _index_lock:
+            _index.update(status="indexing", step=0, message="Starting", pending=False,
+                          error=None)
+        with _gate:
+            _gate_state["indexing"] = True
+            _gate.wait_for(lambda: _gate_state["active_chats"] == 0, timeout=300)
+        summary, error = None, None
+        try:
+            if docs_store.list_docs():
+                with contextlib.redirect_stdout(io.StringIO()):
+                    summary = ingest.main(progress=_index_progress)
+            else:
+                error = "No documents to index."
+            with _agents_lock:
+                _agents.clear()            # next question loads the new index
+        except Exception as e:            # keep the server alive; show it in the UI
+            error = f"{type(e).__name__}: {e}"
+        finally:
+            with _gate:
+                _gate_state["indexing"] = False
+                _gate.notify_all()
+        with _index_lock:
+            if _index["pending"]:
+                continue                   # more changes arrived meanwhile
+            _index.update(status="error" if error else "idle", summary=summary,
+                          error=error, finished_at=time.time(),
+                          message=error or "Up to date")
+            return
+
+
+def _schedule_index():
+    with _index_lock:
+        if _index["status"] == "indexing":
+            _index["pending"] = True
+            return
+        _index.update(status="indexing", step=0, message="Queued")
+    threading.Thread(target=_run_index, daemon=True).start()
+
+
 def _changed():
-    _state["docs_changed"] = True
+    _schedule_index()
 
 
 @app.get("/api/docs")
 def list_docs(user=Depends(require_hr)):
     docs = [{k: d[k] for k in ("access", "name", "size")} for d in docs_store.list_docs()]
-    return {"docs": docs, "changed": _state["docs_changed"]}
+    return {"docs": docs}
 
 
 @app.get("/api/docs/{access}/{name}")
@@ -231,14 +300,18 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
 
 @app.post("/api/reindex")
 def reindex(user=Depends(require_hr)):
+    """Manual re-index (changes already re-index automatically)."""
     if not docs_store.list_docs():
         raise HTTPException(400, "Add at least one document first.")
-    log = io.StringIO()
-    with _agents_lock, contextlib.redirect_stdout(log):
-        summary = ingest.main()
-        _agents.clear()                # next question reloads the new index
-    _state["docs_changed"] = False
-    return {"summary": summary, "log": log.getvalue()}
+    _schedule_index()
+    return index_status(user)
+
+
+@app.get("/api/index/status")
+def index_status(user=Depends(current_user)):
+    with _index_lock:
+        return {k: _index[k] for k in ("status", "step", "total", "message", "pending",
+                                       "summary", "error", "finished_at")}
 
 
 @app.get("/api/health")
