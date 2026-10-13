@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { BookOpenText, FolderOpen, LogOut, MessageSquare } from "lucide-react"
+import { ChevronDown, LogOut } from "lucide-react"
 
 import { ChatView } from "@/components/chat-view"
 import { DocsView } from "@/components/docs-view"
@@ -11,18 +11,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
 
 type Screen = "chat" | "docs"
@@ -77,52 +72,78 @@ export default function App() {
     .slice(0, 2)
     .toUpperCase()
 
+  const navItems: { id: Screen; label: string }[] = [
+    { id: "chat", label: "Chat" },
+    ...(role === "hr" ? [{ id: "docs" as Screen, label: "Documents" }] : []),
+  ]
+
   return (
     <div className="flex h-svh flex-col">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <BookOpenText className="size-4" />
-            </div>
-            <span className="hidden font-semibold sm:inline">Knowledge Assistant</span>
-          </div>
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
+        <div className="mx-auto flex h-12 max-w-6xl items-center gap-8 px-4">
+          <span className="select-none text-sm font-semibold tracking-tight">
+            Knowledge<span className="font-normal text-muted-foreground"> assistant</span>
+          </span>
 
-          <Tabs value={screen} onValueChange={(v) => setScreen(v as Screen)} className="ml-2">
-            <TabsList>
-              <TabsTrigger value="chat">
-                <MessageSquare /> Chat
-              </TabsTrigger>
-              {role === "hr" && (
-                <TabsTrigger value="docs">
-                  <FolderOpen /> Documents
-                </TabsTrigger>
-              )}
-            </TabsList>
-          </Tabs>
+          <nav className="flex h-full items-center gap-6">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setScreen(item.id)}
+                className={cn(
+                  "relative flex h-full items-center text-sm transition-colors",
+                  screen === item.id
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {item.label}
+                {screen === item.id && (
+                  <span className="absolute inset-x-0 -bottom-px h-px bg-foreground" />
+                )}
+              </button>
+            ))}
+          </nav>
 
-          <div className="ml-auto flex items-center gap-2">
-            <Select value={role} onValueChange={(v) => changeRole(v as Role)}>
-              <SelectTrigger size="sm" className="w-36" aria-label="Role">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="hr">HR / Admin</SelectItem>
-                <SelectItem value="public">Public user</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="ml-auto flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 rounded-full px-3 text-xs font-normal text-muted-foreground hover:text-foreground"
+                >
+                  {role === "hr" ? "HR / Admin" : "Public"}
+                  <ChevronDown className="size-3.5 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  View as
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={role} onValueChange={(v) => changeRole(v as Role)}>
+                  <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account">
-                  <Avatar className="size-8">
-                    <AvatarFallback>{initials || "?"}</AvatarFallback>
+                <button
+                  className="rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Account"
+                >
+                  <Avatar className="size-7">
+                    <AvatarFallback className="bg-foreground text-[11px] font-medium text-background">
+                      {initials || "?"}
+                    </AvatarFallback>
                   </Avatar>
-                </Button>
+                </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuLabel>
-                  <div className="font-medium">{user.name}</div>
+                  <div className="text-sm font-medium">{user.name}</div>
                   <div className="text-xs font-normal text-muted-foreground">@{user.username}</div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />

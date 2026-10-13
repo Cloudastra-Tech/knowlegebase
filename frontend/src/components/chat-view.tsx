@@ -176,9 +176,6 @@ export function ChatView({ role }: { role: Role }) {
         <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
           {messages.length === 0 && (
             <div className="flex flex-col items-center pt-12 text-center sm:pt-20">
-              <div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-                <Sparkles className="size-6" />
-              </div>
               <h2 className="text-2xl font-semibold tracking-tight">Ask your company docs</h2>
               <p className="mt-2 max-w-md text-sm text-muted-foreground">
                 Answers come from your uploaded documents and the Outline wiki, with the sources
