@@ -239,3 +239,18 @@ def reindex(user=Depends(require_hr)):
         _agents.clear()                # next question reloads the new index
     _state["docs_changed"] = False
     return {"summary": summary, "log": log.getvalue()}
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
+
+
+# ---- The website -------------------------------------------------------------
+# In production (Docker) the built React app lives in frontend/dist and is served
+# from here, so one container + one port serves both the site and the API.
+# Locally, `npm run dev` serves the site instead and this folder doesn't exist.
+_SITE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+if os.path.isdir(_SITE):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_SITE, html=True), name="site")
