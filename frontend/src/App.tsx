@@ -4,6 +4,7 @@ import { ChevronDown, LogOut } from "lucide-react"
 import { ChatView } from "@/components/chat-view"
 import { DocsView } from "@/components/docs-view"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
+import { LandingPage } from "@/components/landing-page"
 import { LoginPage } from "@/components/login-page"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -29,6 +30,26 @@ export default function App() {
   const [checking, setChecking] = useState(!!session.token)
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
+  // Signed out: the landing page, or the sign-in form at #login.
+  const [wantsLogin, setWantsLogin] = useState(() => window.location.hash === "#login")
+
+  useEffect(() => {
+    const onHash = () => setWantsLogin(window.location.hash === "#login")
+    window.addEventListener("hashchange", onHash)
+    return () => window.removeEventListener("hashchange", onHash)
+  }, [])
+
+  function goTo(hash: string) {
+    if (hash) window.location.hash = hash
+    else history.replaceState(null, "", window.location.pathname)
+    setWantsLogin(hash === "login")
+    window.scrollTo(0, 0)
+  }
+
+  function onLogin(u: User) {
+    goTo("")
+    setUser(u)
+  }
 
   // Restore the session after a page refresh.
   useEffect(() => {
@@ -65,7 +86,13 @@ export default function App() {
     )
   }
 
-  if (!user) return <LoginPage onLogin={setUser} />
+  if (!user) {
+    return wantsLogin ? (
+      <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
+    ) : (
+      <LandingPage onSignIn={() => goTo("login")} />
+    )
+  }
 
   const initials = user.name
     .split(/\s+/)
