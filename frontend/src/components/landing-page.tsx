@@ -1,7 +1,17 @@
 import {
   ArrowRight,
   BookOpen,
+  Check,
+  Cloud,
+  Database,
+  Eye,
+  EyeOff,
   FileText,
+  Globe,
+  KeyRound,
+  Server,
+  Trash2,
+  X,
   Layers,
   Lock,
   MessagesSquare,
@@ -112,6 +122,102 @@ const FEATURES = [
     body: "Prompt-injection checks, sensitive-data filters and PII masking on every answer.",
   },
 ]
+
+const TRUST = [
+  {
+    icon: Server,
+    title: "Self-hosted",
+    body: "Runs on your own server or private cloud in a single container. No shared, multi-tenant SaaS.",
+  },
+  {
+    icon: Database,
+    title: "Your index stays with you",
+    body: "Documents and their search index (vectors) are stored on your server, not in a third-party database.",
+  },
+  {
+    icon: EyeOff,
+    title: "Never used for training",
+    body: "Answers use the OpenAI API, whose policy is that API data isn't used to train models by default.",
+  },
+  {
+    icon: Lock,
+    title: "Permission-aware by design",
+    body: "Restricted documents are filtered out before search, so the AI never receives what a user can't see.",
+  },
+  {
+    icon: Eye,
+    title: "Read-only connections",
+    body: "Connected tools are only read, never edited. Your source of truth stays untouched.",
+  },
+  {
+    icon: Trash2,
+    title: "Delete means gone",
+    body: "Remove a document and it is dropped from the search index automatically, so it can no longer appear in answers.",
+  },
+  {
+    icon: KeyRound,
+    title: "Secure sign-in",
+    body: "Salted, hashed passwords, lockout after failed attempts, and HTTPS on the public site.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Guardrails on every answer",
+    body: "Prompt-injection detection, sensitive-data filters and automatic masking of emails, phones and cards.",
+  },
+]
+
+const ALWAYS = [
+  "Keep your documents and search index on infrastructure you control",
+  "Send the AI only the snippets needed to answer the current question",
+  "Show the exact sources behind every answer, so it can be checked",
+  "Filter restricted content by permission before the AI sees it",
+]
+
+const NEVER = [
+  "Train AI models on your documents or questions",
+  "Sell, share or reuse your data for anything else",
+  "Write to or change your connected tools",
+  "Store your documents in an outside vector-database service",
+]
+
+const DEPLOY = [
+  { icon: Server, title: "Your server", tag: "", body: "One Docker container on any Linux VPS or on-prem machine." },
+  { icon: Cloud, title: "Private cloud", tag: "", body: "Deploy in your own AWS, Azure or GCP account and network." },
+  {
+    icon: Globe,
+    title: "In-region AI model",
+    tag: "Option",
+    body: "Swap to Azure OpenAI in your region, or a self-hosted model, when data must not leave.",
+  },
+]
+
+// Where data goes: documents and index stay inside; only snippets reach the model.
+function DataFlow() {
+  return (
+    <div className="mt-8 rounded-2xl border border-border/70 p-5">
+      <div className="rounded-xl border border-dashed border-foreground/25 p-4">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Inside your infrastructure
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          {["Your documents", "Search index", "Assistant"].map((label, i) => (
+            <div key={label} className="flex items-center gap-2">
+              {i > 0 && <ArrowRight className="size-3.5 text-muted-foreground" />}
+              <span className="rounded-lg bg-muted px-3 py-1.5 font-medium">{label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-3 flex items-start gap-3 text-sm">
+        <ArrowRight className="mt-0.5 size-3.5 shrink-0 rotate-90 text-muted-foreground" />
+        <p className="text-muted-foreground">
+          Only the question and the few relevant snippets go to the AI model to write the answer.
+          Nothing is kept for training.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 function IntegrationTile({ item }: { item: Integration }) {
   return (
@@ -283,6 +389,15 @@ export function LandingPage({ onSignIn }: { onSignIn: () => void }) {
                 <a href="#integrations">See integrations</a>
               </Button>
             </div>
+            <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
+              {["Self-hosted", "Never used for training", "Permission-aware", "Cited answers"].map(
+                (t) => (
+                  <span key={t} className="flex items-center gap-1.5">
+                    <Check className="size-3.5 text-emerald-600" /> {t}
+                  </span>
+                ),
+              )}
+            </div>
           </div>
           <ProductPreview />
         </div>
@@ -345,27 +460,89 @@ export function LandingPage({ onSignIn }: { onSignIn: () => void }) {
         </Section>
       </div>
 
-      {/* Security */}
-      <Section
-        id="security"
-        eyebrow="Security"
-        title="Private by default"
-        body="Your documents stay in your workspace. Only signed-in teammates can ask questions, and restricted content stays restricted."
-      >
-        <div className="mx-auto grid max-w-4xl gap-4 sm:grid-cols-3">
-          {[
-            ["Sign-in required", "Accounts with salted, hashed passwords and lockout after failed attempts."],
-            ["Access-aware search", "HR-only documents are filtered out before the model ever sees them."],
-            ["Safety checks", "Every question and answer passes injection and sensitive-data guards."],
-          ].map(([title, body]) => (
-            <div key={title} className="rounded-2xl border border-border/70 p-5">
-              <ShieldCheck className="size-5 text-foreground/80" />
-              <h3 className="mt-3 text-sm font-semibold">{title}</h3>
-              <p className="mt-1.5 text-sm text-muted-foreground">{body}</p>
+      {/* Security & data control — the trust USP */}
+      <section id="security" className="scroll-mt-20 py-20 sm:py-28">
+        <div className="mx-auto max-w-6xl px-4">
+          <div className="grid items-start gap-12 lg:grid-cols-[1fr_1.1fr]">
+            <div className="lg:sticky lg:top-24">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                Security &amp; data control
+              </p>
+              <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-5xl">
+                Your data.
+                <br />
+                <span className="text-muted-foreground">Your server. Your rules.</span>
+              </h2>
+              <p className="mt-5 max-w-md text-muted-foreground">
+                The assistant runs inside your own infrastructure. Your documents and their search
+                index never leave it, nothing is used to train AI models, and you decide who can see
+                what.
+              </p>
+              <DataFlow />
             </div>
-          ))}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {TRUST.map((t) => (
+                <div
+                  key={t.title}
+                  className="rounded-2xl border border-border/70 bg-background p-5 transition-colors hover:border-foreground/20"
+                >
+                  <div className="flex size-9 items-center justify-center rounded-lg bg-foreground text-background">
+                    <t.icon className="size-4" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-semibold">{t.title}</h3>
+                  <p className="mt-1.5 text-sm text-muted-foreground">{t.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-16 grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-border/70 p-6">
+              <p className="text-sm font-semibold">What we always do</p>
+              <ul className="mt-4 space-y-3">
+                {ALWAYS.map((x) => (
+                  <li key={x} className="flex gap-3 text-sm">
+                    <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                    <span>{x}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-2xl border border-border/70 p-6">
+              <p className="text-sm font-semibold">What we never do</p>
+              <ul className="mt-4 space-y-3">
+                {NEVER.map((x) => (
+                  <li key={x} className="flex gap-3 text-sm">
+                    <X className="mt-0.5 size-4 shrink-0 text-destructive" />
+                    <span>{x}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-border/70 bg-muted/30 p-6">
+            <p className="text-sm font-semibold">Choose where it runs</p>
+            <div className="mt-4 grid gap-5 sm:grid-cols-3">
+              {DEPLOY.map((d) => (
+                <div key={d.title}>
+                  <div className="flex items-center gap-2">
+                    <d.icon className="size-4 text-foreground/80" />
+                    <p className="text-sm font-medium">{d.title}</p>
+                    {d.tag && (
+                      <Badge variant="outline" className="font-normal text-muted-foreground">
+                        {d.tag}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-sm text-muted-foreground">{d.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      </Section>
+      </section>
 
       {/* CTA */}
       <section className="px-4 pb-24">
