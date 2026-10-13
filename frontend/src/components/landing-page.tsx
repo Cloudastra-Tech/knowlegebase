@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   BookOpen,
+  Building2,
   Check,
   Cloud,
   Database,
@@ -42,6 +43,7 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 type Integration = {
   name: string
@@ -164,7 +166,14 @@ const TRUST = [
     title: "Guardrails on every answer",
     body: "Prompt-injection detection, sensitive-data filters and automatic masking of emails, phones and cards.",
   },
-]
+  {
+    icon: Building2,
+    title: "Single sign-on (SSO)",
+    body: "Sign in with Google Workspace or Microsoft Entra ID over SAML / OIDC, so access follows your company directory. Offboard someone once and they lose access here too.",
+    tag: "Soon",
+    wide: true,
+  },
+] as { icon: typeof Server; title: string; body: string; tag?: string; wide?: boolean }[]
 
 const ALWAYS = [
   "Keep your documents and search index on infrastructure you control",
@@ -485,10 +494,20 @@ export function LandingPage({ onSignIn }: { onSignIn: () => void }) {
               {TRUST.map((t) => (
                 <div
                   key={t.title}
-                  className="rounded-2xl border border-border/70 bg-background p-5 transition-colors hover:border-foreground/20"
+                  className={cn(
+                    "rounded-2xl border border-border/70 bg-background p-5 transition-colors hover:border-foreground/20",
+                    t.wide && "sm:col-span-2",
+                  )}
                 >
-                  <div className="flex size-9 items-center justify-center rounded-lg bg-foreground text-background">
-                    <t.icon className="size-4" />
+                  <div className="flex items-center justify-between">
+                    <div className="flex size-9 items-center justify-center rounded-lg bg-foreground text-background">
+                      <t.icon className="size-4" />
+                    </div>
+                    {t.tag && (
+                      <Badge variant="outline" className="font-normal text-muted-foreground">
+                        {t.tag}
+                      </Badge>
+                    )}
                   </div>
                   <h3 className="mt-4 text-sm font-semibold">{t.title}</h3>
                   <p className="mt-1.5 text-sm text-muted-foreground">{t.body}</p>
