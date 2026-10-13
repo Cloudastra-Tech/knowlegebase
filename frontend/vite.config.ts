@@ -10,6 +10,6 @@ export default defineConfig({
   },
   server: {
     // The FastAPI backend (api.py) runs on :8010; the browser only talks to Vite.
-    proxy: { "/api": "http://localhost:8010" },
+    proxy: { "/api": "http://127.0.0.1:8010" },
   },
 })
