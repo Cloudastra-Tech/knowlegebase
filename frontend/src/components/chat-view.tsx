@@ -12,10 +12,8 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
 import { api, type ChatReply, type Role, type Source } from "@/lib/api"
 
 interface Message {
@@ -126,6 +124,15 @@ export function ChatView({ role }: { role: Role }) {
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const nextId = useRef(1)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Grow the input with its text (up to max-h-48), shrink back when cleared.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${el.scrollHeight}px`
+  }, [input])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -227,19 +234,33 @@ export function ChatView({ role }: { role: Role }) {
         </div>
       </div>
 
-      <div className="border-t bg-background">
-        <form onSubmit={onSubmit} className="mx-auto flex max-w-3xl items-end gap-2 px-4 py-3">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="Ask a question… (Shift+Enter for a new line)"
-            className="max-h-40 min-h-11 resize-none"
-            rows={1}
-          />
-          <Button type="submit" size="icon" disabled={loading || !input.trim()} aria-label="Send">
-            <ArrowUp />
-          </Button>
+      <div className="pointer-events-none bg-gradient-to-t from-background via-background to-transparent pt-6">
+        <form onSubmit={onSubmit} className="pointer-events-auto mx-auto max-w-3xl px-4 pb-4">
+          <div
+            onClick={() => inputRef.current?.focus()}
+            className="flex cursor-text items-end gap-2 rounded-3xl border border-border/70 bg-background py-2 pl-5 pr-2 shadow-[0_2px_20px_-6px_rgba(0,0,0,0.12)] transition-all focus-within:border-foreground/25 focus-within:shadow-[0_4px_28px_-8px_rgba(0,0,0,0.2)]"
+          >
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Ask anything…"
+              rows={1}
+              className="max-h-48 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/70"
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              aria-label="Send"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-all hover:opacity-85 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/60"
+            >
+              <ArrowUp className="size-4" strokeWidth={2.5} />
+            </button>
+          </div>
+          <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
+            Enter to send · Shift + Enter for a new line
+          </p>
         </form>
       </div>
     </div>
