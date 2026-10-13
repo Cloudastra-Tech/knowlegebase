@@ -311,7 +311,7 @@ function DocEditor({
   const dirty = content !== original
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card className="flex min-h-0 flex-col md:h-full">
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div className="min-w-0 space-y-1.5">
           <CardTitle className="truncate text-base">{doc.name}</CardTitle>
@@ -357,7 +357,7 @@ function DocEditor({
           </AlertDialog>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-1 flex-col">
+      <CardContent className="flex min-h-0 flex-1 flex-col">
         {!isText ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             <FileText className="size-8" />
@@ -374,7 +374,7 @@ function DocEditor({
           <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            className="min-h-80 flex-1 resize-none font-mono text-sm"
+            className="h-[60svh] min-h-0 flex-1 resize-none overflow-y-auto font-mono text-sm field-sizing-fixed md:h-auto"
           />
         )}
         {dirty && <p className="mt-2 text-xs text-muted-foreground">Unsaved changes</p>}
@@ -423,7 +423,7 @@ export function DocsView() {
   const visible = docs.filter((d) => filter === "all" || d.access === filter)
 
   return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-4 py-6">
+    <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 md:h-full">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Documents</h2>
@@ -439,8 +439,8 @@ export function DocsView() {
       </div>
 
 
-      <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[320px_1fr]">
-        <Card className="flex min-h-0 flex-col gap-3 py-4">
+      <div className="grid gap-4 md:min-h-0 md:flex-1 md:grid-cols-[320px_1fr] md:grid-rows-[minmax(0,1fr)]">
+        <Card className="flex max-h-96 min-h-0 flex-col gap-3 py-4 md:max-h-none">
           <div className="flex items-center justify-between gap-2 px-4">
             <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
               <TabsList>
