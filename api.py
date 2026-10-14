@@ -17,6 +17,7 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     POST   /auth/logout
     GET    /auth/me
     POST   /chat                  {question, role} -> {answer, sources, steps}
+    POST   /chat/stream           same, streamed live (steps + answer tokens) as SSE
     GET    /docs                  list documents                       (HR / Admin)
     GET    /docs/{access}/{name}  text of a .txt, or the file itself    (HR / Admin)
     POST   /docs                  {name, access, content} new .txt      (HR / Admin)
@@ -43,6 +44,7 @@ the Streamlit dropdown — it is a demo switch, not a security boundary.
 import contextlib
 import json
 import io
+import queue
 import os
 import secrets
 import threading
@@ -50,7 +52,7 @@ import time
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -200,11 +202,59 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
         with _gate:
             _gate_of(ws)["active"] -= 1
             _gate.notify_all()
-    steps = [{"tool": t["tool"], "input": t["input"],
-              "output": t["output"][:STEP_PREVIEW_CHARS]
-              + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
-             for t in trace]
-    return {"answer": answer, "sources": sources, "steps": steps}
+    return {"answer": answer, "sources": sources, "steps": _steps(trace)}
+
+
+def _steps(trace):
+    return [{"tool": t["tool"], "input": t["input"],
+             "output": t["output"][:STEP_PREVIEW_CHARS]
+             + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
+            for t in trace]
+
+
+@app.post("/api/chat/stream")
+def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
+    """Same as /api/chat, but streams what's happening as Server-Sent Events:
+         status      {"text"}                       e.g. "Checking your question"
+         step_start  {"id", "tool", "label"}        e.g. "Searching company docs"
+         step_end    {"id", "tool", "result"}       e.g. "found 2 relevant documents"
+         answer      {"text"}                       the answer so far (PII already masked)
+         done        {"answer", "sources", "steps"} the final, checked answer
+         error       {"message"}"""
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(400, "Please type a question.")
+    ws = ws_of(user)
+    with _gate:
+        if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
+            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
+        _gate_of(ws)["active"] += 1
+
+    events = queue.Queue()
+
+    def work():
+        try:
+            answer, trace, sources = get_agent(ws, role)(question, with_sources=True,
+                                                         on_event=events.put)
+            events.put({"type": "done", "answer": answer, "sources": sources,
+                        "steps": _steps(trace)})
+        except Exception as e:                     # show it in the chat, keep serving
+            events.put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
+        finally:
+            with _gate:
+                _gate_of(ws)["active"] -= 1
+                _gate.notify_all()
+            events.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def sse():
+        while (event := events.get()) is not None:
+            yield f"data: {json.dumps(event)}\n\n"
+
+    # X-Accel-Buffering: no -> nginx passes each event through immediately.
+    return StreamingResponse(sse(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ---- Re-indexing -------------------------------------------------------------
