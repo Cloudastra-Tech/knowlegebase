@@ -2,8 +2,8 @@
 connectors/google_drive.py  —  sync a workspace's Google Drive into its index.
 
 Read-only: we only ever LIST and DOWNLOAD files (scope drive.readonly).
-What gets synced: ONLY the folders / Shared Drives the admin picks (sub-folders
-included) — nothing until something is picked. Inside them: Google Docs
+What gets synced: ONLY what the admin picks — folders / Shared Drives (their
+sub-folders included) and/or single files — nothing until something is picked. Inside them: Google Docs
 (exported as text), Google Sheets (as CSV text), PDFs and plain-text files,
 up to MAX_FILES.
 
@@ -126,9 +126,14 @@ def _query(token, q, fields, order="name"):
             return out
 
 
+SUPPORTED = (DOC, SHEET, PDF, TEXT)
+_WANTED = " or ".join(f"mimeType = '{m}'" for m in SUPPORTED)
+_FILE_FIELDS = "id, name, mimeType, modifiedTime, webViewLink, size"
+
+
 def list_folders(workspace, parent=None):
-    """Folders to choose from. parent=None -> top level: Shared Drives + the
-    folders at the root of My Drive. Otherwise -> the sub-folders of `parent`."""
+    """What can be picked inside `parent` (None = top level: Shared Drives + the
+    root of My Drive): its sub-folders and its supported files."""
     token = _access_token(workspace)
     headers = {"Authorization": f"Bearer {token}"}
     drives = []
@@ -138,25 +143,38 @@ def list_folders(workspace, parent=None):
         if r.ok:
             drives = [{"id": d["id"], "name": d["name"], "kind": "drive"}
                       for d in r.json().get("drives", [])]
-    q = f"mimeType = '{FOLDER}' and trashed = false and '{parent or 'root'}' in parents"
+    where = f"trashed = false and '{parent or 'root'}' in parents"
+    items = _query(token, f"{where} and (mimeType = '{FOLDER}' or {_WANTED})", "id, name, mimeType")
     folders = [{"id": f["id"], "name": f["name"], "kind": "folder"}
-               for f in _query(token, q, "id, name")]
-    return {"drives": drives, "folders": folders}
+               for f in items if f["mimeType"] == FOLDER]
+    files = [{"id": f["id"], "name": f["name"], "kind": "file", "mimeType": f["mimeType"]}
+             for f in items if f["mimeType"] != FOLDER]
+    return {"drives": drives, "folders": folders, "files": files}
 
 
 def _list_files(token, roots):
-    """Supported files inside the chosen folders / Shared Drives, sub-folders
-    included (breadth-first), newest first, capped at MAX_FILES."""
-    wanted = f"(mimeType = '{DOC}' or mimeType = '{SHEET}' or mimeType = '{PDF}' or mimeType = '{TEXT}')"
-    files, seen, queue = {}, set(), [r["id"] for r in roots]
+    """Supported files for the chosen items: every file inside chosen folders /
+    Shared Drives (sub-folders included, breadth-first) plus individually chosen
+    files. Newest first, capped at MAX_FILES."""
+    files, seen = {}, set()
+    queue = [r["id"] for r in roots if r.get("kind") != "file"]
+    for r in roots:
+        if r.get("kind") == "file":
+            meta = requests.get(f"{FILES_URL}/{r['id']}", timeout=30,
+                                params={"fields": _FILE_FIELDS + ", trashed",
+                                        "supportsAllDrives": "true"},
+                                headers={"Authorization": f"Bearer {token}"})
+            if meta.ok:          # 404 = deleted / no longer shared: just drop it
+                f = meta.json()
+                if not f.get("trashed") and f.get("mimeType") in SUPPORTED:
+                    files[f["id"]] = f
     while queue and len(seen) < MAX_FOLDERS:
         folder = queue.pop(0)
         if folder in seen:
             continue
         seen.add(folder)
-        q = f"'{folder}' in parents and trashed = false and ({wanted[1:-1]} or mimeType = '{FOLDER}')"
-        for f in _query(token, q, "id, name, mimeType, modifiedTime, webViewLink, size",
-                        order="modifiedTime desc"):
+        q = f"'{folder}' in parents and trashed = false and ({_WANTED} or mimeType = '{FOLDER}')"
+        for f in _query(token, q, _FILE_FIELDS, order="modifiedTime desc"):
             if f["mimeType"] == FOLDER:
                 queue.append(f["id"])
             else:

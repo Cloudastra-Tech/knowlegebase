@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { ChevronRight, Folder, HardDrive, Loader2, X } from "lucide-react"
+import {
+  ChevronRight,
+  FileSpreadsheet,
+  FileText,
+  FileType,
+  Folder,
+  HardDrive,
+  Loader2,
+  X,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -17,8 +26,17 @@ import { api, type DriveFolder } from "@/lib/api"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-// Pick which Google Drive folders / Shared Drives to sync. Sub-folders of a
-// picked folder are included automatically.
+export function DriveItemIcon({ item, className = "size-4" }: { item: DriveFolder; className?: string }) {
+  const cls = `${className} shrink-0 text-muted-foreground`
+  if (item.kind === "drive") return <HardDrive className={cls} />
+  if (item.kind === "folder") return <Folder className={cls} />
+  if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
+  if (item.mimeType === "application/pdf") return <FileType className={cls} />
+  return <FileText className={cls} />
+}
+
+// Pick what to sync from Google Drive: whole folders / Shared Drives (their
+// sub-folders and new files included automatically) and/or single files.
 export function DriveFolderPicker({
   open,
   onOpenChange,
@@ -49,7 +67,9 @@ export function DriveFolderPicker({
     setItems(null)
     api
       .driveFolders(parent)
-      .then(({ drives, folders }) => !cancelled && setItems([...drives, ...folders]))
+      .then(
+        ({ drives, folders, files }) => !cancelled && setItems([...drives, ...folders, ...files]),
+      )
       .catch((err) => {
         toast.error(errorText(err))
         if (!cancelled) setItems([])
@@ -73,8 +93,8 @@ export function DriveFolderPicker({
       await api.setDriveFolders(selected)
       toast.success(
         selected.length
-          ? `Syncing ${selected.length} folder${selected.length === 1 ? "" : "s"}…`
-          : "No folders selected. Drive files were removed from search.",
+          ? `Syncing ${selected.length} item${selected.length === 1 ? "" : "s"}…`
+          : "Nothing selected. Drive files were removed from search.",
       )
       onSaved()
       onOpenChange(false)
@@ -91,8 +111,8 @@ export function DriveFolderPicker({
         <DialogHeader>
           <DialogTitle>Choose what to sync</DialogTitle>
           <DialogDescription>
-            Only these folders are synced, including their sub-folders. Everyone in this
-            workspace can search what you pick.
+            Tick whole folders (sub-folders and new files included) or single files. Everyone
+            in this workspace can search what you pick.
           </DialogDescription>
         </DialogHeader>
 
@@ -124,7 +144,9 @@ export function DriveFolderPicker({
               <Skeleton className="h-8 w-2/3" />
             </div>
           ) : items.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">No folders here.</p>
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              No folders or supported files here (Docs, Sheets, PDFs, text).
+            </p>
           ) : (
             items.map((f) => (
               <div
@@ -137,24 +159,29 @@ export function DriveFolderPicker({
                   onCheckedChange={() => toggle(f)}
                   aria-label={`Sync ${f.name}`}
                 />
-                {f.kind === "drive" ? (
-                  <HardDrive className="size-4 shrink-0 text-muted-foreground" />
-                ) : (
-                  <Folder className="size-4 shrink-0 text-muted-foreground" />
-                )}
-                <button
-                  onClick={() => setPath([...path, f])}
-                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left text-sm"
-                  title="Open folder"
-                >
-                  <span className="truncate">
+                <DriveItemIcon item={f} />
+                {f.kind === "file" ? (
+                  <button
+                    onClick={() => !coveredByParent && toggle(f)}
+                    className="min-w-0 flex-1 truncate text-left text-sm"
+                  >
                     {f.name}
-                    {f.kind === "drive" && (
-                      <span className="ml-1.5 text-xs text-muted-foreground">Shared Drive</span>
-                    )}
-                  </span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setPath([...path, f])}
+                    className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left text-sm"
+                    title="Open folder"
+                  >
+                    <span className="truncate">
+                      {f.name}
+                      {f.kind === "drive" && (
+                        <span className="ml-1.5 text-xs text-muted-foreground">Shared Drive</span>
+                      )}
+                    </span>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                )}
               </div>
             ))
           )}
@@ -168,9 +195,10 @@ export function DriveFolderPicker({
               {selected.map((s) => (
                 <span
                   key={s.id}
-                  className="flex items-center gap-1 rounded-full bg-muted py-1 pl-2.5 pr-1 text-xs"
+                  className="flex max-w-60 items-center gap-1 rounded-full bg-muted py-1 pl-2 pr-1 text-xs"
                 >
-                  {s.name}
+                  <DriveItemIcon item={s} className="size-3" />
+                  <span className="truncate">{s.name}</span>
                   <button
                     onClick={() => toggle(s)}
                     className="rounded-full p-0.5 hover:bg-background"

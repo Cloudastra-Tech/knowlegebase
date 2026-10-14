@@ -470,7 +470,8 @@ class FoldersIn(BaseModel):
 
 @app.get("/api/integrations/google_drive/folders")
 def drive_folders(parent: str = "", user=Depends(require_hr)):
-    """Browse folders to pick from: top level (Shared Drives + My Drive root) or a sub-folder."""
+    """Browse what can be picked: top level (Shared Drives + My Drive root) or a
+    folder — its sub-folders and its files."""
     ws = ws_of(user)
     if not integrations_store.get(ws, google_drive.PROVIDER):
         raise HTTPException(400, "Google Drive isn't connected.")
@@ -482,14 +483,17 @@ def drive_folders(parent: str = "", user=Depends(require_hr)):
 
 @app.put("/api/integrations/google_drive/folders")
 def drive_set_folders(body: FoldersIn, user=Depends(require_hr)):
-    """Save which folders / Shared Drives to sync, then sync (removed ones are dropped)."""
+    """Save which folders / Shared Drives / single files to sync, then sync
+    (anything no longer picked is dropped from the index)."""
     ws = ws_of(user)
     drive = integrations_store.get(ws, google_drive.PROVIDER)
     if not drive:
         raise HTTPException(400, "Google Drive isn't connected.")
+    kinds = ("drive", "folder", "file")
     folders = [{"id": str(f["id"]), "name": str(f.get("name", ""))[:200],
-                "kind": "drive" if f.get("kind") == "drive" else "folder"}
-               for f in body.folders if f.get("id")][:50]
+                "kind": f.get("kind") if f.get("kind") in kinds else "folder",
+                **({"mimeType": str(f["mimeType"])[:100]} if f.get("mimeType") else {})}
+               for f in body.folders if f.get("id")][:200]
     settings = dict(drive.get("settings") or {}, folders=folders)
     integrations_store.update(ws, google_drive.PROVIDER, settings=settings)
     _start_drive_sync(ws)

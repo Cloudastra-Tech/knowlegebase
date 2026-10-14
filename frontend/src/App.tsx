@@ -67,8 +67,8 @@ export default function App() {
       setOpenDrivePicker(choose)
       toast.success(
         choose
-          ? "Google Drive connected. Now choose which folders to sync."
-          : "Google Drive connected. Syncing your folders…",
+          ? "Google Drive connected. Now choose which folders or files to sync."
+          : "Google Drive connected. Syncing your selection…",
       )
     }
     const error = params.get("error")

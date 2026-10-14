@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
-import { BookOpen, FileText, Folder, FolderCog, Loader2, RefreshCw, Unplug } from "lucide-react"
+import { BookOpen, FileText, FolderCog, Loader2, RefreshCw, Unplug } from "lucide-react"
 import {
   siConfluence,
   siDropbox,
@@ -23,7 +23,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { DriveFolderPicker } from "@/components/drive-folder-picker"
+import { DriveFolderPicker, DriveItemIcon } from "@/components/drive-folder-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -191,8 +191,8 @@ function GoogleDriveCard({
       {item.status === "disconnected" && (
         <>
           <p className="text-sm text-muted-foreground">
-            Read-only access. After connecting, you choose which folders to sync. Nothing else
-            is touched. Synced files stay up to date every 30 minutes and are cited with a link
+            Read-only access. After connecting, you choose which folders or files to sync.
+            Nothing else is touched. Synced files stay up to date every 30 minutes and are cited with a link
             back to Drive.
           </p>
           <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
@@ -207,30 +207,31 @@ function GoogleDriveCard({
           {folders.length === 0 ? (
             <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-dashed p-3">
               <p className="text-sm text-muted-foreground">
-                Nothing is synced yet. Choose the folders your team should search.
+                Nothing is synced yet. Choose the folders or files your team should search.
               </p>
               <Button size="sm" onClick={() => setPickerOpen(true)}>
-                <FolderCog /> Choose folders
+                <FolderCog /> Choose what to sync
               </Button>
             </div>
           ) : (
             <div className="mb-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">Syncing these folders</p>
+                <p className="text-xs text-muted-foreground">Syncing</p>
                 <button
                   onClick={() => setPickerOpen(true)}
                   className="text-xs font-medium underline-offset-4 hover:underline"
                 >
-                  Edit folders
+                  Edit selection
                 </button>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {folders.map((f) => (
                   <span
                     key={f.id}
-                    className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
+                    className="flex max-w-60 items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
                   >
-                    <Folder className="size-3" /> {f.name}
+                    <DriveItemIcon item={f} className="size-3" />
+                    <span className="truncate">{f.name}</span>
                   </span>
                 ))}
               </div>

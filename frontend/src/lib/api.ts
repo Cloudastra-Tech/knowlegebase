@@ -29,10 +29,12 @@ export interface Integration {
   folders?: DriveFolder[]
 }
 
+// Something picked to sync from Google Drive: a folder, a Shared Drive or one file.
 export interface DriveFolder {
   id: string
   name: string
-  kind: "folder" | "drive"
+  kind: "folder" | "drive" | "file"
+  mimeType?: string
 }
 
 export interface Source {
@@ -179,7 +181,7 @@ export const api = {
     request<{ url: string }>("/integrations/google_drive/connect", { method: "POST" }),
   syncDrive: () => request<{ ok: boolean }>("/integrations/google_drive/sync", { method: "POST" }),
   driveFolders: (parent?: string) =>
-    request<{ drives: DriveFolder[]; folders: DriveFolder[] }>(
+    request<{ drives: DriveFolder[]; folders: DriveFolder[]; files: DriveFolder[] }>(
       `/integrations/google_drive/folders${parent ? `?parent=${encodeURIComponent(parent)}` : ""}`,
     ),
   setDriveFolders: (folders: DriveFolder[]) =>
