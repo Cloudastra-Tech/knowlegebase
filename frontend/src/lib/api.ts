@@ -6,6 +6,26 @@ export type Access = "public" | "restricted"
 export interface User {
   username: string
   name: string
+  workspace: string
+}
+
+export type IntegrationStatus =
+  | "connected"
+  | "syncing"
+  | "error"
+  | "disconnected"
+  | "not_configured"
+  | "unavailable"
+
+export interface Integration {
+  id: "uploads" | "google_drive" | "outline"
+  name: string
+  status: IntegrationStatus
+  doc_count?: number
+  account?: string | null
+  connected_by?: string | null
+  last_sync_at?: number | null
+  last_error?: string | null
 }
 
 export interface Source {
@@ -145,6 +165,14 @@ export const api = {
   },
   reindex: () => request<IndexStatus>("/reindex", { method: "POST" }),
   indexStatus: () => request<IndexStatus>("/index/status"),
+
+  integrations: () =>
+    request<{ workspace: string; integrations: Integration[] }>("/integrations"),
+  connectDrive: () =>
+    request<{ url: string }>("/integrations/google_drive/connect", { method: "POST" }),
+  syncDrive: () => request<{ ok: boolean }>("/integrations/google_drive/sync", { method: "POST" }),
+  disconnectDrive: () =>
+    request<{ ok: boolean }>("/integrations/google_drive", { method: "DELETE" }),
 
   // PDFs need the auth header, so fetch them as a blob instead of a plain link.
   async downloadDoc(d: Doc) {

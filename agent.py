@@ -90,14 +90,23 @@ def _words(text):
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 3}
 
 
+_NOT_FOUND = re.compile(
+    r"\b(couldn[’']?t|could not|can[’']?t|cannot|unable to|did not|didn[’']?t|wasn[’']?t able to) (find|locate)\b"
+    r"|\bno (specific |relevant )?(information|details|mention|data)\b"
+    r"|\bnot (mentioned|covered|available|specified|included|provided) in\b"
+    r"|\b(don[’']?t|do not|does not|doesn[’']?t) (have|contain|mention|include|provide|cover|specify)"
+    r" (any |specific )?(information|details|mention|data|anything)\b"
+    r"|\bdon[’']?t know\b|\bdo not know\b|\bnot sure\b", re.IGNORECASE)
+
+
 def _chunks_used(answer, docs, min_overlap=0.3):
     """The retrieved chunks the answer actually draws on.
     Retrieval returns the top-k chunks even when only one is relevant, so we
     keep a chunk only if a good share of the answer's words appear in it."""
     answer_words = _words(answer)
-    if not answer_words or not docs:
-        return []
-    scored = [(len(answer_words & _words(d.page_content)) / len(answer_words), d) for d in docs]
+    if not answer_words or not docs or _NOT_FOUND.search(answer):
+        return []                     # "I couldn't find..." cites nothing
+    scored =[(len(answer_words & _words(d.page_content)) / len(answer_words), d) for d in docs]
     used = [d for score, d in scored if score >= min_overlap]
     if used:
         return used
@@ -118,9 +127,11 @@ def format_sources(sources):
     return "\n\n**Sources**\n\n" + "\n".join(lines)
 
 
-def build_agent(role="public"):
-    """Create an agent for a given user role. Returns a run(question) function."""
-    retriever, rag_llm = load_chain(role)
+def build_agent(role="public", collection=None, outline=True):
+    """Create an agent for a given user role. Returns a run(question) function.
+    collection: the workspace's search index (None = default workspace).
+    outline: whether this workspace has the Outline wiki connected."""
+    retriever, rag_llm = load_chain(role, collection)
 
     # CITATIONS: every tool that reads a document records it here. run() clears
     # it per question and appends a "Sources" list built from it — so citations
@@ -139,18 +150,22 @@ def build_agent(role="public"):
     # ---- The TOOLS the agent can choose from --------------------------------
     @tool
     def search_docs(question: str) -> str:
-        """Search the company's uploaded documents (the Documents screen):
+        """Search the company's documents: files uploaded on the Documents screen
+        and files synced from connected tools such as Google Drive / Google Docs:
         policies (leave, refund, HR), handbooks, pricing, support hours, stipend,
         FAQs, PDFs and any other files added there. Try this FIRST for any
         question about the company, its policies or its products."""
         answer, docs = answer_question(question, retriever, rag_llm, role)
-        if not docs:                     # a guard refused before any search ran
+        if docs is None:                 # a guard refused before any search ran
             blocked.append(answer)
             return (f"BLOCKED BY ACCESS RULES: {answer} Do not search any other tool "
                     "for this; just tell the user this message.")
         for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
-            if source:
+            if d.metadata.get("title"):          # synced from a connector (e.g. Drive)
+                cite(d.metadata["title"], d.metadata.get("provider") or "Connected source",
+                     d.metadata.get("url") or None)
+            elif source:
                 cite(os.path.basename(source), "Company documents")
         return answer
 
@@ -262,8 +277,9 @@ def build_agent(role="public"):
         except Exception as e:
             return f"Error: {e}"
 
-    tools = [search_docs, calculator, convert_currency, wikipedia,
-             search_outline, read_outline_doc]
+    tools = [search_docs, calculator, convert_currency, wikipedia]
+    if outline:                       # only workspaces with the wiki connected
+        tools += [search_outline, read_outline_doc]
 
     # The model is told about the tools; it decides when to call them.
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(tools)
@@ -363,6 +379,8 @@ def build_agent(role="public"):
         answer = messages[-1].content or "(no answer)"
         if blocked_reply:                 # a guard refused: say exactly why
             answer = blocked_reply[0]
+            sources = []
+        elif _NOT_FOUND.search(answer):   # "I couldn't find..." -> nothing to cite
             sources = []
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)

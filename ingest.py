@@ -15,6 +15,7 @@ The 4 things that happen here (this IS the RAG ingestion pipeline):
     4. STORE   — save those vectors in Chroma (the vector database)
 """
 
+import json
 import os
 from dotenv import load_dotenv
 
@@ -32,9 +33,33 @@ DOCS_FOLDER = "docs"
 DB_FOLDER = "chroma_db"
 
 
-def main(progress=None):
-    """Rebuild the vector DB from docs/. Returns a summary dict (None if no docs).
-    progress(step, total, message) — optional callback, e.g. for a UI progress bar."""
+def _connector_metadata(documents):
+    """Files synced by a connector (docs/.../connectors/<provider>/) come with a
+    manifest.json giving each file's real title and link — attach it so answers
+    can cite "Q3 plan (Google Drive)" with a link instead of a file id."""
+    manifests = {}
+    for doc in documents:
+        source = doc.metadata.get("source", "")
+        if "connectors" not in source.replace("\\", "/").split("/"):
+            continue
+        folder = os.path.dirname(source)
+        if folder not in manifests:
+            try:
+                with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+                    manifests[folder] = json.load(f)
+            except (OSError, ValueError):
+                manifests[folder] = {}
+        info = manifests[folder].get(os.path.basename(source))
+        if info:
+            doc.metadata.update(title=info.get("title") or "", url=info.get("url") or "",
+                                provider=info.get("provider") or "")
+
+
+def main(progress=None, docs_folder=DOCS_FOLDER, collection=None):
+    """Rebuild a search index from a docs folder. Returns a summary dict.
+    progress(step, total, message) — optional callback, e.g. for a UI progress bar.
+    docs_folder / collection — which workspace (defaults = the original setup)."""
+    collection = collection or "langchain"
     def report(step, message):
         if progress:
             progress(step, 4, message)
@@ -46,15 +71,14 @@ def main(progress=None):
     print("1) Loading documents from the 'docs' folder...")
     report(1, "Reading documents")
 
-    txt_loader = DirectoryLoader(DOCS_FOLDER, glob="**/*.txt", loader_cls=TextLoader)
-    pdf_loader = DirectoryLoader(DOCS_FOLDER, glob="**/*.pdf", loader_cls=PyPDFLoader)
-
-    documents = txt_loader.load() + pdf_loader.load()
+    documents = []
+    if os.path.isdir(docs_folder):
+        txt_loader = DirectoryLoader(docs_folder, glob="**/*.txt", loader_cls=TextLoader,
+                                     loader_kwargs={"autodetect_encoding": True})
+        pdf_loader = DirectoryLoader(docs_folder, glob="**/*.pdf", loader_cls=PyPDFLoader)
+        documents = txt_loader.load() + pdf_loader.load()
+    _connector_metadata(documents)
     print(f"   -> Loaded {len(documents)} document(s).")
-
-    if not documents:
-        print("   !! No documents found. Put a .txt or .pdf file in the 'docs' folder.")
-        return None
 
     # ----------------------------------------------------------------
     # 1b. CLEAN  —  empty the old collection so we always rebuild fresh.
@@ -67,7 +91,14 @@ def main(progress=None):
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     if os.path.exists(DB_FOLDER):
         print(f"   Clearing the old collection in '{DB_FOLDER}' for a clean rebuild...")
-        Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings).delete_collection()
+        Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings,
+               collection_name=collection).delete_collection()
+
+    if not documents:
+        # Nothing left (e.g. every doc deleted): the cleared index is the result.
+        print("   !! No documents found. Put a .txt or .pdf file in the 'docs' folder.")
+        report(4, "Done")
+        return {"documents": 0, "chunks": 0, "restricted": 0}
 
     # ----------------------------------------------------------------
     # 2. SPLIT  —  cut big text into small overlapping chunks
@@ -118,6 +149,7 @@ def main(progress=None):
         documents=chunks,
         embedding=embeddings,
         persist_directory=DB_FOLDER,
+        collection_name=collection,
     )
 
     print(f"   -> Done! Your knowledge base is saved in the '{DB_FOLDER}' folder.")

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react"
 import { ChevronDown, LogOut } from "lucide-react"
+import { toast } from "sonner"
 
 import { ChatView } from "@/components/chat-view"
 import { DocsView } from "@/components/docs-view"
+import { IntegrationsView } from "@/components/integrations-view"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LandingPage } from "@/components/landing-page"
 import { LoginPage } from "@/components/login-page"
@@ -23,7 +25,7 @@ import { IndexStatusProvider } from "@/lib/index-status"
 import { cn } from "@/lib/utils"
 import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
 
-type Screen = "chat" | "docs"
+type Screen = "chat" | "docs" | "integrations"
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -50,6 +52,26 @@ export default function App() {
     goTo("")
     setUser(u)
   }
+
+  // Back from Google's consent screen: /#integrations?connected=... or ?error=...
+  useEffect(() => {
+    if (!user || !window.location.hash.startsWith("#integrations")) return
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "")
+    history.replaceState(null, "", window.location.pathname)
+    session.setRole("hr")
+    setRole("hr")
+    setScreen("integrations")
+    if (params.get("connected")) toast.success("Google Drive connected. Syncing your files…")
+    const error = params.get("error")
+    if (error) {
+      const why: Record<string, string> = {
+        access_denied: "Access to Google Drive was not granted.",
+        expired: "The connection request expired. Please try again.",
+        connect_failed: "Couldn't finish connecting Google Drive. Please try again.",
+      }
+      toast.error(why[error] ?? "Google Drive was not connected.")
+    }
+  }, [user])
 
   // Restore the session after a page refresh.
   useEffect(() => {
@@ -103,7 +125,12 @@ export default function App() {
 
   const navItems: { id: Screen; label: string }[] = [
     { id: "chat", label: "Chat" },
-    ...(role === "hr" ? [{ id: "docs" as Screen, label: "Documents" }] : []),
+    ...(role === "hr"
+      ? [
+          { id: "docs" as Screen, label: "Documents" },
+          { id: "integrations" as Screen, label: "Integrations" },
+        ]
+      : []),
   ]
 
   return (
@@ -198,6 +225,11 @@ export default function App() {
         {screen === "docs" && role === "hr" && (
           <div className="h-full overflow-y-auto">
             <DocsView />
+          </div>
+        )}
+        {screen === "integrations" && role === "hr" && (
+          <div className="h-full overflow-y-auto">
+            <IntegrationsView onOpenDocuments={() => setScreen("docs")} />
           </div>
         )}
       </main>

@@ -71,8 +71,10 @@ ROLE_ACCESS = {
 }
 
 
-def load_chain(role="public"):
+def load_chain(role="public", collection=None):
     """
+    collection: which workspace's search index to use (None = the default one).
+
     Build the RAG pipeline, SCOPED to what this role may see.
     A 'public' user can never retrieve 'restricted' chunks — so confidential
     text never reaches the model for them. This is permission-filtered retrieval.
@@ -81,7 +83,8 @@ def load_chain(role="public"):
 
     # Re-open the vector database we built in ingest.py.
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    vectorstore = Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings)
+    vectorstore = Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings,
+                         collection_name=collection or "langchain")
 
     # ---- SEARCH 1: semantic (dense) — matches by MEANING ----
     # The 'filter' makes Chroma only search chunks whose access is allowed.
@@ -99,8 +102,11 @@ def load_chain(role="public"):
             texts.append(text)
             metas.append(meta)
 
-    bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas)
-    bm25_retriever.k = 4
+    if texts:
+        bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas)
+        bm25_retriever.k = 4
+    else:                       # an empty workspace: nothing to search yet
+        bm25_retriever = _NoHits()
 
     # ---- HYBRID: fuse both searches with Reciprocal Rank Fusion (RRF) ----
     # Our own little retriever runs BOTH searches and merges their rankings.
@@ -110,6 +116,12 @@ def load_chain(role="public"):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     return retriever, llm
+
+
+class _NoHits:
+    """Stand-in retriever for an empty index (BM25 can't be built from nothing)."""
+    def invoke(self, query):
+        return []
 
 
 class HybridRetriever:
@@ -200,7 +212,7 @@ def answer_question(question, retriever, llm, role="public"):
     # Check the question BEFORE doing any work (e.g. block empty/abusive input).
     ok, reason = check_question(question, allow_restricted)
     if not ok:
-        return reason, []
+        return reason, None          # None = blocked by a guard (not "no results")
 
     # ---- 0. HyDE (optional) — enrich the search query ------------------
     search_query = question
@@ -231,6 +243,7 @@ def answer_question(question, retriever, llm, role="public"):
     answer = check_answer(answer, llm, allow_restricted)
 
     # Return the answer AND the source chunks (so the UI can show citations).
+    # (docs is None only when a guard blocked the question above.)
     return answer, docs
 
 

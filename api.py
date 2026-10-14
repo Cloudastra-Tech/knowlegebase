@@ -2,7 +2,11 @@
 api.py  —  the JSON API behind the React frontend (frontend/).
 
 Same brain as the Streamlit app: the agent (agent.py), login (auth.py) and the
-docs/ folder (docs_store.py). Only the screen is different.
+docs folder (docs_store.py). Only the screen is different.
+
+MULTI-TENANT: every user belongs to a workspace (company). Documents, the search
+index, integrations and index status are all per workspace (workspaces.py), so
+one company never sees another company's data.
 
 Run it (from the project folder):
     venv\\Scripts\\uvicorn api:app --reload --port 8010
@@ -21,7 +25,12 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     POST   /docs/upload           multipart: files[], access            (HR / Admin)
     POST   /reindex               rebuild the search index              (HR / Admin)
     GET    /index/status          background re-index progress
-Every document change re-indexes automatically in the background.
+    GET    /integrations          what this workspace has connected
+    POST   /integrations/google_drive/connect   -> {url} of Google's consent screen (HR / Admin)
+    GET    /integrations/google_drive/callback  Google redirects the browser back here
+    POST   /integrations/google_drive/sync      sync now                      (HR / Admin)
+    DELETE /integrations/google_drive           disconnect + delete copies    (HR / Admin)
+Every document change re-indexes automatically; Drive re-syncs every 30 minutes.
 
 The role (public / hr) is chosen in the UI and sent as "X-Role", exactly like
 the Streamlit dropdown — it is a demo switch, not a security boundary.
@@ -35,16 +44,19 @@ import threading
 import time
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 load_dotenv()
 
-import auth          # noqa: E402  (needs the .env loaded first)
-import docs_store    # noqa: E402
-import ingest        # noqa: E402
-from agent import build_agent  # noqa: E402
+import auth                          # noqa: E402  (needs the .env loaded first)
+import docs_store                    # noqa: E402
+import ingest                        # noqa: E402
+import integrations_store            # noqa: E402
+import workspaces                    # noqa: E402
+from agent import build_agent        # noqa: E402
+from connectors import google_drive  # noqa: E402
 
 app = FastAPI(title="Knowledge Assistant API")
 
@@ -52,23 +64,38 @@ SESSION_SECONDS = 12 * 60 * 60
 MAX_FAILED_LOGINS = 5
 LOCKOUT_SECONDS = 60
 STEP_PREVIEW_CHARS = 600
+DRIVE_SYNC_EVERY = 30 * 60        # seconds between automatic Drive syncs
+OAUTH_STATE_SECONDS = 10 * 60
 
 _sessions = {}            # token -> {"user": {...}, "expires": epoch}
 _failed_logins = {}       # username -> (count, locked_until)
-_agents = {}              # role -> agent run() function
+_agents = {}              # (workspace, role) -> agent run() function
 _agents_lock = threading.Lock()
 
-# ---- Background re-indexing ----
-# Every document change schedules a re-index in a background thread; the UI polls
-# GET /api/index/status to show a progress bar. Changes made while an index is
-# running set `pending`, so one more pass runs right after (they are coalesced).
-_index = {"status": "idle", "step": 0, "total": 4, "message": "", "pending": False,
-          "summary": None, "error": None, "finished_at": None}
+# ---- Background re-indexing (per workspace) ----
+# Every document change schedules a re-index of THAT workspace in a background
+# thread; the UI polls GET /api/index/status. Changes made while an index runs
+# set `pending`, so one more pass runs right after (they are coalesced).
+_indexes = {}             # workspace -> status dict
 _index_lock = threading.Lock()
-# Chat questions wait while the index is swapped, and the swap waits for
-# questions already running — so nobody searches a half-built index.
+_ingest_lock = threading.Lock()   # one rebuild at a time (shared Chroma store)
+# Chat questions wait while their workspace's index is swapped, and the swap
+# waits for questions already running — so nobody searches a half-built index.
 _gate = threading.Condition()
-_gate_state = {"indexing": False, "active_chats": 0}
+_gate_state = {}          # workspace -> {"indexing": bool, "active": int}
+
+_oauth_states = {}        # state -> {"workspace", "user", "expires", "redirect_uri"}
+_syncing = set()          # workspaces whose Drive sync is running
+_sync_lock = threading.Lock()
+
+
+def _new_index_state():
+    return {"status": "idle", "step": 0, "total": 4, "message": "", "pending": False,
+            "summary": None, "error": None, "finished_at": None}
+
+
+def _gate_of(ws):
+    return _gate_state.setdefault(ws, {"indexing": False, "active": 0})
 
 
 # ---- Auth --------------------------------------------------------------------
@@ -92,8 +119,15 @@ def current_role(x_role: str = Header(default="public")):
 
 def require_hr(user=Depends(current_user), role=Depends(current_role)):
     if role != "hr":
-        raise HTTPException(403, "Switch to HR / Admin to manage documents.")
+        raise HTTPException(403, "Switch to HR / Admin to manage documents and integrations.")
     return user
+
+
+def ws_of(user):
+    ws = user.get("workspace") or workspaces.DEFAULT
+    if not workspaces.valid(ws):
+        raise HTTPException(400, "Invalid workspace on this account.")
+    return ws
 
 
 @app.post("/api/auth/login")
@@ -135,11 +169,16 @@ class ChatIn(BaseModel):
     question: str
 
 
-def get_agent(role):
+def outline_on(ws):
+    """The Outline wiki is configured server-wide (.env) for the default workspace."""
+    return ws == workspaces.DEFAULT and bool(os.getenv("OUTLINE_API_TOKEN"))
+
+
+def get_agent(ws, role):
     with _agents_lock:
-        if role not in _agents:
-            _agents[role] = build_agent(role)
-        return _agents[role]
+        if (ws, role) not in _agents:
+            _agents[(ws, role)] = build_agent(role, workspaces.collection(ws), outline_on(ws))
+        return _agents[(ws, role)]
 
 
 @app.post("/api/chat")
@@ -147,21 +186,85 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
+    ws = ws_of(user)
     with _gate:
-        if not _gate.wait_for(lambda: not _gate_state["indexing"], timeout=120):
+        if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
             raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
-        _gate_state["active_chats"] += 1
+        _gate_of(ws)["active"] += 1
     try:
-        answer, trace, sources = get_agent(role)(question, with_sources=True)
+        answer, trace, sources = get_agent(ws, role)(question, with_sources=True)
     finally:
         with _gate:
-            _gate_state["active_chats"] -= 1
+            _gate_of(ws)["active"] -= 1
             _gate.notify_all()
     steps = [{"tool": t["tool"], "input": t["input"],
               "output": t["output"][:STEP_PREVIEW_CHARS]
               + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
              for t in trace]
     return {"answer": answer, "sources": sources, "steps": steps}
+
+
+# ---- Re-indexing -------------------------------------------------------------
+def _run_index(ws):
+    """Background worker: re-index one workspace until no more changes are pending."""
+    def progress(step, total, message):
+        with _index_lock:
+            _indexes[ws].update(step=step, total=total, message=message)
+
+    while True:
+        with _index_lock:
+            _indexes[ws].update(status="indexing", step=0, message="Starting",
+                                pending=False, error=None)
+        with _gate:
+            _gate_of(ws)["indexing"] = True
+            _gate.wait_for(lambda: _gate_of(ws)["active"] == 0, timeout=300)
+        summary, error = None, None
+        try:
+            with _ingest_lock, contextlib.redirect_stdout(io.StringIO()):
+                summary = ingest.main(progress=progress,
+                                      docs_folder=workspaces.docs_root(ws),
+                                      collection=workspaces.collection(ws))
+            with _agents_lock:
+                for key in [k for k in _agents if k[0] == ws]:
+                    del _agents[key]   # next question loads the new index
+        except Exception as e:        # keep the server alive; show it in the UI
+            error = f"{type(e).__name__}: {e}"
+        finally:
+            with _gate:
+                _gate_of(ws)["indexing"] = False
+                _gate.notify_all()
+        with _index_lock:
+            if _indexes[ws]["pending"]:
+                continue               # more changes arrived meanwhile
+            _indexes[ws].update(status="error" if error else "idle", summary=summary,
+                                error=error, finished_at=time.time(),
+                                message=error or "Up to date")
+            return
+
+
+def _schedule_index(ws):
+    with _index_lock:
+        state = _indexes.setdefault(ws, _new_index_state())
+        if state["status"] == "indexing":
+            state["pending"] = True
+            return
+        state.update(status="indexing", step=0, message="Queued")
+    threading.Thread(target=_run_index, args=(ws,), daemon=True).start()
+
+
+@app.post("/api/reindex")
+def reindex(user=Depends(require_hr)):
+    """Manual re-index (changes already re-index automatically)."""
+    _schedule_index(ws_of(user))
+    return index_status(user)
+
+
+@app.get("/api/index/status")
+def index_status(user=Depends(current_user)):
+    with _index_lock:
+        state = _indexes.get(ws_of(user)) or _new_index_state()
+        return {k: state[k] for k in ("status", "step", "total", "message", "pending",
+                                      "summary", "error", "finished_at")}
 
 
 # ---- Documents ---------------------------------------------------------------
@@ -175,73 +278,23 @@ class SaveDocIn(BaseModel):
     content: str
 
 
-def _existing_path(access, name):
-    path = docs_store.doc_path(access, name)
+def _existing_path(ws, access, name):
+    path = docs_store.doc_path(access, name, workspaces.docs_root(ws))
     if not path or not os.path.isfile(path):
         raise HTTPException(404, "Document not found.")
     return path
 
 
-def _index_progress(step, total, message):
-    with _index_lock:
-        _index.update(step=step, total=total, message=message)
-
-
-def _run_index():
-    """Background worker: re-index until no more changes are pending."""
-    while True:
-        with _index_lock:
-            _index.update(status="indexing", step=0, message="Starting", pending=False,
-                          error=None)
-        with _gate:
-            _gate_state["indexing"] = True
-            _gate.wait_for(lambda: _gate_state["active_chats"] == 0, timeout=300)
-        summary, error = None, None
-        try:
-            if docs_store.list_docs():
-                with contextlib.redirect_stdout(io.StringIO()):
-                    summary = ingest.main(progress=_index_progress)
-            else:
-                error = "No documents to index."
-            with _agents_lock:
-                _agents.clear()            # next question loads the new index
-        except Exception as e:            # keep the server alive; show it in the UI
-            error = f"{type(e).__name__}: {e}"
-        finally:
-            with _gate:
-                _gate_state["indexing"] = False
-                _gate.notify_all()
-        with _index_lock:
-            if _index["pending"]:
-                continue                   # more changes arrived meanwhile
-            _index.update(status="error" if error else "idle", summary=summary,
-                          error=error, finished_at=time.time(),
-                          message=error or "Up to date")
-            return
-
-
-def _schedule_index():
-    with _index_lock:
-        if _index["status"] == "indexing":
-            _index["pending"] = True
-            return
-        _index.update(status="indexing", step=0, message="Queued")
-    threading.Thread(target=_run_index, daemon=True).start()
-
-
-def _changed():
-    _schedule_index()
-
-
 @app.get("/api/docs")
 def list_docs(user=Depends(require_hr)):
-    docs = [{k: d[k] for k in ("access", "name", "size")} for d in docs_store.list_docs()]
+    root = workspaces.docs_root(ws_of(user))
+    docs = [{k: d[k] for k in ("access", "name", "size")} for d in docs_store.list_docs(root)]
     return {"docs": docs}
 
 
 @app.get("/api/docs/{access}/{name}")
 def read_doc(access: str, name: str, user=Depends(require_hr)):
-    path = _existing_path(access, name)
+    path = _existing_path(ws_of(user), access, name)
     if name.lower().endswith(".pdf"):
         return FileResponse(path, media_type="application/pdf", filename=name)
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -250,38 +303,43 @@ def read_doc(access: str, name: str, user=Depends(require_hr)):
 
 @app.post("/api/docs")
 def create_doc(body: NewDocIn, user=Depends(require_hr)):
+    ws = ws_of(user)
+    root = workspaces.docs_root(ws)
     name = docs_store.safe_name(body.name)
     if body.access not in docs_store.ACCESS_LEVELS:
         raise HTTPException(400, "Access must be public or restricted.")
     if not name or not body.content.strip():
         raise HTTPException(400, "Please give a file name and some content.")
-    if os.path.exists(docs_store.doc_path(body.access, name)):
+    if os.path.exists(docs_store.doc_path(body.access, name, root)):
         raise HTTPException(409, f"{name} already exists. Edit it instead.")
-    docs_store.save(body.access, name, body.content.encode("utf-8"))
-    _changed()
+    docs_store.save(body.access, name, body.content.encode("utf-8"), root)
+    _schedule_index(ws)
     return {"access": body.access, "name": name}
 
 
 @app.put("/api/docs/{access}/{name}")
 def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr)):
-    _existing_path(access, name)
+    ws = ws_of(user)
+    _existing_path(ws, access, name)
     if not name.lower().endswith(".txt"):
         raise HTTPException(400, "Only .txt documents can be edited here.")
-    docs_store.save(access, name, body.content.encode("utf-8"))
-    _changed()
+    docs_store.save(access, name, body.content.encode("utf-8"), workspaces.docs_root(ws))
+    _schedule_index(ws)
     return {"ok": True}
 
 
 @app.delete("/api/docs/{access}/{name}")
 def delete_doc(access: str, name: str, user=Depends(require_hr)):
-    os.remove(_existing_path(access, name))
-    _changed()
+    ws = ws_of(user)
+    os.remove(_existing_path(ws, access, name))
+    _schedule_index(ws)
     return {"ok": True}
 
 
 @app.post("/api/docs/upload")
 def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"),
                 user=Depends(require_hr)):
+    ws = ws_of(user)
     if access not in docs_store.ACCESS_LEVELS:
         raise HTTPException(400, "Access must be public or restricted.")
     saved = []
@@ -290,28 +348,130 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
             continue
         name = docs_store.safe_name(f.filename)
         if name:
-            docs_store.save(access, name, f.file.read())
+            docs_store.save(access, name, f.file.read(), workspaces.docs_root(ws))
             saved.append(name)
     if not saved:
         raise HTTPException(400, "Please choose at least one .txt or .pdf file.")
-    _changed()
+    _schedule_index(ws)
     return {"saved": saved}
 
 
-@app.post("/api/reindex")
-def reindex(user=Depends(require_hr)):
-    """Manual re-index (changes already re-index automatically)."""
-    if not docs_store.list_docs():
-        raise HTTPException(400, "Add at least one document first.")
-    _schedule_index()
-    return index_status(user)
+# ---- Integrations ------------------------------------------------------------
+def _sync_drive(ws):
+    """Sync one workspace's Google Drive (background); re-index if anything changed."""
+    with _sync_lock:
+        if ws in _syncing:
+            return
+        _syncing.add(ws)
+    try:
+        integrations_store.update(ws, google_drive.PROVIDER, status="syncing", last_error=None)
+        count, changed = google_drive.sync(ws)
+        integrations_store.update(ws, google_drive.PROVIDER, status="connected",
+                                  last_sync_at=time.time(), doc_count=count)
+        if changed:
+            _schedule_index(ws)
+    except Exception as e:
+        integrations_store.update(ws, google_drive.PROVIDER, status="error",
+                                  last_error=f"{type(e).__name__}: {e}"[:500])
+    finally:
+        with _sync_lock:
+            _syncing.discard(ws)
 
 
-@app.get("/api/index/status")
-def index_status(user=Depends(current_user)):
-    with _index_lock:
-        return {k: _index[k] for k in ("status", "step", "total", "message", "pending",
-                                       "summary", "error", "finished_at")}
+def _start_drive_sync(ws):
+    threading.Thread(target=_sync_drive, args=(ws,), daemon=True).start()
+
+
+def _drive_scheduler():
+    """Re-sync every connected Drive every DRIVE_SYNC_EVERY seconds."""
+    while True:
+        time.sleep(DRIVE_SYNC_EVERY)
+        if not google_drive.configured():
+            continue
+        for row in integrations_store.all_connected(google_drive.PROVIDER):
+            if row["status"] in ("connected", "error"):
+                _start_drive_sync(row["workspace"])
+
+
+@app.on_event("startup")
+def _start_background_jobs():
+    threading.Thread(target=_drive_scheduler, daemon=True).start()
+
+
+def _redirect_uri(request: Request):
+    base = os.getenv("PUBLIC_URL") or str(request.base_url)
+    return base.rstrip("/") + "/api/integrations/google_drive/callback"
+
+
+@app.get("/api/integrations")
+def list_integrations(user=Depends(current_user)):
+    ws = ws_of(user)
+    drive = integrations_store.get(ws, google_drive.PROVIDER)
+    if drive:
+        drive_status = drive["status"]
+    else:
+        drive_status = "disconnected" if google_drive.configured() else "not_configured"
+    return {"workspace": ws, "integrations": [
+        {"id": "uploads", "name": "Uploaded files", "status": "connected",
+         "doc_count": len(docs_store.list_docs(workspaces.docs_root(ws)))},
+        {"id": "google_drive", "name": "Google Drive", "status": drive_status,
+         "account": drive and drive["account"], "connected_by": drive and drive["connected_by"],
+         "last_sync_at": drive and drive["last_sync_at"],
+         "doc_count": (drive and drive["doc_count"]) or 0,
+         "last_error": drive and drive["last_error"]},
+        {"id": "outline", "name": "Outline wiki",
+         "status": "connected" if outline_on(ws) else "unavailable"},
+    ]}
+
+
+@app.post("/api/integrations/google_drive/connect")
+def drive_connect(request: Request, user=Depends(require_hr)):
+    if not google_drive.configured():
+        raise HTTPException(400, "Google Drive isn't set up on this server yet "
+                                 "(GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing).")
+    now = time.time()
+    for s in [k for k, v in _oauth_states.items() if v["expires"] < now]:
+        del _oauth_states[s]
+    state = secrets.token_urlsafe(24)
+    redirect_uri = _redirect_uri(request)
+    _oauth_states[state] = {"workspace": ws_of(user), "user": user["username"],
+                            "expires": now + OAUTH_STATE_SECONDS, "redirect_uri": redirect_uri}
+    return {"url": google_drive.auth_url(redirect_uri, state)}
+
+
+@app.get("/api/integrations/google_drive/callback")
+def drive_callback(state: str = "", code: str = "", error: str = ""):
+    """Google sends the browser back here. The one-time `state` ties it to the
+    workspace and user who clicked Connect (a redirect carries no session header)."""
+    pending = _oauth_states.pop(state, None)
+    if not pending or pending["expires"] < time.time():
+        return RedirectResponse("/#integrations?error=expired")
+    if error or not code:
+        return RedirectResponse("/#integrations?error=" + (error or "cancelled"))
+    try:
+        google_drive.finish_connect(pending["workspace"], code, pending["redirect_uri"],
+                                    pending["user"])
+    except Exception:
+        return RedirectResponse("/#integrations?error=connect_failed")
+    _start_drive_sync(pending["workspace"])
+    return RedirectResponse("/#integrations?connected=google_drive")
+
+
+@app.post("/api/integrations/google_drive/sync")
+def drive_sync(user=Depends(require_hr)):
+    ws = ws_of(user)
+    if not integrations_store.get(ws, google_drive.PROVIDER):
+        raise HTTPException(400, "Google Drive isn't connected.")
+    _start_drive_sync(ws)
+    return {"ok": True}
+
+
+@app.delete("/api/integrations/google_drive")
+def drive_disconnect(user=Depends(require_hr)):
+    ws = ws_of(user)
+    google_drive.disconnect(ws)
+    _schedule_index(ws)            # drop the Drive files from the search index
+    return {"ok": True}
 
 
 @app.get("/api/health")

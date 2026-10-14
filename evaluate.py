@@ -83,7 +83,7 @@ def main():
     totals = [0, 0, 0]
     for q in TEST_QUESTIONS:
         answer, docs = answer_question(q, retriever, llm, "public")
-        context = "\n\n".join(d.page_content for d in docs)
+        context = "\n\n".join(d.page_content for d in docs or [])
 
         cr = context_relevance(q, context)
         gr = groundedness(answer, context)
