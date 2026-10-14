@@ -137,6 +137,12 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn
 }
 
+// Called when the server refuses something: the account's role may have changed.
+let onForbidden: () => void = () => {}
+export function setForbiddenHandler(fn: () => void) {
+  onForbidden = fn
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (session.token) headers.set("Authorization", `Bearer ${session.token}`)
@@ -154,6 +160,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       /* not JSON */
     }
     if (res.status === 401 && !path.startsWith("/auth/")) onUnauthorized()
+    if (res.status === 403 && !path.startsWith("/auth/")) onForbidden()
     throw new ApiError(res.status, message)
   }
   return res.json() as Promise<T>

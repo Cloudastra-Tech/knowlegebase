@@ -24,7 +24,14 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { IndexStatusProvider } from "@/lib/index-status"
 import { cn, hashParams } from "@/lib/utils"
-import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
+import {
+  api,
+  session,
+  setForbiddenHandler,
+  setUnauthorizedHandler,
+  type Role,
+  type User,
+} from "@/lib/api"
 
 type Screen = "chat" | "knowledge" | "docs" | "integrations"
 
@@ -93,6 +100,18 @@ export default function App() {
     showIntegrationResult()
   }
 
+  // An admin can change someone's role while they're signed in. Re-read the
+  // account when the server refuses something, and when the tab comes back.
+  useEffect(() => {
+    const recheck = () => {
+      if (session.token) api.me().then(setUser).catch(() => {})
+    }
+    setForbiddenHandler(recheck)
+    const onVisible = () => document.visibilityState === "visible" && recheck()
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
+  }, [])
+
   // Restore the session after a page refresh — or, back from Google / Microsoft
   // at /#sso?code=..., swap the one-time code for a session.
   useEffect(() => {
@@ -155,6 +174,9 @@ export default function App() {
   // Only an HR account gets HR; it can also "view as" public. Everyone else is public.
   const canAdmin = user.role === "hr"
   const activeRole: Role = canAdmin ? role : "public"
+  // If the role drops while on an HR-only screen, show Chat rather than nothing.
+  const current: Screen =
+    activeRole === "hr" || screen === "chat" || screen === "knowledge" ? screen : "chat"
 
   const initials = user.name
     .split(/\s+/)
@@ -190,13 +212,13 @@ export default function App() {
                 onClick={() => setScreen(item.id)}
                 className={cn(
                   "relative flex h-full items-center text-sm transition-colors",
-                  screen === item.id
+                  current === item.id
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {item.label}
-                {screen === item.id && (
+                {current === item.id && (
                   <span className="absolute inset-x-0 -bottom-px h-px bg-foreground" />
                 )}
               </button>
@@ -264,20 +286,20 @@ export default function App() {
 
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={screen === "chat" ? "h-full" : "hidden"}>
+        <div className={current === "chat" ? "h-full" : "hidden"}>
           <ChatView role={activeRole} />
         </div>
-        {screen === "knowledge" && (
+        {current === "knowledge" && (
           <div className="h-full overflow-y-auto">
             <KnowledgeView key={activeRole} />
           </div>
         )}
-        {screen === "docs" && activeRole === "hr" && (
+        {current === "docs" && (
           <div className="h-full overflow-y-auto">
             <DocsView />
           </div>
         )}
-        {screen === "integrations" && activeRole === "hr" && (
+        {current === "integrations" && (
           <div className="h-full overflow-y-auto">
             <IntegrationsView
               onOpenDocuments={() => setScreen("docs")}
