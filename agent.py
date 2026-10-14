@@ -328,13 +328,23 @@ def build_agent(role="public", collection=None, outline=True):
             # all-words match, so then try each keyword on its own.
             name = " ".join(w for w in query.split() if w[:1].isupper())
             fallbacks = [name] if name and name != query else []
-            fallbacks += [w for w in _keywords(query) if w.lower() != query.lower()]
+            keywords = _keywords(query)
+            fallbacks += [w for w in keywords if w.lower() != query.lower()]
             seen = {r.get("document", {}).get("id") for r in results}
             for q in fallbacks:
                 if len(results) >= 3:
                     break
                 more, _ = _outline_post("documents.search", {"query": q, "limit": 5})
                 for r in (more or {}).get("data", []):
+                    # A loose keyword match counts only if the keyword is in the
+                    # page TITLE ("deviq" -> "DevIQ: Product Guide"), not just
+                    # somewhere in the text ("navigator" in a code snippet).
+                    # With several keywords, the title must share at least two
+                    # ("bible navigator" doesn't match "Lead Generation Bible").
+                    title_words = _words(r.get("document", {}).get("title", ""))
+                    shared = {k.lower() for k in keywords} & title_words
+                    if len(shared) < min(2, len(keywords)) or not (_words(q) & title_words):
+                        continue
                     if r.get("document", {}).get("id") not in seen:
                         seen.add(r.get("document", {}).get("id"))
                         results.append(r)
