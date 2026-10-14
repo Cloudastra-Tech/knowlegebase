@@ -56,5 +56,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
 
 # On first run, build the vector DB if it's missing (needs OPENAI_API_KEY),
 # then launch the API + site bound to all interfaces. ONE worker on purpose:
-# login sessions live in memory, so several workers would not share them.
+# sign-in codes, OAuth states, the re-index queue and login lockouts live in
+# memory, so several workers would not share them (sessions are in SQLite).
 CMD ["sh", "-c", "if [ ! -d chroma_db ] || [ -z \"$(ls -A chroma_db 2>/dev/null)\" ]; then echo 'Building chroma_db via ingest.py...'; python ingest.py; fi; exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8501} --proxy-headers --forwarded-allow-ips=*"]
