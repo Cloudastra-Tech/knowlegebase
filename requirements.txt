@@ -1,22 +1,25 @@
 # ---- Stage 1: Simple RAG app (OpenAI + real Guardrails AI) ----
 # Each line is one tool. Comments explain WHY it's here.
 
-langchain                 # the "glue" framework that connects all the steps
-langgraph                 # builds the agent loop as a state graph (Phase 6)
-langchain-openai          # lets LangChain talk to OpenAI (embeddings + chat model)
-openai                    # the official OpenAI client (used under the hood)
-langchain-community       # extra loaders (e.g. reading PDFs / text files)
-langchain-chroma          # connects LangChain to the Chroma vector database
-chromadb                  # the vector database itself (stores embeddings, runs search)
-rank-bm25                 # keyword search (BM25) for hybrid retrieval — Stage 2
-requests                  # call free web APIs (Frankfurter, Wikipedia) — agent tools
-guardrails-ai             # the open-source safety library (validates input/output)
-streamlit                 # the chat UI you type into (runs in your browser)
-python-dotenv             # loads your secret API key from a .env file
-pypdf                     # reads text out of PDF files
-tiktoken                  # lets us SEE how text is split into tokens (Phase 1 concept)
-fastapi<0.140             # JSON API for the React frontend (api.py); 0.140+ conflicts with chromadb's opentelemetry pin
-uvicorn[standard]         # runs the FastAPI app
-python-multipart          # file uploads in the API
-cryptography              # encrypts integration tokens (Google Drive OAuth) at rest
-chardet                   # detects the encoding of non-UTF-8 text files when indexing
+langchain==1.4.5           # the "glue" framework that connects all the steps
+langgraph==1.2.15          # builds the agent loop as a state graph (Phase 6)
+langchain-openai==1.7.1    # lets LangChain talk to OpenAI (embeddings + chat model)
+openai==2.54.0             # the official OpenAI client (used under the hood)
+langchain-community==0.4.2 # extra loaders (e.g. reading PDFs / text files)
+langchain-chroma==1.1.0    # connects LangChain to the Chroma vector database
+chromadb==1.5.9            # the vector database itself (stores embeddings, runs search)
+rank-bm25==0.2.2           # keyword search (BM25) for hybrid retrieval — Stage 2
+requests==2.34.2           # call free web APIs (Frankfurter, Wikipedia) — agent tools
+guardrails-ai==0.11.0      # the open-source safety library (validates input/output)
+streamlit==1.65.0          # the chat UI you type into (runs in your browser)
+python-dotenv==1.2.4       # loads your secret API key from a .env file
+pypdf==6.20.1              # reads text out of PDF files
+tiktoken==0.14.0           # lets us SEE how text is split into tokens (Phase 1 concept)
+fastapi==0.139.2           # JSON API for the React frontend (api.py); 0.140+ conflicts with chromadb's opentelemetry pin
+uvicorn[standard]==0.54.0  # runs the FastAPI app
+python-multipart==0.0.32   # file uploads in the API
+cryptography==50.0.2       # encrypts integration tokens (Google Drive OAuth) at rest
+chardet==7.6.0             # detects the encoding of non-UTF-8 text files when indexing
+Authlib==1.9.0             # single sign-on with Google / Microsoft (sso.py): the OpenID Connect flow
+httpx==0.28.1              # the HTTP client Authlib's Starlette integration uses
+itsdangerous==2.2.0        # signs the short-lived cookie that holds sign-in state (SessionMiddleware)

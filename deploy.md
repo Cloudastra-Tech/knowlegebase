@@ -12,13 +12,13 @@ to deploy the app on a fresh Linux server. Commands are for **Ubuntu 22.04+**.
   (private matters — `docs/restricted/staff_salaries.txt` is committed).
 - An **OpenAI API key** (`sk-...`). Optionally Outline + Cloudflare Access values.
 
-> ⚠️ **Security note — login is username + password over plain HTTP.** The app
-> has its own login (accounts in `config/users.json`, created in step 4b). Once
-> signed in, anyone can still pick "HR / Admin" in the sidebar, so only give
-> accounts to people allowed to see restricted docs. Also, this
-> runbook serves it on port 8501 without HTTPS, so passwords cross the network
-> unencrypted. Put Caddy (automatic HTTPS) or Cloudflare Access in front before
-> exposing it to the internet. Signing in again is needed after a page refresh.
+> ⚠️ **Security note — serve it over HTTPS.** People sign in with Google /
+> Microsoft (step 4c) or a username + password (step 4b). Each account has a role:
+> only HR / Admin accounts see restricted documents and the Documents and
+> Integrations screens. This runbook serves port 8501 without HTTPS, so put an
+> HTTPS reverse proxy (nginx, Caddy) or Cloudflare Access in front before exposing
+> it to the internet. Google and Microsoft refuse to send sign-ins back to a plain
+> `http://` address (except `localhost`).
 
 ---
 
@@ -67,16 +67,55 @@ docker compose logs -f
 
 ## 4b. Create the first login
 
-No one can sign in until an account exists. Create one per person (it asks for
-the password, minimum 8 characters). Every account gets the same access:
+Skip this if everyone signs in with Google / Microsoft (step 4c). Otherwise
+create one account per person (it asks for the password, minimum 8 characters).
+Accounts are public users unless created with `--role hr`:
 
 ```bash
-docker compose exec knowledgebase python auth.py add admin
+docker compose exec knowledgebase python auth.py add admin --role hr
 ```
 
 Add more people the same way. Also available:
-`python auth.py list`, `python auth.py remove <username>`. Accounts are stored in
-`./config/users.json` on the host (mounted into the container, gitignored).
+`python auth.py list`, `python auth.py role <username> <public|hr>`,
+`python auth.py remove <username>`. Accounts are stored in `./config/users.json`
+on the host (mounted into the container, gitignored). Accounts created before
+roles existed are public until given a role, e.g. `python auth.py role admin hr`.
+
+## 4c. Single sign-on (Google / Microsoft)
+
+1. Set `PUBLIC_URL` in `.env` to the site's `https://` address.
+2. **Google:** in Google Cloud -> APIs & Services -> Credentials, use (or create)
+   an OAuth client of type *Web application* and add the redirect URI
+   `<PUBLIC_URL>/api/auth/sso/google/callback`. Put its id and secret in
+   `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (shared with the Drive integration).
+   Only Google **Workspace** accounts can sign in, never personal Gmail ones.
+3. **Microsoft:** in Entra ID -> App registrations, register a *single tenant*
+   app with the Web redirect URI `<PUBLIC_URL>/api/auth/sso/microsoft/callback`,
+   create a client secret, and set `MICROSOFT_CLIENT_ID`,
+   `MICROSOFT_CLIENT_SECRET` and `MICROSOFT_TENANT_ID` (the Directory / tenant id).
+4. Set `SESSION_SECRET` to a long random string.
+5. Say who may sign in and who is HR / Admin in `./config/sso.json`:
+
+   ```json
+   {
+     "workspaces": {
+       "default": {
+         "domains": ["cloudastra.in", "cloudastra.co"],
+         "hr": ["someone@cloudastra.in"]
+       }
+     }
+   }
+   ```
+
+   Anyone with an address on a listed domain gets in as a public user; addresses
+   under `"hr"` get HR / Admin. Other addresses are turned away. List every domain
+   of your Google Workspace, primary one included. The file is checked on every
+   request, so edits apply straight away (no restart) — remove someone, or their
+   HR role, and it takes effect on their next click. The same goes for
+   `auth.py role` / `auth.py remove` on password accounts.
+6. `docker compose up -d` to pick up the new `.env`. The login page now shows
+   *Continue with Google* / *Continue with Microsoft* for each provider set up.
+   Set `PASSWORD_LOGIN=off` to remove the username + password form.
 
 ## 5. Open the firewall
 
