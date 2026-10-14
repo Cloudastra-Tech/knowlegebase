@@ -30,7 +30,8 @@ an **open-book exam** (AI looks up the real answer first). RAG = open book.
 | **Chroma** (vector DB) | Stores + searches those numbers | A librarian who finds books by *meaning*, not title |
 | **OpenAI gpt-4o-mini** | Writes the final answer | The student who reads the found pages and answers |
 | **Guardrails** | Safety checks | A bouncer checking what goes in and comes out |
-| **Streamlit** | The chat website | The front door you actually walk through |
+| **React + FastAPI** | The chat website (`frontend/`) and its API (`api.py`) | The front door you actually walk through |
+| **Google / Microsoft sign-in** | Who you are, and what you may see | The badge that opens some doors and not others |
 
 **Everything is free except the OpenAI API** — and that costs only cents for a project this size.
 
@@ -45,7 +46,7 @@ There are **two phases**: studying (once), then answering (every question).
 Your files → LOAD → SPLIT into chunks → EMBED (to numbers) → STORE in Chroma
 ```
 
-### Phase B — `app.py` + `rag.py` (every time you ask — "open-book answering")
+### Phase B — `api.py` + `agent.py` + `rag.py` (every time you ask — "open-book answering")
 ```
 Your question → RETRIEVE matching chunks → AUGMENT the prompt with them
              → GENERATE the answer → GUARD (safety) → show answer + sources
@@ -59,9 +60,14 @@ Your question → RETRIEVE matching chunks → AUGMENT the prompt with them
 |---|---|
 | `ingest.py` | Reads `docs/`, chunks + embeds them, saves to Chroma. **Run this first.** |
 | `rag.py` | The brain: retrieve → augment → generate → guard. |
-| `guardrails.py` | The safety rules (input + output checks). |
-| `app.py` | The Streamlit chat website. |
-| `docs/` | Put your `.txt` and `.pdf` files here. (A `sample.txt` is included.) |
+| `agent.py` | The agent: picks tools (docs search, calculator, currency, Wikipedia, wiki) and chains them. |
+| `safety.py` | The safety rules (input + output checks). |
+| `api.py` | The API behind the website: chat, documents, integrations, sign-in. |
+| `frontend/` | The website (React + shadcn/ui). |
+| `auth.py` / `sso.py` | Sign-in: username + password accounts, and Google / Microsoft. Both decide your **role**. |
+| `app.py` | The original Streamlit chat website (still works; the React site is the main one). |
+| `docs/` | Your `.txt` and `.pdf` files: `docs/public/` for everyone, `docs/restricted/` for HR / Admin. |
+| `tests/` | Automatic checks — run `pytest`. |
 | `inspect_tokens.py` | Bonus: *see* how text becomes tokens (Phase 1 concept). |
 
 ---
@@ -83,27 +89,39 @@ pip install -r requirements.txt
 python ingest.py
 ```
 
-**4. Start chatting:**
+**4. Create a login** (once). `--role hr` makes it HR / Admin; leave it off for a
+normal (public) user:
 ```powershell
-streamlit run app.py
+venv\Scripts\python.exe auth.py add <username> --role hr
 ```
-Your browser opens. Ask: *"What is the refund policy?"* — try it!
+Or sign in with Google / Microsoft instead — see step 4c of `deploy.md`.
 
-> Want to use your own files? Drop `.txt` or `.pdf` files into `docs/`,
-> then run `python ingest.py` again.
-
-### Or: the React frontend (shadcn/ui)
-
-Same assistant, new screen: React + Vite + shadcn/ui in `frontend/`, talking to a
-small FastAPI backend (`api.py`). Needs Node.js 20+.
-
+**5. Start chatting** — the website needs Node.js 20+:
 ```powershell
-venv\Scripts\python.exe auth.py add <username>     # once: create a login
 venv\Scripts\uvicorn api:app --reload --port 8010  # terminal 1: the API
 cd frontend; npm install; npm run dev              # terminal 2: the website
 ```
-Open **http://localhost:5173**, sign in, and use **Chat** or **Documents**
-(Documents shows when the role switch in the header is HR / Admin).
+Open **http://localhost:5173**, sign in, and ask: *"What is the refund policy?"*
+
+What you see depends on your account's **role**. Everyone gets **Chat** and
+**Knowledge**; HR / Admin accounts also get **Documents** and **Integrations**, can
+search restricted files, and can switch to *View as: Public user* to see what
+others see. The role comes from your account, never from the browser.
+
+> Want to use your own files? Add them on the **Documents** screen (they're
+> re-indexed automatically), or drop them into `docs/` and run `python ingest.py`.
+
+**Check everything still works:**
+```powershell
+pip install -r requirements-dev.txt
+pytest
+```
+
+### Or: the original Streamlit app
+```powershell
+streamlit run app.py
+```
+Same assistant, simpler screen. It uses the same password accounts and roles.
 
 ---
 
