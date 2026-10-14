@@ -1,14 +1,8 @@
-import { useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { ChevronDown, LogOut } from "lucide-react"
 import { toast } from "sonner"
 
-import { ChatView } from "@/components/chat-view"
-import { DocsView } from "@/components/docs-view"
-import { IntegrationsView } from "@/components/integrations-view"
-import { KnowledgeView } from "@/components/knowledge-view"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
-import { LandingPage } from "@/components/landing-page"
-import { LoginPage } from "@/components/login-page"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -34,6 +28,29 @@ import {
 } from "@/lib/api"
 
 type Screen = "chat" | "knowledge" | "docs" | "integrations"
+
+// Each page is its own download, so a visitor on the landing page doesn't load the
+// chat (markdown rendering) and a public user never loads the HR screens.
+const ChatView = lazy(() => import("@/components/chat-view").then((m) => ({ default: m.ChatView })))
+const DocsView = lazy(() => import("@/components/docs-view").then((m) => ({ default: m.DocsView })))
+const IntegrationsView = lazy(() =>
+  import("@/components/integrations-view").then((m) => ({ default: m.IntegrationsView })),
+)
+const KnowledgeView = lazy(() =>
+  import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
+)
+const LandingPage = lazy(() =>
+  import("@/components/landing-page").then((m) => ({ default: m.LandingPage })),
+)
+const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
+
+function PageLoading() {
+  return (
+    <div className="flex h-full min-h-40 items-center justify-center">
+      <Skeleton className="h-10 w-48" />
+    </div>
+  )
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -164,10 +181,14 @@ export default function App() {
   }
 
   if (!user) {
-    return wantsLogin ? (
-      <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
-    ) : (
-      <LandingPage onSignIn={() => goTo("login")} />
+    return (
+      <Suspense fallback={<PageLoading />}>
+        {wantsLogin ? (
+          <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
+        ) : (
+          <LandingPage onSignIn={() => goTo("login")} />
+        )}
+      </Suspense>
     )
   }
 
@@ -287,24 +308,32 @@ export default function App() {
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
         <div className={current === "chat" ? "h-full" : "hidden"}>
-          <ChatView role={activeRole} />
+          <Suspense fallback={<PageLoading />}>
+            <ChatView role={activeRole} />
+          </Suspense>
         </div>
         {current === "knowledge" && (
           <div className="h-full overflow-y-auto">
-            <KnowledgeView key={activeRole} />
+            <Suspense fallback={<PageLoading />}>
+              <KnowledgeView key={activeRole} />
+            </Suspense>
           </div>
         )}
         {current === "docs" && (
           <div className="h-full overflow-y-auto">
-            <DocsView />
+            <Suspense fallback={<PageLoading />}>
+              <DocsView />
+            </Suspense>
           </div>
         )}
         {current === "integrations" && (
           <div className="h-full overflow-y-auto">
-            <IntegrationsView
-              onOpenDocuments={() => setScreen("docs")}
-              openDrivePicker={openDrivePicker}
-            />
+            <Suspense fallback={<PageLoading />}>
+              <IntegrationsView
+                onOpenDocuments={() => setScreen("docs")}
+                openDrivePicker={openDrivePicker}
+              />
+            </Suspense>
           </div>
         )}
       </main>
