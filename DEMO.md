@@ -7,20 +7,23 @@ Follow it top to bottom. Each section = what to SAY + what to SHOW.
 
 ## 0. Before you start (setup — 1 minute)
 
-Create a login once (it asks for the password):
+Create an HR / Admin login once (it asks for the password). Optionally also a
+normal one, to show that a public account can't switch to HR:
 
 ```powershell
-venv\Scripts\python.exe auth.py add demo
+venv\Scripts\python.exe auth.py add demo --role hr
+venv\Scripts\python.exe auth.py add guest
 ```
 
-Then open a terminal in the project folder and run:
+Then, in the project folder, start the API and the website (two terminals):
 
 ```powershell
-venv\Scripts\streamlit run app.py
+venv\Scripts\uvicorn api:app --port 8010
+cd frontend; npm run dev
 ```
 
-It opens in the browser at **http://localhost:8501**. Sign in with the account above.
-Keep the **terminal visible too** — it prints the agent's tool calls live (great for the demo).
+Open **http://localhost:5173** and sign in as `demo`.
+Keep the **API terminal visible too** — it prints the agent's tool calls live (great for the demo).
 
 > 💡 If documents ever change, rebuild the DB first: `venv\Scripts\python.exe ingest.py`
 
@@ -44,7 +47,7 @@ Open **ARCHITECTURE.md** in the IDE (Ctrl+Shift+V for the diagram preview) and s
 > asks something. On top of that sits an **agent** that decides which tools to use."
 
 Point to the layers:
-1. **Streamlit** — the chat website
+1. **React website + FastAPI** — the chat screen and the API behind it
 2. **RAG pipeline** — finds the right piece of our docs and answers from it
 3. **Guardrails + permissions** — safety and access control
 4. **LangGraph agent** — decides + chains tools
@@ -53,7 +56,7 @@ Point to the layers:
 
 ## 3. DEMO PART A — It answers from our documents
 
-**Sign in as: Public user** (sidebar)
+**View as: Public user** (the role menu in the header — only HR accounts have it)
 
 Ask:
 ```
@@ -117,7 +120,7 @@ What is the teacher's salary?
 > "A public user can't see salaries. Two things protect this: a **permission filter**
 > that won't even search the salary file, and a **guardrail** that blocks the question."
 
-Now **switch the sidebar to: HR / Admin** and ask the **same question**:
+Now **switch View as back to: HR / Admin** and ask the **same question**:
 ```
 What is the teacher's salary?
 ```
@@ -125,6 +128,12 @@ What is the teacher's salary?
 
 > "Same question, different role, different result. HR is authorized, so the salary
 > file is searchable for them. That's **role-based access control** — the whole point."
+
+Optional: sign out and sign in as `guest`. There's **no role menu** at all.
+
+> "The role comes from the account — a password account here, or the company's
+> Google / Microsoft login in production. The website can't promote anyone: the
+> server checks the account's role on every single request."
 
 ---
 
@@ -145,7 +154,8 @@ Then point to the code:
 - **agent.py** — the tools + the LangGraph graph (the loop)
 - **rag.py** — retrieval + answer generation (hybrid search: keyword + meaning, merged with RRF)
 - **safety.py** — the input/output guardrails
-- **app.py** — the Streamlit chat UI
+- **api.py** + **frontend/** — the API and the React chat website
+- **auth.py** + **sso.py** — sign-in (password, Google, Microsoft) and where your role comes from
 
 ---
 
@@ -153,7 +163,8 @@ Then point to the code:
 
 | Tool | Job |
 |---|---|
-| **Streamlit** | the chat website |
+| **React + FastAPI** | the chat website and its API |
+| **Google / Microsoft sign-in** | single sign-on; the account decides the role |
 | **LangChain** | the model, tools, messages, RAG pieces |
 | **LangGraph** | the agent loop (decide → run tool → repeat) |
 | **OpenAI** | embeddings (`text-embedding-3-small`) + answers (`gpt-4o-mini`) |

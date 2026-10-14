@@ -62,7 +62,7 @@ uses the OpenAI key). Watch it finish:
 
 ```bash
 docker compose logs -f
-# Wait for the Streamlit URL line, then Ctrl-C to stop tailing.
+# Wait for "Uvicorn running on http://0.0.0.0:8501", then Ctrl-C to stop tailing.
 ```
 
 ## 4b. Create the first login
@@ -127,7 +127,7 @@ sudo ufw allow 8501/tcp     # skip if your cloud uses security-groups instead
 
 ```bash
 docker compose ps           # STATUS should show "Up"
-curl -fsS http://localhost:8501/_stcore/health && echo OK
+curl -fsS http://localhost:8501/api/health && echo OK
 ```
 
 Open **`http://<SERVER_IP>:8501`** in a browser.
@@ -168,8 +168,9 @@ cd genai && docker compose ps              # STATUS: Up
 
 ## Managing documents from the UI
 
-Pick **HR / Admin** in the sidebar, then **Documents** in the sidebar to view, edit, add,
-upload (TXT/PDF) or delete documents, then press **Re-index**. `docs/` is mounted
+Sign in with an HR / Admin account and open **Documents** in the top bar to view,
+edit, add, upload (TXT/PDF) or delete documents; every change is re-indexed
+automatically (progress shows in the top bar). `docs/` is mounted
 from the host (`./docs:/app/docs`), so UI changes survive rebuilds — but they are
 **not committed to git**. A `git pull` that touches the same files may conflict;
 commit them from the server or copy them back if you want them in the repo.
@@ -177,7 +178,13 @@ commit them from the server or copy them back if you want them in the repo.
 ## Troubleshooting
 
 - **Page won't load right after `up`** — first boot is still building Chroma.
-  `docker compose logs -f` until you see the Streamlit URL.
+  `docker compose logs -f` until you see the `Uvicorn running` line.
+- **Someone can't sign in with Google / Microsoft** — the login page says why.
+  "Isn't set up for this app": add their email's domain to `config/sso.json`.
+  "Didn't finish": `docker compose logs` shows the provider's error (e.g. a
+  redirect URI that doesn't match `PUBLIC_URL`, or admin consent needed).
+- **An admin lost the Documents screen after upgrading** — password accounts
+  made before roles existed are public: `python auth.py role <name> hr`.
 - **`OPENAI_API_KEY` errors in logs** — the `.env` key is missing/wrong. Fix it,
   then `docker compose up -d --build`.
 - **Port 8501 unreachable** — firewall (step 5) or the cloud provider's

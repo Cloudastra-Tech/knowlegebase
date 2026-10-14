@@ -16,7 +16,8 @@ If you can read this, you can explain the app to anyone.
 
 | Tool | Its one job | Plain-English name |
 |---|---|---|
-| **Streamlit** | The chat website you type into | The front desk |
+| **React + FastAPI** | The chat website you type into, and its API | The front desk |
+| **Sign-in** (password, Google, Microsoft) | Proves who you are; your account sets your role | The badge at the door |
 | **LangChain** | Connects all the steps together | The recipe / glue |
 | **OpenAI `text-embedding-3-small`** | Turns text into numbers (meaning) | The translator |
 | **Chroma** | Stores those numbers + searches them | The librarian |
@@ -60,7 +61,7 @@ and (b) who is allowed to see it.
 
 ```
                     ┌─────────────────────────────────────┐
-   You type  ─────► │   Streamlit chat  +  "Sign in as:"   │   role = public / hr
+   You type  ─────► │  Chat website  +  you, signed in     │   role = from your account
    a question       └──────────────────┬──────────────────┘
                                        ▼
                     ┌──────────────────────────────────────┐
@@ -120,6 +121,21 @@ LAYER 2 — GUARDRAILS          "the backup net"
 
 ---
 
+## 🔑 Where your role comes from
+
+```
+  Sign in ──► password account (users.json, "role": "hr" or not)
+          └─► Google / Microsoft ──► sso.py checks config/sso.json:
+                                       • is your email's domain listed?  no → turned away
+                                       • is your email in the "hr" list? yes → HR / Admin
+                                                                         no  → public
+```
+Your role is looked up again on **every request**, so taking someone's HR role
+away works straight away. The website can *lower* it (an HR user can "view as
+public"), but it can never *raise* it — the server decides.
+
+---
+
 ## 👤 Same question, two roles (the whole point)
 
 ```
@@ -143,6 +159,7 @@ LAYER 2 — GUARDRAILS          "the backup net"
 | Chunking, retrieve, BM25, RRF, hybrid | Phase 3 — RAG |
 | LangChain loaders / splitters / prompts | Phase 4 — Frameworks |
 | Guardrails + permission filtering | Phase 6 — Production safety |
+| Sign-in (SSO) + account roles | Phase 6 — Production safety |
 
 ---
 
@@ -177,7 +194,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    U["User types a question"] --> ROLE{"Sign in as?"}
+    U["User types a question"] --> ROLE{"Account's role"}
     ROLE -->|Public| INP{"Input Guard (Guardrails AI)"}
     ROLE -->|HR / Admin| INP
     INP -->|too long or toxic| B1["Blocked (everyone)"]
