@@ -10,46 +10,23 @@ ingest.py and reloads the agent — exactly what you'd do by hand in a terminal.
 """
 
 import os
-import re
 import contextlib
 import io
 
 import streamlit as st
 
+import docs_store
 import ingest
 
-DOCS_FOLDER = ingest.DOCS_FOLDER
+DOCS_FOLDER = docs_store.DOCS_FOLDER
 ACCESS_FOLDERS = {"Public": "public", "Restricted (HR only)": "restricted"}
-EXTENSIONS = (".txt", ".pdf")      # what ingest.py can read
+_safe_name = docs_store.safe_name
+_save = docs_store.save
 
 
 def _list_docs():
     """All .txt/.pdf files under docs/, as (access, filename, full_path)."""
-    found = []
-    for access in ACCESS_FOLDERS.values():
-        folder = os.path.join(DOCS_FOLDER, access)
-        if not os.path.isdir(folder):
-            continue
-        for name in sorted(os.listdir(folder)):
-            if name.lower().endswith(EXTENSIONS):
-                found.append((access, name, os.path.join(folder, name)))
-    return found
-
-
-def _safe_name(name, default_ext=".txt"):
-    """Keep only a plain file name (no folders, no odd characters)."""
-    name = os.path.basename(name or "").strip()
-    stem, ext = os.path.splitext(name)
-    stem = re.sub(r"[^A-Za-z0-9 _.-]", "", stem).strip().replace(" ", "_")
-    ext = ext.lower() if ext.lower() in EXTENSIONS else default_ext
-    return f"{stem}{ext}" if stem else ""
-
-
-def _save(access, name, data):
-    folder = os.path.join(DOCS_FOLDER, access)
-    os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, name), "wb") as f:
-        f.write(data)
+    return [(d["access"], d["name"], d["path"]) for d in docs_store.list_docs()]
 
 
 def _mark_changed(message):

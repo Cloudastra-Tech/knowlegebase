@@ -92,6 +92,19 @@ Your browser opens. Ask: *"What is the refund policy?"* — try it!
 > Want to use your own files? Drop `.txt` or `.pdf` files into `docs/`,
 > then run `python ingest.py` again.
 
+### Or: the React frontend (shadcn/ui)
+
+Same assistant, new screen: React + Vite + shadcn/ui in `frontend/`, talking to a
+small FastAPI backend (`api.py`). Needs Node.js 20+.
+
+```powershell
+venv\Scripts\python.exe auth.py add <username>     # once: create a login
+venv\Scripts\uvicorn api:app --reload --port 8010  # terminal 1: the API
+cd frontend; npm install; npm run dev              # terminal 2: the website
+```
+Open **http://localhost:5173**, sign in, and use **Chat** or **Documents**
+(Documents shows when the role switch in the header is HR / Admin).
+
 ---
 
 ## 🗺️ Where this fits in your learning roadmap

@@ -34,6 +34,7 @@ Run a quick demo:  python agent.py
 import os
 import re
 import sys
+import threading
 import requests
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
@@ -96,8 +97,14 @@ def _chunks_used(answer, docs, min_overlap=0.3):
     answer_words = _words(answer)
     if not answer_words or not docs:
         return []
-    return [d for d in docs
-            if len(answer_words & _words(d.page_content)) / len(answer_words) >= min_overlap]
+    scored = [(len(answer_words & _words(d.page_content)) / len(answer_words), d) for d in docs]
+    used = [d for score, d in scored if score >= min_overlap]
+    if used:
+        return used
+    # Filler in the answer ("feel free to ask...") can dilute every score below
+    # the bar — then cite the single best match if it shares anything real.
+    best_score, best = max(scored, key=lambda sd: sd[0])
+    return [best] if best_score >= 0.15 else []
 
 
 def format_sources(sources):
@@ -119,6 +126,10 @@ def build_agent(role="public"):
     # it per question and appends a "Sources" list built from it — so citations
     # come from what was ACTUALLY read, not from what the model claims it read.
     cited = []
+    # GUARD refusals: if a tool's safety check blocks the question (e.g. a public
+    # user asking for staff salary), we return that exact message to the user,
+    # instead of letting the agent keep searching and reword it as "not found".
+    blocked = []
 
     def cite(title, provider, url=None):
         entry = {"title": title, "provider": provider, "url": url}
@@ -133,6 +144,10 @@ def build_agent(role="public"):
         FAQs, PDFs and any other files added there. Try this FIRST for any
         question about the company, its policies or its products."""
         answer, docs = answer_question(question, retriever, rag_llm, role)
+        if not docs:                     # a guard refused before any search ran
+            blocked.append(answer)
+            return (f"BLOCKED BY ACCESS RULES: {answer} Do not search any other tool "
+                    "for this; just tell the user this message.")
         for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
             if source:
@@ -310,14 +325,25 @@ def build_agent(role="public"):
     # ---- RUN: same signature as before -> (answer, trace) ------------------
     # app.py doesn't change. We run the graph, then rebuild the tool-call
     # "trace" from the final message list so the UI can show each step.
-    def run(user_input):
+    # One question at a time per agent: `cited` is shared, so two overlapping
+    # questions would otherwise mix up each other's citations.
+    lock = threading.Lock()
+
+    def run(user_input, with_sources=False):
+        """Answer a question -> (answer, trace).
+        with_sources=True -> (answer, trace, sources) with the sources as a list
+        of {title, provider, url} instead of a markdown list in the answer."""
         # GUARD (input): block prompt-injection / jailbreak before doing any work.
         ok, msg = check_prompt_injection(user_input)
         if not ok:
-            return msg, []
+            return (msg, [], []) if with_sources else (msg, [])
 
-        cited.clear()      # citations are per question
-        result = graph.invoke({"messages": [HumanMessage(content=user_input)]})
+        with lock:
+            cited.clear()      # citations are per question
+            blocked.clear()
+            result = graph.invoke({"messages": [HumanMessage(content=user_input)]})
+            sources = list(cited)
+            blocked_reply = list(blocked)
         messages = result["messages"]
 
         # Map each tool result back to its call id so we can pair them up.
@@ -335,11 +361,15 @@ def build_agent(role="public"):
                                   "output": str(out)})
 
         answer = messages[-1].content or "(no answer)"
+        if blocked_reply:                 # a guard refused: say exactly why
+            answer = blocked_reply[0]
+            sources = []
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)
         # CITATIONS: list every document the tools actually read.
-        answer += format_sources(cited)
-        return answer, trace
+        if with_sources:
+            return answer, trace, sources
+        return answer + format_sources(sources), trace
 
     return run
 
