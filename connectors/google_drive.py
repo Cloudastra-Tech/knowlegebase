@@ -245,7 +245,10 @@ def sync(workspace):
                       "modified": f["modifiedTime"], "provider": "Google Drive"}
         changed = True
 
-    for name in set(manifest) - set(keep):          # removed or no longer shared
+    # Remove anything not in the current list: unshared / deleted items, plus
+    # stray files left by an interrupted sync (they'd be indexed untitled).
+    stale = (set(manifest) | set(os.listdir(folder))) - set(keep) - {"manifest.json"}
+    for name in stale:
         try:
             os.remove(os.path.join(folder, name))
         except OSError:

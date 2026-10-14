@@ -138,7 +138,15 @@ def _blocks_text(token, block_id, depth=0):
         params = {"page_size": 100}
         if cursor:
             params["start_cursor"] = cursor
-        data = _call("GET", f"/blocks/{block_id}/children", token, params=params)
+        try:
+            data = _call("GET", f"/blocks/{block_id}/children", token, params=params)
+        except requests.HTTPError as e:
+            # Some blocks can't be read even though the page is shared: synced
+            # blocks whose original lives on an unshared page, linked databases,
+            # newer block types (AI, meeting notes). Skip that part, keep the rest.
+            if e.response is not None and e.response.status_code in (400, 403, 404):
+                return [l for l in lines if l.strip()]
+            raise
         for b in data.get("results", []):
             t = b.get("type")
             body = b.get(t) or {}
@@ -233,7 +241,10 @@ def sync(workspace):
                       "modified": page.get("last_edited_time"), "provider": LABEL}
         changed = True
 
-    for name in set(manifest) - set(keep):            # unshared, deleted or archived
+    # Remove anything not in the current list: unshared / deleted items, plus
+    # stray files left by an interrupted sync (they'd be indexed untitled).
+    stale = (set(manifest) | set(os.listdir(folder))) - set(keep) - {"manifest.json"}
+    for name in stale:
         try:
             os.remove(os.path.join(folder, name))
         except OSError:
