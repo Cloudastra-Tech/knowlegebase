@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
-import { BookOpen, FileText, Loader2, RefreshCw, Unplug } from "lucide-react"
+import { BookOpen, FileText, Folder, FolderCog, Loader2, RefreshCw, Unplug } from "lucide-react"
 import {
   siConfluence,
   siDropbox,
@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { DriveFolderPicker } from "@/components/drive-folder-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -118,8 +119,21 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function GoogleDriveCard({ item, onChange }: { item: Integration; onChange: () => void }) {
+function GoogleDriveCard({
+  item,
+  onChange,
+  autoOpenPicker,
+}: {
+  item: Integration
+  onChange: () => void
+  autoOpenPicker?: boolean
+}) {
   const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null)
+  const folders = item.folders ?? []
+  const [pickerOpen, setPickerOpen] = useState(false)
+  useEffect(() => {
+    if (autoOpenPicker && !folders.length) setPickerOpen(true)
+  }, [autoOpenPicker, folders.length])
 
   async function connect() {
     setBusy("connect")
@@ -177,8 +191,9 @@ function GoogleDriveCard({ item, onChange }: { item: Integration; onChange: () =
       {item.status === "disconnected" && (
         <>
           <p className="text-sm text-muted-foreground">
-            Read-only access. Files your Google account can see are synced and kept up to date
-            every 30 minutes, then cited with a link back to Drive.
+            Read-only access. After connecting, you choose which folders to sync. Nothing else
+            is touched. Synced files stay up to date every 30 minutes and are cited with a link
+            back to Drive.
           </p>
           <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
             {busy === "connect" && <Loader2 className="animate-spin" />}
@@ -189,6 +204,38 @@ function GoogleDriveCard({ item, onChange }: { item: Integration; onChange: () =
 
       {connected && (
         <>
+          {folders.length === 0 ? (
+            <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-dashed p-3">
+              <p className="text-sm text-muted-foreground">
+                Nothing is synced yet. Choose the folders your team should search.
+              </p>
+              <Button size="sm" onClick={() => setPickerOpen(true)}>
+                <FolderCog /> Choose folders
+              </Button>
+            </div>
+          ) : (
+            <div className="mb-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">Syncing these folders</p>
+                <button
+                  onClick={() => setPickerOpen(true)}
+                  className="text-xs font-medium underline-offset-4 hover:underline"
+                >
+                  Edit folders
+                </button>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {folders.map((f) => (
+                  <span
+                    key={f.id}
+                    className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
+                  >
+                    <Folder className="size-3" /> {f.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
             <Stat label="Account" value={item.account || "—"} />
             <Stat label="Files" value={item.doc_count ?? 0} />
@@ -202,7 +249,7 @@ function GoogleDriveCard({ item, onChange }: { item: Integration; onChange: () =
               size="sm"
               variant="outline"
               onClick={sync}
-              disabled={busy !== null || item.status === "syncing"}
+              disabled={busy !== null || item.status === "syncing" || !folders.length}
             >
               {busy === "sync" || item.status === "syncing" ? (
                 <Loader2 className="animate-spin" />
@@ -237,6 +284,12 @@ function GoogleDriveCard({ item, onChange }: { item: Integration; onChange: () =
               </AlertDialogContent>
             </AlertDialog>
           </div>
+          <DriveFolderPicker
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            initial={folders}
+            onSaved={onChange}
+          />
         </>
       )}
     </Card>
@@ -254,7 +307,13 @@ const SOON: { name: string; icon?: SimpleIcon; letter?: string }[] = [
   { name: "Zendesk", icon: siZendesk },
 ]
 
-export function IntegrationsView({ onOpenDocuments }: { onOpenDocuments: () => void }) {
+export function IntegrationsView({
+  onOpenDocuments,
+  openDrivePicker,
+}: {
+  onOpenDocuments: () => void
+  openDrivePicker?: boolean
+}) {
   const [items, setItems] = useState<Integration[] | null>(null)
   const [workspace, setWorkspace] = useState("")
   const { refresh: refreshIndex } = useIndexStatus()
@@ -307,7 +366,13 @@ export function IntegrationsView({ onOpenDocuments }: { onOpenDocuments: () => v
       ) : (
         <>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {byId.google_drive && <GoogleDriveCard item={byId.google_drive} onChange={load} />}
+            {byId.google_drive && (
+              <GoogleDriveCard
+                item={byId.google_drive}
+                onChange={load}
+                autoOpenPicker={openDrivePicker}
+              />
+            )}
 
             {byId.uploads && (
               <Card

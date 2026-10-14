@@ -28,6 +28,8 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     GET    /integrations          what this workspace has connected
     POST   /integrations/google_drive/connect   -> {url} of Google's consent screen (HR / Admin)
     GET    /integrations/google_drive/callback  Google redirects the browser back here
+    GET    /integrations/google_drive/folders   browse folders to pick         (HR / Admin)
+    PUT    /integrations/google_drive/folders   {folders} choose what to sync  (HR / Admin)
     POST   /integrations/google_drive/sync      sync now                      (HR / Admin)
     DELETE /integrations/google_drive           disconnect + delete copies    (HR / Admin)
 Every document change re-indexes automatically; Drive re-syncs every 30 minutes.
@@ -418,7 +420,8 @@ def list_integrations(user=Depends(current_user)):
          "account": drive and drive["account"], "connected_by": drive and drive["connected_by"],
          "last_sync_at": drive and drive["last_sync_at"],
          "doc_count": (drive and drive["doc_count"]) or 0,
-         "last_error": drive and drive["last_error"]},
+         "last_error": drive and drive["last_error"],
+         "folders": ((drive and drive.get("settings")) or {}).get("folders", [])},
         {"id": "outline", "name": "Outline wiki",
          "status": "connected" if outline_on(ws) else "unavailable"},
     ]}
@@ -453,8 +456,44 @@ def drive_callback(state: str = "", code: str = "", error: str = ""):
                                     pending["user"])
     except Exception:
         return RedirectResponse("/#integrations?error=connect_failed")
-    _start_drive_sync(pending["workspace"])
-    return RedirectResponse("/#integrations?connected=google_drive")
+    drive = integrations_store.get(pending["workspace"], google_drive.PROVIDER) or {}
+    if (drive.get("settings") or {}).get("folders"):
+        _start_drive_sync(pending["workspace"])   # reconnect: keep syncing the same folders
+        return RedirectResponse("/#integrations?connected=google_drive")
+    # New connection: nothing is synced until the admin picks folders.
+    return RedirectResponse("/#integrations?connected=google_drive&choose=1")
+
+
+class FoldersIn(BaseModel):
+    folders: list[dict]
+
+
+@app.get("/api/integrations/google_drive/folders")
+def drive_folders(parent: str = "", user=Depends(require_hr)):
+    """Browse folders to pick from: top level (Shared Drives + My Drive root) or a sub-folder."""
+    ws = ws_of(user)
+    if not integrations_store.get(ws, google_drive.PROVIDER):
+        raise HTTPException(400, "Google Drive isn't connected.")
+    try:
+        return google_drive.list_folders(ws, parent or None)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't list Google Drive folders: {e}")
+
+
+@app.put("/api/integrations/google_drive/folders")
+def drive_set_folders(body: FoldersIn, user=Depends(require_hr)):
+    """Save which folders / Shared Drives to sync, then sync (removed ones are dropped)."""
+    ws = ws_of(user)
+    drive = integrations_store.get(ws, google_drive.PROVIDER)
+    if not drive:
+        raise HTTPException(400, "Google Drive isn't connected.")
+    folders = [{"id": str(f["id"]), "name": str(f.get("name", ""))[:200],
+                "kind": "drive" if f.get("kind") == "drive" else "folder"}
+               for f in body.folders if f.get("id")][:50]
+    settings = dict(drive.get("settings") or {}, folders=folders)
+    integrations_store.update(ws, google_drive.PROVIDER, settings=settings)
+    _start_drive_sync(ws)
+    return {"folders": folders}
 
 
 @app.post("/api/integrations/google_drive/sync")

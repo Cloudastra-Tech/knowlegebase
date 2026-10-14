@@ -26,6 +26,13 @@ export interface Integration {
   connected_by?: string | null
   last_sync_at?: number | null
   last_error?: string | null
+  folders?: DriveFolder[]
+}
+
+export interface DriveFolder {
+  id: string
+  name: string
+  kind: "folder" | "drive"
 }
 
 export interface Source {
@@ -171,6 +178,15 @@ export const api = {
   connectDrive: () =>
     request<{ url: string }>("/integrations/google_drive/connect", { method: "POST" }),
   syncDrive: () => request<{ ok: boolean }>("/integrations/google_drive/sync", { method: "POST" }),
+  driveFolders: (parent?: string) =>
+    request<{ drives: DriveFolder[]; folders: DriveFolder[] }>(
+      `/integrations/google_drive/folders${parent ? `?parent=${encodeURIComponent(parent)}` : ""}`,
+    ),
+  setDriveFolders: (folders: DriveFolder[]) =>
+    request<{ folders: DriveFolder[] }>("/integrations/google_drive/folders", {
+      method: "PUT",
+      body: JSON.stringify({ folders }),
+    }),
   disconnectDrive: () =>
     request<{ ok: boolean }>("/integrations/google_drive", { method: "DELETE" }),
 

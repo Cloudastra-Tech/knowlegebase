@@ -2,8 +2,10 @@
 connectors/google_drive.py  —  sync a workspace's Google Drive into its index.
 
 Read-only: we only ever LIST and DOWNLOAD files (scope drive.readonly).
-What gets synced: Google Docs (exported as text), Google Sheets (as CSV text),
-PDFs and plain-text files the connected account can see, up to MAX_FILES.
+What gets synced: ONLY the folders / Shared Drives the admin picks (sub-folders
+included) — nothing until something is picked. Inside them: Google Docs
+(exported as text), Google Sheets (as CSV text), PDFs and plain-text files,
+up to MAX_FILES.
 
 Files land in  <workspace docs>/connectors/google_drive/  next to a
 manifest.json (file -> title, Drive link), which ingest.py uses so answers can
@@ -27,17 +29,20 @@ PROVIDER = "google_drive"
 SCOPES = "openid email https://www.googleapis.com/auth/drive.readonly"
 MAX_FILES = 500
 MAX_BYTES = 20 * 1024 * 1024          # skip files bigger than 20 MB
+MAX_FOLDERS = 2000                    # stop walking sub-folders after this many
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 FILES_URL = "https://www.googleapis.com/drive/v3/files"
+DRIVES_URL = "https://www.googleapis.com/drive/v3/drives"
 
 DOC = "application/vnd.google-apps.document"
 SHEET = "application/vnd.google-apps.spreadsheet"
 PDF = "application/pdf"
 TEXT = "text/plain"
+FOLDER = "application/vnd.google-apps.folder"
 
 
 def configured():
@@ -102,25 +107,62 @@ def _access_token(workspace):
     return sec["access_token"]
 
 
-def _list_files(token):
-    q = (f"trashed = false and (mimeType = '{DOC}' or mimeType = '{SHEET}' "
-         f"or mimeType = '{PDF}' or mimeType = '{TEXT}')")
-    files, page = [], None
-    while len(files) < MAX_FILES:
-        params = {"q": q, "pageSize": 200, "orderBy": "modifiedTime desc",
-                  "fields": "nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink, size)",
-                  "includeItemsFromAllDrives": "true", "supportsAllDrives": "true"}
+def _query(token, q, fields, order="name"):
+    """All results of one Drive files.list query (follows pages)."""
+    out, page = [], None
+    while True:
+        params = {"q": q, "pageSize": 200, "orderBy": order, "fields": f"nextPageToken, files({fields})",
+                  "includeItemsFromAllDrives": "true", "supportsAllDrives": "true",
+                  "corpora": "allDrives"}
         if page:
             params["pageToken"] = page
         r = requests.get(FILES_URL, params=params, timeout=30,
                          headers={"Authorization": f"Bearer {token}"})
         r.raise_for_status()
         data = r.json()
-        files += data.get("files", [])
+        out += data.get("files", [])
         page = data.get("nextPageToken")
-        if not page:
-            break
-    return files[:MAX_FILES]
+        if not page or len(out) >= MAX_FILES * 4:
+            return out
+
+
+def list_folders(workspace, parent=None):
+    """Folders to choose from. parent=None -> top level: Shared Drives + the
+    folders at the root of My Drive. Otherwise -> the sub-folders of `parent`."""
+    token = _access_token(workspace)
+    headers = {"Authorization": f"Bearer {token}"}
+    drives = []
+    if parent is None:
+        r = requests.get(DRIVES_URL, params={"pageSize": 100, "fields": "drives(id, name)"},
+                         headers=headers, timeout=30)
+        if r.ok:
+            drives = [{"id": d["id"], "name": d["name"], "kind": "drive"}
+                      for d in r.json().get("drives", [])]
+    q = f"mimeType = '{FOLDER}' and trashed = false and '{parent or 'root'}' in parents"
+    folders = [{"id": f["id"], "name": f["name"], "kind": "folder"}
+               for f in _query(token, q, "id, name")]
+    return {"drives": drives, "folders": folders}
+
+
+def _list_files(token, roots):
+    """Supported files inside the chosen folders / Shared Drives, sub-folders
+    included (breadth-first), newest first, capped at MAX_FILES."""
+    wanted = f"(mimeType = '{DOC}' or mimeType = '{SHEET}' or mimeType = '{PDF}' or mimeType = '{TEXT}')"
+    files, seen, queue = {}, set(), [r["id"] for r in roots]
+    while queue and len(seen) < MAX_FOLDERS:
+        folder = queue.pop(0)
+        if folder in seen:
+            continue
+        seen.add(folder)
+        q = f"'{folder}' in parents and trashed = false and ({wanted[1:-1]} or mimeType = '{FOLDER}')"
+        for f in _query(token, q, "id, name, mimeType, modifiedTime, webViewLink, size",
+                        order="modifiedTime desc"):
+            if f["mimeType"] == FOLDER:
+                queue.append(f["id"])
+            else:
+                files[f["id"]] = f
+    newest = sorted(files.values(), key=lambda f: f.get("modifiedTime", ""), reverse=True)
+    return newest[:MAX_FILES]
 
 
 def _download(token, f):
@@ -148,8 +190,10 @@ def _download(token, f):
 
 
 def sync(workspace):
-    """Bring this workspace's Drive copy up to date. Returns (count, changed)."""
+    """Bring this workspace's Drive copy up to date. Returns (count, changed).
+    Only the chosen folders are synced; with none chosen, every copy is removed."""
     token = _access_token(workspace)
+    roots = ((store.get(workspace, PROVIDER) or {}).get("settings") or {}).get("folders") or []
     folder = workspaces.connector_dir(workspace, PROVIDER)
     os.makedirs(folder, exist_ok=True)
     manifest_path = os.path.join(folder, "manifest.json")
@@ -160,7 +204,7 @@ def sync(workspace):
         manifest = {}
 
     changed, keep = False, {}
-    for f in _list_files(token):
+    for f in (_list_files(token, roots) if roots else []):
         known = next(((k, v) for k, v in manifest.items() if v.get("id") == f["id"]), None)
         if known and known[1].get("modified") == f["modifiedTime"] and \
                 os.path.exists(os.path.join(folder, known[0])):

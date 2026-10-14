@@ -32,6 +32,7 @@ export default function App() {
   const [checking, setChecking] = useState(!!session.token)
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
+  const [openDrivePicker, setOpenDrivePicker] = useState(false)
   // Signed out: the landing page, or the sign-in form at #login.
   const [wantsLogin, setWantsLogin] = useState(() => window.location.hash === "#login")
 
@@ -61,7 +62,15 @@ export default function App() {
     session.setRole("hr")
     setRole("hr")
     setScreen("integrations")
-    if (params.get("connected")) toast.success("Google Drive connected. Syncing your files…")
+    if (params.get("connected")) {
+      const choose = params.get("choose") === "1"
+      setOpenDrivePicker(choose)
+      toast.success(
+        choose
+          ? "Google Drive connected. Now choose which folders to sync."
+          : "Google Drive connected. Syncing your folders…",
+      )
+    }
     const error = params.get("error")
     if (error) {
       const why: Record<string, string> = {
@@ -229,7 +238,10 @@ export default function App() {
         )}
         {screen === "integrations" && role === "hr" && (
           <div className="h-full overflow-y-auto">
-            <IntegrationsView onOpenDocuments={() => setScreen("docs")} />
+            <IntegrationsView
+              onOpenDocuments={() => setScreen("docs")}
+              openDrivePicker={openDrivePicker}
+            />
           </div>
         )}
       </main>
