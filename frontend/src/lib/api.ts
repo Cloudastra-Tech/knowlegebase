@@ -7,6 +7,14 @@ export interface User {
   username: string
   name: string
   workspace: string
+  // What the ACCOUNT may do. An HR account can still view the app as "public".
+  role: Role
+  provider?: "google" | "microsoft"
+}
+
+export interface AuthOptions {
+  providers: { id: "google" | "microsoft"; name: string }[]
+  password: boolean
 }
 
 export type IntegrationStatus =
@@ -145,7 +153,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* not JSON */
     }
-    if (res.status === 401 && path !== "/auth/login") onUnauthorized()
+    if (res.status === 401 && !path.startsWith("/auth/")) onUnauthorized()
     throw new ApiError(res.status, message)
   }
   return res.json() as Promise<T>
@@ -154,7 +162,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const docPath = (d: { access: Access; name: string }) =>
   `/docs/${d.access}/${encodeURIComponent(d.name)}`
 
+// A full-page navigation (not fetch): the server redirects to Google / Microsoft.
+export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/start`
+
 export const api = {
+  authOptions: () => request<AuthOptions>("/auth/providers"),
+  // The provider sends the browser back to /#sso?code=...; swap the code for a session.
+  ssoExchange: (code: string) =>
+    request<{ token: string; user: User }>("/auth/sso/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
   login: (username: string, password: string) =>
     request<{ token: string; user: User }>("/auth/login", {
       method: "POST",

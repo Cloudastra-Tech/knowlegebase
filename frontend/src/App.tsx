@@ -23,22 +23,24 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IndexStatusProvider } from "@/lib/index-status"
-import { cn } from "@/lib/utils"
+import { cn, hashParams } from "@/lib/utils"
 import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
 
 type Screen = "chat" | "knowledge" | "docs" | "integrations"
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
-  const [checking, setChecking] = useState(!!session.token)
+  const [checking, setChecking] = useState(
+    () => !!session.token || window.location.hash.startsWith("#sso"),
+  )
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
   const [openDrivePicker, setOpenDrivePicker] = useState(false)
-  // Signed out: the landing page, or the sign-in form at #login.
-  const [wantsLogin, setWantsLogin] = useState(() => window.location.hash === "#login")
+  // Signed out: the landing page, or the sign-in form at #login (or #login?error=...).
+  const [wantsLogin, setWantsLogin] = useState(() => window.location.hash.startsWith("#login"))
 
   useEffect(() => {
-    const onHash = () => setWantsLogin(window.location.hash === "#login")
+    const onHash = () => setWantsLogin(window.location.hash.startsWith("#login"))
     window.addEventListener("hashchange", onHash)
     return () => window.removeEventListener("hashchange", onHash)
   }, [])
@@ -46,7 +48,7 @@ export default function App() {
   function goTo(hash: string) {
     if (hash) window.location.hash = hash
     else history.replaceState(null, "", window.location.pathname)
-    setWantsLogin(hash === "login")
+    setWantsLogin(hash.startsWith("login"))
     window.scrollTo(0, 0)
   }
 
@@ -58,7 +60,7 @@ export default function App() {
   // Back from Google's consent screen: /#integrations?connected=... or ?error=...
   useEffect(() => {
     if (!user || !window.location.hash.startsWith("#integrations")) return
-    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "")
+    const params = hashParams()
     history.replaceState(null, "", window.location.pathname)
     session.setRole("hr")
     setRole("hr")
@@ -85,12 +87,28 @@ export default function App() {
     }
   }, [user])
 
-  // Restore the session after a page refresh.
+  // Restore the session after a page refresh — or, back from Google / Microsoft
+  // at /#sso?code=..., swap the one-time code for a session.
   useEffect(() => {
     setUnauthorizedHandler(() => {
       session.setToken(null)
       setUser(null)
     })
+    if (window.location.hash.startsWith("#sso")) {
+      const code = hashParams().get("code")
+      history.replaceState(null, "", window.location.pathname)
+      api
+        .ssoExchange(code ?? "")
+        .then(({ token, user }) => {
+          session.setToken(token)
+          setUser(user)
+        })
+        .catch(() => {
+          window.location.hash = "login?error=expired"
+        })
+        .finally(() => setChecking(false))
+      return
+    }
     if (!session.token) return
     api
       .me()
@@ -128,6 +146,10 @@ export default function App() {
     )
   }
 
+  // Only an HR account gets HR; it can also "view as" public. Everyone else is public.
+  const canAdmin = user.role === "hr"
+  const activeRole: Role = canAdmin ? role : "public"
+
   const initials = user.name
     .split(/\s+/)
     .map((p) => p[0])
@@ -138,7 +160,7 @@ export default function App() {
   const navItems: { id: Screen; label: string }[] = [
     { id: "chat", label: "Chat" },
     { id: "knowledge", label: "Knowledge" },
-    ...(role === "hr"
+    ...(activeRole === "hr"
       ? [
           { id: "docs" as Screen, label: "Documents" },
           { id: "integrations" as Screen, label: "Integrations" },
@@ -179,27 +201,29 @@ export default function App() {
             <div className="mr-2">
               <IndexStatusText />
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1 rounded-full px-3 text-xs font-normal text-muted-foreground hover:text-foreground"
-                >
-                  {role === "hr" ? "HR / Admin" : "Public"}
-                  <ChevronDown className="size-3.5 opacity-60" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                  View as
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={role} onValueChange={(v) => changeRole(v as Role)}>
-                  <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {canAdmin && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1 rounded-full px-3 text-xs font-normal text-muted-foreground hover:text-foreground"
+                  >
+                    {activeRole === "hr" ? "HR / Admin" : "Public"}
+                    <ChevronDown className="size-3.5 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    View as
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={role} onValueChange={(v) => changeRole(v as Role)}>
+                    <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -217,7 +241,9 @@ export default function App() {
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuLabel>
                   <div className="text-sm font-medium">{user.name}</div>
-                  <div className="text-xs font-normal text-muted-foreground">@{user.username}</div>
+                  <div className="text-xs font-normal text-muted-foreground">
+                    {user.username.includes("@") ? user.username : `@${user.username}`}
+                  </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut}>
@@ -233,19 +259,19 @@ export default function App() {
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
         <div className={screen === "chat" ? "h-full" : "hidden"}>
-          <ChatView role={role} />
+          <ChatView role={activeRole} />
         </div>
         {screen === "knowledge" && (
           <div className="h-full overflow-y-auto">
-            <KnowledgeView key={role} />
+            <KnowledgeView key={activeRole} />
           </div>
         )}
-        {screen === "docs" && role === "hr" && (
+        {screen === "docs" && activeRole === "hr" && (
           <div className="h-full overflow-y-auto">
             <DocsView />
           </div>
         )}
-        {screen === "integrations" && role === "hr" && (
+        {screen === "integrations" && activeRole === "hr" && (
           <div className="h-full overflow-y-auto">
             <IntegrationsView
               onOpenDocuments={() => setScreen("docs")}
