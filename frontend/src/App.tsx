@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useState } from "react"
+import { lazy, useEffect, useState } from "react"
 import { ChevronDown, LogOut } from "lucide-react"
 import { toast } from "sonner"
 
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
+import { LazyPage } from "@/components/lazy-page"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,6 +21,7 @@ import { IndexStatusProvider } from "@/lib/index-status"
 import { cn, hashParams } from "@/lib/utils"
 import {
   api,
+  ApiError,
   session,
   setForbiddenHandler,
   setUnauthorizedHandler,
@@ -44,13 +46,8 @@ const LandingPage = lazy(() =>
 )
 const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
 
-function PageLoading() {
-  return (
-    <div className="flex h-full min-h-40 items-center justify-center">
-      <Skeleton className="h-10 w-48" />
-    </div>
-  )
-}
+// The screens a public user may see; anything else falls back to Chat.
+const publicScreen = (s: Screen): Screen => (s === "knowledge" ? s : "chat")
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -120,8 +117,29 @@ export default function App() {
   // An admin can change someone's role while they're signed in. Re-read the
   // account when the server refuses something, and when the tab comes back.
   useEffect(() => {
+    let inFlight = false
     const recheck = () => {
-      if (session.token) api.me().then(setUser).catch(() => {})
+      const token = session.token
+      if (!token || inFlight) return               // one check at a time
+      inFlight = true
+      api
+        .me()
+        .then((u) => {
+          if (session.token !== token) return       // signed out meanwhile
+          setUser(u)
+          if (u.role !== "hr") setScreen(publicScreen)
+        })
+        .catch((err) => {
+          // Access removed altogether. (/auth/* 401s skip the unauthorized handler.)
+          if (err instanceof ApiError && err.status === 401 && session.token === token) {
+            session.setToken(null)
+            setUser(null)
+            setScreen("chat")
+          }
+        })
+        .finally(() => {
+          inFlight = false
+        })
     }
     setForbiddenHandler(recheck)
     const onVisible = () => document.visibilityState === "visible" && recheck()
@@ -162,7 +180,12 @@ export default function App() {
   function changeRole(next: Role) {
     session.setRole(next)
     setRole(next)
-    if (next !== "hr") setScreen((s) => (s === "knowledge" ? s : "chat"))
+    if (next !== "hr") setScreen(publicScreen)
+  }
+
+  function openScreen(next: Screen) {
+    setScreen(next)
+    setOpenDrivePicker(false)    // the picker opens by itself only on arrival from Google
   }
 
   async function signOut() {
@@ -182,22 +205,19 @@ export default function App() {
 
   if (!user) {
     return (
-      <Suspense fallback={<PageLoading />}>
+      <LazyPage fullScreen>
         {wantsLogin ? (
           <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
         ) : (
           <LandingPage onSignIn={() => goTo("login")} />
         )}
-      </Suspense>
+      </LazyPage>
     )
   }
 
   // Only an HR account gets HR; it can also "view as" public. Everyone else is public.
   const canAdmin = user.role === "hr"
   const activeRole: Role = canAdmin ? role : "public"
-  // If the role drops while on an HR-only screen, show Chat rather than nothing.
-  const current: Screen =
-    activeRole === "hr" || screen === "chat" || screen === "knowledge" ? screen : "chat"
 
   const initials = user.name
     .split(/\s+/)
@@ -230,16 +250,16 @@ export default function App() {
             {navItems.map((item) => (
               <button
                 key={item.id}
-                onClick={() => setScreen(item.id)}
+                onClick={() => openScreen(item.id)}
                 className={cn(
                   "relative flex h-full items-center text-sm transition-colors",
-                  current === item.id
+                  screen === item.id
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {item.label}
-                {current === item.id && (
+                {screen === item.id && (
                   <span className="absolute inset-x-0 -bottom-px h-px bg-foreground" />
                 )}
               </button>
@@ -307,33 +327,33 @@ export default function App() {
 
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={current === "chat" ? "h-full" : "hidden"}>
-          <Suspense fallback={<PageLoading />}>
+        <div className={screen === "chat" ? "h-full" : "hidden"}>
+          <LazyPage>
             <ChatView role={activeRole} />
-          </Suspense>
+          </LazyPage>
         </div>
-        {current === "knowledge" && (
+        {screen === "knowledge" && (
           <div className="h-full overflow-y-auto">
-            <Suspense fallback={<PageLoading />}>
+            <LazyPage>
               <KnowledgeView key={activeRole} />
-            </Suspense>
+            </LazyPage>
           </div>
         )}
-        {current === "docs" && (
+        {screen === "docs" && activeRole === "hr" && (
           <div className="h-full overflow-y-auto">
-            <Suspense fallback={<PageLoading />}>
+            <LazyPage>
               <DocsView />
-            </Suspense>
+            </LazyPage>
           </div>
         )}
-        {current === "integrations" && (
+        {screen === "integrations" && activeRole === "hr" && (
           <div className="h-full overflow-y-auto">
-            <Suspense fallback={<PageLoading />}>
+            <LazyPage>
               <IntegrationsView
-                onOpenDocuments={() => setScreen("docs")}
+                onOpenDocuments={() => openScreen("docs")}
                 openDrivePicker={openDrivePicker}
               />
-            </Suspense>
+            </LazyPage>
           </div>
         )}
       </main>

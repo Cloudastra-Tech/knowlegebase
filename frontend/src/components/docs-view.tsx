@@ -266,12 +266,15 @@ function DocEditor({
   const [loading, setLoading] = useState(isText)
   const [saving, setSaving] = useState(false)
 
-  // Starts out loading (see useState above); the editor is remounted per document.
+  // Read once per document (it starts out loading, see above). Keyed on access +
+  // name, not the object: a refreshed list hands us a new object for the same
+  // file, and re-reading then would overwrite what's being typed.
+  const { access, name } = doc
   useEffect(() => {
     if (!isText) return
     let cancelled = false
     api
-      .readDoc(doc)
+      .readDoc({ access, name })
       .then(({ content }) => {
         if (cancelled) return
         setOriginal(content)
@@ -282,7 +285,7 @@ function DocEditor({
     return () => {
       cancelled = true
     }
-  }, [doc, isText])
+  }, [access, name, isText])
 
   async function save() {
     setSaving(true)

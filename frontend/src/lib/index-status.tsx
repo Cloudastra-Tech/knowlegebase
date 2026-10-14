@@ -18,12 +18,17 @@ export function IndexStatusProvider({ children }: { children: React.ReactNode })
   // The timer calls the poll through this ref: poll can't name itself while
   // it's still being defined.
   const pollRef = useRef<() => void>(() => {})
+  // Bumped by every poll and on unmount: only the latest poll of a mounted
+  // provider schedules the next one, so no stray loop survives a sign-out.
+  const latest = useRef(0)
 
   const poll = useCallback(() => {
     window.clearTimeout(timer.current)
+    const mine = ++latest.current
     return api
       .indexStatus()
       .then((s) => {
+        if (mine !== latest.current) return null
         setStatus(s)
         const indexing = s.status === "indexing"
         if (wasIndexing.current && !indexing) {
@@ -34,20 +39,24 @@ export function IndexStatusProvider({ children }: { children: React.ReactNode })
         wasIndexing.current = indexing
         return indexing ? FAST_MS : SLOW_MS
       })
-      .catch(() => SLOW_MS) // signed out or offline — try again later
+      .catch(() => (mine === latest.current ? SLOW_MS : null)) // offline — try again later
       .then((next) => {
-        timer.current = window.setTimeout(() => pollRef.current(), next)
+        if (next !== null) timer.current = window.setTimeout(() => pollRef.current(), next)
       })
+  }, [])
+
+  // Stop for good: a poll still in flight won't schedule another.
+  const stop = useCallback(() => {
+    latest.current++
+    window.clearTimeout(timer.current)
+    window.clearTimeout(finishedTimer.current)
   }, [])
 
   useEffect(() => {
     pollRef.current = poll
     poll()
-    return () => {
-      window.clearTimeout(timer.current)
-      window.clearTimeout(finishedTimer.current)
-    }
-  }, [poll])
+    return stop
+  }, [poll, stop])
 
   return (
     <IndexStatusContext.Provider value={{ status, justFinished, refresh: poll }}>
