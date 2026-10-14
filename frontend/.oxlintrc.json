@@ -4,5 +4,15 @@
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/components/ui/**"],
+      // shadcn's generated components export their variants next to the component.
+      // Left as generated, so `npx shadcn add` can still update them.
+      "rules": {
+        "react/only-export-components": "off"
+      }
+    }
+  ]
 }

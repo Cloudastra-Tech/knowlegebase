@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, type Integration, type IntegrationStatus } from "@/lib/api"
-import { useIndexStatus } from "@/lib/index-status"
+import { useIndexStatus } from "@/lib/index-status-context"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -131,9 +131,13 @@ function GoogleDriveCard({
   const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null)
   const folders = item.folders ?? []
   const [pickerOpen, setPickerOpen] = useState(false)
-  useEffect(() => {
-    if (autoOpenPicker && !folders.length) setPickerOpen(true)
-  }, [autoOpenPicker, folders.length])
+  // Just connected and nothing picked yet: open the picker (once per arrival).
+  const shouldAutoOpen = !!autoOpenPicker && !folders.length
+  const [autoOpened, setAutoOpened] = useState(false)
+  if (shouldAutoOpen !== autoOpened) {
+    setAutoOpened(shouldAutoOpen)
+    if (shouldAutoOpen) setPickerOpen(true)
+  }
 
   async function connect() {
     setBusy("connect")
@@ -442,15 +446,17 @@ export function IntegrationsView({
   const [workspace, setWorkspace] = useState("")
   const { refresh: refreshIndex } = useIndexStatus()
 
-  const load = useCallback(async () => {
-    try {
-      const data = await api.integrations()
-      setItems(data.integrations)
-      setWorkspace(data.workspace)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
-  }, [])
+  const load = useCallback(
+    () =>
+      api
+        .integrations()
+        .then((data) => {
+          setItems(data.integrations)
+          setWorkspace(data.workspace)
+        })
+        .catch((err) => toast.error(errorText(err))),
+    [],
+  )
 
   useEffect(() => {
     load()

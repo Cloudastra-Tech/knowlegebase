@@ -58,8 +58,9 @@ export default function App() {
   }
 
   // Back from Google's consent screen: /#integrations?connected=... or ?error=...
-  useEffect(() => {
-    if (!user || !window.location.hash.startsWith("#integrations")) return
+  // Handled once we know who's signed in (see signedIn below).
+  function showIntegrationResult() {
+    if (!window.location.hash.startsWith("#integrations")) return
     const params = hashParams()
     history.replaceState(null, "", window.location.pathname)
     session.setRole("hr")
@@ -85,7 +86,12 @@ export default function App() {
       }
       toast.error(why[error] ?? "The integration was not connected.")
     }
-  }, [user])
+  }
+
+  function signedIn(u: User) {
+    setUser(u)
+    showIntegrationResult()
+  }
 
   // Restore the session after a page refresh — or, back from Google / Microsoft
   // at /#sso?code=..., swap the one-time code for a session.
@@ -101,7 +107,7 @@ export default function App() {
         .ssoExchange(code ?? "")
         .then(({ token, user }) => {
           session.setToken(token)
-          setUser(user)
+          signedIn(user)
         })
         .catch(() => {
           window.location.hash = "login?error=expired"
@@ -112,7 +118,7 @@ export default function App() {
     if (!session.token) return
     api
       .me()
-      .then(setUser)
+      .then(signedIn)
       .catch(() => session.setToken(null))
       .finally(() => setChecking(false))
   }, [])

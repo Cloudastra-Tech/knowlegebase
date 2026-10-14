@@ -44,7 +44,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { api, type Access, type Doc } from "@/lib/api"
-import { useIndexStatus } from "@/lib/index-status"
+import { useIndexStatus } from "@/lib/index-status-context"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const sameDoc = (a: Doc | null, b: Doc | null) =>
@@ -266,10 +266,10 @@ function DocEditor({
   const [loading, setLoading] = useState(isText)
   const [saving, setSaving] = useState(false)
 
+  // Starts out loading (see useState above); the editor is remounted per document.
   useEffect(() => {
     if (!isText) return
     let cancelled = false
-    setLoading(true)
     api
       .readDoc(doc)
       .then(({ content }) => {
@@ -391,21 +391,22 @@ export function DocsView() {
   const [filter, setFilter] = useState<"all" | Access>("all")
   const [selected, setSelected] = useState<Doc | null>(null)
 
-  const refresh = useCallback(async (select?: { access: Access; name: string }) => {
-    try {
-      const data = await api.listDocs()
-      setDocs(data.docs)
-      refreshIndex()                    // a change just started a re-index
-      setSelected((current) => {
-        const wanted = select ?? current
-        return data.docs.find((d) => sameDoc(d, wanted as Doc)) ?? null
-      })
-    } catch (err) {
-      toast.error(errorText(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [refreshIndex])
+  const refresh = useCallback(
+    (select?: { access: Access; name: string }) =>
+      api
+        .listDocs()
+        .then((data) => {
+          setDocs(data.docs)
+          refreshIndex()                    // a change just started a re-index
+          setSelected((current) => {
+            const wanted = select ?? current
+            return data.docs.find((d) => sameDoc(d, wanted as Doc)) ?? null
+          })
+        })
+        .catch((err) => toast.error(errorText(err)))
+        .finally(() => setLoading(false)),
+    [refreshIndex],
+  )
 
   useEffect(() => {
     refresh()
