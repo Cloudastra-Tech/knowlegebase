@@ -99,6 +99,28 @@ _NOT_FOUND = re.compile(
     r"|\bdon[’']?t know\b|\bdo not know\b|\bnot sure\b", re.IGNORECASE)
 
 
+_SMALL_TALK = re.compile(
+    r"^\s*(hi+|hello|hey|hiya|yo|thanks?|thank you|thx|ok(ay)?|cool|great|nice|bye|"
+    r"good (morning|afternoon|evening|night))\b[\s!.?,]*(there|team|bot|assistant)?[\s!.?]*$",
+    re.IGNORECASE)
+_PURE_MATH = re.compile(
+    r"^\s*(what('?s| is)|calculate|compute|solve)?\s*[-+*/×x÷^%().\d\s]+[?=\s]*$",
+    re.IGNORECASE)
+
+
+def needs_retrieval(question):
+    """RETRIEVAL-FIRST: every question searches the company docs before the agent
+    thinks — except small talk ("hi", "thanks") and pure arithmetic ("18*7")."""
+    q = (question or "").strip()
+    if not q:
+        return False
+    if _SMALL_TALK.match(q):
+        return False
+    if _PURE_MATH.match(q) and re.search(r"\d", q):
+        return False
+    return True
+
+
 def _chunks_used(answer, docs, min_overlap=0.3):
     """The retrieved chunks the answer actually draws on.
     Retrieval returns the top-k chunks even when only one is relevant, so we
@@ -289,6 +311,11 @@ def build_agent(role="public", collection=None, outline=True):
     SYSTEM = SystemMessage(content=(
         "You are the company's internal knowledge assistant. You solve multi-step "
         "questions by CHAINING tools.\n"
+        "- The company docs have ALREADY been searched for the user's question "
+        "(the first search_docs result in the conversation). Answer from it when it "
+        "covers the question. Do NOT call search_docs again with the same query; "
+        "only with a clearly different query (other words, a sub-question) when "
+        "the first result doesn't answer it.\n"
         "- RULE #1: for ANY question about a product, project, client, person, "
         "document, process, policy, tool or name, call search_docs FIRST — even if "
         "it sounds like general knowledge (e.g. 'Bible Navigator', 'DevIQ', 'the "
@@ -339,10 +366,32 @@ def build_agent(role="public", collection=None, outline=True):
         ai = llm.invoke([SYSTEM] + state["messages"])
         return {"messages": [ai]}
 
+    def retrieve_node(state):
+        """RETRIEVAL-FIRST (industry standard for company assistants): search the
+        company docs for EVERY question, in code, before the agent runs — so an
+        answer can never skip the docs because the model guessed the question was
+        "general knowledge". The search is recorded as an ordinary search_docs
+        call, so citations, guard blocks and the steps panel work unchanged; the
+        agent then decides only what ELSE it needs (another query, Outline,
+        calculator, Wikipedia)."""
+        question = next((m.content for m in reversed(state["messages"])
+                         if isinstance(m, HumanMessage)), "")
+        if not needs_retrieval(question):
+            return {"messages": []}
+        call_id = "retrieve_first"
+        result = search_docs.invoke({"question": question})
+        return {"messages": [
+            AIMessage(content="", tool_calls=[{"id": call_id, "name": "search_docs",
+                                               "args": {"question": question}}]),
+            ToolMessage(content=result, tool_call_id=call_id, name="search_docs"),
+        ]}
+
     builder = StateGraph(MessagesState)
+    builder.add_node("retrieve", retrieve_node)
     builder.add_node("agent", agent_node)
     builder.add_node("tools", ToolNode(tools))     # runs whatever tool the LLM asked for
-    builder.add_edge(START, "agent")
+    builder.add_edge(START, "retrieve")            # ALWAYS search the docs first
+    builder.add_edge("retrieve", "agent")
     # tools_condition routes to "tools" if the LLM made tool calls, else to END.
     builder.add_conditional_edges("agent", tools_condition)
     builder.add_edge("tools", "agent")             # after a tool runs, think again
