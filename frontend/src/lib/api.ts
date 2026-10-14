@@ -192,7 +192,7 @@ export const api = {
     request<ChatReply>("/chat", { method: "POST", body: JSON.stringify({ question }) }),
 
   listDocs: () => request<{ docs: Doc[] }>("/docs"),
-  readDoc: (d: Doc) => request<{ content: string }>(docPath(d)),
+  readDoc: (d: { access: Access; name: string }) => request<{ content: string }>(docPath(d)),
   createDoc: (name: string, access: Access, content: string) =>
     request<{ access: Access; name: string }>("/docs", {
       method: "POST",
