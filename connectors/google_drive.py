@@ -226,7 +226,13 @@ def sync(workspace):
         known = next(((k, v) for k, v in manifest.items() if v.get("id") == f["id"]), None)
         if known and known[1].get("modified") == f["modifiedTime"] and \
                 os.path.exists(os.path.join(folder, known[0])):
-            keep[known[0]] = known[1]
+            entry = dict(known[1])
+            if entry.get("title") != f["name"] or entry.get("url") != f.get("webViewLink"):
+                # Renamed (or moved) without a content change: no re-download,
+                # but citations must show the new name, so re-index.
+                entry.update(title=f["name"], url=f.get("webViewLink"))
+                changed = True
+            keep[known[0]] = entry
             continue
         got = _download(token, f)
         if not got:
