@@ -1,0 +1,41 @@
+# Runs the backend tests and the frontend lint + build on every PR and push to
+# main and the shared SSO branch. No secrets needed: the tests fake OpenAI and
+# the sign-in providers.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, epic/sso]
+  push:
+    branches: [main, epic/sso]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"          # same as the Docker image
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest
+        env:
+          OPENAI_API_KEY: sk-test-not-used
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22                # same as the Docker image
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
