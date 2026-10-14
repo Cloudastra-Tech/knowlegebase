@@ -149,6 +149,50 @@ def format_sources(sources):
     return "\n\n**Sources**\n\n" + "\n".join(lines)
 
 
+# ---- Live steps (shown to the user while the agent works) --------------------
+def step_label(tool, args):
+    """What the UI shows while a tool runs, e.g. 'Searching company docs'."""
+    args = args or {}
+    if tool == "search_docs":
+        return "Searching company docs"
+    if tool == "search_outline":
+        return f"Searching the Outline wiki for \u201c{args.get('query', '')}\u201d"
+    if tool == "read_outline_doc":
+        return "Reading a wiki page"
+    if tool == "calculator":
+        return f"Calculating {args.get('expression', '')}"
+    if tool == "convert_currency":
+        return (f"Converting {args.get('amount', '')} {args.get('from_currency', '')} "
+                f"to {args.get('to_currency', '')}")
+    if tool == "wikipedia":
+        return f"Looking up \u201c{args.get('topic', '')}\u201d on Wikipedia"
+    return f"Using {tool}"
+
+
+def step_result(tool, output, found_docs=None):
+    """A short summary of what a tool returned, e.g. 'found 2 documents'."""
+    out = str(output or "")
+    if out.startswith("BLOCKED BY ACCESS RULES"):
+        return "blocked by access rules"
+    if out.startswith("Error"):
+        return "failed"
+    if tool == "search_docs":
+        if found_docs:
+            return f"found {found_docs} relevant document{'s' if found_docs != 1 else ''}"
+        return "nothing relevant found"
+    if tool == "search_outline":
+        n = sum(1 for line in out.splitlines() if line.startswith("- "))
+        return f"{n} matching page{'s' if n != 1 else ''}" if n else "no matching pages"
+    if tool == "read_outline_doc":
+        first = out.splitlines()[0] if out else ""
+        return first[2:].strip() if first.startswith("# ") else "read"
+    if tool in ("calculator", "convert_currency"):
+        return out[:80]
+    if tool == "wikipedia":
+        return "summary found" if out and "No summary" not in out else "nothing found"
+    return "done"
+
+
 def build_agent(role="public", collection=None, outline=True):
     """Create an agent for a given user role. Returns a run(question) function.
     collection: the workspace's search index (None = default workspace).
@@ -163,6 +207,12 @@ def build_agent(role="public", collection=None, outline=True):
     # user asking for staff salary), we return that exact message to the user,
     # instead of letting the agent keep searching and reword it as "not found".
     blocked = []
+    # LIVE STEPS: run(..., on_event=fn) sets this so nodes can report progress.
+    emit_holder = [None]
+
+    def emit(event):
+        if emit_holder[0]:
+            emit_holder[0](event)
 
     def cite(title, provider, url=None):
         entry = {"title": title, "provider": provider, "url": url}
@@ -379,7 +429,12 @@ def build_agent(role="public", collection=None, outline=True):
         if not needs_retrieval(question):
             return {"messages": []}
         call_id = "retrieve_first"
+        emit({"type": "step_start", "id": call_id, "tool": "search_docs",
+              "label": step_label("search_docs", {})})
+        before = len(cited)
         result = search_docs.invoke({"question": question})
+        emit({"type": "step_end", "id": call_id, "tool": "search_docs",
+              "result": step_result("search_docs", result, len(cited) - before)})
         return {"messages": [
             AIMessage(content="", tool_calls=[{"id": call_id, "name": "search_docs",
                                                "args": {"question": question}}]),
@@ -404,10 +459,47 @@ def build_agent(role="public", collection=None, outline=True):
     # questions would otherwise mix up each other's citations.
     lock = threading.Lock()
 
-    def run(user_input, with_sources=False):
+    def _stream(user_input, on_event):
+        """Run the graph while reporting each step and the answer tokens live.
+        Returns the full message list, like graph.invoke would."""
+        messages = [HumanMessage(content=user_input)]
+        text = ""                         # the answer streamed so far
+        started = {}                      # tool call id -> cited count at start
+        for mode, data in graph.stream({"messages": list(messages)},
+                                       stream_mode=["updates", "messages"]):
+            if mode == "messages":
+                chunk, meta = data
+                if (meta.get("langgraph_node") == "agent" and isinstance(chunk.content, str)
+                        and chunk.content and not blocked):
+                    text += chunk.content
+                    # Mask PII on the text so far, so it never flashes on screen.
+                    on_event({"type": "answer", "text": redact_pii(text)})
+                continue
+            for node, update in (data or {}).items():
+                new = (update or {}).get("messages", []) if isinstance(update, dict) else []
+                messages += new
+                for m in new:
+                    if node == "agent" and isinstance(m, AIMessage) and m.tool_calls:
+                        if text:          # it wrote a little, then chose a tool
+                            text = ""
+                            on_event({"type": "answer", "text": ""})
+                        for tc in m.tool_calls:
+                            started[tc["id"]] = len(cited)
+                            on_event({"type": "step_start", "id": tc["id"], "tool": tc["name"],
+                                      "label": step_label(tc["name"], tc["args"])})
+                    elif node == "tools" and isinstance(m, ToolMessage):
+                        found = len(cited) - started.get(m.tool_call_id, len(cited))
+                        on_event({"type": "step_end", "id": m.tool_call_id, "tool": m.name,
+                                  "result": step_result(m.name, m.content, found)})
+        return messages
+
+    def run(user_input, with_sources=False, on_event=None):
         """Answer a question -> (answer, trace).
         with_sources=True -> (answer, trace, sources) with the sources as a list
-        of {title, provider, url} instead of a markdown list in the answer."""
+        of {title, provider, url} instead of a markdown list in the answer.
+        on_event(dict) -> stream progress: step_start / step_end / answer events."""
+        if on_event:
+            on_event({"type": "status", "text": "Checking your question"})
         # GUARD (input): block prompt-injection / jailbreak before doing any work.
         ok, msg = check_prompt_injection(user_input)
         if not ok:
@@ -416,10 +508,17 @@ def build_agent(role="public", collection=None, outline=True):
         with lock:
             cited.clear()      # citations are per question
             blocked.clear()
-            result = graph.invoke({"messages": [HumanMessage(content=user_input)]})
+            emit_holder[0] = on_event
+            try:
+                if on_event:
+                    messages = _stream(user_input, on_event)
+                else:
+                    messages = graph.invoke(
+                        {"messages": [HumanMessage(content=user_input)]})["messages"]
+            finally:
+                emit_holder[0] = None
             sources = list(cited)
             blocked_reply = list(blocked)
-        messages = result["messages"]
 
         # Map each tool result back to its call id so we can pair them up.
         outputs = {m.tool_call_id: m.content for m in messages
