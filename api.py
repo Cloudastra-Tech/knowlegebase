@@ -25,6 +25,7 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     POST   /docs/upload           multipart: files[], access            (HR / Admin)
     POST   /reindex               rebuild the search index              (HR / Admin)
     GET    /index/status          background re-index progress
+    GET    /knowledge             everything the assistant can search (uploads + synced files)
     GET    /integrations          what this workspace has connected
     POST   /integrations/google_drive/connect   -> {url} of Google's consent screen (HR / Admin)
     GET    /integrations/google_drive/callback  Google redirects the browser back here
@@ -39,6 +40,7 @@ the Streamlit dropdown — it is a demo switch, not a security boundary.
 """
 
 import contextlib
+import json
 import io
 import os
 import secrets
@@ -515,6 +517,59 @@ def drive_disconnect(user=Depends(require_hr)):
     google_drive.disconnect(ws)
     _schedule_index(ws)            # drop the Drive files from the search index
     return {"ok": True}
+
+
+@app.get("/api/knowledge")
+def knowledge(user=Depends(current_user), role=Depends(current_role)):
+    """Everything this workspace's assistant can search: uploaded files plus files
+    synced by connectors, with how much of each is in the search index.
+    Public users only see public items (like search itself)."""
+    ws = ws_of(user)
+    root = workspaces.docs_root(ws)
+
+    # Chunks per file in the index (by file path), straight from Chroma.
+    chunks = {}
+    try:
+        import chromadb
+        col = chromadb.PersistentClient(path=ingest.DB_FOLDER).get_collection(
+            workspaces.collection(ws))
+        for meta in col.get(include=["metadatas"])["metadatas"]:
+            key = os.path.normcase(os.path.abspath(meta.get("source", "")))
+            chunks[key] = chunks.get(key, 0) + 1
+    except Exception:
+        pass                                   # no index yet: everything shows 0
+
+    def indexed(path):
+        return chunks.get(os.path.normcase(os.path.abspath(path)), 0)
+
+    items = []
+    for d in docs_store.list_docs(root):
+        if role != "hr" and d["access"] == "restricted":
+            continue
+        items.append({"title": d["name"], "source": "Uploaded", "access": d["access"],
+                      "url": None, "modified": os.path.getmtime(d["path"]),
+                      "size": d["size"], "chunks": indexed(d["path"])})
+
+    connectors_dir = os.path.join(root, "connectors")
+    for provider in sorted(os.listdir(connectors_dir)) if os.path.isdir(connectors_dir) else []:
+        folder = os.path.join(connectors_dir, provider)
+        try:
+            with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for name, info in manifest.items():
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path):
+                continue
+            items.append({"title": info.get("title") or name,
+                          "source": info.get("provider") or provider, "access": "public",
+                          "url": info.get("url"), "modified": info.get("modified"),
+                          "size": os.path.getsize(path), "chunks": indexed(path)})
+
+    items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))
+    return {"workspace": ws, "items": items,
+            "outline": outline_on(ws)}         # searched live, so not listed here
 
 
 @app.get("/api/health")

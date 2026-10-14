@@ -66,6 +66,16 @@ export interface IndexStatus {
   finished_at: number | null
 }
 
+export interface KnowledgeItem {
+  title: string
+  source: string
+  access: Access
+  url: string | null
+  modified: number | string | null
+  size: number
+  chunks: number
+}
+
 export interface Doc {
   access: Access
   name: string
@@ -174,6 +184,9 @@ export const api = {
   },
   reindex: () => request<IndexStatus>("/reindex", { method: "POST" }),
   indexStatus: () => request<IndexStatus>("/index/status"),
+
+  knowledge: () =>
+    request<{ workspace: string; items: KnowledgeItem[]; outline: boolean }>("/knowledge"),
 
   integrations: () =>
     request<{ workspace: string; integrations: Integration[] }>("/integrations"),

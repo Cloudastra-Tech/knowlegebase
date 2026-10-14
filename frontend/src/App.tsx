@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { ChatView } from "@/components/chat-view"
 import { DocsView } from "@/components/docs-view"
 import { IntegrationsView } from "@/components/integrations-view"
+import { KnowledgeView } from "@/components/knowledge-view"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LandingPage } from "@/components/landing-page"
 import { LoginPage } from "@/components/login-page"
@@ -25,7 +26,7 @@ import { IndexStatusProvider } from "@/lib/index-status"
 import { cn } from "@/lib/utils"
 import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
 
-type Screen = "chat" | "docs" | "integrations"
+type Screen = "chat" | "knowledge" | "docs" | "integrations"
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -99,7 +100,7 @@ export default function App() {
   function changeRole(next: Role) {
     session.setRole(next)
     setRole(next)
-    if (next !== "hr") setScreen("chat")
+    if (next !== "hr") setScreen((s) => (s === "knowledge" ? s : "chat"))
   }
 
   async function signOut() {
@@ -134,6 +135,7 @@ export default function App() {
 
   const navItems: { id: Screen; label: string }[] = [
     { id: "chat", label: "Chat" },
+    { id: "knowledge", label: "Knowledge" },
     ...(role === "hr"
       ? [
           { id: "docs" as Screen, label: "Documents" },
@@ -231,6 +233,11 @@ export default function App() {
         <div className={screen === "chat" ? "h-full" : "hidden"}>
           <ChatView role={role} />
         </div>
+        {screen === "knowledge" && (
+          <div className="h-full overflow-y-auto">
+            <KnowledgeView key={role} />
+          </div>
+        )}
         {screen === "docs" && role === "hr" && (
           <div className="h-full overflow-y-auto">
             <DocsView />
