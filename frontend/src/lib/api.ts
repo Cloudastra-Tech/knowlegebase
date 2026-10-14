@@ -6,6 +6,35 @@ export type Access = "public" | "restricted"
 export interface User {
   username: string
   name: string
+  workspace: string
+}
+
+export type IntegrationStatus =
+  | "connected"
+  | "syncing"
+  | "error"
+  | "disconnected"
+  | "not_configured"
+  | "unavailable"
+
+export interface Integration {
+  id: "uploads" | "google_drive" | "notion" | "outline"
+  name: string
+  status: IntegrationStatus
+  doc_count?: number
+  account?: string | null
+  connected_by?: string | null
+  last_sync_at?: number | null
+  last_error?: string | null
+  folders?: DriveFolder[]
+}
+
+// Something picked to sync from Google Drive: a folder, a Shared Drive or one file.
+export interface DriveFolder {
+  id: string
+  name: string
+  kind: "folder" | "drive" | "file"
+  mimeType?: string
 }
 
 export interface Source {
@@ -35,6 +64,16 @@ export interface IndexStatus {
   summary: { documents: number; chunks: number; restricted: number } | null
   error: string | null
   finished_at: number | null
+}
+
+export interface KnowledgeItem {
+  title: string
+  source: string
+  access: Access
+  url: string | null
+  modified: number | string | null
+  size: number
+  chunks: number
 }
 
 export interface Doc {
@@ -145,6 +184,31 @@ export const api = {
   },
   reindex: () => request<IndexStatus>("/reindex", { method: "POST" }),
   indexStatus: () => request<IndexStatus>("/index/status"),
+
+  knowledge: () =>
+    request<{ workspace: string; items: KnowledgeItem[]; outline: boolean }>("/knowledge"),
+
+  integrations: () =>
+    request<{ workspace: string; integrations: Integration[] }>("/integrations"),
+  // Generic for every connector: provider = "google_drive" | "notion".
+  connectIntegration: (provider: string) =>
+    request<{ url: string }>(`/integrations/${provider}/connect`, { method: "POST" }),
+  syncIntegration: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${provider}/sync`, { method: "POST" }),
+  disconnectIntegration: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${provider}`, { method: "DELETE" }),
+  connectDrive: () => api.connectIntegration("google_drive"),
+  syncDrive: () => api.syncIntegration("google_drive"),
+  driveFolders: (parent?: string) =>
+    request<{ drives: DriveFolder[]; folders: DriveFolder[]; files: DriveFolder[] }>(
+      `/integrations/google_drive/folders${parent ? `?parent=${encodeURIComponent(parent)}` : ""}`,
+    ),
+  setDriveFolders: (folders: DriveFolder[]) =>
+    request<{ folders: DriveFolder[] }>("/integrations/google_drive/folders", {
+      method: "PUT",
+      body: JSON.stringify({ folders }),
+    }),
+  disconnectDrive: () => api.disconnectIntegration("google_drive"),
 
   // PDFs need the auth header, so fetch them as a blob instead of a plain link.
   async downloadDoc(d: Doc) {

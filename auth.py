@@ -5,10 +5,10 @@ Users live in config/users.json (gitignored — never commit it):
     {"swastik": {"name": "Swastik", "password": "pbkdf2$...$...$..."}}
 
 Passwords are never stored as plain text — only a salted PBKDF2 hash.
-Every account gets the same access; login just keeps strangers out.
+Each account belongs to one WORKSPACE (company); it only sees that workspace's data.
 
 Manage users from a terminal:
-    python auth.py add <username>     # asks for the password
+    python auth.py add <username> [--workspace <slug>]   # asks for the password
     python auth.py remove <username>
     python auth.py list
 """
@@ -65,7 +65,8 @@ def authenticate(username, password):
     """Return the user record (with 'username') if the login is right, else None."""
     user = load_users().get((username or "").strip().lower())
     if user and verify_password(password or "", user.get("password", "")):
-        return {"username": username.strip().lower(), "name": user.get("name", username)}
+        return {"username": username.strip().lower(), "name": user.get("name", username),
+                "workspace": user.get("workspace", "default")}
     return None
 
 
@@ -117,6 +118,14 @@ def logout():
 # ---- Command line: manage users ----------------------------------------------
 def _cli(args):
     users = load_users()
+    workspace = "default"
+    if "--workspace" in args:                     # python auth.py add bob --workspace acme
+        i = args.index("--workspace")
+        workspace = (args[i + 1:i + 2] or [""])[0].strip().lower()
+        args = args[:i] + args[i + 2:]
+        import workspaces
+        if not workspaces.valid(workspace):
+            sys.exit("Workspace must be lowercase letters, digits or '-', e.g. acme-corp.")
     if len(args) == 2 and args[0] == "add":
         username = args[1].strip().lower()
         password = getpass.getpass(f"Password for {username}: ")
@@ -126,9 +135,9 @@ def _cli(args):
             sys.exit("Passwords don't match.")
         existed = username in users
         users[username] = {"name": users.get(username, {}).get("name", args[1]),
-                           "password": hash_password(password)}
+                           "password": hash_password(password), "workspace": workspace}
         save_users(users)
-        print(f"{'Updated' if existed else 'Added'} {username}.")
+        print(f"{'Updated' if existed else 'Added'} {username} (workspace: {workspace}).")
     elif len(args) == 2 and args[0] == "remove":
         if users.pop(args[1].strip().lower(), None) is None:
             sys.exit(f"No user named {args[1]}.")
@@ -136,7 +145,7 @@ def _cli(args):
         print(f"Removed {args[1]}.")
     elif args == ["list"]:
         for name in sorted(users):
-            print(name)
+            print(f"{name:<20} workspace: {users[name].get('workspace', 'default')}")
         if not users:
             print("(no users)")
     else:

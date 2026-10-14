@@ -18,3 +18,5 @@ tiktoken                  # lets us SEE how text is split into tokens (Phase 1 c
 fastapi<0.140             # JSON API for the React frontend (api.py); 0.140+ conflicts with chromadb's opentelemetry pin
 uvicorn[standard]         # runs the FastAPI app
 python-multipart          # file uploads in the API
+cryptography              # encrypts integration tokens (Google Drive OAuth) at rest
+chardet                   # detects the encoding of non-UTF-8 text files when indexing

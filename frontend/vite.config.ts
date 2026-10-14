@@ -10,6 +10,8 @@ export default defineConfig({
   },
   server: {
     // The FastAPI backend (api.py) runs on :8010; the browser only talks to Vite.
-    proxy: { "/api": "http://127.0.0.1:8010" },
+    // changeOrigin false keeps Host = localhost:5173, so OAuth redirect URIs
+    // (e.g. Google Drive) point back at the dev site, not at :8010.
+    proxy: { "/api": { target: "http://127.0.0.1:8010", changeOrigin: false } },
   },
 })

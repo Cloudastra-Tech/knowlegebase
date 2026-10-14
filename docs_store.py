@@ -15,11 +15,12 @@ ACCESS_LEVELS = ("public", "restricted")
 EXTENSIONS = (".txt", ".pdf")      # what ingest.py can read
 
 
-def list_docs():
-    """All .txt/.pdf files under docs/, as dicts (access, name, path, size)."""
+def list_docs(root=DOCS_FOLDER):
+    """Uploaded .txt/.pdf files of a workspace, as dicts (access, name, path, size).
+    (Files synced by connectors live in root/connectors/ and are not listed.)"""
     found = []
     for access in ACCESS_LEVELS:
-        folder = os.path.join(DOCS_FOLDER, access)
+        folder = os.path.join(root, access)
         if not os.path.isdir(folder):
             continue
         for name in sorted(os.listdir(folder)):
@@ -39,15 +40,15 @@ def safe_name(name, default_ext=".txt"):
     return f"{stem}{ext}" if stem else ""
 
 
-def doc_path(access, name):
+def doc_path(access, name, root=DOCS_FOLDER):
     """Path of an existing-or-new doc, or None if access/name are not allowed."""
     if access not in ACCESS_LEVELS or not name or safe_name(name) != name:
         return None
-    return os.path.join(DOCS_FOLDER, access, name)
+    return os.path.join(root, access, name)
 
 
-def save(access, name, data):
-    folder = os.path.join(DOCS_FOLDER, access)
+def save(access, name, data, root=DOCS_FOLDER):
+    folder = os.path.join(root, access)
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, name), "wb") as f:
         f.write(data)

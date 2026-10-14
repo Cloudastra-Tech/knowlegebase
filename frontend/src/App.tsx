@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react"
 import { ChevronDown, LogOut } from "lucide-react"
+import { toast } from "sonner"
 
 import { ChatView } from "@/components/chat-view"
 import { DocsView } from "@/components/docs-view"
+import { IntegrationsView } from "@/components/integrations-view"
+import { KnowledgeView } from "@/components/knowledge-view"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LandingPage } from "@/components/landing-page"
 import { LoginPage } from "@/components/login-page"
@@ -23,13 +26,14 @@ import { IndexStatusProvider } from "@/lib/index-status"
 import { cn } from "@/lib/utils"
 import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
 
-type Screen = "chat" | "docs"
+type Screen = "chat" | "knowledge" | "docs" | "integrations"
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [checking, setChecking] = useState(!!session.token)
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
+  const [openDrivePicker, setOpenDrivePicker] = useState(false)
   // Signed out: the landing page, or the sign-in form at #login.
   const [wantsLogin, setWantsLogin] = useState(() => window.location.hash === "#login")
 
@@ -51,6 +55,36 @@ export default function App() {
     setUser(u)
   }
 
+  // Back from Google's consent screen: /#integrations?connected=... or ?error=...
+  useEffect(() => {
+    if (!user || !window.location.hash.startsWith("#integrations")) return
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "")
+    history.replaceState(null, "", window.location.pathname)
+    session.setRole("hr")
+    setRole("hr")
+    setScreen("integrations")
+    const connected = params.get("connected")
+    if (connected) {
+      const name = connected === "notion" ? "Notion" : "Google Drive"
+      const choose = params.get("choose") === "1"
+      setOpenDrivePicker(choose)
+      toast.success(
+        choose
+          ? `${name} connected. Now choose which folders or files to sync.`
+          : `${name} connected. Syncing…`,
+      )
+    }
+    const error = params.get("error")
+    if (error) {
+      const why: Record<string, string> = {
+        access_denied: "Access was not granted.",
+        expired: "The connection request expired. Please try again.",
+        connect_failed: "Couldn't finish connecting. Please try again.",
+      }
+      toast.error(why[error] ?? "The integration was not connected.")
+    }
+  }, [user])
+
   // Restore the session after a page refresh.
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -68,7 +102,7 @@ export default function App() {
   function changeRole(next: Role) {
     session.setRole(next)
     setRole(next)
-    if (next !== "hr") setScreen("chat")
+    if (next !== "hr") setScreen((s) => (s === "knowledge" ? s : "chat"))
   }
 
   async function signOut() {
@@ -103,7 +137,13 @@ export default function App() {
 
   const navItems: { id: Screen; label: string }[] = [
     { id: "chat", label: "Chat" },
-    ...(role === "hr" ? [{ id: "docs" as Screen, label: "Documents" }] : []),
+    { id: "knowledge", label: "Knowledge" },
+    ...(role === "hr"
+      ? [
+          { id: "docs" as Screen, label: "Documents" },
+          { id: "integrations" as Screen, label: "Integrations" },
+        ]
+      : []),
   ]
 
   return (
@@ -195,9 +235,22 @@ export default function App() {
         <div className={screen === "chat" ? "h-full" : "hidden"}>
           <ChatView role={role} />
         </div>
+        {screen === "knowledge" && (
+          <div className="h-full overflow-y-auto">
+            <KnowledgeView key={role} />
+          </div>
+        )}
         {screen === "docs" && role === "hr" && (
           <div className="h-full overflow-y-auto">
             <DocsView />
+          </div>
+        )}
+        {screen === "integrations" && role === "hr" && (
+          <div className="h-full overflow-y-auto">
+            <IntegrationsView
+              onOpenDocuments={() => setScreen("docs")}
+              openDrivePicker={openDrivePicker}
+            />
           </div>
         )}
       </main>

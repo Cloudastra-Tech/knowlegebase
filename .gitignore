@@ -7,3 +7,9 @@ venv/
 
 # Login accounts (password hashes) — never commit
 config/
+
+# Workspace documents (other companies' data) — never commit
+data/
+
+# Copies synced from connectors (Google Drive, Notion) — private, never commit
+docs/connectors/

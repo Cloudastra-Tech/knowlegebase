@@ -90,14 +90,23 @@ def _words(text):
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 3}
 
 
+_NOT_FOUND = re.compile(
+    r"\b(couldn[’']?t|could not|can[’']?t|cannot|unable to|did not|didn[’']?t|wasn[’']?t able to) (find|locate)\b"
+    r"|\bno (specific |relevant )?(information|details|mention|data)\b"
+    r"|\bnot (mentioned|covered|available|specified|included|provided) in\b"
+    r"|\b(don[’']?t|do not|does not|doesn[’']?t) (have|contain|mention|include|provide|cover|specify)"
+    r" (any |specific )?(information|details|mention|data|anything)\b"
+    r"|\bdon[’']?t know\b|\bdo not know\b|\bnot sure\b", re.IGNORECASE)
+
+
 def _chunks_used(answer, docs, min_overlap=0.3):
     """The retrieved chunks the answer actually draws on.
     Retrieval returns the top-k chunks even when only one is relevant, so we
     keep a chunk only if a good share of the answer's words appear in it."""
     answer_words = _words(answer)
-    if not answer_words or not docs:
-        return []
-    scored = [(len(answer_words & _words(d.page_content)) / len(answer_words), d) for d in docs]
+    if not answer_words or not docs or _NOT_FOUND.search(answer):
+        return []                     # "I couldn't find..." cites nothing
+    scored =[(len(answer_words & _words(d.page_content)) / len(answer_words), d) for d in docs]
     used = [d for score, d in scored if score >= min_overlap]
     if used:
         return used
@@ -118,9 +127,11 @@ def format_sources(sources):
     return "\n\n**Sources**\n\n" + "\n".join(lines)
 
 
-def build_agent(role="public"):
-    """Create an agent for a given user role. Returns a run(question) function."""
-    retriever, rag_llm = load_chain(role)
+def build_agent(role="public", collection=None, outline=True):
+    """Create an agent for a given user role. Returns a run(question) function.
+    collection: the workspace's search index (None = default workspace).
+    outline: whether this workspace has the Outline wiki connected."""
+    retriever, rag_llm = load_chain(role, collection)
 
     # CITATIONS: every tool that reads a document records it here. run() clears
     # it per question and appends a "Sources" list built from it — so citations
@@ -139,18 +150,22 @@ def build_agent(role="public"):
     # ---- The TOOLS the agent can choose from --------------------------------
     @tool
     def search_docs(question: str) -> str:
-        """Search the company's uploaded documents (the Documents screen):
+        """Search the company's documents: files uploaded on the Documents screen
+        and files synced from connected tools such as Google Drive / Google Docs:
         policies (leave, refund, HR), handbooks, pricing, support hours, stipend,
         FAQs, PDFs and any other files added there. Try this FIRST for any
         question about the company, its policies or its products."""
         answer, docs = answer_question(question, retriever, rag_llm, role)
-        if not docs:                     # a guard refused before any search ran
+        if docs is None:                 # a guard refused before any search ran
             blocked.append(answer)
             return (f"BLOCKED BY ACCESS RULES: {answer} Do not search any other tool "
                     "for this; just tell the user this message.")
         for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
-            if source:
+            if d.metadata.get("title"):          # synced from a connector (e.g. Drive)
+                cite(d.metadata["title"], d.metadata.get("provider") or "Connected source",
+                     d.metadata.get("url") or None)
+            elif source:
                 cite(os.path.basename(source), "Company documents")
         return answer
 
@@ -177,7 +192,9 @@ def build_agent(role="public"):
 
     @tool
     def wikipedia(topic: str) -> str:
-        """Get a short summary of a general-knowledge topic from Wikipedia."""
+        """Get a short summary of a PUBLIC general-knowledge topic from Wikipedia.
+        LAST RESORT: use only after search_docs found nothing. Never use it for the
+        company's own products, projects, clients, people or documents."""
         try:
             t = topic.strip().replace(" ", "_")
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{t}"
@@ -193,10 +210,10 @@ def build_agent(role="public"):
         """Search Cloudastra's internal knowledge base / wiki. This is the
         company's internal documentation tool (Outline, self-hosted at
         app.cloudastra.co). USE THIS whenever the user mentions any of:
-        Outline, Notion, the wiki, the knowledge base, "internal docs",
+        Outline, the wiki, the knowledge base, "internal docs",
         "internal documentation", "our docs", "company docs", app.cloudastra,
         app.cloudastra.co, runbooks, project notes, how-tos, meeting notes, or
-        engineering knowledge. (People may call it "Notion" or "internal docs"
+        engineering knowledge. (People may call it "the wiki" or "internal docs"
         even though it is Outline — treat all of those as THIS tool.)
         Returns the top matches as short SNIPPETS, each with a document id. To
         read the FULL content of the best match, follow up with read_outline_doc
@@ -262,21 +279,28 @@ def build_agent(role="public"):
         except Exception as e:
             return f"Error: {e}"
 
-    tools = [search_docs, calculator, convert_currency, wikipedia,
-             search_outline, read_outline_doc]
+    tools = [search_docs, calculator, convert_currency, wikipedia]
+    if outline:                       # only workspaces with the wiki connected
+        tools += [search_outline, read_outline_doc]
 
     # The model is told about the tools; it decides when to call them.
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(tools)
 
     SYSTEM = SystemMessage(content=(
-        "You are a helpful assistant that solves multi-step questions by CHAINING tools.\n"
-        "- For company policies, handbooks, prices, refund, support, stipend, HR "
-        "rules, or anything in the uploaded company documents: search_docs FIRST. "
-        "If search_docs doesn't have the answer, then try search_outline.\n"
-        "- The internal knowledge base is called Outline (at app.cloudastra.co), "
-        "but people also call it 'Notion', 'the wiki', 'internal docs', "
-        "'internal documentation', or 'our docs'. If the user mentions ANY of "
-        "those names, or app.cloudastra, use the search_outline tool.\n"
+        "You are the company's internal knowledge assistant. You solve multi-step "
+        "questions by CHAINING tools.\n"
+        "- RULE #1: for ANY question about a product, project, client, person, "
+        "document, process, policy, tool or name, call search_docs FIRST — even if "
+        "it sounds like general knowledge (e.g. 'Bible Navigator', 'DevIQ', 'the "
+        "audit'). search_docs covers uploaded files AND everything synced from "
+        "Google Drive / Google Docs / Sheets AND Notion. If it finds nothing, try "
+        "search_outline (when available). Only after those find nothing may you "
+        "use wikipedia, and only for genuinely public world knowledge.\n"
+        "- For company policies, handbooks, prices, refund, support, stipend and HR "
+        "rules: search_docs.\n"
+        "- 'Notion', 'Google Drive', 'Drive', 'Docs' or 'Sheets' -> search_docs (they "
+        "are synced into it). The Outline wiki is at app.cloudastra.co; people "
+        "also call it 'the wiki', 'internal docs' or 'our docs' -> search_outline.\n"
         "- For ANY question about INTERNAL company/team knowledge (runbooks, "
         "project notes, how-tos, engineering docs, meeting notes), ALWAYS follow "
         "this 3-step flow:\n"
@@ -298,7 +322,9 @@ def build_agent(role="public"):
         "year or in another currency, FIRST search_docs for the base MONTHLY rupee "
         "price, THEN use calculator for the math, THEN convert_currency for the currency.\n"
         "- Never ask search_docs for dollars or yearly totals directly — it can't do math.\n"
-        "- Use wikipedia only for general world knowledge, not company facts.\n"
+        "- wikipedia is the LAST resort: only for public world knowledge, and only "
+        "after search_docs found nothing. Never answer a company/project question "
+        "from wikipedia.\n"
         "- Do NOT write your own 'Sources' list or mention document titles as "
         "citations — the app appends a verified Sources list automatically."
     ))
@@ -363,6 +389,8 @@ def build_agent(role="public"):
         answer = messages[-1].content or "(no answer)"
         if blocked_reply:                 # a guard refused: say exactly why
             answer = blocked_reply[0]
+            sources = []
+        elif _NOT_FOUND.search(answer):   # "I couldn't find..." -> nothing to cite
             sources = []
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)
