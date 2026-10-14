@@ -72,7 +72,14 @@ import workspaces                    # noqa: E402
 from agent import build_agent        # noqa: E402
 from connectors import google_drive, notion  # noqa: E402
 
-app = FastAPI(title="Knowledge Assistant API")
+@contextlib.asynccontextmanager
+async def _lifespan(app):
+    """Background jobs that run for the life of the server."""
+    threading.Thread(target=_sync_scheduler, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Knowledge Assistant API", lifespan=_lifespan)
 log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 # Holds Authlib's state / nonce / PKCE verifier between the redirect to Google or
 # Microsoft and the callback — nothing else goes in it. Without SESSION_SECRET a
@@ -518,11 +525,6 @@ def _sync_scheduler():
             for row in integrations_store.all_connected(provider):
                 if row["status"] in ("connected", "error"):
                     _start_sync(row["workspace"], provider)
-
-
-@app.on_event("startup")
-def _start_background_jobs():
-    threading.Thread(target=_sync_scheduler, daemon=True).start()
 
 
 def _public_url(request: Request, path):
