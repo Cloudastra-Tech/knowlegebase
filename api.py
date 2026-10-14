@@ -58,6 +58,7 @@ import auth                          # noqa: E402  (needs the .env loaded first)
 import docs_store                    # noqa: E402
 import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
+import sessions_store                # noqa: E402
 import workspaces                    # noqa: E402
 from agent import build_agent        # noqa: E402
 from connectors import google_drive  # noqa: E402
@@ -71,7 +72,6 @@ STEP_PREVIEW_CHARS = 600
 DRIVE_SYNC_EVERY = 30 * 60        # seconds between automatic Drive syncs
 OAUTH_STATE_SECONDS = 10 * 60
 
-_sessions = {}            # token -> {"user": {...}, "expires": epoch}
 _failed_logins = {}       # username -> (count, locked_until)
 _agents = {}              # (workspace, role) -> agent run() function
 _agents_lock = threading.Lock()
@@ -109,12 +109,10 @@ class LoginIn(BaseModel):
 
 
 def current_user(authorization: str = Header(default="")):
-    token = authorization.removeprefix("Bearer ").strip()
-    session = _sessions.get(token)
-    if not session or session["expires"] < time.time():
-        _sessions.pop(token, None)
+    user = sessions_store.get(authorization.removeprefix("Bearer ").strip())
+    if not user:
         raise HTTPException(401, "Please sign in.")
-    return session["user"]
+    return user
 
 
 def current_role(x_role: str = Header(default="public")):
@@ -153,13 +151,13 @@ def login(body: LoginIn):
         raise HTTPException(401, "Wrong username or password.")
     _failed_logins.pop(key, None)
     token = secrets.token_urlsafe(32)
-    _sessions[token] = {"user": user, "expires": time.time() + SESSION_SECONDS}
+    sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
     return {"token": token, "user": user}
 
 
 @app.post("/api/auth/logout")
 def logout(authorization: str = Header(default="")):
-    _sessions.pop(authorization.removeprefix("Bearer ").strip(), None)
+    sessions_store.delete(authorization.removeprefix("Bearer ").strip())
     return {"ok": True}
 
 
