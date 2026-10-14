@@ -22,6 +22,7 @@ import re
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.retrievers import BM25Retriever   # keyword search
 
@@ -29,6 +30,8 @@ from safety import check_question, check_answer  # our Guardrails-AI safety laye
 
 load_dotenv()
 DB_FOLDER = "chroma_db"
+INTRO_CHARS = 1200      # chunks starting this early count as a document's intro
+INTRO_CHUNKS = 3        # ...at most this many per document (title + summary)
 
 # ----------------------------------------------------------------------------
 # Phase 3 retrieval upgrades — ON/OFF switches.
@@ -51,9 +54,14 @@ How to respond:
   invite them to ask about the documents. Do NOT say "I don't know" to a greeting.
 - Answer questions using the context below. It was retrieved from the documents.
 - Read the context carefully — the answer may be phrased differently than the question.
+- Each piece of context starts with its document's title in [brackets]. Use it:
+  for "what is X?" / "tell me about X", summarise what the documents about X say
+  (their purpose, key facts, decisions, plans) instead of saying you don't know.
 - If the answer truly isn't in the context, say you don't know based on the
   documents, and suggest a topic they could ask about instead.
-- Never invent facts that aren't supported by the context.
+- Never invent facts that aren't supported by the context. Never guess: don't
+  use words like "likely", "probably" or "might" to fill gaps — say only what
+  the context states, and if it's partial, say what it does cover.
 
 Context:
 {context}
@@ -112,6 +120,19 @@ def load_chain(role="public", collection=None):
     # Our own little retriever runs BOTH searches and merges their rankings.
     retriever = HybridRetriever(dense_retriever, bm25_retriever, top_k=4)
 
+    # DOCUMENT INTROS: the first chunks of every document (title, summary).
+    # Matching chunks are often from the middle of a document; for "what is X?"
+    # the model also needs how that document begins. See intros_for().
+    intros = {}
+    for text, meta in zip(texts, metas):
+        if meta.get("start_index", 10**9) < INTRO_CHARS:
+            # PDFs are loaded page by page: order by page first, then position.
+            key = (meta.get("page", 0), meta["start_index"])
+            intros.setdefault(meta.get("source", ""), []).append((key, text, meta))
+    retriever.intros = {src: [Document(page_content=t, metadata=m)
+                              for _, t, m in sorted(chunks, key=lambda c: c[0])[:INTRO_CHUNKS]]
+                        for src, chunks in intros.items()}
+
     # The chat model that writes the final answer.
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
@@ -141,6 +162,15 @@ class HybridRetriever:
         self.bm25 = bm25_retriever
         self.top_k = top_k
         self.rrf_k = rrf_k
+        self.intros = {}      # source -> its first chunks (set by load_chain)
+
+    def intros_for(self, docs, max_docs=2):
+        """The opening chunks of the top documents among `docs` that aren't
+        already included — added to the context, not used for ranking."""
+        have = {d.page_content for d in docs}
+        sources = list(dict.fromkeys(d.metadata.get("source", "") for d in docs))[:max_docs]
+        return [i for src in sources for i in self.intros.get(src, [])
+                if i.page_content not in have]
 
     def invoke(self, query):
         # Run both searches. Each returns an ORDERED list of chunks (best first).
@@ -227,9 +257,17 @@ def answer_question(question, retriever, llm, role="public"):
     if USE_RERANK:
         docs = rerank(question, docs, llm, top_n=4)
 
+    # ---- 1c. Add how the top documents BEGIN (title / summary), so a chunk
+    # from the middle of a document is read in context. Citations still come
+    # from the matched chunks only (the intros are appended after them).
+    if hasattr(retriever, "intros_for"):
+        docs = docs + retriever.intros_for(docs)
+
     # ---- 2. AUGMENT ----------------------------------------------------
     # Glue the retrieved chunks together into one block of "context" text.
-    context = "\n\n".join(d.page_content for d in docs)
+    # Each chunk already starts with "[Document title]" (see ingest.py), so the
+    # model knows which document every piece of context comes from.
+    context = "\n\n---\n\n".join(d.page_content for d in docs)
 
     # ---- 3. GENERATE ---------------------------------------------------
     # Fill the prompt template, then ask the AI to write the answer.

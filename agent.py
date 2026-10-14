@@ -192,7 +192,9 @@ def build_agent(role="public", collection=None, outline=True):
 
     @tool
     def wikipedia(topic: str) -> str:
-        """Get a short summary of a general-knowledge topic from Wikipedia."""
+        """Get a short summary of a PUBLIC general-knowledge topic from Wikipedia.
+        LAST RESORT: use only after search_docs found nothing. Never use it for the
+        company's own products, projects, clients, people or documents."""
         try:
             t = topic.strip().replace(" ", "_")
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{t}"
@@ -208,10 +210,10 @@ def build_agent(role="public", collection=None, outline=True):
         """Search Cloudastra's internal knowledge base / wiki. This is the
         company's internal documentation tool (Outline, self-hosted at
         app.cloudastra.co). USE THIS whenever the user mentions any of:
-        Outline, Notion, the wiki, the knowledge base, "internal docs",
+        Outline, the wiki, the knowledge base, "internal docs",
         "internal documentation", "our docs", "company docs", app.cloudastra,
         app.cloudastra.co, runbooks, project notes, how-tos, meeting notes, or
-        engineering knowledge. (People may call it "Notion" or "internal docs"
+        engineering knowledge. (People may call it "the wiki" or "internal docs"
         even though it is Outline — treat all of those as THIS tool.)
         Returns the top matches as short SNIPPETS, each with a document id. To
         read the FULL content of the best match, follow up with read_outline_doc
@@ -285,14 +287,20 @@ def build_agent(role="public", collection=None, outline=True):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(tools)
 
     SYSTEM = SystemMessage(content=(
-        "You are a helpful assistant that solves multi-step questions by CHAINING tools.\n"
-        "- For company policies, handbooks, prices, refund, support, stipend, HR "
-        "rules, or anything in the uploaded company documents: search_docs FIRST. "
-        "If search_docs doesn't have the answer, then try search_outline.\n"
-        "- The internal knowledge base is called Outline (at app.cloudastra.co), "
-        "but people also call it 'Notion', 'the wiki', 'internal docs', "
-        "'internal documentation', or 'our docs'. If the user mentions ANY of "
-        "those names, or app.cloudastra, use the search_outline tool.\n"
+        "You are the company's internal knowledge assistant. You solve multi-step "
+        "questions by CHAINING tools.\n"
+        "- RULE #1: for ANY question about a product, project, client, person, "
+        "document, process, policy, tool or name, call search_docs FIRST — even if "
+        "it sounds like general knowledge (e.g. 'Bible Navigator', 'DevIQ', 'the "
+        "audit'). search_docs covers uploaded files AND everything synced from "
+        "Google Drive / Google Docs / Sheets AND Notion. If it finds nothing, try "
+        "search_outline (when available). Only after those find nothing may you "
+        "use wikipedia, and only for genuinely public world knowledge.\n"
+        "- For company policies, handbooks, prices, refund, support, stipend and HR "
+        "rules: search_docs.\n"
+        "- 'Notion', 'Google Drive', 'Drive', 'Docs' or 'Sheets' -> search_docs (they "
+        "are synced into it). The Outline wiki is at app.cloudastra.co; people "
+        "also call it 'the wiki', 'internal docs' or 'our docs' -> search_outline.\n"
         "- For ANY question about INTERNAL company/team knowledge (runbooks, "
         "project notes, how-tos, engineering docs, meeting notes), ALWAYS follow "
         "this 3-step flow:\n"
@@ -314,7 +322,9 @@ def build_agent(role="public", collection=None, outline=True):
         "year or in another currency, FIRST search_docs for the base MONTHLY rupee "
         "price, THEN use calculator for the math, THEN convert_currency for the currency.\n"
         "- Never ask search_docs for dollars or yearly totals directly — it can't do math.\n"
-        "- Use wikipedia only for general world knowledge, not company facts.\n"
+        "- wikipedia is the LAST resort: only for public world knowledge, and only "
+        "after search_docs found nothing. Never answer a company/project question "
+        "from wikipedia.\n"
         "- Do NOT write your own 'Sources' list or mention document titles as "
         "citations — the app appends a verified Sources list automatically."
     ))

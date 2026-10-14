@@ -74,7 +74,10 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None):
     documents = []
     if os.path.isdir(docs_folder):
         txt_loader = DirectoryLoader(docs_folder, glob="**/*.txt", loader_cls=TextLoader,
-                                     loader_kwargs={"autodetect_encoding": True})
+                                     # UTF-8 first (Windows would otherwise guess cp1252
+                                     # and garble text), detect the encoding only if that fails.
+                                     loader_kwargs={"encoding": "utf-8",
+                                                    "autodetect_encoding": True})
         pdf_loader = DirectoryLoader(docs_folder, glob="**/*.pdf", loader_cls=PyPDFLoader)
         documents = txt_loader.load() + pdf_loader.load()
     _connector_metadata(documents)
@@ -115,9 +118,20 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None):
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=100,
+        add_start_index=True,   # remember where each chunk sits in its document
     )
     chunks = splitter.split_documents(documents)
     print(f"   -> Created {len(chunks)} chunk(s).")
+
+    # CONTEXTUAL CHUNK HEADER: start every chunk with its document's title.
+    # A chunk in the middle of "Bible Navigator — Technical Audit" often never
+    # says "Bible Navigator"; without the title, a search for it misses those
+    # chunks and the model can't tell what they are about.
+    for chunk in chunks:
+        title = chunk.metadata.get("title") or os.path.splitext(
+            os.path.basename(chunk.metadata.get("source", "")))[0]
+        if title and not chunk.page_content.startswith(title):
+            chunk.page_content = f"[{title}]\n{chunk.page_content}"
 
     # ----------------------------------------------------------------
     # 2b. TAG  —  give every chunk an ACCESS LEVEL (permission control).
