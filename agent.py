@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import requests
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
@@ -86,6 +87,20 @@ def _outline_doc_url(doc):
     return path if path.startswith("http") else f"{base}{path}"
 
 
+_STOPWORDS = set("""a an the is are was were be been am do does did what whats what's who whom
+whose which when where why how waht wat tell me about give show explain describe please
+can could would should will shall may might must of in on at to for from by with and or
+not no our your my their its this that these those it i we you they us any some all
+info information details detail regarding""".split())
+
+
+def _keywords(text):
+    """Meaningful words of a question, longest first (for keyword fallbacks)."""
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", text or "")
+    keep = [w for w in dict.fromkeys(words) if w.lower() not in _STOPWORDS]
+    return sorted(keep, key=len, reverse=True)[:3]
+
+
 def _words(text):
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 3}
 
@@ -121,12 +136,20 @@ def needs_retrieval(question):
     return True
 
 
+def _is_not_found(answer):
+    """True when the answer as a whole says "I couldn't find it" — a short
+    refusal, or one that opens with it. A long answer that only notes one
+    missing detail ("X is not specified in the docs") still has sources."""
+    m = _NOT_FOUND.search(answer or "")
+    return bool(m) and (len(answer) < 280 or m.start() < 60)
+
+
 def _chunks_used(answer, docs, min_overlap=0.3):
     """The retrieved chunks the answer actually draws on.
     Retrieval returns the top-k chunks even when only one is relevant, so we
     keep a chunk only if a good share of the answer's words appear in it."""
     answer_words = _words(answer)
-    if not answer_words or not docs or _NOT_FOUND.search(answer):
+    if not answer_words or not docs or _is_not_found(answer):
         return []                     # "I couldn't find..." cites nothing
     scored =[(len(answer_words & _words(d.page_content)) / len(answer_words), d) for d in docs]
     used = [d for score, d in scored if score >= min_overlap]
@@ -301,12 +324,20 @@ def build_agent(role="public", collection=None, outline=True):
             # Outline only returns docs containing ALL the words, so "Project X
             # tech stack" can miss the doc about Project X. With few hits, search
             # again with just the name in the query (its capitalised words).
+            # Typos ("waht is deviq") and question words also break the
+            # all-words match, so then try each keyword on its own.
             name = " ".join(w for w in query.split() if w[:1].isupper())
-            if len(results) < 3 and name and name != query:
-                more, _ = _outline_post("documents.search", {"query": name, "limit": 5})
-                seen = {r.get("document", {}).get("id") for r in results}
-                results += [r for r in (more or {}).get("data", [])
-                            if r.get("document", {}).get("id") not in seen]
+            fallbacks = [name] if name and name != query else []
+            fallbacks += [w for w in _keywords(query) if w.lower() != query.lower()]
+            seen = {r.get("document", {}).get("id") for r in results}
+            for q in fallbacks:
+                if len(results) >= 3:
+                    break
+                more, _ = _outline_post("documents.search", {"query": q, "limit": 5})
+                for r in (more or {}).get("data", []):
+                    if r.get("document", {}).get("id") not in seen:
+                        seen.add(r.get("document", {}).get("id"))
+                        results.append(r)
 
             if not results:
                 return "No matching documents found in the Outline wiki."
@@ -361,11 +392,14 @@ def build_agent(role="public", collection=None, outline=True):
     SYSTEM = SystemMessage(content=(
         "You are the company's internal knowledge assistant. You solve multi-step "
         "questions by CHAINING tools.\n"
-        "- The company docs have ALREADY been searched for the user's question "
-        "(the first search_docs result in the conversation). Answer from it when it "
-        "covers the question. Do NOT call search_docs again with the same query; "
-        "only with a clearly different query (other words, a sub-question) when "
-        "the first result doesn't answer it.\n"
+        "- ALL company sources have ALREADY been searched for the user's question: "
+        "search_docs (uploads + Google Drive + Notion) and, when available, "
+        "search_outline (the wiki) — see their results at the start of the "
+        "conversation. Answer from them when they cover the question. If the wiki "
+        "search lists relevant pages, call read_outline_doc on the best match "
+        "before answering. Do NOT repeat a search with the same query; only with a "
+        "clearly different query (other words, a sub-question) when needed. Use "
+        "wikipedia ONLY if every company source found nothing.\n"
         "- RULE #1: for ANY question about a product, project, client, person, "
         "document, process, policy, tool or name, call search_docs FIRST — even if "
         "it sounds like general knowledge (e.g. 'Bible Navigator', 'DevIQ', 'the "
@@ -428,17 +462,35 @@ def build_agent(role="public", collection=None, outline=True):
                          if isinstance(m, HumanMessage)), "")
         if not needs_retrieval(question):
             return {"messages": []}
-        call_id = "retrieve_first"
-        emit({"type": "step_start", "id": call_id, "tool": "search_docs",
-              "label": step_label("search_docs", {})})
+        # Every connected company source is searched, in code, IN PARALLEL:
+        # the index (uploads + Google Drive + Notion) and, where connected, the
+        # Outline wiki (searched live). The user never has to name the source.
+        searches = [("retrieve_docs", search_docs, "search_docs", {"question": question})]
+        if outline:
+            searches.append(("retrieve_wiki", search_outline, "search_outline",
+                             {"query": question}))
+        for call_id, _, name, args in searches:
+            emit({"type": "step_start", "id": call_id, "tool": name,
+                  "label": step_label(name, args)})
+
         before = len(cited)
-        result = search_docs.invoke({"question": question})
-        emit({"type": "step_end", "id": call_id, "tool": "search_docs",
-              "result": step_result("search_docs", result, len(cited) - before)})
+
+        def run_one(item):
+            call_id, tool_fn, name, args = item
+            out = tool_fn.invoke(args)
+            found = len(cited) - before if name == "search_docs" else None
+            emit({"type": "step_end", "id": call_id, "tool": name,
+                  "result": step_result(name, out, found)})
+            return out
+
+        with ThreadPoolExecutor(max_workers=len(searches)) as pool:
+            outputs = list(pool.map(run_one, searches))
+
         return {"messages": [
-            AIMessage(content="", tool_calls=[{"id": call_id, "name": "search_docs",
-                                               "args": {"question": question}}]),
-            ToolMessage(content=result, tool_call_id=call_id, name="search_docs"),
+            AIMessage(content="", tool_calls=[{"id": call_id, "name": name, "args": args}
+                                              for call_id, _, name, args in searches]),
+            *[ToolMessage(content=out, tool_call_id=call_id, name=name)
+              for (call_id, _, name, _), out in zip(searches, outputs)],
         ]}
 
     builder = StateGraph(MessagesState)
@@ -538,7 +590,7 @@ def build_agent(role="public", collection=None, outline=True):
         if blocked_reply:                 # a guard refused: say exactly why
             answer = blocked_reply[0]
             sources = []
-        elif _NOT_FOUND.search(answer):   # "I couldn't find..." -> nothing to cite
+        elif _is_not_found(answer):       # "I couldn't find..." -> nothing to cite
             sources = []
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)
