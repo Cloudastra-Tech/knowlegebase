@@ -326,4 +326,16 @@ def health():
 _SITE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 if os.path.isdir(_SITE):
     from fastapi.staticfiles import StaticFiles
-    app.mount("/", StaticFiles(directory=_SITE, html=True), name="site")
+
+    class _Site(StaticFiles):
+        """index.html is never cached, so a deploy shows up on the next load.
+        Built assets have content hashes in their names, so they cache forever."""
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            if path.replace("\\", "/").startswith("assets/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.mount("/", _Site(directory=_SITE, html=True), name="site")
