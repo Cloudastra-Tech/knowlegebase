@@ -27,13 +27,14 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     GET    /index/status          background re-index progress
     GET    /knowledge             everything the assistant can search (uploads + synced files)
     GET    /integrations          what this workspace has connected
-    POST   /integrations/google_drive/connect   -> {url} of Google's consent screen (HR / Admin)
-    GET    /integrations/google_drive/callback  Google redirects the browser back here
+    POST   /integrations/{provider}/connect     -> {url} of the consent screen  (HR / Admin)
+    GET    /integrations/{provider}/callback    the provider redirects back here
     GET    /integrations/google_drive/folders   browse folders to pick         (HR / Admin)
     PUT    /integrations/google_drive/folders   {folders} choose what to sync  (HR / Admin)
-    POST   /integrations/google_drive/sync      sync now                      (HR / Admin)
-    DELETE /integrations/google_drive           disconnect + delete copies    (HR / Admin)
-Every document change re-indexes automatically; Drive re-syncs every 30 minutes.
+    POST   /integrations/{provider}/sync        sync now                      (HR / Admin)
+    DELETE /integrations/{provider}             disconnect + delete copies    (HR / Admin)
+  ({provider} = google_drive | notion)
+Every document change re-indexes automatically; connectors re-sync every 30 minutes.
 
 The role (public / hr) is chosen in the UI and sent as "X-Role", exactly like
 the Streamlit dropdown — it is a demo switch, not a security boundary.
@@ -61,7 +62,7 @@ import integrations_store            # noqa: E402
 import sessions_store                # noqa: E402
 import workspaces                    # noqa: E402
 from agent import build_agent        # noqa: E402
-from connectors import google_drive  # noqa: E402
+from connectors import google_drive, notion  # noqa: E402
 
 app = FastAPI(title="Knowledge Assistant API")
 
@@ -69,7 +70,7 @@ SESSION_SECONDS = 12 * 60 * 60
 MAX_FAILED_LOGINS = 5
 LOCKOUT_SECONDS = 60
 STEP_PREVIEW_CHARS = 600
-DRIVE_SYNC_EVERY = 30 * 60        # seconds between automatic Drive syncs
+DRIVE_SYNC_EVERY = 30 * 60        # seconds between automatic connector syncs
 OAUTH_STATE_SECONDS = 10 * 60
 
 _failed_logins = {}       # username -> (count, locked_until)
@@ -89,7 +90,7 @@ _gate = threading.Condition()
 _gate_state = {}          # workspace -> {"indexing": bool, "active": int}
 
 _oauth_states = {}        # state -> {"workspace", "user", "expires", "redirect_uri"}
-_syncing = set()          # workspaces whose Drive sync is running
+_syncing = set()          # (workspace, provider) syncs that are running
 _sync_lock = threading.Lock()
 
 
@@ -359,109 +360,167 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
 
 
 # ---- Integrations ------------------------------------------------------------
-def _sync_drive(ws):
-    """Sync one workspace's Google Drive (background); re-index if anything changed."""
+# Every connector module has the same shape: PROVIDER, configured(), auth_url(),
+# finish_connect(), sync(), disconnect(). The endpoints below work for all of them:
+#   POST   /api/integrations/{provider}/connect   -> {url} of the provider's consent screen
+#   GET    /api/integrations/{provider}/callback  the provider redirects the browser back here
+#   POST   /api/integrations/{provider}/sync      sync now
+#   DELETE /api/integrations/{provider}           disconnect + delete the synced copies
+CONNECTORS = {c.PROVIDER: c for c in (google_drive, notion)}
+LABELS = {"google_drive": "Google Drive", "notion": "Notion"}
+SETUP_ENV = {"google_drive": "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET",
+             "notion": "NOTION_CLIENT_ID / NOTION_CLIENT_SECRET"}
+
+
+def _connector(provider):
+    c = CONNECTORS.get(provider)
+    if not c:
+        raise HTTPException(404, "Unknown integration.")
+    return c
+
+
+def _ready_to_sync(ws, provider):
+    """Drive syncs only what the admin picked; Notion's picking happens on its own
+    consent screen, so anything shared with us is wanted."""
+    if provider != google_drive.PROVIDER:
+        return True
+    row = integrations_store.get(ws, provider) or {}
+    return bool((row.get("settings") or {}).get("folders"))
+
+
+def _sync(ws, provider):
+    """Sync one workspace's connector (background); re-index if anything changed."""
+    key = (ws, provider)
     with _sync_lock:
-        if ws in _syncing:
+        if key in _syncing:
             return
-        _syncing.add(ws)
+        _syncing.add(key)
     try:
-        integrations_store.update(ws, google_drive.PROVIDER, status="syncing", last_error=None)
-        count, changed = google_drive.sync(ws)
-        integrations_store.update(ws, google_drive.PROVIDER, status="connected",
+        integrations_store.update(ws, provider, status="syncing", last_error=None)
+        count, changed = CONNECTORS[provider].sync(ws)
+        integrations_store.update(ws, provider, status="connected",
                                   last_sync_at=time.time(), doc_count=count)
         if changed:
             _schedule_index(ws)
     except Exception as e:
-        integrations_store.update(ws, google_drive.PROVIDER, status="error",
+        integrations_store.update(ws, provider, status="error",
                                   last_error=f"{type(e).__name__}: {e}"[:500])
     finally:
         with _sync_lock:
-            _syncing.discard(ws)
+            _syncing.discard(key)
 
 
-def _start_drive_sync(ws):
-    threading.Thread(target=_sync_drive, args=(ws,), daemon=True).start()
+def _start_sync(ws, provider):
+    threading.Thread(target=_sync, args=(ws, provider), daemon=True).start()
 
 
-def _drive_scheduler():
-    """Re-sync every connected Drive every DRIVE_SYNC_EVERY seconds."""
+def _sync_scheduler():
+    """Re-sync every connected integration every DRIVE_SYNC_EVERY seconds."""
     while True:
         time.sleep(DRIVE_SYNC_EVERY)
-        if not google_drive.configured():
-            continue
-        for row in integrations_store.all_connected(google_drive.PROVIDER):
-            if row["status"] in ("connected", "error"):
-                _start_drive_sync(row["workspace"])
+        for provider, c in CONNECTORS.items():
+            if not c.configured():
+                continue
+            for row in integrations_store.all_connected(provider):
+                if row["status"] in ("connected", "error"):
+                    _start_sync(row["workspace"], provider)
 
 
 @app.on_event("startup")
 def _start_background_jobs():
-    threading.Thread(target=_drive_scheduler, daemon=True).start()
+    threading.Thread(target=_sync_scheduler, daemon=True).start()
 
 
-def _redirect_uri(request: Request):
+def _redirect_uri(request: Request, provider):
     base = os.getenv("PUBLIC_URL") or str(request.base_url)
-    return base.rstrip("/") + "/api/integrations/google_drive/callback"
+    return base.rstrip("/") + f"/api/integrations/{provider}/callback"
+
+
+def _integration_info(ws, provider):
+    row = integrations_store.get(ws, provider)
+    if row:
+        status = row["status"]
+    else:
+        status = "disconnected" if CONNECTORS[provider].configured() else "not_configured"
+    info = {"id": provider, "name": LABELS[provider], "status": status,
+            "account": row and row["account"], "connected_by": row and row["connected_by"],
+            "last_sync_at": row and row["last_sync_at"],
+            "doc_count": (row and row["doc_count"]) or 0,
+            "last_error": row and row["last_error"]}
+    if provider == google_drive.PROVIDER:
+        info["folders"] = ((row and row.get("settings")) or {}).get("folders", [])
+    return info
 
 
 @app.get("/api/integrations")
 def list_integrations(user=Depends(current_user)):
     ws = ws_of(user)
-    drive = integrations_store.get(ws, google_drive.PROVIDER)
-    if drive:
-        drive_status = drive["status"]
-    else:
-        drive_status = "disconnected" if google_drive.configured() else "not_configured"
     return {"workspace": ws, "integrations": [
         {"id": "uploads", "name": "Uploaded files", "status": "connected",
          "doc_count": len(docs_store.list_docs(workspaces.docs_root(ws)))},
-        {"id": "google_drive", "name": "Google Drive", "status": drive_status,
-         "account": drive and drive["account"], "connected_by": drive and drive["connected_by"],
-         "last_sync_at": drive and drive["last_sync_at"],
-         "doc_count": (drive and drive["doc_count"]) or 0,
-         "last_error": drive and drive["last_error"],
-         "folders": ((drive and drive.get("settings")) or {}).get("folders", [])},
+        _integration_info(ws, "google_drive"),
+        _integration_info(ws, "notion"),
         {"id": "outline", "name": "Outline wiki",
          "status": "connected" if outline_on(ws) else "unavailable"},
     ]}
 
 
-@app.post("/api/integrations/google_drive/connect")
-def drive_connect(request: Request, user=Depends(require_hr)):
-    if not google_drive.configured():
-        raise HTTPException(400, "Google Drive isn't set up on this server yet "
-                                 "(GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing).")
+@app.post("/api/integrations/{provider}/connect")
+def integration_connect(provider: str, request: Request, user=Depends(require_hr)):
+    c = _connector(provider)
+    if not c.configured():
+        raise HTTPException(400, f"{LABELS[provider]} isn't set up on this server yet "
+                                 f"({SETUP_ENV[provider]} missing).")
     now = time.time()
     for s in [k for k, v in _oauth_states.items() if v["expires"] < now]:
         del _oauth_states[s]
     state = secrets.token_urlsafe(24)
-    redirect_uri = _redirect_uri(request)
+    redirect_uri = _redirect_uri(request, provider)
     _oauth_states[state] = {"workspace": ws_of(user), "user": user["username"],
-                            "expires": now + OAUTH_STATE_SECONDS, "redirect_uri": redirect_uri}
-    return {"url": google_drive.auth_url(redirect_uri, state)}
+                            "provider": provider, "expires": now + OAUTH_STATE_SECONDS,
+                            "redirect_uri": redirect_uri}
+    return {"url": c.auth_url(redirect_uri, state)}
 
 
-@app.get("/api/integrations/google_drive/callback")
-def drive_callback(state: str = "", code: str = "", error: str = ""):
-    """Google sends the browser back here. The one-time `state` ties it to the
+@app.get("/api/integrations/{provider}/callback")
+def integration_callback(provider: str, state: str = "", code: str = "", error: str = ""):
+    """The provider sends the browser back here. The one-time `state` ties it to the
     workspace and user who clicked Connect (a redirect carries no session header)."""
+    c = _connector(provider)
     pending = _oauth_states.pop(state, None)
-    if not pending or pending["expires"] < time.time():
+    if not pending or pending["expires"] < time.time() or pending.get("provider") != provider:
         return RedirectResponse("/#integrations?error=expired")
     if error or not code:
         return RedirectResponse("/#integrations?error=" + (error or "cancelled"))
+    ws = pending["workspace"]
     try:
-        google_drive.finish_connect(pending["workspace"], code, pending["redirect_uri"],
-                                    pending["user"])
+        c.finish_connect(ws, code, pending["redirect_uri"], pending["user"])
     except Exception:
         return RedirectResponse("/#integrations?error=connect_failed")
-    drive = integrations_store.get(pending["workspace"], google_drive.PROVIDER) or {}
-    if (drive.get("settings") or {}).get("folders"):
-        _start_drive_sync(pending["workspace"])   # reconnect: keep syncing the same folders
-        return RedirectResponse("/#integrations?connected=google_drive")
-    # New connection: nothing is synced until the admin picks folders.
-    return RedirectResponse("/#integrations?connected=google_drive&choose=1")
+    if _ready_to_sync(ws, provider):
+        _start_sync(ws, provider)
+        return RedirectResponse(f"/#integrations?connected={provider}")
+    # Drive, new connection: nothing is synced until the admin picks folders.
+    return RedirectResponse(f"/#integrations?connected={provider}&choose=1")
+
+
+@app.post("/api/integrations/{provider}/sync")
+def integration_sync(provider: str, user=Depends(require_hr)):
+    _connector(provider)
+    ws = ws_of(user)
+    if not integrations_store.get(ws, provider):
+        raise HTTPException(400, f"{LABELS[provider]} isn't connected.")
+    _start_sync(ws, provider)
+    return {"ok": True}
+
+
+@app.delete("/api/integrations/{provider}")
+def integration_disconnect(provider: str, user=Depends(require_hr)):
+    c = _connector(provider)
+    ws = ws_of(user)
+    c.disconnect(ws)
+    _schedule_index(ws)            # drop its files from the search index
+    return {"ok": True}
 
 
 class FoldersIn(BaseModel):
@@ -496,25 +555,8 @@ def drive_set_folders(body: FoldersIn, user=Depends(require_hr)):
                for f in body.folders if f.get("id")][:200]
     settings = dict(drive.get("settings") or {}, folders=folders)
     integrations_store.update(ws, google_drive.PROVIDER, settings=settings)
-    _start_drive_sync(ws)
+    _start_sync(ws, google_drive.PROVIDER)
     return {"folders": folders}
-
-
-@app.post("/api/integrations/google_drive/sync")
-def drive_sync(user=Depends(require_hr)):
-    ws = ws_of(user)
-    if not integrations_store.get(ws, google_drive.PROVIDER):
-        raise HTTPException(400, "Google Drive isn't connected.")
-    _start_drive_sync(ws)
-    return {"ok": True}
-
-
-@app.delete("/api/integrations/google_drive")
-def drive_disconnect(user=Depends(require_hr)):
-    ws = ws_of(user)
-    google_drive.disconnect(ws)
-    _schedule_index(ws)            # drop the Drive files from the search index
-    return {"ok": True}
 
 
 @app.get("/api/knowledge")

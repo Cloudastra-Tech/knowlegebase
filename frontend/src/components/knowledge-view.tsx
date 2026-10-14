@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-react"
-import { siGoogledrive } from "simple-icons"
+import { siGoogledrive, siNotion } from "simple-icons"
 
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -19,10 +19,11 @@ function when(modified: KnowledgeItem["modified"]) {
 }
 
 function SourceIcon({ source }: { source: string }) {
-  if (source === "Google Drive")
+  const brand = source === "Google Drive" ? siGoogledrive : source === "Notion" ? siNotion : null
+  if (brand)
     return (
       <svg viewBox="0 0 24 24" className="size-4 shrink-0 fill-current text-muted-foreground" aria-hidden>
-        <path d={siGoogledrive.path} />
+        <path d={brand.path} />
       </svg>
     )
   return <FileText className="size-4 shrink-0 text-muted-foreground" />
@@ -121,7 +122,7 @@ export function KnowledgeView() {
           </div>
         ) : visible.length === 0 ? (
           <p className="p-10 text-center text-sm text-muted-foreground">
-            {items.length ? "Nothing matches your search." : "No documents yet. Upload files or connect Google Drive."}
+            {items.length ? "Nothing matches your search." : "No documents yet. Upload files or connect Google Drive or Notion."}
           </p>
         ) : (
           visible.map((i) => (

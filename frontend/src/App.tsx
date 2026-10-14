@@ -63,23 +63,25 @@ export default function App() {
     session.setRole("hr")
     setRole("hr")
     setScreen("integrations")
-    if (params.get("connected")) {
+    const connected = params.get("connected")
+    if (connected) {
+      const name = connected === "notion" ? "Notion" : "Google Drive"
       const choose = params.get("choose") === "1"
       setOpenDrivePicker(choose)
       toast.success(
         choose
-          ? "Google Drive connected. Now choose which folders or files to sync."
-          : "Google Drive connected. Syncing your selection…",
+          ? `${name} connected. Now choose which folders or files to sync.`
+          : `${name} connected. Syncing…`,
       )
     }
     const error = params.get("error")
     if (error) {
       const why: Record<string, string> = {
-        access_denied: "Access to Google Drive was not granted.",
+        access_denied: "Access was not granted.",
         expired: "The connection request expired. Please try again.",
-        connect_failed: "Couldn't finish connecting Google Drive. Please try again.",
+        connect_failed: "Couldn't finish connecting. Please try again.",
       }
-      toast.error(why[error] ?? "Google Drive was not connected.")
+      toast.error(why[error] ?? "The integration was not connected.")
     }
   }, [user])
 

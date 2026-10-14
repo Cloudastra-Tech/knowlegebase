@@ -18,7 +18,7 @@ export type IntegrationStatus =
   | "unavailable"
 
 export interface Integration {
-  id: "uploads" | "google_drive" | "outline"
+  id: "uploads" | "google_drive" | "notion" | "outline"
   name: string
   status: IntegrationStatus
   doc_count?: number
@@ -190,9 +190,15 @@ export const api = {
 
   integrations: () =>
     request<{ workspace: string; integrations: Integration[] }>("/integrations"),
-  connectDrive: () =>
-    request<{ url: string }>("/integrations/google_drive/connect", { method: "POST" }),
-  syncDrive: () => request<{ ok: boolean }>("/integrations/google_drive/sync", { method: "POST" }),
+  // Generic for every connector: provider = "google_drive" | "notion".
+  connectIntegration: (provider: string) =>
+    request<{ url: string }>(`/integrations/${provider}/connect`, { method: "POST" }),
+  syncIntegration: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${provider}/sync`, { method: "POST" }),
+  disconnectIntegration: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${provider}`, { method: "DELETE" }),
+  connectDrive: () => api.connectIntegration("google_drive"),
+  syncDrive: () => api.syncIntegration("google_drive"),
   driveFolders: (parent?: string) =>
     request<{ drives: DriveFolder[]; folders: DriveFolder[]; files: DriveFolder[] }>(
       `/integrations/google_drive/folders${parent ? `?parent=${encodeURIComponent(parent)}` : ""}`,
@@ -202,8 +208,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ folders }),
     }),
-  disconnectDrive: () =>
-    request<{ ok: boolean }>("/integrations/google_drive", { method: "DELETE" }),
+  disconnectDrive: () => api.disconnectIntegration("google_drive"),
 
   // PDFs need the auth header, so fetch them as a blob instead of a plain link.
   async downloadDoc(d: Doc) {

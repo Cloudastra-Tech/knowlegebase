@@ -297,8 +297,131 @@ function GoogleDriveCard({
   )
 }
 
+function NotionCard({ item, onChange }: { item: Integration; onChange: () => void }) {
+  const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null)
+
+  async function connect() {
+    setBusy("connect")
+    try {
+      const { url } = await api.connectIntegration("notion")
+      window.location.href = url // Notion's screen, where the pages to share are picked
+    } catch (err) {
+      toast.error(errorText(err))
+      setBusy(null)
+    }
+  }
+
+  async function sync() {
+    setBusy("sync")
+    try {
+      await api.syncIntegration("notion")
+      toast.success("Syncing Notion…")
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function disconnect() {
+    setBusy("disconnect")
+    try {
+      await api.disconnectIntegration("notion")
+      toast.success("Notion disconnected. Its pages were removed from search.")
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const connected = ["connected", "syncing", "error"].includes(item.status)
+
+  return (
+    <Card
+      icon={<BrandIcon icon={siNotion} />}
+      title="Notion"
+      subtitle="Pages, sub-pages and database rows"
+      status={item.status}
+    >
+      {item.status === "not_configured" && (
+        <p className="text-sm text-muted-foreground">
+          The server needs a Notion public integration before Notion can be connected
+          (NOTION_CLIENT_ID / NOTION_CLIENT_SECRET). Ask your admin to set it up.
+        </p>
+      )}
+
+      {item.status === "disconnected" && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Read-only. On Notion's screen you pick exactly which pages to share; only those
+            and their sub-pages are synced, then cited with a link back to Notion.
+          </p>
+          <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
+            {busy === "connect" && <Loader2 className="animate-spin" />}
+            Connect Notion
+          </Button>
+        </>
+      )}
+
+      {connected && (
+        <>
+          <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
+            <Stat label="Workspace" value={item.account || "—"} />
+            <Stat label="Pages" value={item.doc_count ?? 0} />
+            <Stat label="Last sync" value={item.status === "syncing" ? "now" : timeAgo(item.last_sync_at)} />
+          </div>
+          {item.status === "error" && item.last_error && (
+            <p className="mt-3 text-sm text-destructive">{item.last_error}</p>
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={sync}
+              disabled={busy !== null || item.status === "syncing"}
+            >
+              {busy === "sync" || item.status === "syncing" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <RefreshCw />
+              )}
+              Sync now
+            </Button>
+            <Button size="sm" variant="outline" onClick={connect} disabled={busy !== null}>
+              <FolderCog /> Change pages
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="ghost" className="text-destructive" disabled={busy !== null}>
+                  <Unplug /> Disconnect
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Disconnect Notion?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Every synced Notion page is deleted from this workspace and its search index.
+                    Your pages in Notion are not touched. To remove our access on Notion's side
+                    too, open Notion → Settings → Connections.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={disconnect}>Disconnect</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </>
+      )}
+    </Card>
+  )
+}
+
 const SOON: { name: string; icon?: SimpleIcon; letter?: string }[] = [
-  { name: "Notion", icon: siNotion },
   { name: "Confluence", icon: siConfluence },
   { name: "SharePoint", letter: "S" },
   { name: "Slack", letter: "#" },
@@ -374,6 +497,8 @@ export function IntegrationsView({
                 autoOpenPicker={openDrivePicker}
               />
             )}
+
+            {byId.notion && <NotionCard item={byId.notion} onChange={load} />}
 
             {byId.uploads && (
               <Card
