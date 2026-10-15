@@ -4,17 +4,26 @@ import remarkGfm from "remark-gfm"
 import {
   ArrowUp,
   BookOpen,
+  Check,
   ChevronRight,
   ExternalLink,
   FileText,
+  Loader2,
   Sparkles,
-  Wrench,
+  TriangleAlert,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Skeleton } from "@/components/ui/skeleton"
-import { api, type ChatReply, type Role, type Source } from "@/lib/api"
+import { api, type ChatReply, type Role, type Source, type StreamEvent } from "@/lib/api"
+
+// One step the assistant took, shown live while it works ("Searching company docs").
+interface LiveStep {
+  id: string
+  label: string
+  result?: string
+  done: boolean
+}
 
 interface Message {
   id: number
@@ -22,6 +31,9 @@ interface Message {
   text: string
   reply?: ChatReply
   error?: boolean
+  streaming?: boolean
+  status?: string
+  steps?: LiveStep[]
 }
 
 const SUGGESTIONS = [
@@ -55,23 +67,106 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
   )
 }
 
+function StepRow({ step }: { step: LiveStep }) {
+  const blocked = step.result === "blocked by access rules" || step.result === "failed"
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
+        {!step.done ? (
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+        ) : blocked ? (
+          <TriangleAlert className="size-3.5 text-amber-600" />
+        ) : (
+          <Check className="size-3.5 text-emerald-600" />
+        )}
+      </span>
+      <span className={step.done ? "text-muted-foreground" : "text-foreground"}>
+        {step.label}
+        {step.done ? "" : "…"}
+        {step.result && <span className="text-muted-foreground/80"> · {step.result}</span>}
+      </span>
+    </div>
+  )
+}
+
+// What the assistant did: live while it works, then folded into one line.
+function StepsPanel({ message }: { message: Message }) {
+  const steps = message.steps ?? []
+  const details = message.reply?.steps ?? []
+  if (message.streaming) {
+    return (
+      <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
+        {steps.length === 0 && (
+          <div className="flex items-center gap-2 text-xs text-foreground">
+            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+            {message.status ?? "Thinking"}…
+          </div>
+        )}
+        {steps.map((st) => (
+          <StepRow key={st.id} step={st} />
+        ))}
+      </div>
+    )
+  }
+  if (!steps.length) return null
+  const summary = steps.map((st) => st.label).join(" · ")
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground">
+        <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+        <Check className="size-3.5 shrink-0 text-emerald-600" />
+        <span className="shrink-0">
+          {steps.length} step{steps.length === 1 ? "" : "s"}
+        </span>
+        <span className="truncate opacity-70">· {summary}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 space-y-2">
+        <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
+          {steps.map((st) => (
+            <StepRow key={st.id} step={st} />
+          ))}
+        </div>
+        {details.map((step, i) => (
+          <div key={i} className="rounded-lg border bg-muted/40 p-3 text-xs">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="font-medium">Step {i + 1}</span>
+              <Badge variant="outline" className="font-mono">
+                {step.tool}
+              </Badge>
+            </div>
+            <p className="font-mono text-muted-foreground">input: {JSON.stringify(step.input)}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{step.output}</p>
+          </div>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 function AssistantMessage({ message }: { message: Message }) {
   const reply = message.reply
   return (
     <div className="flex gap-3">
       <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-        <Sparkles className="size-4" />
+        <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
       </div>
       <div className="min-w-0 flex-1 space-y-3 pt-1">
-        <div
-          className={
-            message.error
-              ? "text-sm text-destructive"
-              : "max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
-          }
-        >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
-        </div>
+        <StepsPanel message={message} />
+
+        {message.text && (
+          <div
+            className={
+              message.error
+                ? "text-sm text-destructive"
+                : "max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
+            }
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+            {message.streaming && (
+              <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-foreground/60" />
+            )}
+          </div>
+        )}
 
         {reply && reply.sources.length > 0 && (
           <div className="space-y-2">
@@ -84,34 +179,6 @@ function AssistantMessage({ message }: { message: Message }) {
               ))}
             </div>
           </div>
-        )}
-
-        {reply && reply.steps.length > 0 && (
-          <Collapsible>
-            <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-              <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
-              <Wrench className="size-3.5" />
-              Agent steps ({reply.steps.length} tool call{reply.steps.length === 1 ? "" : "s"})
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2 space-y-2">
-              {reply.steps.map((step, i) => (
-                <div key={i} className="rounded-lg border bg-muted/40 p-3 text-xs">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="font-medium">Step {i + 1}</span>
-                    <Badge variant="outline" className="font-mono">
-                      {step.tool}
-                    </Badge>
-                  </div>
-                  <p className="font-mono text-muted-foreground">
-                    input: {JSON.stringify(step.input)}
-                  </p>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
-                    {step.output}
-                  </p>
-                </div>
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
         )}
       </div>
     </div>
@@ -142,24 +209,50 @@ export function ChatView({ role }: { role: Role }) {
     const q = question.trim()
     if (!q || loading) return
     setInput("")
-    setMessages((m) => [...m, { id: nextId.current++, role: "user", text: q }])
+    const id = nextId.current + 1
+    nextId.current += 2
+    setMessages((m) => [
+      ...m,
+      { id: id - 1, role: "user", text: q },
+      { id, role: "assistant", text: "", streaming: true, status: "Thinking", steps: [] },
+    ])
     setLoading(true)
+    const update = (fn: (msg: Message) => Message) =>
+      setMessages((all) => all.map((msg) => (msg.id === id ? fn(msg) : msg)))
+
+    function onEvent(e: StreamEvent) {
+      if (e.type === "status") update((msg) => ({ ...msg, status: e.text }))
+      else if (e.type === "step_start")
+        update((msg) => ({
+          ...msg,
+          steps: [...(msg.steps ?? []), { id: e.id, label: e.label, done: false }],
+        }))
+      else if (e.type === "step_end")
+        update((msg) => ({
+          ...msg,
+          steps: (msg.steps ?? []).map((st) =>
+            st.id === e.id ? { ...st, done: true, result: e.result } : st,
+          ),
+        }))
+      else if (e.type === "answer") update((msg) => ({ ...msg, text: e.text }))
+    }
+
     try {
-      const reply = await api.chat(q)
-      setMessages((m) => [
-        ...m,
-        { id: nextId.current++, role: "assistant", text: reply.answer, reply },
-      ])
+      const reply = await api.chatStream(q, onEvent)
+      update((msg) => ({
+        ...msg,
+        text: reply.answer, // the final, checked answer replaces the streamed draft
+        reply,
+        streaming: false,
+        steps: (msg.steps ?? []).map((st) => ({ ...st, done: true })),
+      }))
     } catch (err) {
-      setMessages((m) => [
-        ...m,
-        {
-          id: nextId.current++,
-          role: "assistant",
-          text: err instanceof Error ? err.message : "Something went wrong.",
-          error: true,
-        },
-      ])
+      update((msg) => ({
+        ...msg,
+        text: err instanceof Error ? err.message : "Something went wrong.",
+        error: true,
+        streaming: false,
+      }))
     } finally {
       setLoading(false)
     }
@@ -218,18 +311,6 @@ export function ChatView({ role }: { role: Role }) {
             ),
           )}
 
-          {loading && (
-            <div className="flex gap-3">
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                <Sparkles className="size-4 animate-pulse" />
-              </div>
-              <div className="flex-1 space-y-2 pt-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-                <p className="text-xs text-muted-foreground">Searching documents…</p>
-              </div>
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
       </div>

@@ -63,6 +63,15 @@ export interface ChatReply {
   steps: Step[]
 }
 
+// Events from POST /api/chat/stream (see api.py chat_stream).
+export type StreamEvent =
+  | { type: "status"; text: string }
+  | { type: "step_start"; id: string; tool: string; label: string }
+  | { type: "step_end"; id: string; tool: string; result: string }
+  | { type: "answer"; text: string }
+  | ({ type: "done" } & ChatReply)
+  | { type: "error"; message: string }
+
 export interface IndexStatus {
   status: "idle" | "indexing" | "error"
   step: number
@@ -190,6 +199,50 @@ export const api = {
 
   chat: (question: string) =>
     request<ChatReply>("/chat", { method: "POST", body: JSON.stringify({ question }) }),
+
+  // Live version of chat(): calls onEvent for each step / answer update as it
+  // happens (Server-Sent Events), and resolves with the final reply.
+  async chatStream(question: string, onEvent: (e: StreamEvent) => void): Promise<ChatReply> {
+    const res = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`,
+        "X-Role": session.role,
+      },
+      body: JSON.stringify({ question }),
+    })
+    if (!res.ok || !res.body) {
+      let message = `Request failed (${res.status})`
+      try {
+        const data = await res.json()
+        if (typeof data.detail === "string") message = data.detail
+      } catch {
+        /* not JSON */
+      }
+      if (res.status === 401) onUnauthorized()
+      throw new ApiError(res.status, message)
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let cut
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const line = buffer.slice(0, cut).trim()
+        buffer = buffer.slice(cut + 2)
+        if (!line.startsWith("data:")) continue
+        const event = JSON.parse(line.slice(5)) as StreamEvent
+        if (event.type === "done") return event
+        if (event.type === "error") throw new ApiError(500, event.message)
+        onEvent(event)
+      }
+    }
+    throw new ApiError(500, "The answer stream ended unexpectedly.")
+  },
 
   listDocs: () => request<{ docs: Doc[] }>("/docs"),
   readDoc: (d: { access: Access; name: string }) => request<{ content: string }>(docPath(d)),
