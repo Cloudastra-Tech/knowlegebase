@@ -4,7 +4,8 @@ members_store.py  —  WHO may sign in to which workspace, and with which role.
 It lives in the same small SQLite file as the sessions and integrations
 (config/app.db), so it can be changed from the app instead of by editing files:
 
-    workspaces         one row per company
+    workspaces         one row per company; require_sso turns passwords off for
+                       everyone but its admins (their way in if the provider breaks)
     workspace_domains  email domains a workspace owns; only VERIFIED ones let
                        anyone in, and a domain is verified for one workspace at most
     members            everyone who can sign in: password accounts, and people
@@ -93,6 +94,8 @@ _NEW_COLUMNS = (
     ("members", "groups", "TEXT"),                  # JSON list, as last sent
     ("members", "disabled", "INTEGER NOT NULL DEFAULT 0"),
     ("sso_connections", "group_claim", "TEXT"),
+    ("sso_connections", "logout_at_idp", "INTEGER NOT NULL DEFAULT 0"),
+    ("workspaces", "require_sso", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -190,7 +193,7 @@ def _import_old_files(conn):
             log.exception("Couldn't read %s, so it wasn't imported", path)
             continue
         copy(conn, data)
-        conn.execute("INSERT INTO imports VALUES (?, ?)", (source, time.time()))
+        conn.execute("INSERT INTO imports (source, imported_at) VALUES (?, ?)", (source, time.time()))
         log.warning("Imported %s into the database; edits to it are no longer read.", path)
 
 
@@ -221,7 +224,8 @@ def _copy_sso(conn, config):
             taken = conn.execute("""SELECT 1 FROM workspace_domains
                                     WHERE domain = ? AND verified_at IS NOT NULL""",
                                  (domain,)).fetchone()
-            conn.execute("INSERT OR IGNORE INTO workspace_domains VALUES (?, ?, NULL, ?)",
+            conn.execute("INSERT OR IGNORE INTO workspace_domains (workspace, domain, verify_token, verified_at) "
+                         "VALUES (?, ?, NULL, ?)",
                          (slug, domain, None if taken else time.time()))
         for email in ws.get("hr", []):
             email = email.strip().lower()
@@ -235,7 +239,24 @@ def _copy_sso(conn, config):
 
 
 def _ensure_workspace(conn, slug):
-    conn.execute("INSERT OR IGNORE INTO workspaces VALUES (?, ?, ?)", (slug, slug, time.time()))
+    conn.execute("INSERT OR IGNORE INTO workspaces (slug, name, created_at) VALUES (?, ?, ?)",
+                 (slug, slug, time.time()))
+
+
+# ---- Workspaces ----------------------------------------------------------------
+def requires_sso(workspace):
+    """Does this workspace allow passwords only for its admins?"""
+    with _db() as conn:
+        row = conn.execute("SELECT require_sso FROM workspaces WHERE slug = ?",
+                           (workspace,)).fetchone()
+    return bool(row and row["require_sso"])
+
+
+def set_requires_sso(workspace, on):
+    with _lock, _db() as conn:
+        _ensure_workspace(conn, workspace)
+        conn.execute("UPDATE workspaces SET require_sso = ? WHERE slug = ?",
+                     (int(bool(on)), workspace))
 
 
 # ---- Domains -------------------------------------------------------------------
@@ -267,7 +288,8 @@ def add_verified_domain(workspace, domain):
         if owner and owner["workspace"] != workspace:
             raise ValueError(f"{domain} already belongs to the workspace {owner['workspace']}.")
         _ensure_workspace(conn, workspace)
-        conn.execute("""INSERT INTO workspace_domains VALUES (?, ?, NULL, ?)
+        conn.execute("""INSERT INTO workspace_domains (workspace, domain, verify_token, verified_at)
+                        VALUES (?, ?, NULL, ?)
                         ON CONFLICT (workspace, domain)
                         DO UPDATE SET verified_at = excluded.verified_at""",
                      (workspace, domain, time.time()))
@@ -467,6 +489,7 @@ def _connection(row):
     c.pop("secret", None)                 # only connection_keys() hands that out
     c["metadata"] = json.loads(c["metadata"] or "{}")
     c["enabled"] = bool(c["enabled"])
+    c["logout_at_idp"] = bool(c.get("logout_at_idp"))
     return c
 
 
@@ -500,9 +523,10 @@ def update_connection(workspace, cid, **fields):
                                             **fields.pop("keys")})
     if "metadata" in fields:
         fields["metadata"] = json.dumps(fields["metadata"])
-    if "enabled" in fields:
-        fields["enabled"] = int(bool(fields["enabled"]))
-    allowed = {"label", "issuer", "client_id", "secret", "metadata", "enabled"}
+    for flag in ("enabled", "logout_at_idp"):
+        if flag in fields:
+            fields[flag] = int(bool(fields[flag]))
+    allowed = {"label", "issuer", "client_id", "secret", "metadata", "enabled", "logout_at_idp"}
     if set(fields) - allowed:
         raise ValueError(f"Can't change {', '.join(sorted(set(fields) - allowed))}.")
     cols = "".join(f"{k} = ?, " for k in fields)
@@ -560,7 +584,8 @@ def remember_saml_request(cid, request_id, seconds):
     now = time.time()
     with _lock, _db() as conn:
         conn.execute("DELETE FROM saml_requests WHERE expires < ?", (now,))
-        conn.execute("INSERT INTO saml_requests VALUES (?, ?, ?)", (request_id, cid, now + seconds))
+        conn.execute("INSERT INTO saml_requests (request_id, connection_id, expires) "
+                     "VALUES (?, ?, ?)", (request_id, cid, now + seconds))
 
 
 def open_saml_requests(cid):
@@ -583,7 +608,8 @@ def first_use_of_assertion(assertion_id, expires):
     now = time.time()
     with _lock, _db() as conn:
         conn.execute("DELETE FROM saml_assertions WHERE expires < ?", (now,))
-        return conn.execute("INSERT OR IGNORE INTO saml_assertions VALUES (?, ?)",
+        return conn.execute("INSERT OR IGNORE INTO saml_assertions (assertion_id, expires) "
+                            "VALUES (?, ?)",
                             (assertion_id, max(expires, now + 60))).rowcount == 1
 
 
@@ -631,6 +657,7 @@ def set_group_rules(workspace, cid, group_claim, rules):
         for group, role in rules:
             if group.strip().lower() not in seen:
                 seen.add(group.strip().lower())
-                conn.execute("INSERT INTO group_role_rules VALUES (?, ?, ?)",
+                conn.execute("INSERT INTO group_role_rules (connection_id, group_name, role) "
+                             "VALUES (?, ?, ?)",
                              (cid, group.strip(), role))
     return True

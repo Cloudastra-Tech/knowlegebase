@@ -19,6 +19,7 @@ dotenv.load_dotenv = lambda *args, **kwargs: False
 _tmp = tempfile.mkdtemp(prefix="kb-tests-")
 atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ.setdefault("OPENAI_API_KEY", "sk-test")
+os.environ["RATE_LIMITS"] = "off"         # every test signs in from the same address
 os.environ.update(APP_DB=os.path.join(_tmp, "app.db"),
                   USERS_FILE=os.path.join(_tmp, "users.json"),
                   SSO_CONFIG=os.path.join(_tmp, "sso.json"))
