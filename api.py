@@ -17,6 +17,8 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     POST   /auth/login            {username, password} -> {token, user}
     GET    /auth/sso/{provider}/start      send the browser to Google / Microsoft
     GET    /auth/sso/{provider}/callback   they send it back here (sso.py decides who gets in)
+    POST   /auth/sso/discover     {email} -> {connections} the workspace's own sign-in providers
+    GET    /auth/sso/c/{id}/start | /callback   the same, through one of those providers
     POST   /auth/sso/exchange     {code} -> {token, user}   the one-time code from the callback
     POST   /auth/logout
     GET    /auth/me
@@ -39,6 +41,13 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     POST   /integrations/{provider}/sync        sync now                      (HR / Admin)
     DELETE /integrations/{provider}             disconnect + delete copies    (HR / Admin)
   ({provider} = google_drive | notion)
+    GET    /admin/sign-in         this workspace's domains and sign-in providers  (admin)
+    POST   /admin/sign-in/domains {domain} -> the DNS record that proves it      (admin)
+    POST   /admin/sign-in/domains/{domain}/verify   check the DNS record          (admin)
+    DELETE /admin/sign-in/domains/{domain}                                         (admin)
+    POST   /admin/sign-in/connections {label, issuer, client_id, client_secret}    (admin)
+    PATCH  /admin/sign-in/connections/{id} change any of those, or {enabled}       (admin)
+    DELETE /admin/sign-in/connections/{id}                                         (admin)
 Every document change re-indexes automatically; connectors re-sync every 30 minutes.
 
 ROLES come from the account (members_store.py): public, hr or admin. Admin
@@ -52,15 +61,17 @@ import io
 import logging
 import queue
 import os
+import re
 import secrets
 import sqlite3
 import threading
 import time
+import urllib.parse
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 load_dotenv()
@@ -72,6 +83,7 @@ import integrations_store            # noqa: E402
 import members_store                 # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
+import sso_setup                     # noqa: E402
 import workspaces                    # noqa: E402
 from agent import build_agent        # noqa: E402
 from connectors import google_drive, notion  # noqa: E402
@@ -93,6 +105,7 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET") or 
                    https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
 
 SESSION_SECONDS = 12 * 60 * 60
+EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}$")
 MAX_FAILED_LOGINS = 5
 LOCKOUT_SECONDS = 60
 STEP_PREVIEW_CHARS = 600
@@ -143,7 +156,8 @@ def current_user(authorization: str = Header(default="")):
     # Workspace and role are looked up again on EVERY request, so removing someone
     # (or their HR role) takes effect now, not when their 12-hour session ends.
     try:
-        access = (sso.access_for(user["username"], user.get("org")) if user.get("provider")
+        access = (sso.access_for(user["username"], user.get("org"), user.get("connection"))
+                  if user.get("provider")
                   else auth.access_for(user["username"]))
     except (OSError, sqlite3.Error):         # e.g. the database can't be read
         log.exception("Couldn't read the sign-in settings")
@@ -164,6 +178,15 @@ def require_hr(user=Depends(current_user), role=Depends(current_role)):
         raise HTTPException(403, "Switch to HR / Admin to manage documents and integrations."
                             if user["role"] in members_store.STAFF_ROLES else
                             "Only HR / Admin accounts can manage documents and integrations.")
+    return user
+
+
+def require_admin(user=Depends(current_user), role=Depends(current_role)):
+    """Admins only, and not while viewing the app as a public user."""
+    if user["role"] != "admin" or role != "hr":
+        raise HTTPException(403, "Switch to HR / Admin to change sign-in settings."
+                            if user["role"] == "admin" else
+                            "Only admins can change sign-in settings.")
     return user
 
 
@@ -230,25 +253,83 @@ async def sso_callback(provider: str, request: Request):
     c = sso.client(provider)
     if not c:
         return RedirectResponse("/#login?error=sso_unavailable")
+    return await _finish_sso(provider, c, request, lambda claims: sso.user_for(provider, claims))
+
+
+async def _finish_sso(name, c, request, user_for):
+    """The provider sent the browser back: check its answer, then hand the
+    browser a one-time code for the session."""
     error = request.query_params.get("error")
     if error:                      # the provider refused; log why (e.g. admin consent needed)
-        log.warning("SSO %s: provider returned %s: %s", provider, error,
+        log.warning("SSO %s: provider returned %s: %s", name, error,
                     request.query_params.get("error_description", ""))
         return RedirectResponse("/#login?error="
                                 + ("cancelled" if error == "access_denied" else "sso_failed"))
     try:
         token = await c.authorize_access_token(request)    # checks state + the ID token
     except Exception:
-        log.exception("SSO %s: sign-in callback failed", provider)
+        log.exception("SSO %s: sign-in callback failed", name)
         return RedirectResponse("/#login?error=sso_failed")
     try:
-        user = sso.user_for(provider, token.get("userinfo") or {})
+        user = user_for(token.get("userinfo") or {})
     except sso.NotAllowed as e:
         return RedirectResponse(f"/#login?error={e.reason}")
     except Exception:              # e.g. the database can't be read
-        log.exception("SSO %s: couldn't decide who gets in", provider)
+        log.exception("SSO %s: couldn't decide who gets in", name)
         return RedirectResponse("/#login?error=sso_failed")
     return RedirectResponse("/#sso?code=" + sso.issue_code(user))
+
+
+# A workspace's own provider, found from the email someone types on the login page.
+class EmailIn(BaseModel):
+    email: str = Field(max_length=320)
+
+
+def _usable_connection(cid):
+    try:
+        conn = members_store.get_connection(cid)
+    except sqlite3.Error:
+        log.exception("Couldn't read sign-in connection %s", cid)
+        return None
+    return conn if conn and conn["enabled"] else None
+
+
+@app.post("/api/auth/sso/discover")
+def sso_discover(body: EmailIn):
+    email = body.email.strip().lower()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(400, "Enter your work email address.")
+    try:
+        conns = sso.connections_for_email(email)
+    except sqlite3.Error:
+        log.exception("Couldn't look up sign-in for an email")
+        raise HTTPException(503, "Sign-in settings can't be read. Please try again.")
+    hint = urllib.parse.urlencode({"login_hint": email})
+    return {"connections": [{"id": c["id"], "name": c["label"],
+                             "url": f"/api/auth/sso/c/{c['id']}/start?{hint}"} for c in conns]}
+
+
+@app.get("/api/auth/sso/c/{cid}/start")
+async def sso_connection_start(cid: str, request: Request, login_hint: str = ""):
+    conn = _usable_connection(cid)
+    if not conn:
+        return RedirectResponse("/#login?error=sso_unavailable")
+    extra = {"login_hint": login_hint} if EMAIL_RE.match(login_hint) else {}
+    try:
+        return await sso.connection_client(conn).authorize_redirect(
+            request, _public_url(request, f"/api/auth/sso/c/{cid}/callback"), **extra)
+    except Exception:
+        log.exception("SSO connection %s: couldn't start sign-in", cid)
+        return RedirectResponse("/#login?error=sso_failed")
+
+
+@app.get("/api/auth/sso/c/{cid}/callback")
+async def sso_connection_callback(cid: str, request: Request):
+    conn = _usable_connection(cid)
+    if not conn:
+        return RedirectResponse("/#login?error=sso_unavailable")
+    return await _finish_sso(f"connection {cid}", sso.connection_client(conn), request,
+                             lambda claims: sso.user_for_connection(conn, claims))
 
 
 @app.post("/api/auth/sso/exchange")
@@ -270,6 +351,129 @@ def logout(authorization: str = Header(default="")):
 @app.get("/api/auth/me")
 def me(user=Depends(current_user)):
     return user
+
+
+# ---- Sign-in settings: a workspace's domains and its own providers (admin) -------
+class DomainIn(BaseModel):
+    domain: str = Field(max_length=260)
+
+
+class ConnectionIn(BaseModel):
+    label: str = Field(min_length=1, max_length=60)
+    issuer: str = Field(max_length=500)
+    client_id: str = Field(min_length=1, max_length=300)
+    client_secret: str = Field(min_length=1, max_length=2000)
+
+
+class ConnectionPatch(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    issuer: str | None = Field(default=None, max_length=500)
+    client_id: str | None = Field(default=None, min_length=1, max_length=300)
+    client_secret: str | None = Field(default=None, min_length=1, max_length=2000)
+    enabled: bool | None = None
+
+
+def _domain_out(row):
+    name, value = members_store.txt_record(row) if row["verify_token"] else (None, None)
+    return {"domain": row["domain"], "verified": row["verified_at"] is not None,
+            "verified_at": row["verified_at"], "txt_name": name, "txt_value": value}
+
+
+def _connection_out(request, c):
+    """Everything the admin screen shows; never the client secret."""
+    return {"id": c["id"], "protocol": c["protocol"], "label": c["label"],
+            "issuer": c["issuer"], "client_id": c["client_id"], "enabled": c["enabled"],
+            "created_at": c["created_at"], "last_login_at": c["last_login_at"],
+            "redirect_uri": _public_url(request, f"/api/auth/sso/c/{c['id']}/callback")}
+
+
+def _setup_error(e):
+    return HTTPException(400, str(e))
+
+
+@app.get("/api/admin/sign-in")
+def sign_in_settings(request: Request, user=Depends(require_admin)):
+    ws = ws_of(user)
+    return {"domains": [_domain_out(d) for d in members_store.list_domains(ws)],
+            "connections": [_connection_out(request, c)
+                            for c in members_store.list_connections(ws)]}
+
+
+@app.post("/api/admin/sign-in/domains")
+def add_domain(body: DomainIn, user=Depends(require_admin)):
+    try:
+        domain = sso_setup.normalize_domain(body.domain)
+    except sso_setup.SetupError as e:
+        raise _setup_error(e)
+    return _domain_out(members_store.claim_domain(ws_of(user), domain))
+
+
+@app.post("/api/admin/sign-in/domains/{domain}/verify")
+def verify_domain(domain: str, user=Depends(require_admin)):
+    ws = ws_of(user)
+    row = members_store.get_domain(ws, domain)
+    if not row:
+        raise HTTPException(404, "Add the domain first.")
+    if row["verified_at"] is None:
+        name, value = members_store.txt_record(row)
+        if value not in sso_setup.txt_values(name):
+            raise HTTPException(400, f"No TXT record {name} with the value {value} yet. "
+                                     "DNS changes can take a few minutes to appear.")
+        try:
+            members_store.mark_verified(ws, row["domain"])
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        log.warning("Workspace %s verified the domain %s", ws, row["domain"])
+    return _domain_out(members_store.get_domain(ws, domain))
+
+
+@app.delete("/api/admin/sign-in/domains/{domain}")
+def delete_domain(domain: str, user=Depends(require_admin)):
+    if not members_store.remove_domain(domain, workspace=ws_of(user)):
+        raise HTTPException(404, "This workspace doesn't have that domain.")
+    return {"ok": True}
+
+
+@app.post("/api/admin/sign-in/connections")
+def add_connection(body: ConnectionIn, request: Request, user=Depends(require_admin)):
+    try:
+        issuer = sso_setup.normalize_issuer(body.issuer)
+        metadata = sso_setup.oidc_metadata(issuer)
+    except sso_setup.SetupError as e:
+        raise _setup_error(e)
+    conn = members_store.create_connection(ws_of(user), body.label.strip(), issuer,
+                                           body.client_id.strip(), body.client_secret,
+                                           metadata, user["username"])
+    return _connection_out(request, conn)
+
+
+@app.patch("/api/admin/sign-in/connections/{cid}")
+def edit_connection(cid: str, body: ConnectionPatch, request: Request,
+                    user=Depends(require_admin)):
+    ws = ws_of(user)
+    conn = members_store.get_connection(cid)
+    if not conn or conn["workspace"] != ws:
+        raise HTTPException(404, "This workspace has no such sign-in provider.")
+    fields = body.model_dump(exclude_none=True)
+    for key in ("label", "client_id"):
+        if key in fields:
+            fields[key] = fields[key].strip()
+    if "issuer" in fields:
+        try:
+            fields["issuer"] = sso_setup.normalize_issuer(fields["issuer"])
+            fields["metadata"] = sso_setup.oidc_metadata(fields["issuer"])
+        except sso_setup.SetupError as e:
+            raise _setup_error(e)
+    if fields:
+        conn = members_store.update_connection(ws, cid, **fields)
+    return _connection_out(request, conn)
+
+
+@app.delete("/api/admin/sign-in/connections/{cid}")
+def delete_connection(cid: str, user=Depends(require_admin)):
+    if not members_store.delete_connection(ws_of(user), cid):
+        raise HTTPException(404, "This workspace has no such sign-in provider.")
+    return {"ok": True}
 
 
 # ---- Chat --------------------------------------------------------------------

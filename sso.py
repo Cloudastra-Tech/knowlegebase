@@ -26,6 +26,11 @@ Such a provider must vouch for the email (email_verified). Anyone who can get a
 verified address on one of your domains there can sign in, so add only
 providers your organisation controls.
 
+A workspace's OWN provider ("connection", set up by its admin, stored in
+members_store.py) only signs people in to that workspace, and only with an
+email on a domain that workspace has verified. The login page finds it from
+the email someone types (connections_for_email).
+
 Authlib does the OpenID Connect work: the redirect, state + PKCE, and checking
 the ID token's signature, audience, issuer and expiry.
 """
@@ -39,6 +44,7 @@ import time
 from authlib.integrations.starlette_client import OAuth
 
 import members_store
+import url_guard
 
 CODE_SECONDS = 60           # the one-time code that hands a new session to the browser
 
@@ -48,6 +54,7 @@ _GENERIC_ID = re.compile(r"^[a-z][a-z0-9]{0,19}$")
 
 _oauth = OAuth()
 _clients = {}
+_connection_clients = {}  # connection id -> (updated_at, Authlib client)
 _codes = {}                 # code -> (user, expires)
 _codes_lock = threading.Lock()
 
@@ -122,6 +129,31 @@ def client(provider):
     return _clients[provider]
 
 
+def connection_client(conn):
+    """The Authlib client for a workspace's own provider. Built from the endpoints
+    saved with it (no discovery fetch), and every call it makes to the provider
+    goes through url_guard. Rebuilt whenever the connection is edited."""
+    cached = _connection_clients.get(conn["id"])
+    if cached and cached[0] == conn["updated_at"]:
+        return cached[1]
+    c = OAuth().register(
+        name=f"conn_{conn['id']}",
+        client_id=conn["client_id"],
+        client_secret=members_store.connection_secret(conn["id"]),
+        client_kwargs={"scope": SCOPES, "code_challenge_method": "S256", "timeout": 10,
+                       "event_hooks": {"request": [url_guard.httpx_hook], "response": []}},
+        **conn["metadata"],
+    )
+    _connection_clients[conn["id"]] = (conn["updated_at"], c)
+    return c
+
+
+def connections_for_email(email):
+    """The enabled providers of the workspace that verified this email's domain."""
+    workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
+    return members_store.list_connections(workspace, enabled_only=True) if workspace else []
+
+
 # ---- Who gets in -------------------------------------------------------------
 def _identity(provider, claims):
     """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
@@ -165,10 +197,15 @@ def _workspace_for(email, org):
     return workspace
 
 
-def access_for(email, org=None):
+def access_for(email, org=None, connection=None):
     """{"workspace", "role"} for someone signed in with single sign-on, or None
-    if they may no longer use the app. Checked on every request."""
+    if they may no longer use the app. Checked on every request: someone who came
+    through a workspace's own provider is also signed out once it's turned off."""
     workspace = _workspace_for(email, org)
+    if workspace and connection is not None:
+        conn = members_store.get_connection(connection)
+        if not conn or not conn["enabled"] or conn["workspace"] != workspace:
+            return None
     member = members_store.get(email) if workspace else None
     if not member or member["workspace"] != workspace:
         return None
@@ -185,6 +222,26 @@ def user_for(provider, claims):
         raise NotAllowed("not_allowed")
     return {"username": email, "name": name, "provider": provider, "org": org,
             "workspace": workspace, "role": member["role"]}
+
+
+def user_for_connection(conn, claims):
+    """The session user for someone a workspace's own provider just signed in.
+    The provider belongs to the workspace, so it's trusted for that workspace's
+    verified domains and nothing else. An email it marks as unverified is
+    refused; one with no email_verified claim at all (Entra ID sends none) is
+    accepted, since the domain check already limits it to the workspace's own."""
+    email = (claims.get("email") or "").strip().lower()
+    if str(claims.get("email_verified")).lower() == "false" or "@" not in email:
+        raise NotAllowed("unverified")
+    if members_store.workspace_for_domain(email.rpartition("@")[2]) != conn["workspace"]:
+        raise NotAllowed("not_allowed")
+    name = claims.get("name") or email.split("@")[0]
+    member = members_store.record_sso_login(email, name, conn["workspace"])
+    if not member:
+        raise NotAllowed("not_allowed")
+    members_store.record_connection_login(conn["id"])
+    return {"username": email, "name": name, "provider": "oidc", "connection": conn["id"],
+            "org": None, "workspace": conn["workspace"], "role": member["role"]}
 
 
 # ---- Handing the session to the browser --------------------------------------
