@@ -9,6 +9,8 @@ It lives in the same small SQLite file as the sessions and integrations
                        anyone in, and a domain is verified for one workspace at most
     members            everyone who can sign in: password accounts, and people
                        who signed in with single sign-on (or were given a role first)
+    sso_connections    a workspace's own sign-in provider (OpenID Connect for now),
+                       set up by its admin; the client secret is encrypted
 
 ROLES, lowest to highest:
     public   chat over public documents
@@ -25,10 +27,12 @@ are no longer read, and can be kept as a backup.
 import json
 import logging
 import os
+import secrets
 import sqlite3
 import threading
 import time
 
+import secret_box
 import workspaces
 
 DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
@@ -37,6 +41,9 @@ SSO_FILE = os.getenv("SSO_CONFIG", os.path.join("config", "sso.json"))
 
 ROLES = ("public", "hr", "admin")
 STAFF_ROLES = ("hr", "admin")      # see HR documents and the HR / Admin screens
+# A workspace proves it owns a domain with this DNS TXT record:
+#     _knowledge-assistant.<domain>   TXT   "kb-verify=<token>"
+TXT_PREFIX = "_knowledge-assistant"
 
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
@@ -87,6 +94,20 @@ def _create_tables(conn):
                       CHECK (role IN ('public', 'hr', 'admin')),
         password_hash TEXT,                -- NULL: single sign-on only
         created_at    REAL NOT NULL,
+        last_login_at REAL);
+    CREATE TABLE IF NOT EXISTS sso_connections (
+        id            TEXT PRIMARY KEY,
+        workspace     TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
+        protocol      TEXT NOT NULL CHECK (protocol IN ('oidc', 'saml')),
+        label         TEXT NOT NULL,       -- the sign-in button: "Continue with <label>"
+        issuer        TEXT,
+        client_id     TEXT,
+        secret        BLOB,                -- encrypted (secret_box.py)
+        metadata      TEXT NOT NULL DEFAULT '{}',  -- the provider's endpoints, as checked
+        enabled       INTEGER NOT NULL DEFAULT 1,
+        created_by    TEXT,
+        created_at    REAL NOT NULL,
+        updated_at    REAL NOT NULL,
         last_login_at REAL);
     CREATE TABLE IF NOT EXISTS imports (
         source      TEXT PRIMARY KEY,      -- an old config file, copied in once
@@ -191,19 +212,60 @@ def add_verified_domain(workspace, domain):
                      (workspace, domain, time.time()))
 
 
-def remove_domain(domain):
-    """Stop a domain signing in anywhere. Returns False if no workspace had it."""
+def remove_domain(domain, workspace=None):
+    """Stop a domain signing in (to `workspace`, or anywhere). False if it wasn't there."""
+    sql, args = "DELETE FROM workspace_domains WHERE domain = ?", [domain.strip().lower()]
+    if workspace:
+        sql, args = sql + " AND workspace = ?", args + [workspace]
     with _lock, _db() as conn:
-        n = conn.execute("DELETE FROM workspace_domains WHERE domain = ?",
-                         (domain.strip().lower(),)).rowcount
+        n = conn.execute(sql, args).rowcount
     return n > 0
 
 
-def list_domains():
+def list_domains(workspace=None):
+    sql, args = "SELECT * FROM workspace_domains", []
+    if workspace:
+        sql, args = sql + " WHERE workspace = ?", [workspace]
     with _db() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT workspace, domain, verified_at FROM workspace_domains "
-            "ORDER BY workspace, domain")]
+        return [dict(r) for r in conn.execute(sql + " ORDER BY workspace, domain", args)]
+
+
+def claim_domain(workspace, domain):
+    """A workspace admin adds a domain: it signs nobody in until verified.
+    Returns the row, with the token for the DNS record."""
+    domain = domain.strip().lower()
+    with _lock, _db() as conn:
+        _ensure_workspace(conn, workspace)
+        conn.execute("""INSERT OR IGNORE INTO workspace_domains (workspace, domain, verify_token)
+                        VALUES (?, ?, ?)""", (workspace, domain, secrets.token_urlsafe(18)))
+        conn.execute("""UPDATE workspace_domains SET verify_token = ?
+                        WHERE workspace = ? AND domain = ? AND verify_token IS NULL""",
+                     (secrets.token_urlsafe(18), workspace, domain))
+        return dict(conn.execute("SELECT * FROM workspace_domains WHERE workspace = ? "
+                                 "AND domain = ?", (workspace, domain)).fetchone())
+
+
+def get_domain(workspace, domain):
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM workspace_domains WHERE workspace = ? AND domain = ?",
+                           (workspace, domain.strip().lower())).fetchone()
+    return dict(row) if row else None
+
+
+def mark_verified(workspace, domain):
+    """The DNS record checked out. Raises ValueError if another workspace got there first."""
+    try:
+        with _lock, _db() as conn:
+            conn.execute("""UPDATE workspace_domains SET verified_at = ?
+                            WHERE workspace = ? AND domain = ? AND verified_at IS NULL""",
+                         (time.time(), workspace, domain.strip().lower()))
+    except sqlite3.IntegrityError:
+        raise ValueError("Another workspace has already verified this domain.") from None
+
+
+def txt_record(row):
+    """(name, value) of the DNS TXT record that proves a workspace owns a domain."""
+    return f"{TXT_PREFIX}.{row['domain']}", f"kb-verify={row['verify_token']}"
 
 
 # ---- Members -------------------------------------------------------------------
@@ -277,3 +339,82 @@ def record_sso_login(username, name, workspace):
                      (time.time(), username, workspace))
         row = conn.execute("SELECT * FROM members WHERE username = ?", (username,)).fetchone()
     return dict(row) if row and row["workspace"] == workspace else None
+
+
+# ---- A workspace's own sign-in providers ---------------------------------------
+def _connection(row):
+    if not row:
+        return None
+    c = dict(row)
+    c.pop("secret", None)                 # only connection_secret() hands that out
+    c["metadata"] = json.loads(c["metadata"] or "{}")
+    c["enabled"] = bool(c["enabled"])
+    return c
+
+
+def create_connection(workspace, label, issuer, client_id, client_secret, metadata, created_by):
+    """Add an OpenID Connect provider to a workspace. Returns the connection."""
+    cid, now = secrets.token_hex(6), time.time()
+    with _lock, _db() as conn:
+        _ensure_workspace(conn, workspace)
+        conn.execute("""INSERT INTO sso_connections
+                        (id, workspace, protocol, label, issuer, client_id, secret, metadata,
+                         created_by, created_at, updated_at)
+                        VALUES (?, ?, 'oidc', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (cid, workspace, label, issuer, client_id,
+                      secret_box.seal({"client_secret": client_secret}), json.dumps(metadata),
+                      created_by, now, now))
+    return get_connection(cid)
+
+
+def update_connection(workspace, cid, **fields):
+    """Change a connection's label, issuer, client_id, client_secret, metadata or
+    enabled. Returns the connection, or None if the workspace has no such one."""
+    if "client_secret" in fields:
+        fields["secret"] = secret_box.seal({"client_secret": fields.pop("client_secret")})
+    if "metadata" in fields:
+        fields["metadata"] = json.dumps(fields["metadata"])
+    if "enabled" in fields:
+        fields["enabled"] = int(bool(fields["enabled"]))
+    allowed = {"label", "issuer", "client_id", "secret", "metadata", "enabled"}
+    if set(fields) - allowed:
+        raise ValueError(f"Can't change {', '.join(sorted(set(fields) - allowed))}.")
+    cols = "".join(f"{k} = ?, " for k in fields)
+    with _lock, _db() as conn:
+        n = conn.execute(f"UPDATE sso_connections SET {cols}updated_at = ? "
+                         "WHERE id = ? AND workspace = ?",
+                         (*fields.values(), time.time(), cid, workspace)).rowcount
+    return get_connection(cid) if n else None
+
+
+def get_connection(cid):
+    with _db() as conn:
+        return _connection(conn.execute("SELECT * FROM sso_connections WHERE id = ?",
+                                        (cid or "",)).fetchone())
+
+
+def connection_secret(cid):
+    with _db() as conn:
+        row = conn.execute("SELECT secret FROM sso_connections WHERE id = ?", (cid,)).fetchone()
+    return (secret_box.unseal(row["secret"]) or {}).get("client_secret") if row else None
+
+
+def list_connections(workspace, enabled_only=False):
+    sql = "SELECT * FROM sso_connections WHERE workspace = ?"
+    if enabled_only:
+        sql += " AND enabled = 1"
+    with _db() as conn:
+        return [_connection(r) for r in conn.execute(sql + " ORDER BY created_at", (workspace,))]
+
+
+def delete_connection(workspace, cid):
+    with _lock, _db() as conn:
+        n = conn.execute("DELETE FROM sso_connections WHERE id = ? AND workspace = ?",
+                         (cid, workspace)).rowcount
+    return n > 0
+
+
+def record_connection_login(cid):
+    with _lock, _db() as conn:
+        conn.execute("UPDATE sso_connections SET last_login_at = ? WHERE id = ?",
+                     (time.time(), cid))

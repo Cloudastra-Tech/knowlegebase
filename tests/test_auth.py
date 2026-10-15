@@ -32,6 +32,7 @@ def env():
     import auth
     import members_store
     assert members_store.DB_PATH == os.environ["APP_DB"] != os.path.join("config", "app.db")
+    members_store._ready = False         # copy the files in even if another test opened it
 
     users = {"admin": {"name": "Admin", "role": "hr"},
              "staff": {"name": "Staff", "role": "public"},

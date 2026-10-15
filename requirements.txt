@@ -22,4 +22,5 @@ cryptography==50.0.2       # encrypts integration tokens (Google Drive OAuth) at
 chardet==7.6.0             # detects the encoding of non-UTF-8 text files when indexing
 Authlib==1.9.0             # single sign-on with Google / Microsoft (sso.py): the OpenID Connect flow
 httpx==0.28.1              # the HTTP client Authlib's Starlette integration uses
+dnspython==2.8.0           # checks the DNS TXT record that proves a workspace owns its email domain
 itsdangerous==2.2.0        # signs the short-lived cookie that holds sign-in state (SessionMiddleware)
