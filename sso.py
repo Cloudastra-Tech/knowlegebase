@@ -5,21 +5,14 @@ The provider (Google Workspace, Microsoft Entra ID, or any OpenID Connect
 provider such as Okta, Keycloak or Auth0) proves WHO someone is.
 This file decides WHAT they get: which workspace (company) and which role.
 
-That decision lives in config/sso.json (gitignored, like users.json):
+That decision comes from members_store.py (the database; manage it with
+`python auth.py`):
 
-    {
-      "workspaces": {
-        "default": {
-          "domains": ["cloudastra.in", "cloudastra.co"],
-          "hr": ["priya@cloudastra.in"]
-        }
-      }
-    }
-
-  * an email on one of a workspace's domains signs in to that workspace
-  * emails listed under "hr" get the HR / Admin role; everyone else is public
+  * an email on a domain a workspace has VERIFIED signs in to that workspace
+  * their role is the one on their member row: public unless someone set it
+    (`python auth.py role priya@cloudastra.in hr`); new people start as public
   * anyone else is turned away — having an account at the provider is not enough
-  * it's checked again on every request (api.py), so edits apply straight away
+  * it's checked again on every request (api.py), so changes apply straight away
 
 Server settings (.env). A provider only shows on the login page once it's set:
     GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET     (the same OAuth client Google Drive uses)
@@ -37,7 +30,6 @@ Authlib does the OpenID Connect work: the redirect, state + PKCE, and checking
 the ID token's signature, audience, issuer and expiry.
 """
 
-import json
 import os
 import re
 import secrets
@@ -46,9 +38,8 @@ import time
 
 from authlib.integrations.starlette_client import OAuth
 
-import workspaces
+import members_store
 
-CONFIG_FILE = os.getenv("SSO_CONFIG", os.path.join("config", "sso.json"))
 CODE_SECONDS = 60           # the one-time code that hands a new session to the browser
 
 LABELS = {"google": "Google", "microsoft": "Microsoft"}
@@ -132,14 +123,6 @@ def client(provider):
 
 
 # ---- Who gets in -------------------------------------------------------------
-def load_config():
-    """config/sso.json, or {} if there is none. Raises ValueError if it isn't valid JSON."""
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    with open(CONFIG_FILE, encoding="utf-8") as f:
-        return json.load(f)
-
-
 def _identity(provider, claims):
     """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
     the account belongs to (None for other providers). Refuses addresses the
@@ -172,31 +155,36 @@ def _identity(provider, claims):
     return email, (claims.get("name") or email.split("@")[0]), org
 
 
-def access_for(email, org=None, config=None):
-    """{"workspace", "role"} for an email, or None if no workspace takes it.
-    A Google sign-in must also come from a Workspace whose primary domain (org)
-    is one of that workspace's domains."""
-    config = load_config() if config is None else config
-    domain = email.rpartition("@")[2]
-    for slug, ws in (config.get("workspaces") or {}).items():
-        if not workspaces.valid(slug):
-            continue
-        domains = {d.strip().lower() for d in ws.get("domains", [])}
-        if domain in domains:
-            if org is not None and org not in domains:
-                return None
-            hr = {e.strip().lower() for e in ws.get("hr", [])}
-            return {"workspace": slug, "role": "hr" if email in hr else "public"}
-    return None
+def _workspace_for(email, org):
+    """The workspace that verified this email's domain, or None. A Google sign-in
+    must also come from a Google Workspace whose primary domain (org) that
+    workspace verified, so another organisation's Workspace can't vouch for it."""
+    workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
+    if workspace and org is not None and org not in members_store.verified_domains(workspace):
+        return None
+    return workspace
+
+
+def access_for(email, org=None):
+    """{"workspace", "role"} for someone signed in with single sign-on, or None
+    if they may no longer use the app. Checked on every request."""
+    workspace = _workspace_for(email, org)
+    member = members_store.get(email) if workspace else None
+    if not member or member["workspace"] != workspace:
+        return None
+    return {"workspace": workspace, "role": member["role"]}
 
 
 def user_for(provider, claims):
-    """The session user for someone the provider just signed in."""
+    """The session user for someone the provider just signed in. Adds them as a
+    member the first time."""
     email, name, org = _identity(provider, claims)
-    access = access_for(email, org)
-    if not access:
+    workspace = _workspace_for(email, org)
+    member = members_store.record_sso_login(email, name, workspace) if workspace else None
+    if not member:
         raise NotAllowed("not_allowed")
-    return {"username": email, "name": name, "provider": provider, "org": org, **access}
+    return {"username": email, "name": name, "provider": provider, "org": org,
+            "workspace": workspace, "role": member["role"]}
 
 
 # ---- Handing the session to the browser --------------------------------------

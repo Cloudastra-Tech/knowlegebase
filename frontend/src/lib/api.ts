@@ -1,14 +1,17 @@
 // Thin client for the FastAPI backend (api.py). Vite proxies /api -> :8010.
 
+// The role the app is VIEWED as. An admin views it as "hr" (or "public").
 export type Role = "public" | "hr"
+// What an account may do: admin is hr, plus who may sign in.
+export type AccountRole = Role | "admin"
 export type Access = "public" | "restricted"
 
 export interface User {
   username: string
   name: string
   workspace: string
-  // What the ACCOUNT may do. An HR account can still view the app as "public".
-  role: Role
+  // What the ACCOUNT may do. An HR or admin account can still view the app as "public".
+  role: AccountRole
   provider?: string                   // "google", "microsoft", or an OIDC id such as "okta"
 }
 

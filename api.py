@@ -41,9 +41,9 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
   ({provider} = google_drive | notion)
 Every document change re-indexes automatically; connectors re-sync every 30 minutes.
 
-ROLES come from the account: users.json for password logins, config/sso.json
-for single sign-on. An HR / Admin account can send "X-Role: public" to see the app
-as a public user would; the header can never raise anyone TO HR.
+ROLES come from the account (members_store.py): public, hr or admin. Admin
+counts as HR everywhere here. An HR / Admin account can send "X-Role: public" to
+see the app as a public user would; the header can never raise anyone TO HR.
 """
 
 import contextlib
@@ -53,6 +53,7 @@ import logging
 import queue
 import os
 import secrets
+import sqlite3
 import threading
 import time
 
@@ -68,6 +69,7 @@ import auth                          # noqa: E402  (needs the .env loaded first)
 import docs_store                    # noqa: E402
 import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
+import members_store                 # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
 import workspaces                    # noqa: E402
@@ -143,7 +145,7 @@ def current_user(authorization: str = Header(default="")):
     try:
         access = (sso.access_for(user["username"], user.get("org")) if user.get("provider")
                   else auth.access_for(user["username"]))
-    except (OSError, ValueError):            # e.g. config/sso.json isn't valid JSON
+    except (OSError, sqlite3.Error):         # e.g. the database can't be read
         log.exception("Couldn't read the sign-in settings")
         raise HTTPException(503, "Sign-in settings can't be read. Please tell your admin.")
     if not access:
@@ -153,14 +155,14 @@ def current_user(authorization: str = Header(default="")):
 
 
 def current_role(user=Depends(current_user), x_role: str = Header(default="hr")):
-    """HR only if the ACCOUNT is HR; X-Role can only lower it ("view as public")."""
-    return "hr" if user["role"] == "hr" and x_role == "hr" else "public"
+    """HR only if the ACCOUNT is HR or admin; X-Role can only lower it ("view as public")."""
+    return "hr" if user["role"] in members_store.STAFF_ROLES and x_role == "hr" else "public"
 
 
 def require_hr(user=Depends(current_user), role=Depends(current_role)):
     if role != "hr":
         raise HTTPException(403, "Switch to HR / Admin to manage documents and integrations."
-                            if user["role"] == "hr" else
+                            if user["role"] in members_store.STAFF_ROLES else
                             "Only HR / Admin accounts can manage documents and integrations.")
     return user
 
@@ -187,7 +189,7 @@ def login(body: LoginIn):
     if time.time() < locked_until:
         raise HTTPException(429, f"Too many failed attempts. Try again in "
                                  f"{int(locked_until - time.time())} seconds.")
-    if not auth.load_users():
+    if not members_store.has_password_accounts():
         raise HTTPException(503, "No user accounts exist yet. Create one with: "
                                  "python auth.py add <username>")
     user = auth.authenticate(body.username, body.password)
@@ -243,7 +245,7 @@ async def sso_callback(provider: str, request: Request):
         user = sso.user_for(provider, token.get("userinfo") or {})
     except sso.NotAllowed as e:
         return RedirectResponse(f"/#login?error={e.reason}")
-    except Exception:              # e.g. config/sso.json isn't valid JSON
+    except Exception:              # e.g. the database can't be read
         log.exception("SSO %s: couldn't decide who gets in", provider)
         return RedirectResponse("/#login?error=sso_failed")
     return RedirectResponse("/#sso?code=" + sso.issue_code(user))

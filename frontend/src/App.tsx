@@ -127,7 +127,7 @@ export default function App() {
         .then((u) => {
           if (session.token !== token) return       // signed out meanwhile
           setUser(u)
-          if (u.role !== "hr") setScreen(publicScreen)
+          if (u.role === "public") setScreen(publicScreen)
         })
         .catch((err) => {
           // Access removed altogether. (/auth/* 401s skip the unauthorized handler.)
@@ -215,8 +215,8 @@ export default function App() {
     )
   }
 
-  // Only an HR account gets HR; it can also "view as" public. Everyone else is public.
-  const canAdmin = user.role === "hr"
+  // Only an HR or admin account gets HR; it can also "view as" public. Everyone else is public.
+  const canAdmin = user.role !== "public"
   const activeRole: Role = canAdmin ? role : "public"
 
   const initials = user.name
