@@ -22,6 +22,95 @@ export interface AuthOptions {
   email_sso: boolean
 }
 
+// ---- Sign-in settings (admin): domains, the workspace's own providers, events ----
+export interface SignInDomain {
+  domain: string
+  verified: boolean
+  verified_at: number | null
+  txt_name: string | null // the DNS record that proves it (null for domains set by the server)
+  txt_value: string | null
+}
+
+export type Protocol = "oidc" | "saml"
+
+export interface SignInConnection {
+  id: string
+  protocol: Protocol
+  label: string
+  issuer: string // OIDC issuer, or the SAML IdP's entity ID
+  enabled: boolean
+  created_at: number
+  last_login_at: number | null
+  // OpenID Connect
+  client_id?: string
+  redirect_uri?: string
+  // SAML
+  sp_entity_id?: string
+  acs_url?: string
+  sp_metadata_url?: string
+  sso_url?: string
+  metadata_url?: string | null
+  email_attribute?: string | null
+  signs_requests?: boolean
+}
+
+// What the IdP needs before the provider is added (GET /admin/sign-in/new-provider).
+export interface NewProvider {
+  id: string
+  redirect_uri: string
+  sp_entity_id: string
+  acs_url: string
+  sp_metadata_url: string
+}
+
+export interface SignInEvent {
+  connection_id: string | null
+  connection: string | null
+  email: string | null
+  outcome: "signed_in" | "refused" | "failed" | "test"
+  reason: string | null
+  at: number
+}
+
+export interface SignInSettings {
+  domains: SignInDomain[]
+  connections: SignInConnection[]
+  events: SignInEvent[]
+}
+
+export interface OidcConnectionInput {
+  id?: string
+  label?: string
+  issuer?: string
+  client_id?: string
+  client_secret?: string
+  enabled?: boolean
+}
+
+export interface SamlConnectionInput {
+  id?: string
+  label?: string
+  metadata_url?: string
+  metadata_xml?: string
+  entity_id?: string
+  sso_url?: string
+  certificate?: string
+  email_attribute?: string
+  enabled?: boolean
+}
+
+// The result of an admin's "Test sign-in": what the provider sent, and what would happen.
+export interface SsoTestResult {
+  ok: boolean
+  reason?: string | null
+  detail?: string | null
+  email?: string | null
+  name?: string
+  role?: AccountRole
+  new_member?: boolean
+  sent: Record<string, string>
+}
+
 // A workspace's own provider, found from an email. `url` starts sign-in.
 export interface SsoConnection {
   id: string
@@ -177,6 +266,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     try {
       const data = await res.json()
       if (typeof data.detail === "string") message = data.detail
+      // FastAPI's own validation errors: a list; show the first one.
+      else if (Array.isArray(data.detail) && data.detail[0]?.msg) message = data.detail[0].msg
     } catch {
       /* not JSON */
     }
@@ -192,6 +283,47 @@ const docPath = (d: { access: Access; name: string }) =>
 
 // A full-page navigation (not fetch): the server redirects to Google / Microsoft.
 export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/start`
+
+const json = (method: string, body?: unknown): RequestInit => ({
+  method,
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
+const seg = encodeURIComponent
+
+// Sign-in settings (admin only).
+export const signIn = {
+  get: () => request<SignInSettings>("/admin/sign-in"),
+  newProvider: () => request<NewProvider>("/admin/sign-in/new-provider"),
+  addDomain: (domain: string) =>
+    request<SignInDomain>("/admin/sign-in/domains", json("POST", { domain })),
+  verifyDomain: (domain: string) =>
+    request<SignInDomain>(`/admin/sign-in/domains/${seg(domain)}/verify`, json("POST")),
+  removeDomain: (domain: string) =>
+    request<{ ok: boolean }>(`/admin/sign-in/domains/${seg(domain)}`, json("DELETE")),
+  addOidc: (body: OidcConnectionInput) =>
+    request<SignInConnection>("/admin/sign-in/connections", json("POST", body)),
+  editOidc: (id: string, body: OidcConnectionInput) =>
+    request<SignInConnection>(`/admin/sign-in/connections/${seg(id)}`, json("PATCH", body)),
+  addSaml: (body: SamlConnectionInput) =>
+    request<SignInConnection>("/admin/sign-in/saml-connections", json("POST", body)),
+  editSaml: (id: string, body: SamlConnectionInput) =>
+    request<SignInConnection>(`/admin/sign-in/saml-connections/${seg(id)}`, json("PATCH", body)),
+  setEnabled: (c: SignInConnection, enabled: boolean) =>
+    c.protocol === "saml"
+      ? signIn.editSaml(c.id, { enabled })
+      : signIn.editOidc(c.id, { enabled }),
+  remove: (id: string) =>
+    request<{ ok: boolean }>(`/admin/sign-in/connections/${seg(id)}`, json("DELETE")),
+  startTest: (id: string) =>
+    request<{ ticket: string; url: string }>(
+      `/admin/sign-in/connections/${seg(id)}/test`,
+      json("POST"),
+    ),
+  testResult: (ticket: string) =>
+    request<{ done: boolean; result: SsoTestResult | null }>(
+      `/admin/sign-in/tests/${seg(ticket)}`,
+    ),
+}
 
 export const api = {
   authOptions: () => request<AuthOptions>("/auth/providers"),

@@ -29,7 +29,7 @@ import {
   type User,
 } from "@/lib/api"
 
-type Screen = "chat" | "knowledge" | "docs" | "integrations"
+type Screen = "chat" | "knowledge" | "docs" | "integrations" | "sign-in"
 
 // Each page is its own download, so a visitor on the landing page doesn't load the
 // chat (markdown rendering) and a public user never loads the HR screens.
@@ -43,6 +43,9 @@ const KnowledgeView = lazy(() =>
 )
 const LandingPage = lazy(() =>
   import("@/components/landing-page").then((m) => ({ default: m.LandingPage })),
+)
+const SignInView = lazy(() =>
+  import("@/components/sign-in-view").then((m) => ({ default: m.SignInView })),
 )
 const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
 
@@ -128,6 +131,7 @@ export default function App() {
           if (session.token !== token) return       // signed out meanwhile
           setUser(u)
           if (u.role === "public") setScreen(publicScreen)
+          else if (u.role !== "admin") setScreen((s) => (s === "sign-in" ? "chat" : s))
         })
         .catch((err) => {
           // Access removed altogether. (/auth/* 401s skip the unauthorized handler.)
@@ -235,24 +239,30 @@ export default function App() {
           { id: "integrations" as Screen, label: "Integrations" },
         ]
       : []),
+    // Who may sign in: admins only (HR manages documents, not access).
+    ...(activeRole === "hr" && user.role === "admin"
+      ? [{ id: "sign-in" as Screen, label: "Sign-in" }]
+      : []),
   ]
 
   return (
     <IndexStatusProvider>
     <div className="flex h-svh flex-col">
       <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-12 max-w-6xl items-center gap-8 px-4">
-          <span className="select-none text-sm font-semibold tracking-tight">
-            Knowledge<span className="font-normal text-muted-foreground"> assistant</span>
+        <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
+          <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
+            Knowledge
+            <span className="hidden font-normal text-muted-foreground sm:inline"> assistant</span>
           </span>
 
-          <nav className="flex h-full items-center gap-6">
+          {/* On a phone the tabs scroll sideways instead of widening the page. */}
+          <nav className="flex h-full min-w-0 items-center gap-5 overflow-x-auto [scrollbar-width:none] sm:gap-6">
             {navItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => openScreen(item.id)}
                 className={cn(
-                  "relative flex h-full items-center text-sm transition-colors",
+                  "relative flex h-full shrink-0 items-center whitespace-nowrap text-sm transition-colors",
                   screen === item.id
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -260,13 +270,13 @@ export default function App() {
               >
                 {item.label}
                 {screen === item.id && (
-                  <span className="absolute inset-x-0 -bottom-px h-px bg-foreground" />
+                  <span className="absolute inset-x-0 bottom-0 h-px bg-foreground" />
                 )}
               </button>
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <div className="mr-2">
               <IndexStatusText />
             </div>
@@ -353,6 +363,13 @@ export default function App() {
                 onOpenDocuments={() => openScreen("docs")}
                 openDrivePicker={openDrivePicker}
               />
+            </LazyPage>
+          </div>
+        )}
+        {screen === "sign-in" && activeRole === "hr" && user.role === "admin" && (
+          <div className="h-full overflow-y-auto">
+            <LazyPage>
+              <SignInView workspace={user.workspace} />
             </LazyPage>
           </div>
         )}

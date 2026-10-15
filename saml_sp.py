@@ -139,18 +139,21 @@ def sp_metadata(conn, keys, base):
         return str(entity_descriptor(client.config))
 
 
-def start(conn, keys, base, relay_state="kb"):
-    """(request ID, URL to send the browser to) for a new sign-in."""
+def start(conn, keys, base, relay_state="kb", force_authn=False):
+    """(request ID, URL to send the browser to) for a new sign-in. force_authn
+    asks the IdP for a fresh login even if it has a session (admin's test)."""
     with _client(conn, keys, base) as client:
         request_id, info = client.prepare_for_authenticate(
             entityid=conn["issuer"], relay_state=relay_state, binding=BINDING_HTTP_REDIRECT,
+            force_authn="true" if force_authn else None,
             sigalg=SIG_RSA_SHA256 if conn["metadata"].get("want_authn_requests_signed") else None)
     return request_id, dict(info["headers"])["Location"]
 
 
 def finish(conn, keys, base, saml_response, request_ids):
     """Check the IdP's answer. Returns {"request_id", "assertion_id", "expires",
-    "email", "name"}; raises SamlError if it can't be used."""
+    "email", "name", "sent" (the NameID and attributes)}; raises SamlError if it
+    can't be used."""
     with _client(conn, keys, base) as client:
         try:
             response = client.parse_authn_request_response(
@@ -171,8 +174,11 @@ def finish(conn, keys, base, saml_response, request_ids):
         data = confirmation.subject_confirmation_data
         if data is not None and data.not_on_or_after:
             expires = data.not_on_or_after
+    sent = {"NameID": response.name_id.text if response.name_id is not None else None,
+            **identity}
     return {"request_id": response.in_response_to, "assertion_id": response.assertion.id,
-            "expires": expires, "email": email, "name": _first(identity, NAME_ATTRIBUTES)}
+            "expires": expires, "email": email, "name": _first(identity, NAME_ATTRIBUTES),
+            "sent": sent}
 
 
 def _first(identity, names):
