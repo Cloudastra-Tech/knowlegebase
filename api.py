@@ -172,7 +172,7 @@ def ws_of(user):
 
 @app.get("/api/auth/providers")
 def auth_providers():
-    return {"providers": [{"id": p, "name": sso.LABELS[p]} for p in sso.configured()],
+    return {"providers": [{"id": p, "name": sso.label(p)} for p in sso.configured()],
             "password": auth.password_login_on()}
 
 
@@ -215,7 +215,7 @@ async def sso_start(provider: str, request: Request):
     try:
         return await c.authorize_redirect(
             request, _public_url(request, f"/api/auth/sso/{provider}/callback"),
-            **sso.AUTHORIZE_PARAMS)
+            **sso.authorize_params(provider))
     except Exception:              # couldn't reach the provider's discovery document
         log.exception("SSO %s: couldn't start sign-in", provider)
         return RedirectResponse("/#login?error=sso_failed")

@@ -31,7 +31,7 @@ an **open-book exam** (AI looks up the real answer first). RAG = open book.
 | **OpenAI gpt-4o-mini** | Writes the final answer | The student who reads the found pages and answers |
 | **Guardrails** | Safety checks | A bouncer checking what goes in and comes out |
 | **React + FastAPI** | The chat website (`frontend/`) and its API (`api.py`) | The front door you actually walk through |
-| **Google / Microsoft sign-in** | Who you are, and what you may see | The badge that opens some doors and not others |
+| **Sign-in** (Google, Microsoft, Okta, Keycloak…) | Who you are, and what you may see | The badge that opens some doors and not others |
 
 **Everything is free except the OpenAI API** — and that costs only cents for a project this size.
 
