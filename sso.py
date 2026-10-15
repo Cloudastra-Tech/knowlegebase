@@ -1,7 +1,8 @@
 """
-sso.py  —  SINGLE SIGN-ON: "Continue with Google" / "Continue with Microsoft".
+sso.py  —  SINGLE SIGN-ON: "Continue with Google / Microsoft / Okta / ...".
 
-The provider (Google Workspace or Microsoft Entra ID) proves WHO someone is.
+The provider (Google Workspace, Microsoft Entra ID, or any OpenID Connect
+provider such as Okta, Keycloak or Auth0) proves WHO someone is.
 This file decides WHAT they get: which workspace (company) and which role.
 
 That decision lives in config/sso.json (gitignored, like users.json):
@@ -17,12 +18,20 @@ That decision lives in config/sso.json (gitignored, like users.json):
 
   * an email on one of a workspace's domains signs in to that workspace
   * emails listed under "hr" get the HR / Admin role; everyone else is public
-  * anyone else is turned away — having a Google or Microsoft account is not enough
+  * anyone else is turned away — having an account at the provider is not enough
   * it's checked again on every request (api.py), so edits apply straight away
 
 Server settings (.env). A provider only shows on the login page once it's set:
     GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET     (the same OAuth client Google Drive uses)
     MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET / MICROSOFT_TENANT_ID
+Any other OpenID Connect provider — list its id, then give its settings:
+    OIDC_PROVIDERS=okta,keycloak
+    OIDC_OKTA_ISSUER=https://dev-123456.okta.com/oauth2/default
+    OIDC_OKTA_CLIENT_ID / OIDC_OKTA_CLIENT_SECRET
+    OIDC_OKTA_LABEL=Okta                         (button text, optional)
+Such a provider must vouch for the email (email_verified). Anyone who can get a
+verified address on one of your domains there can sign in, so add only
+providers your organisation controls.
 
 Authlib does the OpenID Connect work: the redirect, state + PKCE, and checking
 the ID token's signature, audience, issuer and expiry.
@@ -30,6 +39,7 @@ the ID token's signature, audience, issuer and expiry.
 
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -43,9 +53,7 @@ CODE_SECONDS = 60           # the one-time code that hands a new session to the 
 
 LABELS = {"google": "Google", "microsoft": "Microsoft"}
 SCOPES = "openid email profile"
-# Always show the account chooser, so someone signed in to a personal account
-# can pick their work one.
-AUTHORIZE_PARAMS = {"prompt": "select_account"}
+_GENERIC_ID = re.compile(r"^[a-z][a-z0-9]{0,19}$")
 
 _oauth = OAuth()
 _clients = {}
@@ -71,10 +79,35 @@ def configured():
     if (os.getenv("MICROSOFT_CLIENT_ID") and os.getenv("MICROSOFT_CLIENT_SECRET")
             and os.getenv("MICROSOFT_TENANT_ID")):
         out.append("microsoft")
+    for p in os.getenv("OIDC_PROVIDERS", "").split(","):
+        p = p.strip().lower()
+        if (_GENERIC_ID.match(p) and p not in LABELS and p not in out
+                and all(_setting(p, k) for k in ("ISSUER", "CLIENT_ID", "CLIENT_SECRET"))):
+            out.append(p)
     return out
 
 
+def _setting(provider, key):
+    """GOOGLE_CLIENT_ID for a built-in provider, OIDC_OKTA_CLIENT_ID for others."""
+    prefix = provider.upper() if provider in LABELS else f"OIDC_{provider.upper()}"
+    return os.getenv(f"{prefix}_{key}", "")
+
+
+def label(provider):
+    """The text on the provider's sign-in button."""
+    return LABELS.get(provider) or _setting(provider, "LABEL") or provider.capitalize()
+
+
+def authorize_params(provider):
+    """Extra parameters for the sign-in redirect. Google and Microsoft always show
+    their account chooser, so someone signed in to a personal account can pick
+    their work one; other providers may not support `prompt=select_account`."""
+    return {"prompt": "select_account"} if provider in LABELS else {}
+
+
 def _metadata_url(provider):
+    if provider not in LABELS:
+        return _setting(provider, "ISSUER").rstrip("/") + "/.well-known/openid-configuration"
     if provider == "google":
         return "https://accounts.google.com/.well-known/openid-configuration"
     # The TENANT-specific endpoint, not /common: its issuer names our tenant, so
@@ -88,12 +121,11 @@ def client(provider):
     if provider not in configured():
         return None
     if provider not in _clients:
-        prefix = provider.upper()
         _clients[provider] = _oauth.register(
             name=provider,
             server_metadata_url=_metadata_url(provider),
-            client_id=os.environ[f"{prefix}_CLIENT_ID"],
-            client_secret=os.environ[f"{prefix}_CLIENT_SECRET"],
+            client_id=_setting(provider, "CLIENT_ID"),
+            client_secret=_setting(provider, "CLIENT_SECRET"),
             client_kwargs={"scope": SCOPES, "code_challenge_method": "S256"},
         )
     return _clients[provider]
@@ -110,8 +142,8 @@ def load_config():
 
 def _identity(provider, claims):
     """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
-    the account belongs to (None for Microsoft). Refuses addresses the provider
-    doesn't vouch for."""
+    the account belongs to (None for other providers). Refuses addresses the
+    provider doesn't vouch for."""
     org = None
     if provider == "google":
         email = (claims.get("email") or "").strip().lower()
@@ -122,7 +154,7 @@ def _identity(provider, claims):
         if not claims.get("hd"):
             raise NotAllowed("not_workspace")
         org = claims["hd"].strip().lower()
-    else:
+    elif provider == "microsoft":
         # Guests and personal Microsoft accounts carry an `idp` naming their own
         # provider; members of our tenant (pinned by the issuer check) don't.
         if claims.get("idp") and claims["idp"] != claims.get("iss"):
@@ -130,6 +162,11 @@ def _identity(provider, claims):
         # preferred_username is the UPN, which Entra only allows on the tenant's
         # verified domains. The `email` claim isn't verified, so it's never used.
         email = (claims.get("preferred_username") or "").strip().lower()
+    else:
+        # Any other OpenID Connect provider: only an address it has verified.
+        if str(claims.get("email_verified")).lower() != "true":
+            raise NotAllowed("unverified")
+        email = (claims.get("email") or "").strip().lower()
     if "@" not in email:
         raise NotAllowed("unverified")
     return email, (claims.get("name") or email.split("@")[0]), org

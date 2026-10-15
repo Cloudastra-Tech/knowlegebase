@@ -9,11 +9,11 @@ export interface User {
   workspace: string
   // What the ACCOUNT may do. An HR account can still view the app as "public".
   role: Role
-  provider?: "google" | "microsoft"
+  provider?: string                   // "google", "microsoft", or an OIDC id such as "okta"
 }
 
 export interface AuthOptions {
-  providers: { id: "google" | "microsoft"; name: string }[]
+  providers: { id: string; name: string }[]
   password: boolean
 }
 

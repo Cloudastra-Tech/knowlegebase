@@ -112,6 +112,9 @@ def test_hr_screens_follow_the_account_role_not_the_header(env, username, x_role
                 "hd": "cloudastra.in"}, "public"),
     ("microsoft", {"preferred_username": "someone@cloudastra.co", "iss": MS_ISS,
                    "name": "Some One"}, "public"),
+    # Any other OpenID Connect provider (Okta, Keycloak, ...): a verified email.
+    ("keycloak", {"email": HR_EMAIL, "email_verified": True}, "hr"),
+    ("okta", {"email": "someone@cloudastra.co", "email_verified": "true"}, "public"),
 ])
 def test_sso_signs_in_to_the_workspace_with_the_configured_role(env, provider, name, claims, role):
     me = env.get("/api/auth/me", headers=bearer(sso_token(env, provider, name, claims))).json()
@@ -135,6 +138,10 @@ def test_sso_signs_in_to_the_workspace_with_the_configured_role(env, provider, n
                    "idp": "https://sts.windows.net/other-tenant/"}, "not_workspace"),
     # Microsoft's `email` claim is unverified, so it alone is not enough.
     ("microsoft", {"email": "someone@cloudastra.in", "iss": MS_ISS}, "unverified"),
+    # Other providers must vouch for the address, and its domain must be listed.
+    ("keycloak", {"email": "someone@cloudastra.in", "email_verified": False}, "unverified"),
+    ("keycloak", {"email": "someone@cloudastra.in"}, "unverified"),
+    ("okta", {"email": "someone@othercorp.com", "email_verified": True}, "not_allowed"),
 ])
 def test_sso_turns_away_accounts_it_cannot_trust(env, provider, name, claims, error):
     assert sso_callback(env, provider, name, claims) == f"/#login?error={error}"
@@ -147,6 +154,18 @@ def test_sso_turns_away_accounts_it_cannot_trust(env, provider, name, claims, er
 def test_provider_errors_reach_the_login_page(env, provider, provider_error, shown):
     location = sso_callback(env, provider, "google", GOOGLE_HR, query=f"error={provider_error}")
     assert location == f"/#login?error={shown}"
+
+
+def test_other_oidc_providers_appear_once_configured(env, monkeypatch):
+    monkeypatch.setenv("OIDC_PROVIDERS", "okta, keycloak, google, Bad-Id")
+    monkeypatch.setenv("OIDC_OKTA_ISSUER", "https://dev-1.okta.com/oauth2/default")
+    monkeypatch.setenv("OIDC_OKTA_CLIENT_ID", "id")
+    monkeypatch.setenv("OIDC_OKTA_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("OIDC_OKTA_LABEL", "Okta")
+    monkeypatch.setenv("OIDC_KEYCLOAK_ISSUER", "http://localhost:8180/realms/kb")   # no secret yet
+    providers = env.get("/api/auth/providers").json()["providers"]
+    assert {"id": "okta", "name": "Okta"} in providers
+    assert all(p["id"] not in ("keycloak", "bad-id") for p in providers)
 
 
 def test_sso_code_works_only_once(env, provider):

@@ -93,8 +93,18 @@ roles existed are public until given a role, e.g. `python auth.py role admin hr`
    app with the Web redirect URI `<PUBLIC_URL>/api/auth/sso/microsoft/callback`,
    create a client secret, and set `MICROSOFT_CLIENT_ID`,
    `MICROSOFT_CLIENT_SECRET` and `MICROSOFT_TENANT_ID` (the Directory / tenant id).
-4. Set `SESSION_SECRET` to a long random string.
-5. Say who may sign in and who is HR / Admin in `./config/sso.json`:
+4. **Okta, Keycloak, Auth0 or any other OpenID Connect provider:** create a
+   *Web* app (authorization code flow, with a client secret) whose redirect URI is
+   `<PUBLIC_URL>/api/auth/sso/<id>/callback`, where `<id>` is a short name you
+   choose (e.g. `okta`). Then in `.env`: `OIDC_PROVIDERS=okta`, plus
+   `OIDC_OKTA_ISSUER` (the issuer URL, e.g. `https://dev-123456.okta.com/oauth2/default`
+   or `https://keycloak.example.com/realms/<realm>`), `OIDC_OKTA_CLIENT_ID`,
+   `OIDC_OKTA_CLIENT_SECRET` and, optionally, `OIDC_OKTA_LABEL` for the button.
+   List several ids separated by commas. These providers must mark the email as
+   **verified**; only add one your organisation controls, because anyone who can
+   get a verified address on your domains there can sign in.
+5. Set `SESSION_SECRET` to a long random string.
+6. Say who may sign in and who is HR / Admin in `./config/sso.json`:
 
    ```json
    {
@@ -113,8 +123,8 @@ roles existed are public until given a role, e.g. `python auth.py role admin hr`
    request, so edits apply straight away (no restart) — remove someone, or their
    HR role, and it takes effect on their next click. The same goes for
    `auth.py role` / `auth.py remove` on password accounts.
-6. `docker compose up -d` to pick up the new `.env`. The login page now shows
-   *Continue with Google* / *Continue with Microsoft* for each provider set up.
+7. `docker compose up -d` to pick up the new `.env`. The login page now shows
+   *Continue with Google* / *Microsoft* / *Okta* … for each provider set up.
    Set `PASSWORD_LOGIN=off` to remove the username + password form.
 
 ## 5. Open the firewall

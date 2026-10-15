@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { Loader2 } from "lucide-react"
-import { siGoogle } from "simple-icons"
+import { KeyRound, Loader2 } from "lucide-react"
+import { siAuth0, siAuthentik, siGoogle, siKeycloak, siOkta } from "simple-icons"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -32,11 +32,23 @@ function ssoErrorFromUrl() {
   return code ? (SSO_ERRORS[code] ?? "Sign-in failed. Please try again.") : null
 }
 
-// simple-icons has no Microsoft logo, so draw its four squares.
+// Logos by provider id. simple-icons has no Microsoft logo, so draw its four
+// squares; any other OpenID Connect provider gets a key.
+const PROVIDER_PATHS: Record<string, string> = {
+  google: siGoogle.path,
+  microsoft: "M1 1h10v10H1zM13 1h10v10H13zM1 13h10v10H1zM13 13h10v10H13z",
+  okta: siOkta.path,
+  keycloak: siKeycloak.path,
+  auth0: siAuth0.path,
+  authentik: siAuthentik.path,
+}
+
 function ProviderIcon({ id }: { id: string }) {
+  const path = PROVIDER_PATHS[id]
+  if (!path) return <KeyRound />
   return (
     <svg viewBox="0 0 24 24" className="fill-current" aria-hidden>
-      <path d={id === "google" ? siGoogle.path : "M1 1h10v10H1zM13 1h10v10H13zM1 13h10v10H1zM13 13h10v10H13z"} />
+      <path d={path} />
     </svg>
   )
 }
