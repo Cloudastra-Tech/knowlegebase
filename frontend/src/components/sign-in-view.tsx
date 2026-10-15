@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -148,9 +149,7 @@ function SignInRules({ settings, onChange }: { settings: SignInSettings; onChang
         onCheckedChange={(v) => toggle(v === true)}
       />
       <div className="grid gap-1">
-        <label htmlFor="require-sso" className="text-sm font-medium">
-          Require single sign-on
-        </label>
+        <Label htmlFor="require-sso">Require single sign-on</Label>
         <p className="text-sm text-muted-foreground">
           Nobody but admins can sign in with a password, and anyone signed in with one is
           signed out. Admins keep theirs as a way in if your provider ever breaks.
@@ -422,73 +421,90 @@ type TestState =
 
 const POLL_MS = 1500
 
+const POLL_ERRORS_TOLERATED = 3           // a network blip doesn't end the test
+
 function TestDialog({
   conn,
+  popup,
   onClose,
 }: {
   conn: SignInConnection | null
+  popup: Window | null // opened by the click, so pop-up blockers let it through
   onClose: () => void
 }) {
   // A new `key` per test (see SignInView), so each one starts out waiting.
   const [state, setState] = useState<TestState>({ phase: "waiting" })
-  const popup = useRef<Window | null>(null)
+  // One ticket per test, even when StrictMode runs the effect twice.
+  const ticket = useRef<Promise<{ ticket: string; url: string }> | null>(null)
 
   useEffect(() => {
     if (!conn) return
     let stopped = false
     let timer: number | undefined
-    // Open the window now, inside the click, so popup blockers allow it.
-    popup.current = window.open("about:blank", "kb-sso-test", "width=520,height=720")
+    ticket.current ??= signIn.startTest(conn.id)
 
-    const poll = (ticket: string, closedChecks: number) => {
+    const poll = (id: string, closedChecks: number, errors: number) => {
       timer = window.setTimeout(async () => {
         if (stopped) return
         try {
-          const { done, result } = await signIn.testResult(ticket)
+          const { done, result } = await signIn.testResult(id)
           if (stopped) return
           if (done && result) {
             setState({ phase: "done", result })
             return
           }
           // Closed without finishing? Give the last answer a moment to arrive.
-          const closed = popup.current?.closed ?? false
+          const closed = popup?.closed ?? false
           if (closed && closedChecks >= 2) {
-            setState({ phase: "error", message: "The test window was closed before the sign-in finished." })
+            setState({
+              phase: "error",
+              message: "The test window was closed before the sign-in finished.",
+            })
             return
           }
-          poll(ticket, closed ? closedChecks + 1 : 0)
+          poll(id, closed ? closedChecks + 1 : 0, 0)
         } catch (err) {
-          if (!stopped) setState({ phase: "error", message: errorText(err) })
+          if (stopped) return
+          if (errors + 1 < POLL_ERRORS_TOLERATED) poll(id, closedChecks, errors + 1)
+          else setState({ phase: "error", message: errorText(err) })
         }
       }, POLL_MS)
     }
 
-    signIn
-      .startTest(conn.id)
-      .then(({ ticket, url }) => {
+    ticket.current
+      .then(({ ticket: id, url }) => {
         if (stopped) return
-        if (popup.current && !popup.current.closed) popup.current.location.href = url
-        else popup.current = window.open(url, "kb-sso-test", "width=520,height=720")
-        if (!popup.current) {
-          setState({ phase: "error", message: "Your browser blocked the test window. Allow pop-ups for this site and try again." })
+        if (!popup || popup.closed) {
+          setState({
+            phase: "error",
+            message:
+              "Your browser blocked the test window. Allow pop-ups for this site and try again.",
+          })
           return
         }
-        poll(ticket, 0)
+        popup.location.href = url
+        poll(id, 0, 0)
       })
       .catch((err) => {
-        popup.current?.close()
+        if (stopped) return
+        popup?.close()
         setState({ phase: "error", message: errorText(err) })
       })
     return () => {
       stopped = true
       window.clearTimeout(timer)
     }
-  }, [conn])
+  }, [conn, popup])
+
+  function close() {
+    if (popup && !popup.closed) popup.close()
+    onClose()
+  }
 
   const sent = state.phase === "done" ? Object.entries(state.result.sent) : []
 
   return (
-    <Dialog open={!!conn} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={!!conn} onOpenChange={(open) => !open && close()}>
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Test sign-in: {conn?.label}</DialogTitle>
@@ -562,7 +578,7 @@ function TestDialog({
           </>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={close}>
             Close
           </Button>
         </DialogFooter>
@@ -640,6 +656,7 @@ function SignInSettingsView() {
   const [editing, setEditing] = useState<SignInConnection | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [testing, setTesting] = useState<SignInConnection | null>(null)
+  const [testWindow, setTestWindow] = useState<Window | null>(null)
   const [roles, setRoles] = useState<SignInConnection | null>(null)
   const [opened, setOpened] = useState(0)     // remounts the dialogs, fresh, on each open
 
@@ -664,6 +681,8 @@ function SignInSettingsView() {
   }
 
   function openTest(conn: SignInConnection) {
+    // Open the window here, in the click: browsers only allow pop-ups from one.
+    setTestWindow(window.open("about:blank", "kb-sso-test", "width=520,height=720"))
     setOpened((n) => n + 1)
     setTesting(conn)
   }
@@ -757,7 +776,7 @@ function SignInSettingsView() {
         editing={editing}
         onSaved={saved}
       />
-      <TestDialog key={`test-${opened}`} conn={testing} onClose={closeTest} />
+      <TestDialog key={`test-${opened}`} conn={testing} popup={testWindow} onClose={closeTest} />
       <GroupRulesDialog
         key={`roles-${opened}`}
         conn={roles}

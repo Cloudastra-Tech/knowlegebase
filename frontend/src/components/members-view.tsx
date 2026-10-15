@@ -109,7 +109,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
               )
             }
           >
-            <SelectTrigger aria-label={`Role of ${m.username}`} className="w-48">
+            <SelectTrigger aria-label={`Role of ${m.username}`} className="w-40 sm:w-48">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

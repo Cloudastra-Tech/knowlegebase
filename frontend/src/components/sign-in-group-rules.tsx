@@ -84,8 +84,8 @@ export function GroupRulesDialog({
       await signIn.setGroupRules(conn.id, claim.trim(), kept)
       toast.success(
         kept.length
-          ? `Saved. ${conn.label} sets roles from groups at each person's next sign-in.`
-          : `Saved. ${conn.label} no longer sets roles.`,
+          ? `Saved. ${conn.label} now sets roles from groups.`
+          : `Saved. ${conn.label} no longer sets roles, and the roles it gave are gone.`,
       )
       onSaved()
     } catch (err) {
@@ -102,8 +102,9 @@ export function GroupRulesDialog({
           <DialogHeader>
             <DialogTitle>Roles from groups: {conn?.label}</DialogTitle>
             <DialogDescription>
-              People get the highest role their groups at the provider give them, each time
-              they sign in. A role you set for someone on the Members tab wins over this.
+              People get the highest role their groups at the provider give them. Saving
+              applies it now to everyone whose groups we know, and again at each sign-in. A
+              role you set for someone on the Members tab wins over this.
             </DialogDescription>
           </DialogHeader>
 
