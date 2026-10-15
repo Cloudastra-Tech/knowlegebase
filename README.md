@@ -64,7 +64,10 @@ Your question → RETRIEVE matching chunks → AUGMENT the prompt with them
 | `safety.py` | The safety rules (input + output checks). |
 | `api.py` | The API behind the website: chat, documents, integrations, sign-in. |
 | `frontend/` | The website (React + shadcn/ui). |
-| `auth.py` / `sso.py` | Sign-in: username + password accounts, and Google / Microsoft. Both decide your **role**. |
+| `auth.py` / `sso.py` | Sign-in: username + password accounts, and single sign-on (Google, Microsoft, each workspace's own provider). |
+| `members_store.py` | Who may sign in where, and as what: workspaces, domains, members, roles, providers (SQLite). |
+| `saml_sp.py` / `sso_setup.py` / `url_guard.py` | SAML sign-in; checks run when an admin sets up a provider; only calling public addresses. |
+| `sign-in-guide.md` | For a workspace's admin: connecting their identity provider. |
 | `app.py` | The original Streamlit chat website (still works; the React site is the main one). |
 | `docs/` | Your `.txt` and `.pdf` files: `docs/public/` for everyone, `docs/restricted/` for HR / Admin. |
 | `tests/` | Automatic checks — run `pytest`. |
