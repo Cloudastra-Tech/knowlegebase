@@ -1,14 +1,9 @@
-import { useEffect, useState } from "react"
+import { lazy, useEffect, useState } from "react"
 import { ChevronDown, LogOut } from "lucide-react"
 import { toast } from "sonner"
 
-import { ChatView } from "@/components/chat-view"
-import { DocsView } from "@/components/docs-view"
-import { IntegrationsView } from "@/components/integrations-view"
-import { KnowledgeView } from "@/components/knowledge-view"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
-import { LandingPage } from "@/components/landing-page"
-import { LoginPage } from "@/components/login-page"
+import { LazyPage } from "@/components/lazy-page"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -23,22 +18,50 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IndexStatusProvider } from "@/lib/index-status"
-import { cn } from "@/lib/utils"
-import { api, session, setUnauthorizedHandler, type Role, type User } from "@/lib/api"
+import { cn, hashParams } from "@/lib/utils"
+import {
+  api,
+  ApiError,
+  session,
+  setForbiddenHandler,
+  setUnauthorizedHandler,
+  type Role,
+  type User,
+} from "@/lib/api"
 
 type Screen = "chat" | "knowledge" | "docs" | "integrations"
 
+// Each page is its own download, so a visitor on the landing page doesn't load the
+// chat (markdown rendering) and a public user never loads the HR screens.
+const ChatView = lazy(() => import("@/components/chat-view").then((m) => ({ default: m.ChatView })))
+const DocsView = lazy(() => import("@/components/docs-view").then((m) => ({ default: m.DocsView })))
+const IntegrationsView = lazy(() =>
+  import("@/components/integrations-view").then((m) => ({ default: m.IntegrationsView })),
+)
+const KnowledgeView = lazy(() =>
+  import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
+)
+const LandingPage = lazy(() =>
+  import("@/components/landing-page").then((m) => ({ default: m.LandingPage })),
+)
+const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
+
+// The screens a public user may see; anything else falls back to Chat.
+const publicScreen = (s: Screen): Screen => (s === "knowledge" ? s : "chat")
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
-  const [checking, setChecking] = useState(!!session.token)
+  const [checking, setChecking] = useState(
+    () => !!session.token || window.location.hash.startsWith("#sso"),
+  )
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
   const [openDrivePicker, setOpenDrivePicker] = useState(false)
-  // Signed out: the landing page, or the sign-in form at #login.
-  const [wantsLogin, setWantsLogin] = useState(() => window.location.hash === "#login")
+  // Signed out: the landing page, or the sign-in form at #login (or #login?error=...).
+  const [wantsLogin, setWantsLogin] = useState(() => window.location.hash.startsWith("#login"))
 
   useEffect(() => {
-    const onHash = () => setWantsLogin(window.location.hash === "#login")
+    const onHash = () => setWantsLogin(window.location.hash.startsWith("#login"))
     window.addEventListener("hashchange", onHash)
     return () => window.removeEventListener("hashchange", onHash)
   }, [])
@@ -46,7 +69,7 @@ export default function App() {
   function goTo(hash: string) {
     if (hash) window.location.hash = hash
     else history.replaceState(null, "", window.location.pathname)
-    setWantsLogin(hash === "login")
+    setWantsLogin(hash.startsWith("login"))
     window.scrollTo(0, 0)
   }
 
@@ -56,9 +79,10 @@ export default function App() {
   }
 
   // Back from Google's consent screen: /#integrations?connected=... or ?error=...
-  useEffect(() => {
-    if (!user || !window.location.hash.startsWith("#integrations")) return
-    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "")
+  // Handled once we know who's signed in (see signedIn below).
+  function showIntegrationResult() {
+    if (!window.location.hash.startsWith("#integrations")) return
+    const params = hashParams()
     history.replaceState(null, "", window.location.pathname)
     session.setRole("hr")
     setRole("hr")
@@ -83,18 +107,72 @@ export default function App() {
       }
       toast.error(why[error] ?? "The integration was not connected.")
     }
-  }, [user])
+  }
 
-  // Restore the session after a page refresh.
+  function signedIn(u: User) {
+    setUser(u)
+    showIntegrationResult()
+  }
+
+  // An admin can change someone's role while they're signed in. Re-read the
+  // account when the server refuses something, and when the tab comes back.
+  useEffect(() => {
+    let inFlight = false
+    const recheck = () => {
+      const token = session.token
+      if (!token || inFlight) return               // one check at a time
+      inFlight = true
+      api
+        .me()
+        .then((u) => {
+          if (session.token !== token) return       // signed out meanwhile
+          setUser(u)
+          if (u.role !== "hr") setScreen(publicScreen)
+        })
+        .catch((err) => {
+          // Access removed altogether. (/auth/* 401s skip the unauthorized handler.)
+          if (err instanceof ApiError && err.status === 401 && session.token === token) {
+            session.setToken(null)
+            setUser(null)
+            setScreen("chat")
+          }
+        })
+        .finally(() => {
+          inFlight = false
+        })
+    }
+    setForbiddenHandler(recheck)
+    const onVisible = () => document.visibilityState === "visible" && recheck()
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
+  }, [])
+
+  // Restore the session after a page refresh — or, back from Google / Microsoft
+  // at /#sso?code=..., swap the one-time code for a session.
   useEffect(() => {
     setUnauthorizedHandler(() => {
       session.setToken(null)
       setUser(null)
     })
+    if (window.location.hash.startsWith("#sso")) {
+      const code = hashParams().get("code")
+      history.replaceState(null, "", window.location.pathname)
+      api
+        .ssoExchange(code ?? "")
+        .then(({ token, user }) => {
+          session.setToken(token)
+          signedIn(user)
+        })
+        .catch(() => {
+          window.location.hash = "login?error=expired"
+        })
+        .finally(() => setChecking(false))
+      return
+    }
     if (!session.token) return
     api
       .me()
-      .then(setUser)
+      .then(signedIn)
       .catch(() => session.setToken(null))
       .finally(() => setChecking(false))
   }, [])
@@ -102,7 +180,12 @@ export default function App() {
   function changeRole(next: Role) {
     session.setRole(next)
     setRole(next)
-    if (next !== "hr") setScreen((s) => (s === "knowledge" ? s : "chat"))
+    if (next !== "hr") setScreen(publicScreen)
+  }
+
+  function openScreen(next: Screen) {
+    setScreen(next)
+    setOpenDrivePicker(false)    // the picker opens by itself only on arrival from Google
   }
 
   async function signOut() {
@@ -121,12 +204,20 @@ export default function App() {
   }
 
   if (!user) {
-    return wantsLogin ? (
-      <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
-    ) : (
-      <LandingPage onSignIn={() => goTo("login")} />
+    return (
+      <LazyPage fullScreen>
+        {wantsLogin ? (
+          <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
+        ) : (
+          <LandingPage onSignIn={() => goTo("login")} />
+        )}
+      </LazyPage>
     )
   }
+
+  // Only an HR account gets HR; it can also "view as" public. Everyone else is public.
+  const canAdmin = user.role === "hr"
+  const activeRole: Role = canAdmin ? role : "public"
 
   const initials = user.name
     .split(/\s+/)
@@ -138,7 +229,7 @@ export default function App() {
   const navItems: { id: Screen; label: string }[] = [
     { id: "chat", label: "Chat" },
     { id: "knowledge", label: "Knowledge" },
-    ...(role === "hr"
+    ...(activeRole === "hr"
       ? [
           { id: "docs" as Screen, label: "Documents" },
           { id: "integrations" as Screen, label: "Integrations" },
@@ -159,7 +250,7 @@ export default function App() {
             {navItems.map((item) => (
               <button
                 key={item.id}
-                onClick={() => setScreen(item.id)}
+                onClick={() => openScreen(item.id)}
                 className={cn(
                   "relative flex h-full items-center text-sm transition-colors",
                   screen === item.id
@@ -179,27 +270,29 @@ export default function App() {
             <div className="mr-2">
               <IndexStatusText />
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1 rounded-full px-3 text-xs font-normal text-muted-foreground hover:text-foreground"
-                >
-                  {role === "hr" ? "HR / Admin" : "Public"}
-                  <ChevronDown className="size-3.5 opacity-60" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                  View as
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={role} onValueChange={(v) => changeRole(v as Role)}>
-                  <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {canAdmin && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1 rounded-full px-3 text-xs font-normal text-muted-foreground hover:text-foreground"
+                  >
+                    {activeRole === "hr" ? "HR / Admin" : "Public"}
+                    <ChevronDown className="size-3.5 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    View as
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={role} onValueChange={(v) => changeRole(v as Role)}>
+                    <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -217,7 +310,9 @@ export default function App() {
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuLabel>
                   <div className="text-sm font-medium">{user.name}</div>
-                  <div className="text-xs font-normal text-muted-foreground">@{user.username}</div>
+                  <div className="text-xs font-normal text-muted-foreground">
+                    {user.username.includes("@") ? user.username : `@${user.username}`}
+                  </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut}>
@@ -233,24 +328,32 @@ export default function App() {
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
         <div className={screen === "chat" ? "h-full" : "hidden"}>
-          <ChatView role={role} />
+          <LazyPage>
+            <ChatView role={activeRole} />
+          </LazyPage>
         </div>
         {screen === "knowledge" && (
           <div className="h-full overflow-y-auto">
-            <KnowledgeView key={role} />
+            <LazyPage>
+              <KnowledgeView key={activeRole} />
+            </LazyPage>
           </div>
         )}
-        {screen === "docs" && role === "hr" && (
+        {screen === "docs" && activeRole === "hr" && (
           <div className="h-full overflow-y-auto">
-            <DocsView />
+            <LazyPage>
+              <DocsView />
+            </LazyPage>
           </div>
         )}
-        {screen === "integrations" && role === "hr" && (
+        {screen === "integrations" && activeRole === "hr" && (
           <div className="h-full overflow-y-auto">
-            <IntegrationsView
-              onOpenDocuments={() => setScreen("docs")}
-              openDrivePicker={openDrivePicker}
-            />
+            <LazyPage>
+              <IntegrationsView
+                onOpenDocuments={() => openScreen("docs")}
+                openDrivePicker={openDrivePicker}
+              />
+            </LazyPage>
           </div>
         )}
       </main>

@@ -13,7 +13,11 @@ Run it (from the project folder):
 then, in frontend/:   npm run dev     -> http://localhost:5173
 
 Endpoints (all under /api, all except login need "Authorization: Bearer <token>"):
+    GET    /auth/providers        which sign-in options the login page shows
     POST   /auth/login            {username, password} -> {token, user}
+    GET    /auth/sso/{provider}/start      send the browser to Google / Microsoft
+    GET    /auth/sso/{provider}/callback   they send it back here (sso.py decides who gets in)
+    POST   /auth/sso/exchange     {code} -> {token, user}   the one-time code from the callback
     POST   /auth/logout
     GET    /auth/me
     POST   /chat                  {question, role} -> {answer, sources, steps}
@@ -37,13 +41,15 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
   ({provider} = google_drive | notion)
 Every document change re-indexes automatically; connectors re-sync every 30 minutes.
 
-The role (public / hr) is chosen in the UI and sent as "X-Role", exactly like
-the Streamlit dropdown — it is a demo switch, not a security boundary.
+ROLES come from the account: users.json for password logins, config/sso.json
+for single sign-on. An HR / Admin account can send "X-Role: public" to see the app
+as a public user would; the header can never raise anyone TO HR.
 """
 
 import contextlib
 import json
 import io
+import logging
 import queue
 import os
 import secrets
@@ -54,6 +60,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
 load_dotenv()
 
@@ -62,11 +69,26 @@ import docs_store                    # noqa: E402
 import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
 import sessions_store                # noqa: E402
+import sso                           # noqa: E402
 import workspaces                    # noqa: E402
 from agent import build_agent        # noqa: E402
 from connectors import google_drive, notion  # noqa: E402
 
-app = FastAPI(title="Knowledge Assistant API")
+@contextlib.asynccontextmanager
+async def _lifespan(app):
+    """Background jobs that run for the life of the server."""
+    threading.Thread(target=_sync_scheduler, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Knowledge Assistant API", lifespan=_lifespan)
+log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
+# Holds Authlib's state / nonce / PKCE verifier between the redirect to Google or
+# Microsoft and the callback — nothing else goes in it. Without SESSION_SECRET a
+# random key is used, which only cancels sign-ins in progress during a restart.
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET") or secrets.token_urlsafe(32),
+                   session_cookie="kb_oauth", max_age=10 * 60, same_site="lax",
+                   https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
 
 SESSION_SECONDS = 12 * 60 * 60
 MAX_FAILED_LOGINS = 5
@@ -112,19 +134,34 @@ class LoginIn(BaseModel):
 
 
 def current_user(authorization: str = Header(default="")):
-    user = sessions_store.get(authorization.removeprefix("Bearer ").strip())
+    token = authorization.removeprefix("Bearer ").strip()
+    user = sessions_store.get(token)
     if not user:
         raise HTTPException(401, "Please sign in.")
-    return user
+    # Workspace and role are looked up again on EVERY request, so removing someone
+    # (or their HR role) takes effect now, not when their 12-hour session ends.
+    try:
+        access = (sso.access_for(user["username"], user.get("org")) if user.get("provider")
+                  else auth.access_for(user["username"]))
+    except (OSError, ValueError):            # e.g. config/sso.json isn't valid JSON
+        log.exception("Couldn't read the sign-in settings")
+        raise HTTPException(503, "Sign-in settings can't be read. Please tell your admin.")
+    if not access:
+        sessions_store.delete(token)
+        raise HTTPException(401, "Please sign in.")
+    return {**user, **access}
 
 
-def current_role(x_role: str = Header(default="public")):
-    return "hr" if x_role == "hr" else "public"
+def current_role(user=Depends(current_user), x_role: str = Header(default="hr")):
+    """HR only if the ACCOUNT is HR; X-Role can only lower it ("view as public")."""
+    return "hr" if user["role"] == "hr" and x_role == "hr" else "public"
 
 
 def require_hr(user=Depends(current_user), role=Depends(current_role)):
     if role != "hr":
-        raise HTTPException(403, "Switch to HR / Admin to manage documents and integrations.")
+        raise HTTPException(403, "Switch to HR / Admin to manage documents and integrations."
+                            if user["role"] == "hr" else
+                            "Only HR / Admin accounts can manage documents and integrations.")
     return user
 
 
@@ -135,8 +172,16 @@ def ws_of(user):
     return ws
 
 
+@app.get("/api/auth/providers")
+def auth_providers():
+    return {"providers": [{"id": p, "name": sso.label(p)} for p in sso.configured()],
+            "password": auth.password_login_on()}
+
+
 @app.post("/api/auth/login")
 def login(body: LoginIn):
+    if not auth.password_login_on():
+        raise HTTPException(403, "Password sign-in is turned off. Use single sign-on.")
     key = body.username.strip().lower()
     count, locked_until = _failed_logins.get(key, (0, 0))
     if time.time() < locked_until:
@@ -155,6 +200,62 @@ def login(body: LoginIn):
     _failed_logins.pop(key, None)
     token = secrets.token_urlsafe(32)
     sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
+    return {"token": token, "user": user}
+
+
+# ---- Single sign-on (sso.py) ---------------------------------------------------
+# Errors go back to the login page as /#login?error=<code>; it explains each code.
+class CodeIn(BaseModel):
+    code: str
+
+
+@app.get("/api/auth/sso/{provider}/start")
+async def sso_start(provider: str, request: Request):
+    c = sso.client(provider)
+    if not c:
+        return RedirectResponse("/#login?error=sso_unavailable")
+    try:
+        return await c.authorize_redirect(
+            request, _public_url(request, f"/api/auth/sso/{provider}/callback"),
+            **sso.authorize_params(provider))
+    except Exception:              # couldn't reach the provider's discovery document
+        log.exception("SSO %s: couldn't start sign-in", provider)
+        return RedirectResponse("/#login?error=sso_failed")
+
+
+@app.get("/api/auth/sso/{provider}/callback")
+async def sso_callback(provider: str, request: Request):
+    c = sso.client(provider)
+    if not c:
+        return RedirectResponse("/#login?error=sso_unavailable")
+    error = request.query_params.get("error")
+    if error:                      # the provider refused; log why (e.g. admin consent needed)
+        log.warning("SSO %s: provider returned %s: %s", provider, error,
+                    request.query_params.get("error_description", ""))
+        return RedirectResponse("/#login?error="
+                                + ("cancelled" if error == "access_denied" else "sso_failed"))
+    try:
+        token = await c.authorize_access_token(request)    # checks state + the ID token
+    except Exception:
+        log.exception("SSO %s: sign-in callback failed", provider)
+        return RedirectResponse("/#login?error=sso_failed")
+    try:
+        user = sso.user_for(provider, token.get("userinfo") or {})
+    except sso.NotAllowed as e:
+        return RedirectResponse(f"/#login?error={e.reason}")
+    except Exception:              # e.g. config/sso.json isn't valid JSON
+        log.exception("SSO %s: couldn't decide who gets in", provider)
+        return RedirectResponse("/#login?error=sso_failed")
+    return RedirectResponse("/#sso?code=" + sso.issue_code(user))
+
+
+@app.post("/api/auth/sso/exchange")
+def sso_exchange(body: CodeIn):
+    user = sso.redeem_code(body.code)
+    if not user:
+        raise HTTPException(401, "That sign-in expired. Please sign in again.")
+    token = secrets.token_urlsafe(32)
+    sessions_store.create(token, user, SESSION_SECONDS)
     return {"token": token, "user": user}
 
 
@@ -476,14 +577,14 @@ def _sync_scheduler():
                     _start_sync(row["workspace"], provider)
 
 
-@app.on_event("startup")
-def _start_background_jobs():
-    threading.Thread(target=_sync_scheduler, daemon=True).start()
+def _public_url(request: Request, path):
+    """Absolute URL of one of our pages, for providers to redirect back to."""
+    base = os.getenv("PUBLIC_URL") or str(request.base_url)
+    return base.rstrip("/") + path
 
 
 def _redirect_uri(request: Request, provider):
-    base = os.getenv("PUBLIC_URL") or str(request.base_url)
-    return base.rstrip("/") + f"/api/integrations/{provider}/callback"
+    return _public_url(request, f"/api/integrations/{provider}/callback")
 
 
 def _integration_info(ws, provider):

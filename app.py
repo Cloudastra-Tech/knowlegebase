@@ -22,9 +22,11 @@ st.sidebar.markdown(f"Signed in as **{user['name']}**")
 if st.sidebar.button("Sign out"):
     auth.logout()
 
-# ---- Pick WHO is using the app (their role / permission level) ----
-role_label = st.sidebar.selectbox("Sign in as:", ["Public user", "HR / Admin"], index=1)  # default: HR / Admin
-role = "hr" if role_label == "HR / Admin" else "public"
+# ---- The account's role decides; HR / Admin can also view as a public user ----
+role = "public"
+if user.get("role") == "hr":
+    role_label = st.sidebar.selectbox("View as:", ["HR / Admin", "Public user"])
+    role = "hr" if role_label == "HR / Admin" else "public"
 st.sidebar.caption(
     "Public users can't retrieve restricted documents (e.g. staff salaries). HR/Admin can."
 )

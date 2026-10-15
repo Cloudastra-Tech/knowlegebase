@@ -10,9 +10,9 @@ ONE-TIME SETUP (run in your terminal once):
     1. pip install guardrails-ai
     2. guardrails configure   -> paste a FREE token from
                                  https://hub.guardrailsai.com/keys
-    3. guardrails hub install hub://guardrails/valid_length
-    4. guardrails hub install hub://guardrails/toxic_language
-    (the custom intent rule below needs NO hub install — it's our own code.)
+    3. guardrails hub install hub://guardrails/toxic_language
+    (the length limit and the custom intent rules below need NO hub install —
+     they're our own code. Without step 3 only the toxicity check is skipped.)
 
 ------------------------------------------------------------------------------
 THE 3 PIECES OF GUARDRAILS:
@@ -134,6 +134,21 @@ class BlockSalaryLeak(Validator):
         return PassResult()
 
 
+# LENGTH validator — our own, so the length limit works even when the Hub
+# validators (step 3/4 of the setup above) aren't installed, e.g. in Docker.
+MAX_QUESTION_CHARS = 500
+
+
+@register_validator(name="max-length", data_type="string")
+class MaxLength(Validator):
+    def validate(self, value, metadata):
+        if len(value) > MAX_QUESTION_CHARS:
+            return FailResult(
+                error_message=f"Question is longer than {MAX_QUESTION_CHARS} characters."
+            )
+        return PassResult()
+
+
 # ----------------------------------------------------------------------------
 # Build TWO kinds of guard:
 #   - GENERIC guard  : length + toxicity. Applies to EVERYONE.
@@ -142,14 +157,13 @@ class BlockSalaryLeak(Validator):
 # This is the key principle: guardrails must respect permissions — never block
 # a user who is authorized to see the data.
 # ----------------------------------------------------------------------------
-generic_validators = []
+generic_validators = [MaxLength(on_fail="exception")]      # always on
 try:
-    from guardrails.hub import ValidLength, ToxicLanguage
-    generic_validators.append(ValidLength(min=1, max=500, on_fail="exception"))
+    from guardrails.hub import ToxicLanguage
     generic_validators.append(ToxicLanguage(threshold=0.5, validation_method="sentence",
                                             on_fail="exception"))
 except ImportError:
-    print("[safety] Hub validators not installed — generic checks skipped. "
+    print("[safety] Hub toxicity validator not installed — toxicity check skipped. "
           "Run: guardrails hub install hub://guardrails/toxic_language")
 
 generic_guard = Guard()
@@ -159,6 +173,12 @@ for _v in generic_validators:
 # Salary-specific guards (used only for NON-authorized users).
 salary_input_guard = Guard().use(BlockStaffSalary(on_fail="exception"))
 output_guard = Guard().use(BlockSalaryLeak(on_fail="exception"))
+
+# Guardrails reports usage (guard / validator names and results, not the text)
+# to its own servers unless ~/.guardrailsrc says not to — and the Docker image
+# has no such file. Turn it off. Done last: every new Guard() re-reads the default.
+for _g in (generic_guard, salary_input_guard, output_guard):
+    _g.configure(allow_metrics_collection=False)
 
 
 # ----------------------------------------------------------------------------

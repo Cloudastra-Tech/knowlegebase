@@ -1,7 +1,7 @@
 import { Check, Loader2, TriangleAlert } from "lucide-react"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useIndexStatus } from "@/lib/index-status"
+import { useIndexStatus } from "@/lib/index-status-context"
 import { cn } from "@/lib/utils"
 
 // Small status text for the navbar: "Indexing · Embedding 12 chunks", then

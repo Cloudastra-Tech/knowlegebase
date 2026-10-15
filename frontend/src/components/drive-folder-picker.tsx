@@ -49,30 +49,37 @@ export function DriveFolderPicker({
   onSaved: () => void
 }) {
   const [path, setPath] = useState<DriveFolder[]>([]) // breadcrumb; [] = top level
-  const [items, setItems] = useState<DriveFolder[] | null>(null)
+  // What's inside the folder being shown, tagged with that folder so a stale
+  // listing never shows while the next one loads (null = loading).
+  const [listing, setListing] = useState<{ parent?: string; items: DriveFolder[] } | null>(null)
   const [selected, setSelected] = useState<DriveFolder[]>(initial)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
+  // Each time the dialog opens: start from the saved picks, at the top level.
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setSelected(initial)
       setPath([])
+      setListing(null)
     }
-  }, [open, initial])
+  }
 
   const parent = path.at(-1)?.id
+  const items = listing && listing.parent === parent ? listing.items : null
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    setItems(null)
     api
       .driveFolders(parent)
       .then(
-        ({ drives, folders, files }) => !cancelled && setItems([...drives, ...folders, ...files]),
+        ({ drives, folders, files }) =>
+          !cancelled && setListing({ parent, items: [...drives, ...folders, ...files] }),
       )
       .catch((err) => {
         toast.error(errorText(err))
-        if (!cancelled) setItems([])
+        if (!cancelled) setListing({ parent, items: [] })
       })
     return () => {
       cancelled = true

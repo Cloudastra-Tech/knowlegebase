@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, type KnowledgeItem } from "@/lib/api"
-import { useIndexStatus } from "@/lib/index-status"
+import { useIndexStatus } from "@/lib/index-status-context"
 
 function when(modified: KnowledgeItem["modified"]) {
   if (!modified) return "—"

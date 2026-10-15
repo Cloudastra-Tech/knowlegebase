@@ -7,6 +7,14 @@ export interface User {
   username: string
   name: string
   workspace: string
+  // What the ACCOUNT may do. An HR account can still view the app as "public".
+  role: Role
+  provider?: string                   // "google", "microsoft", or an OIDC id such as "okta"
+}
+
+export interface AuthOptions {
+  providers: { id: string; name: string }[]
+  password: boolean
 }
 
 export type IntegrationStatus =
@@ -138,6 +146,12 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn
 }
 
+// Called when the server refuses something: the account's role may have changed.
+let onForbidden: () => void = () => {}
+export function setForbiddenHandler(fn: () => void) {
+  onForbidden = fn
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (session.token) headers.set("Authorization", `Bearer ${session.token}`)
@@ -154,7 +168,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* not JSON */
     }
-    if (res.status === 401 && path !== "/auth/login") onUnauthorized()
+    if (res.status === 401 && !path.startsWith("/auth/")) onUnauthorized()
+    if (res.status === 403 && !path.startsWith("/auth/")) onForbidden()
     throw new ApiError(res.status, message)
   }
   return res.json() as Promise<T>
@@ -163,7 +178,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const docPath = (d: { access: Access; name: string }) =>
   `/docs/${d.access}/${encodeURIComponent(d.name)}`
 
+// A full-page navigation (not fetch): the server redirects to Google / Microsoft.
+export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/start`
+
 export const api = {
+  authOptions: () => request<AuthOptions>("/auth/providers"),
+  // The provider sends the browser back to /#sso?code=...; swap the code for a session.
+  ssoExchange: (code: string) =>
+    request<{ token: string; user: User }>("/auth/sso/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
   login: (username: string, password: string) =>
     request<{ token: string; user: User }>("/auth/login", {
       method: "POST",
@@ -220,7 +245,7 @@ export const api = {
   },
 
   listDocs: () => request<{ docs: Doc[] }>("/docs"),
-  readDoc: (d: Doc) => request<{ content: string }>(docPath(d)),
+  readDoc: (d: { access: Access; name: string }) => request<{ content: string }>(docPath(d)),
   createDoc: (name: string, access: Access, content: string) =>
     request<{ access: Access; name: string }>("/docs", {
       method: "POST",

@@ -31,6 +31,8 @@ was swapped. (Memory/checkpointer is NOT added yet — that's the next step.)
 Run a quick demo:  python agent.py
 """
 
+import ast
+import operator
 import os
 import re
 import sys
@@ -46,6 +48,45 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from rag import load_chain, answer_question
 from safety import check_prompt_injection, redact_pii
+
+
+# ---- Calculator: arithmetic only --------------------------------------------
+# eval() — even with no builtins — can be escaped (e.g. via ().__class__), and the
+# expression comes from the model, which a user's question can steer. So we walk
+# the parsed expression ourselves and allow numbers and + - * / // % ** only.
+_OPERATORS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+              ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+              ast.Mod: operator.mod, ast.Pow: operator.pow,
+              ast.UAdd: operator.pos, ast.USub: operator.neg}
+MAX_EXPRESSION = 200        # characters
+MAX_EXPONENT = 100          # 10**100 is fine; 9**9**9 would hang the server
+
+
+def calculate(expression):
+    """The value of an arithmetic expression like '2000*12'. Raises ValueError
+    for anything that isn't plain arithmetic."""
+    if len(expression) > MAX_EXPRESSION:
+        raise ValueError("expression is too long")
+
+    def walk(node):
+        if isinstance(node, ast.Expression):
+            return walk(node.body)
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _OPERATORS:
+            return _OPERATORS[type(node.op)](walk(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in _OPERATORS:
+            left, right = walk(node.left), walk(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right) > MAX_EXPONENT:
+                raise ValueError("exponent is too large")
+            return _OPERATORS[type(node.op)](left, right)
+        raise ValueError("only numbers and + - * / // % ** are allowed")
+
+    try:
+        tree = ast.parse(expression.replace(",", ""), mode="eval")   # "2,000" -> 2000
+    except SyntaxError:
+        raise ValueError("not a valid arithmetic expression")
+    return walk(tree)
 
 
 def _safe(text):
@@ -268,7 +309,7 @@ def build_agent(role="public", collection=None, outline=True):
     def calculator(expression: str) -> str:
         """Do arithmetic. Pass a math expression, e.g. '2000*12' or '24000*0.8'."""
         try:
-            return str(eval(expression, {"__builtins__": {}}, {}))
+            return str(calculate(expression))
         except Exception as e:
             return f"Error: {e}"
 
