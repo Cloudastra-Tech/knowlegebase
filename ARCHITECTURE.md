@@ -124,12 +124,12 @@ LAYER 2 — GUARDRAILS          "the backup net"
 ## 🔑 Where your role comes from
 
 ```
-  Sign in ──► password account (users.json, "role": "hr" or not)
-          └─► Google / Microsoft ──► sso.py checks config/sso.json:
-                                       • is your email's domain listed?  no → turned away
-                                       • is your email in the "hr" list? yes → HR / Admin
-                                                                         no  → public
+  Sign in ──► password account (members table, role public / hr / admin)
+          └─► Google / Microsoft ──► sso.py checks the database (members_store.py):
+                                       • is your email's domain verified?  no → turned away
+                                       • your role on the members table    (public until set)
 ```
+`admin` is HR plus control over who may sign in; the app treats both as HR / Admin.
 Your role is looked up again on **every request**, so taking someone's HR role
 away works straight away. The website can *lower* it (an HR user can "view as
 public"), but it can never *raise* it — the server decides.

@@ -24,7 +24,7 @@ if st.sidebar.button("Sign out"):
 
 # ---- The account's role decides; HR / Admin can also view as a public user ----
 role = "public"
-if user.get("role") == "hr":
+if user.get("role") in ("hr", "admin"):
     role_label = st.sidebar.selectbox("View as:", ["HR / Admin", "Public user"])
     role = "hr" if role_label == "HR / Admin" else "public"
 st.sidebar.caption(
