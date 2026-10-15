@@ -1,0 +1,658 @@
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import {
+  CheckCircle2,
+  ChevronDown,
+  Globe,
+  KeyRound,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+  ShieldCheck,
+  XCircle,
+} from "lucide-react"
+import { toast } from "sonner"
+
+import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  signIn,
+  type SignInConnection,
+  type SignInDomain,
+  type SignInEvent,
+  type SignInSettings,
+  type SsoTestResult,
+} from "@/lib/api"
+import { cn, timeAgo } from "@/lib/utils"
+
+const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
+
+// Why a sign-in was refused, for the admin (codes from api.py / sso.py).
+const REASONS: Record<string, string> = {
+  not_allowed:
+    "Their email isn't on a verified domain of this workspace, or the account belongs to another workspace.",
+  unverified: "The provider didn't send a verified email address.",
+  cancelled: "They cancelled at the provider.",
+  sso_failed: "The provider's answer couldn't be checked.",
+}
+const reasonText = (reason?: string | null) => (reason ? (REASONS[reason] ?? reason) : "")
+
+const PROTOCOL = { oidc: "OpenID Connect", saml: "SAML" } as const
+const ROLE = { public: "Public", hr: "HR", admin: "Admin" } as const
+
+function Section({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string
+  description: React.ReactNode
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <section className="rounded-2xl border border-border/70 bg-background p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-medium">{title}</h3>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+        {action}
+      </div>
+      <div className="mt-4">{children}</div>
+    </section>
+  )
+}
+
+function OnBadge({ on, onLabel, offLabel }: { on: boolean; onLabel: string; offLabel: string }) {
+  return on ? (
+    <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
+      <span className="size-1.5 rounded-full bg-emerald-500" /> {onLabel}
+    </Badge>
+  ) : (
+    <Badge variant="outline" className="font-normal text-muted-foreground">
+      {offLabel}
+    </Badge>
+  )
+}
+
+// ---- Domains -----------------------------------------------------------------------
+function DomainRow({ domain, onChange }: { domain: SignInDomain; onChange: () => void }) {
+  const [checking, setChecking] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+
+  async function check() {
+    setChecking(true)
+    try {
+      const d = await signIn.verifyDomain(domain.domain)
+      if (d.verified) toast.success(`${domain.domain} is verified.`)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  async function remove() {
+    try {
+      await signIn.removeDomain(domain.domain)
+      toast.success(`Removed ${domain.domain}.`)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  return (
+    <div className="rounded-xl border p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Globe className="size-4 text-muted-foreground" />
+        <span className="font-medium">{domain.domain}</span>
+        <OnBadge on={domain.verified} onLabel="Verified" offLabel="Waiting for DNS" />
+        <div className="ml-auto flex gap-2">
+          {!domain.verified && (
+            <Button size="sm" onClick={check} disabled={checking}>
+              {checking && <Loader2 className="animate-spin" />}
+              Check DNS
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
+            Remove
+          </Button>
+        </div>
+      </div>
+      {!domain.verified && domain.txt_name && domain.txt_value && (
+        <div className="mt-3 grid grid-cols-1 gap-2 rounded-lg bg-muted/40 p-3">
+          <p className="text-sm">
+            Add this <span className="font-medium">TXT record</span> at your DNS provider, then
+            check it. DNS changes can take a few minutes to appear.
+          </p>
+          <CopyField label="Name (host)" value={domain.txt_name} />
+          <CopyField label="Value" value={domain.txt_value} />
+        </div>
+      )}
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {domain.domain}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {domain.verified
+                ? `People with an @${domain.domain} address can no longer sign in, and anyone signed in with one is signed out on their next click.`
+                : "The domain was never verified, so nobody signs in with it yet."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={remove}>Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+function AddDomain({ onAdded }: { onAdded: () => void }) {
+  const [domain, setDomain] = useState("")
+  const [adding, setAdding] = useState(false)
+
+  async function add(e: FormEvent) {
+    e.preventDefault()
+    setAdding(true)
+    try {
+      await signIn.addDomain(domain)
+      setDomain("")
+      onAdded()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <form onSubmit={add} className="flex gap-2">
+      <Input
+        id="new-domain"
+        aria-label="Domain"
+        placeholder="example.com"
+        value={domain}
+        onChange={(e) => setDomain(e.target.value)}
+        className="max-w-xs"
+        required
+      />
+      <Button type="submit" variant="outline" disabled={adding}>
+        {adding ? <Loader2 className="animate-spin" /> : <Plus />}
+        Add domain
+      </Button>
+    </form>
+  )
+}
+
+// ---- Providers ---------------------------------------------------------------------
+function ProviderRow({
+  conn,
+  onEdit,
+  onTest,
+  onChange,
+}: {
+  conn: SignInConnection
+  onEdit: () => void
+  onTest: () => void
+  onChange: () => void
+}) {
+  const [confirm, setConfirm] = useState(false)
+
+  async function toggle() {
+    try {
+      await signIn.setEnabled(conn, !conn.enabled)
+      toast.success(conn.enabled ? `${conn.label} is off.` : `${conn.label} is on.`)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function remove() {
+    try {
+      await signIn.remove(conn.id)
+      toast.success(`Deleted ${conn.label}.`)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  return (
+    <div className="rounded-xl border p-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+          <KeyRound className="size-4" />
+        </div>
+        {/* At least 14rem for the name; on a phone the buttons go below it. */}
+        <div className="min-w-0 flex-1 basis-56">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{conn.label}</span>
+            <Badge variant="secondary" className="font-normal">
+              {PROTOCOL[conn.protocol]}
+            </Badge>
+            <OnBadge on={conn.enabled} onLabel="On" offLabel="Off" />
+          </div>
+          <p className="truncate text-sm text-muted-foreground">
+            {conn.issuer} · last sign-in {timeAgo(conn.last_login_at)}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={onTest}>
+            Test sign-in
+          </Button>
+          {!conn.enabled && (
+            <Button size="sm" onClick={toggle}>
+              Turn on
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="ghost" className="size-8" aria-label={`More for ${conn.label}`}>
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+              {conn.enabled && <DropdownMenuItem onSelect={toggle}>Turn off</DropdownMenuItem>}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive" onSelect={() => setConfirm(true)}>
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      <Collapsible>
+        <CollapsibleTrigger className="group mt-3 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+          Setup details
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-3 grid grid-cols-1 gap-3">
+          {conn.protocol === "oidc" ? (
+            <>
+              <CopyField label="Redirect URI (at your provider)" value={conn.redirect_uri!} />
+              <CopyField label="Client ID" value={conn.client_id!} />
+            </>
+          ) : (
+            <>
+              <CopyField label="Entity ID (at your provider)" value={conn.sp_entity_id!} />
+              <CopyField label="ACS URL (at your provider)" value={conn.acs_url!} />
+              <CopyField label="SP metadata URL" value={conn.sp_metadata_url!} />
+              <CopyField label="Your provider's sign-in URL" value={conn.sso_url!} />
+              <p className="text-xs text-muted-foreground">
+                {conn.signs_requests
+                  ? "Your provider asks for signed sign-in requests, so they're signed."
+                  : "Sign-in requests aren't signed: your provider doesn't ask for it."}
+                {conn.email_attribute ? ` Email comes from "${conn.email_attribute}".` : ""}
+              </p>
+            </>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {conn.label}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Nobody can sign in with it any more, and everyone signed in through it is signed
+              out on their next click. To pause it instead, turn it off.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={remove}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+// ---- Test sign-in: a popup signs in at the provider; the result comes back here ------
+type TestState =
+  | { phase: "waiting" }
+  | { phase: "done"; result: SsoTestResult }
+  | { phase: "error"; message: string }
+
+const POLL_MS = 1500
+
+function TestDialog({
+  conn,
+  onClose,
+}: {
+  conn: SignInConnection | null
+  onClose: () => void
+}) {
+  // A new `key` per test (see SignInView), so each one starts out waiting.
+  const [state, setState] = useState<TestState>({ phase: "waiting" })
+  const popup = useRef<Window | null>(null)
+
+  useEffect(() => {
+    if (!conn) return
+    let stopped = false
+    let timer: number | undefined
+    // Open the window now, inside the click, so popup blockers allow it.
+    popup.current = window.open("about:blank", "kb-sso-test", "width=520,height=720")
+
+    const poll = (ticket: string, closedChecks: number) => {
+      timer = window.setTimeout(async () => {
+        if (stopped) return
+        try {
+          const { done, result } = await signIn.testResult(ticket)
+          if (stopped) return
+          if (done && result) {
+            setState({ phase: "done", result })
+            return
+          }
+          // Closed without finishing? Give the last answer a moment to arrive.
+          const closed = popup.current?.closed ?? false
+          if (closed && closedChecks >= 2) {
+            setState({ phase: "error", message: "The test window was closed before the sign-in finished." })
+            return
+          }
+          poll(ticket, closed ? closedChecks + 1 : 0)
+        } catch (err) {
+          if (!stopped) setState({ phase: "error", message: errorText(err) })
+        }
+      }, POLL_MS)
+    }
+
+    signIn
+      .startTest(conn.id)
+      .then(({ ticket, url }) => {
+        if (stopped) return
+        if (popup.current && !popup.current.closed) popup.current.location.href = url
+        else popup.current = window.open(url, "kb-sso-test", "width=520,height=720")
+        if (!popup.current) {
+          setState({ phase: "error", message: "Your browser blocked the test window. Allow pop-ups for this site and try again." })
+          return
+        }
+        poll(ticket, 0)
+      })
+      .catch((err) => {
+        popup.current?.close()
+        setState({ phase: "error", message: errorText(err) })
+      })
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [conn])
+
+  const sent = state.phase === "done" ? Object.entries(state.result.sent) : []
+
+  return (
+    <Dialog open={!!conn} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Test sign-in: {conn?.label}</DialogTitle>
+          <DialogDescription>
+            Sign in at your provider in the window that opened. Nobody is signed in here and no
+            account is added.
+          </DialogDescription>
+        </DialogHeader>
+
+        {state.phase === "waiting" && (
+          <div className="flex items-center gap-3 rounded-lg bg-muted/40 p-4 text-sm">
+            <Loader2 className="size-4 animate-spin" />
+            Waiting for you to sign in in the test window…
+          </div>
+        )}
+        {state.phase === "error" && (
+          <div className="flex items-start gap-3 rounded-lg bg-destructive/10 p-4 text-sm text-destructive">
+            <XCircle className="mt-0.5 size-4 shrink-0" />
+            {state.message}
+          </div>
+        )}
+        {state.phase === "done" && (
+          <>
+            {state.result.ok ? (
+              <div className="flex items-start gap-3 rounded-lg bg-emerald-600/10 p-4 text-sm text-emerald-800 dark:text-emerald-300">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                <p>
+                  <span className="font-medium">{state.result.name}</span> ({state.result.email}) would
+                  sign in as <span className="font-medium">{ROLE[state.result.role ?? "public"]}</span>
+                  {state.result.new_member ? ", as a new member." : "."}
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3 rounded-lg bg-destructive/10 p-4 text-sm text-destructive">
+                <XCircle className="mt-0.5 size-4 shrink-0" />
+                <div>
+                  <p>
+                    {state.result.email ? `${state.result.email} would be turned away. ` : "It didn't work. "}
+                    {state.result.reason === "not_allowed" && state.result.detail
+                      ? state.result.detail
+                      : reasonText(state.result.reason)}
+                  </p>
+                  {state.result.detail && state.result.reason !== "not_allowed" && (
+                    <p className="mt-1 font-mono text-xs break-all">{state.result.detail}</p>
+                  )}
+                </div>
+              </div>
+            )}
+            {sent.length > 0 && (
+              <div className="grid grid-cols-1 gap-2">
+                <p className="text-sm font-medium">What the provider sent</p>
+                <dl className="grid grid-cols-[minmax(0,10rem)_1fr] gap-x-3 gap-y-1 rounded-lg border p-3 text-xs">
+                  {sent.map(([key, value]) => (
+                    <div key={key} className="contents">
+                      <dt className="truncate text-muted-foreground" title={key}>
+                        {key}
+                      </dt>
+                      <dd className="font-mono break-all">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+          </>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---- Recent sign-ins -----------------------------------------------------------------
+const OUTCOME: Record<SignInEvent["outcome"], { label: string; className: string }> = {
+  signed_in: { label: "Signed in", className: "text-emerald-700 dark:text-emerald-400" },
+  refused: { label: "Turned away", className: "text-destructive" },
+  failed: { label: "Failed", className: "text-destructive" },
+  test: { label: "Test", className: "text-muted-foreground" },
+}
+
+function Events({ events }: { events: SignInEvent[] }) {
+  if (!events.length)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Nobody has signed in through your providers yet.
+      </p>
+    )
+  return (
+    <div className="divide-y rounded-xl border">
+      {events.map((e, i) => (
+        <div key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2.5 text-sm">
+          <span className={cn("w-24 shrink-0 font-medium", OUTCOME[e.outcome].className)}>
+            {OUTCOME[e.outcome].label}
+          </span>
+          <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
+          <span className="text-muted-foreground">via {e.connection ?? "a deleted provider"}</span>
+          <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
+          {e.reason && (
+            <p className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
+              {reasonText(e.reason)}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ---- The screen ----------------------------------------------------------------------
+export function SignInView({ workspace }: { workspace: string }) {
+  const [settings, setSettings] = useState<SignInSettings | null>(null)
+  const [editing, setEditing] = useState<SignInConnection | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [testing, setTesting] = useState<SignInConnection | null>(null)
+  const [opened, setOpened] = useState(0)     // remounts the dialogs, fresh, on each open
+
+  const load = useCallback(() => {
+    signIn
+      .get()
+      .then(setSettings)
+      .catch((err) => toast.error(errorText(err)))
+  }, [])
+
+  useEffect(load, [load])
+
+  function openDialog(conn: SignInConnection | null) {
+    setEditing(conn)
+    setOpened((n) => n + 1)
+    setDialogOpen(true)
+  }
+
+  function openTest(conn: SignInConnection) {
+    setOpened((n) => n + 1)
+    setTesting(conn)
+  }
+
+  function saved(conn: SignInConnection, added: boolean) {
+    setDialogOpen(false)
+    toast.success(
+      added
+        ? `Added ${conn.label}. It's off: test it, then turn it on.`
+        : `Saved ${conn.label}.`,
+    )
+    load()
+  }
+
+  function closeTest() {
+    setTesting(null)
+    load()                  // the test shows up in recent sign-ins
+  }
+
+  const verified = settings?.domains.some((d) => d.verified) ?? false
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-6">
+      <div>
+        <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <ShieldCheck className="size-6" /> Sign-in
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Let people sign in to the <span className="font-medium text-foreground">{workspace}</span>{" "}
+          workspace with your company's identity provider. Only emails on your verified domains
+          get in.
+        </p>
+      </div>
+
+      {!settings ? (
+        <div className="mt-6 grid grid-cols-1 gap-4">
+          <Skeleton className="h-36 rounded-2xl" />
+          <Skeleton className="h-48 rounded-2xl" />
+        </div>
+      ) : (
+        <div className="mt-6 grid grid-cols-1 gap-6">
+          <Section
+            title="Email domains"
+            description="Prove you own each domain your people's emails are on."
+          >
+            <div className="grid grid-cols-1 gap-3">
+              {settings.domains.map((d) => (
+                <DomainRow key={d.domain} domain={d} onChange={load} />
+              ))}
+              <AddDomain onAdded={load} />
+            </div>
+          </Section>
+
+          <Section
+            title="Identity providers"
+            description="People pick one after typing their work email on the sign-in page."
+            action={
+              <Button size="sm" onClick={() => openDialog(null)}>
+                <Plus /> Add provider
+              </Button>
+            }
+          >
+            <div className="grid grid-cols-1 gap-3">
+              {!verified && (
+                <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
+                  Verify a domain first: providers only sign in people with an email on one.
+                </p>
+              )}
+              {settings.connections.map((c) => (
+                <ProviderRow
+                  key={c.id}
+                  conn={c}
+                  onEdit={() => openDialog(c)}
+                  onTest={() => openTest(c)}
+                  onChange={load}
+                />
+              ))}
+              {!settings.connections.length && (
+                <p className="text-sm text-muted-foreground">
+                  No provider yet. Add your Okta, Entra ID, Google Workspace or any other OpenID
+                  Connect or SAML provider.
+                </p>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Recent sign-ins" description="Through your providers, newest first.">
+            <Events events={settings.events} />
+          </Section>
+        </div>
+      )}
+
+      <ProviderDialog
+        key={`provider-${opened}`}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editing={editing}
+        onSaved={saved}
+      />
+      <TestDialog key={`test-${opened}`} conn={testing} onClose={closeTest} />
+    </div>
+  )
+}

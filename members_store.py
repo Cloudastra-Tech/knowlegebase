@@ -13,6 +13,8 @@ It lives in the same small SQLite file as the sessions and integrations
                        set up by its admin; its secrets are encrypted
     saml_requests      SAML sign-ins in progress: an IdP's answer must match one, once
     saml_assertions    SAML assertions already used, so none can be replayed
+    sso_events         recent sign-ins and refusals through a workspace's providers,
+                       for its admin (the newest EVENTS_KEPT per workspace)
 
 ROLES, lowest to highest:
     public   chat over public documents
@@ -46,6 +48,7 @@ STAFF_ROLES = ("hr", "admin")      # see HR documents and the HR / Admin screens
 # A workspace proves it owns a domain with this DNS TXT record:
 #     _knowledge-assistant.<domain>   TXT   "kb-verify=<token>"
 TXT_PREFIX = "_knowledge-assistant"
+EVENTS_KEPT = 500
 
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
@@ -119,6 +122,16 @@ def _create_tables(conn):
     CREATE TABLE IF NOT EXISTS saml_assertions (
         assertion_id  TEXT PRIMARY KEY,
         expires       REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS sso_events (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace     TEXT NOT NULL,
+        connection_id TEXT,
+        email         TEXT,
+        outcome       TEXT NOT NULL
+                      CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test')),
+        reason        TEXT,                -- why it was refused or failed
+        at            REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id);
     CREATE TABLE IF NOT EXISTS imports (
         source      TEXT PRIMARY KEY,      -- an old config file, copied in once
         imported_at REAL NOT NULL);
@@ -477,3 +490,22 @@ def first_use_of_assertion(assertion_id, expires):
         conn.execute("DELETE FROM saml_assertions WHERE expires < ?", (now,))
         return conn.execute("INSERT OR IGNORE INTO saml_assertions VALUES (?, ?)",
                             (assertion_id, max(expires, now + 60))).rowcount == 1
+
+
+# ---- What happened at sign-in, for the workspace's admin ---------------------------
+def log_event(workspace, cid, email, outcome, reason=None):
+    with _lock, _db() as conn:
+        conn.execute("""INSERT INTO sso_events
+                        (workspace, connection_id, email, outcome, reason, at)
+                        VALUES (?, ?, ?, ?, ?, ?)""",
+                     (workspace, cid, email, outcome, (reason or "")[:300] or None, time.time()))
+        conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND id NOT IN
+                        (SELECT id FROM sso_events WHERE workspace = ?
+                         ORDER BY id DESC LIMIT ?)""", (workspace, workspace, EVENTS_KEPT))
+
+
+def recent_events(workspace, limit=50):
+    with _db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT connection_id, email, outcome, reason, at FROM sso_events "
+            "WHERE workspace = ? ORDER BY id DESC LIMIT ?", (workspace, limit))]

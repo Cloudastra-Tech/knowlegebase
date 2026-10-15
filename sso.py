@@ -224,18 +224,46 @@ def user_for(provider, claims):
             "workspace": workspace, "role": member["role"]}
 
 
-def user_for_connection(conn, claims):
-    """The session user for someone a workspace's own provider just signed in.
-    The provider belongs to the workspace, so it's trusted for that workspace's
-    verified domains and nothing else. An email it marks as unverified is
-    refused; one with no email_verified claim at all (Entra ID sends none) is
-    accepted, since the domain check already limits it to the workspace's own."""
+def check_connection_identity(conn, claims):
+    """(email, name) of someone a workspace's own provider vouches for, or
+    NotAllowed. The provider belongs to the workspace, so it's trusted for that
+    workspace's verified domains and nothing else. An email it marks as
+    unverified is refused; one with no email_verified claim at all (Entra ID
+    sends none) is accepted, since the domain check already limits it to the
+    workspace's own."""
     email = (claims.get("email") or "").strip().lower()
     if str(claims.get("email_verified")).lower() == "false" or "@" not in email:
         raise NotAllowed("unverified")
     if members_store.workspace_for_domain(email.rpartition("@")[2]) != conn["workspace"]:
         raise NotAllowed("not_allowed")
-    name = claims.get("name") or email.split("@")[0]
+    member = members_store.get(email)
+    if member and member["workspace"] != conn["workspace"]:
+        raise NotAllowed("not_allowed")       # an account in another workspace
+    return email, claims.get("name") or email.split("@")[0]
+
+
+def try_connection(conn, claims):
+    """What WOULD happen if these claims signed in, without signing anyone in
+    (the admin's "Test sign-in")."""
+    try:
+        email, name = check_connection_identity(conn, claims)
+    except NotAllowed as e:
+        email = (claims.get("email") or "").strip().lower()
+        detail = None
+        if e.reason == "not_allowed":          # which of the two rules it broke
+            domain = email.rpartition("@")[2]
+            detail = (f"{domain} isn't a verified domain of this workspace."
+                      if members_store.workspace_for_domain(domain) != conn["workspace"]
+                      else "This account belongs to another workspace.")
+        return {"ok": False, "reason": e.reason, "detail": detail, "email": email or None}
+    member = members_store.get(email)
+    return {"ok": True, "email": email, "name": name,
+            "role": member["role"] if member else "public", "new_member": member is None}
+
+
+def user_for_connection(conn, claims):
+    """The session user for someone a workspace's own provider just signed in."""
+    email, name = check_connection_identity(conn, claims)
     member = members_store.record_sso_login(email, name, conn["workspace"])
     if not member:
         raise NotAllowed("not_allowed")

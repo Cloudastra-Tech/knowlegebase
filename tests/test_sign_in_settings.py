@@ -279,7 +279,7 @@ def acme_sso(client, acme):
 def callback(client, idp, conn, claims):
     idp.claims = claims
     r = client.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state=y")
-    assert r.status_code in (302, 307)
+    assert r.status_code in (302, 303, 307)
     return r.headers["location"]
 
 
@@ -351,3 +351,104 @@ def test_turning_a_provider_off_signs_its_people_out(client, idp, acme_sso, acme
         assert acme_sso["id"] not in [c["id"] for c in found["connections"]]
     finally:
         client.patch(path, headers=acme, json={"enabled": True})
+
+
+# ---- "Test sign-in" and the event log ----------------------------------------------
+def start_test(client, acme, conn):
+    r = client.post(f"/api/admin/sign-in/connections/{conn['id']}/test", headers=acme)
+    assert r.status_code == 200
+    body = r.json()
+    started = client.get(body["url"])
+    assert started.status_code in (302, 307)
+    return body["ticket"], started.headers["location"]
+
+
+def result_of(client, acme, ticket):
+    return client.get(f"/api/admin/sign-in/tests/{ticket}", headers=acme).json()
+
+
+def test_an_admin_can_try_a_provider_without_signing_anyone_in(client, acme, acme_sso,
+                                                               monkeypatch):
+    import members_store
+    import sso
+    ticket, location = start_test(client, acme, acme_sso)
+    assert "prompt=login" in location                     # sign in fresh, as anyone
+    assert result_of(client, acme, ticket) == {"done": False, "result": None}
+    fake = type("P", (), {"authorize_access_token": None})()
+
+    async def answer(request):
+        return {"userinfo": {"email": "tester@acme.example", "email_verified": True,
+                             "name": "Tess", "groups": ["eng", "hr"], "nonce": "x"}}
+    fake.authorize_access_token = answer
+    monkeypatch.setattr(sso, "connection_client", lambda conn: fake)
+    r = client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state=y")
+    assert r.headers["location"] == "/#sso-test"           # no session code
+    result = result_of(client, acme, ticket)["result"]
+    assert result["ok"] and (result["email"], result["role"], result["new_member"]) == (
+        "tester@acme.example", "public", True)
+    assert result["sent"]["groups"] == "eng, hr" and "nonce" not in result["sent"]
+    assert members_store.get("tester@acme.example") is None   # nobody was added
+    events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
+    assert events[0]["outcome"] == "test" and events[0]["connection"] == "Acme SSO"
+
+
+def test_a_test_reports_why_someone_would_be_refused(client, acme, acme_sso, idp):
+    ticket, _ = start_test(client, acme, acme_sso)
+    callback(client, idp, acme_sso, {"email": "x@globex.example", "email_verified": True})
+    result = result_of(client, acme, ticket)["result"]
+    assert (result["ok"], result["reason"], result["detail"]) == (
+        False, "not_allowed", "globex.example isn't a verified domain of this workspace.")
+
+
+def test_a_provider_can_be_tried_while_it_is_off(client, acme, acme_sso, monkeypatch):
+    path = f"/api/admin/sign-in/connections/{acme_sso['id']}"
+    client.patch(path, headers=acme, json={"enabled": False})
+    try:
+        _, location = start_test(client, acme, acme_sso)
+        assert location.startswith(DOC["authorization_endpoint"])
+        # ... but a real sign-in still can't use it.
+        assert client.get(f"/api/auth/sso/c/{acme_sso['id']}/start").headers["location"] == (
+            "/#login?error=sso_unavailable")
+    finally:
+        client.patch(path, headers=acme, json={"enabled": True})
+
+
+def test_a_real_sign_in_after_a_test_is_a_real_sign_in(client, acme, acme_sso, idp):
+    start_test(client, acme, acme_sso)                    # started, never finished
+    client.get(f"/api/auth/sso/c/{acme_sso['id']}/start")  # then a real one
+    location = callback(client, idp, acme_sso, {"email": "real@acme.example",
+                                                 "email_verified": True})
+    assert location.startswith("/#sso?code=")
+
+
+def test_tests_belong_to_their_workspace(client, acme, globex, acme_sso):
+    ticket, _ = start_test(client, acme, acme_sso)
+    assert client.get(f"/api/admin/sign-in/tests/{ticket}", headers=globex).status_code == 404
+    client.cookies.clear()          # drop the unfinished test (a real /start clears it too)
+    assert client.post(f"/api/admin/sign-in/connections/{acme_sso['id']}/test",
+                       headers=globex).status_code == 404
+
+
+def test_sign_ins_and_refusals_are_logged_for_the_admin(client, acme, globex, acme_sso, idp):
+    session_for(client, idp, acme_sso, {"email": "logged@acme.example", "email_verified": True})
+    callback(client, idp, acme_sso, {"email": "logged@acme.example", "email_verified": False})
+    events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
+    assert [(e["email"], e["outcome"], e["reason"]) for e in events[:2]] == [
+        ("logged@acme.example", "refused", "unverified"),
+        ("logged@acme.example", "signed_in", None)]
+    assert all(e["email"] != "logged@acme.example"
+               for e in client.get("/api/admin/sign-in", headers=globex).json()["events"])
+
+
+def test_the_idp_addresses_are_known_before_the_provider_is_added(client, acme, provider_doc):
+    new = client.get("/api/admin/sign-in/new-provider", headers=acme).json()
+    assert new["redirect_uri"].endswith(f"/api/auth/sso/c/{new['id']}/callback")
+    assert new["sp_entity_id"].endswith(f"/api/auth/saml/{new['id']}/metadata")
+    body = {"id": new["id"], "label": "Planned", "issuer": ISSUER, "client_id": "kb",
+            "client_secret": "s"}
+    added = client.post("/api/admin/sign-in/connections", headers=acme, json=body).json()
+    assert added["id"] == new["id"] and added["redirect_uri"] == new["redirect_uri"]
+    assert client.post("/api/admin/sign-in/connections", headers=acme,
+                       json=body).status_code == 409
+    assert client.post("/api/admin/sign-in/connections", headers=acme,
+                       json={**body, "id": "../../x"}).status_code == 422

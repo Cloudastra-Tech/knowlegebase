@@ -349,3 +349,34 @@ def test_only_this_workspaces_admin_changes_it(client, conn):
     assert client.patch(path, headers=other, json={"enabled": False}).status_code == 404
     assert client.patch(f"/api/admin/sign-in/connections/{conn['id']}", headers=other,
                         json={"enabled": False}).status_code == 404
+
+
+# ---- "Test sign-in" ----------------------------------------------------------------
+def test_an_admin_can_try_saml_without_signing_anyone_in(client, admin, conn, idp):
+    import members_store
+    ticket_url = client.post(f"/api/admin/sign-in/connections/{conn['id']}/test",
+                             headers=admin).json()
+    location = client.get(ticket_url["url"]).headers["location"]
+    request = idp.read_request(location)
+    assert request.force_authn == "true"                  # a fresh login at the IdP
+    answer = idp.answer(request, "trial@samlco.example")
+    assert finish(client, post_answer(client, conn, answer)) == "/#sso-test"
+    result = client.get(f"/api/admin/sign-in/tests/{ticket_url['ticket']}",
+                        headers=admin).json()["result"]
+    assert result["ok"] and result["email"] == "trial@samlco.example"
+    assert result["sent"]["NameID"] == "trial@samlco.example"
+    assert members_store.get("trial@samlco.example") is None
+
+
+def test_a_failed_saml_test_says_why(client, admin, conn, idp):
+    ticket_url = client.post(f"/api/admin/sign-in/connections/{conn['id']}/test",
+                             headers=admin).json()
+    location = client.get(ticket_url["url"]).headers["location"]
+    relay = dict(urllib.parse.parse_qsl(location.split("?", 1)[1]))["RelayState"]
+    unsigned = idp.answer(idp.read_request(location), "x@samlco.example", sign_assertion=False)
+    r = client.post(f"/api/auth/saml/{conn['id']}/acs",
+                    data={"SAMLResponse": unsigned, "RelayState": relay})
+    assert r.headers["location"] == "/#sso-test"
+    result = client.get(f"/api/admin/sign-in/tests/{ticket_url['ticket']}",
+                        headers=admin).json()["result"]
+    assert not result["ok"] and "signed" in result["detail"]
