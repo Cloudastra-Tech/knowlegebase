@@ -85,7 +85,28 @@ Add more people the same way. Also available:
 this version copies both into the database, once. After that the files are no
 longer read (keep them as a backup); make changes with `python auth.py`.
 
-## 4c. Single sign-on (Google / Microsoft)
+## 4c. Single sign-on
+
+There are two kinds of sign-in provider:
+
+- **Each workspace's own** (its Okta, Entra ID, Google Workspace SAML app, …):
+  set up by the workspace's **admin** in the app, under **Access**, with no server
+  change. [sign-in-guide.md](sign-in-guide.md) is the guide to hand them. As the
+  server operator you only need to:
+  - set `PUBLIC_URL` (step 1 below) **and keep it**: the addresses each workspace
+    registered at its provider (redirect URIs, SAML entity IDs and ACS URLs)
+    contain it, so changing it breaks every workspace's sign-in until they update
+    their provider;
+  - give the workspace an admin: `python auth.py add <name> --workspace <slug> --role admin`
+    (or `python auth.py role <their email> admin --workspace <slug>` for someone who
+    will sign in with single sign-on);
+  - back up `./config/` as a whole: `app.db` holds the providers' secrets
+    **encrypted** with `config/integrations.key` (or `INTEGRATIONS_KEY`), and one is
+    useless without the other.
+  SAML needs the `xmlsec1` program, which the Docker image includes.
+- **Server-wide** providers, set in `.env` and offered to everyone: Google,
+  Microsoft and any OpenID Connect provider listed in `OIDC_PROVIDERS`. The steps
+  below set those up; skip them if every workspace brings its own.
 
 1. Set `PUBLIC_URL` in `.env` to the site's `https://` address.
 2. **Google:** in Google Cloud -> APIs & Services -> Credentials, use (or create)
@@ -121,7 +142,10 @@ longer read (keep them as a backup); make changes with `python auth.py`.
    someone's first sign-in. Other addresses are turned away. Add every domain of
    your Google Workspace, primary one included. Access is checked on every
    request, so changes apply straight away (no restart): `auth.py domain remove`,
-   `auth.py remove` or a lower role takes effect on the person's next click.
+   `auth.py remove`, `auth.py disable` or a lower role takes effect on the
+   person's next click. A workspace's admin can do all of this in the app
+   (**Access**) instead; domains they add there must pass a DNS check, while
+   `auth.py domain add` trusts you.
 7. `docker compose up -d` to pick up the new `.env`. The login page now shows
    *Continue with Google* / *Microsoft* / *Okta* … for each provider set up.
    Set `PASSWORD_LOGIN=off` to remove the username + password form.
@@ -194,6 +218,19 @@ commit them from the server or copy them back if you want them in the repo.
   redirect URI that doesn't match `PUBLIC_URL`, or admin consent needed).
 - **An admin lost the Documents screen after upgrading** — password accounts
   made before roles existed are public: `python auth.py role <name> hr`.
+- **A workspace admin's SAML setup says xmlsec1 isn't installed** — outside
+  Docker, install it (`apt-get install xmlsec1`) or set `XMLSEC_BINARY`.
+- **Testing a provider that runs on this machine or your network** (e.g.
+  Keycloak in Docker) says it "points to a private network address" — the server
+  only calls public addresses. For local testing, list it in `.env`:
+  `SSO_ALLOW_PRIVATE_HOSTS=localhost:8180`.
+- **"Too many attempts. Wait a minute"** — the sign-in endpoints are rate-limited
+  per address. Behind a proxy, make sure uvicorn sees real client addresses
+  (`--proxy-headers --forwarded-allow-ips=<proxy>`), or everyone shares one limit.
+- **Someone is locked out after "Require single sign-on" was turned on** — only
+  admins keep passwords. If the provider itself is broken, sign in as an admin
+  with a password and turn it off under **Access → Sign-in**, or run
+  `python auth.py role <name> admin`.
 - **`OPENAI_API_KEY` errors in logs** — the `.env` key is missing/wrong. Fix it,
   then `docker compose up -d --build`.
 - **Port 8501 unreachable** — firewall (step 5) or the cloud provider's
