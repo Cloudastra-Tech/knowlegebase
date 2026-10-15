@@ -557,3 +557,88 @@ def test_members_are_managed_per_workspace_and_not_by_yourself(client, acme, glo
     assert client.get("/api/admin/members", headers=hr).status_code == 403
     assert client.patch("/api/admin/members/mine@acme.example", headers=acme,
                         json={"role": "owner"}).status_code == 422
+
+
+# ---- Requiring single sign-on, signing out at the provider, limits -----------------
+def test_requiring_sso_leaves_passwords_to_admins(client, acme, acme_sso):
+    hr_headers = as_user(client, "acme-hr")
+    assert client.put("/api/admin/sign-in/policy", headers=acme,
+                      json={"require_sso": True}).json() == {"require_sso": True}
+    try:
+        assert client.get("/api/admin/sign-in", headers=acme).json()["require_sso"] is True
+        assert client.get("/api/auth/me", headers=hr_headers).status_code == 401   # live session
+        r = client.post("/api/auth/login", json={"username": "acme-hr",
+                                                 "password": "correct-horse"})
+        assert r.status_code == 403 and "single sign-on" in r.json()["detail"]
+        wrong = client.post("/api/auth/login", json={"username": "acme-hr", "password": "nope"})
+        assert wrong.status_code == 401        # says nothing until the password is right
+        as_user(client, "acme-admin")          # the admin's way in if the provider breaks
+        events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
+        assert ("acme-hr", "refused", "sso_required", "password") in [
+            (e["email"], e["outcome"], e["reason"], e["connection"]) for e in events]
+    finally:
+        client.put("/api/admin/sign-in/policy", headers=acme, json={"require_sso": False})
+    as_user(client, "acme-hr")
+
+
+def test_sso_can_only_be_required_once_someone_could_sign_in(client):
+    import auth
+    import members_store
+    members_store.set_password("lonely-admin", "L", auth.hash_password("correct-horse"),
+                               "lonely", "admin")
+    lonely = as_user(client, "lonely-admin")
+    r = client.put("/api/admin/sign-in/policy", headers=lonely, json={"require_sso": True})
+    assert r.status_code == 400 and "Verify a domain" in r.json()["detail"]
+    members_store.add_verified_domain("lonely", "lonely.example")
+    r = client.put("/api/admin/sign-in/policy", headers=lonely, json={"require_sso": True})
+    assert r.status_code == 400 and "provider" in r.json()["detail"]
+
+
+def test_signing_out_can_sign_out_at_the_provider_too(client, acme, monkeypatch):
+    import members_store
+    import sso
+    conn = members_store.create_connection(
+        "acme", "oidc", "With logout", ISSUER, "kb", {"client_secret": "s"},
+        {**{k: DOC[k] for k in ("issuer", "authorization_endpoint", "token_endpoint",
+                                "jwks_uri")},
+         "end_session_endpoint": ISSUER + "/protocol/openid-connect/logout"}, "test")
+    fake = type("P", (), {})()
+
+    async def answer(request):
+        return {"userinfo": {"email": "bye@acme.example", "email_verified": True},
+                "id_token": "the.id.token"}
+    fake.authorize_access_token = answer
+    monkeypatch.setattr(sso, "connection_client", lambda c: fake)
+
+    def signed_in():
+        location = client.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state=y")
+        r = client.post("/api/auth/sso/exchange",
+                        json={"code": location.headers["location"].split("code=")[1]})
+        assert "id_token" not in r.json()["user"]                 # never to the browser
+        headers = {"Authorization": f"Bearer {r.json()['token']}"}
+        assert "id_token" not in client.get("/api/auth/me", headers=headers).json()
+        return headers
+
+    out = client.get("/api/admin/sign-in", headers=acme).json()["connections"]
+    assert next(c for c in out if c["id"] == conn["id"])["supports_logout"] is True
+    # Off by default: signing out here doesn't sign them out of everything else.
+    assert client.post("/api/auth/logout", headers=signed_in()).json()["logout_url"] is None
+    client.patch(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme,
+                 json={"logout_at_idp": True})
+    url = client.post("/api/auth/logout", headers=signed_in()).json()["logout_url"]
+    target = urlsplit(url)
+    q = parse_qs(target.query)
+    assert f"{target.scheme}://{target.netloc}{target.path}" == (
+        ISSUER + "/protocol/openid-connect/logout")
+    assert q["id_token_hint"] == ["the.id.token"] and q["client_id"] == ["kb"]
+    assert q["post_logout_redirect_uri"][0].endswith("/")
+    client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme)
+
+
+def test_the_public_sign_in_endpoints_are_rate_limited(client, monkeypatch):
+    import api
+    monkeypatch.setenv("RATE_LIMITS", "on")
+    monkeypatch.setattr(api, "_hits", {})
+    codes = [client.post("/api/auth/sso/discover", json={"email": "x@acme.example"}).status_code
+             for _ in range(api.LIMITS["discover"] + 1)]
+    assert codes[-2] == 200 and codes[-1] == 429

@@ -214,10 +214,12 @@ export default function App() {
   }
 
   async function signOut() {
-    await api.logout().catch(() => {})
+    const out = await api.logout().catch(() => null)
     session.setToken(null)
     setUser(null)
     setScreen("chat")
+    // The admin set this provider to sign people out there too.
+    if (out?.logout_url) window.location.assign(out.logout_url)
   }
 
   if (checking) {

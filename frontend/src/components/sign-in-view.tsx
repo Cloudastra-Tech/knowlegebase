@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -106,6 +107,56 @@ function OnBadge({ on, onLabel, offLabel }: { on: boolean; onLabel: string; offL
     <Badge variant="outline" className="font-normal text-muted-foreground">
       {offLabel}
     </Badge>
+  )
+}
+
+// ---- Require single sign-on ----------------------------------------------------------
+function SignInRules({ settings, onChange }: { settings: SignInSettings; onChange: () => void }) {
+  const [saving, setSaving] = useState(false)
+
+  async function toggle(on: boolean) {
+    setSaving(true)
+    try {
+      await signIn.setPolicy(on)
+      toast.success(
+        on
+          ? "Single sign-on is required. Only admins can still use a password."
+          : "People can sign in with a password again.",
+      )
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!settings.password_login)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Passwords are turned off on this server, so everyone already signs in with single
+        sign-on.
+      </p>
+    )
+  return (
+    <div className="flex items-start gap-3">
+      <Checkbox
+        id="require-sso"
+        className="mt-0.5"
+        checked={settings.require_sso}
+        disabled={saving}
+        onCheckedChange={(v) => toggle(v === true)}
+      />
+      <div className="grid gap-1">
+        <label htmlFor="require-sso" className="text-sm font-medium">
+          Require single sign-on
+        </label>
+        <p className="text-sm text-muted-foreground">
+          Nobody but admins can sign in with a password, and anyone signed in with one is
+          signed out. Admins keep theirs as a way in if your provider ever breaks.
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -321,6 +372,12 @@ function ProviderRow({
             <>
               <CopyField label="Redirect URI (at your provider)" value={conn.redirect_uri!} />
               <CopyField label="Client ID" value={conn.client_id!} />
+              {conn.logout_at_idp && (
+                <CopyField
+                  label="Sign-out redirect URI (at your provider)"
+                  value={conn.post_logout_redirect_uri!}
+                />
+              )}
             </>
           ) : (
             <>
@@ -637,6 +694,10 @@ function SignInSettingsView() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
+          <Section title="Sign-in rules" description="How people in this workspace sign in.">
+            <SignInRules settings={settings} onChange={load} />
+          </Section>
+
           <Section
             title="Email domains"
             description="People sign in only with an email on a domain you've proved you own."

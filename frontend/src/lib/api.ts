@@ -44,6 +44,9 @@ export interface SignInConnection {
   // OpenID Connect
   client_id?: string
   redirect_uri?: string
+  logout_at_idp?: boolean // signing out here also signs out there
+  supports_logout?: boolean // the provider has a sign-out endpoint
+  post_logout_redirect_uri?: string
   // SAML
   sp_entity_id?: string
   acs_url?: string
@@ -101,6 +104,8 @@ export interface SignInSettings {
   domains: SignInDomain[]
   connections: SignInConnection[]
   events: SignInEvent[]
+  require_sso: boolean // passwords only for admins
+  password_login: boolean // the server allows passwords at all
 }
 
 export interface OidcConnectionInput {
@@ -110,6 +115,7 @@ export interface OidcConnectionInput {
   client_id?: string
   client_secret?: string
   enabled?: boolean
+  logout_at_idp?: boolean
 }
 
 export interface SamlConnectionInput {
@@ -321,6 +327,8 @@ const seg = encodeURIComponent
 export const signIn = {
   get: () => request<SignInSettings>("/admin/sign-in"),
   newProvider: () => request<NewProvider>("/admin/sign-in/new-provider"),
+  setPolicy: (require_sso: boolean) =>
+    request<{ require_sso: boolean }>("/admin/sign-in/policy", json("PUT", { require_sso })),
   addDomain: (domain: string) =>
     request<SignInDomain>("/admin/sign-in/domains", json("POST", { domain })),
   verifyDomain: (domain: string) =>
@@ -381,7 +389,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
-  logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  // logout_url: where to go next to also sign out at the provider (if it's set to)
+  logout: () =>
+    request<{ ok: boolean; logout_url: string | null }>("/auth/logout", { method: "POST" }),
   me: () => request<User>("/auth/me"),
 
   chat: (question: string) =>

@@ -3,6 +3,7 @@ import { Check, Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -94,6 +95,7 @@ export function ProviderDialog({
   const [issuer, setIssuer] = useState(editing?.protocol === "oidc" ? editing.issuer : "")
   const [clientId, setClientId] = useState(editing?.client_id ?? "")
   const [clientSecret, setClientSecret] = useState("")
+  const [logoutAtIdp, setLogoutAtIdp] = useState(editing?.logout_at_idp ?? false)
   const [source, setSource] = useState<SamlSource>(editing ? "keep" : "url")
   const [metadataUrl, setMetadataUrl] = useState(editing?.metadata_url ?? "")
   const [metadataXml, setMetadataXml] = useState("")
@@ -142,6 +144,7 @@ export function ProviderDialog({
           client_id: clientId.trim(),
           ...(clientSecret ? { client_secret: clientSecret } : {}),
           ...(adding || issuer.trim() !== editing?.issuer ? { issuer: issuer.trim() } : {}),
+          ...(!adding && logoutAtIdp !== editing.logout_at_idp ? { logout_at_idp: logoutAtIdp } : {}),
         }
         conn = adding
           ? await signIn.addOidc({ ...body, id: planned?.id, enabled: false })
@@ -256,6 +259,28 @@ export function ProviderDialog({
                     required={adding}
                   />
                 </Field>
+                {editing?.supports_logout && (
+                  <Field>
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="provider-logout"
+                        className="mt-0.5"
+                        checked={logoutAtIdp}
+                        onCheckedChange={(v) => setLogoutAtIdp(v === true)}
+                      />
+                      <div className="grid gap-1">
+                        <label htmlFor="provider-logout" className="text-sm font-medium">
+                          Also sign out at {editing.label}
+                        </label>
+                        <FieldDescription>
+                          Signing out here also ends their {editing.label} session, which
+                          signs them out of other apps that use it too. Register this sign-out
+                          redirect URI there: {editing.post_logout_redirect_uri}
+                        </FieldDescription>
+                      </div>
+                    </div>
+                  </Field>
+                )}
               </>
             ) : (
               <>

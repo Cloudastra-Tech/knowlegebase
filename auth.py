@@ -67,23 +67,39 @@ def password_login_on():
     return os.getenv("PASSWORD_LOGIN", "on").strip().lower() not in ("off", "false", "0", "no")
 
 
+def sso_required(member):
+    """Must this account sign in with single sign-on? Its workspace says so, and
+    it isn't an admin (admins keep their password, in case the provider breaks)."""
+    return member["role"] != "admin" and members_store.requires_sso(member["workspace"])
+
+
 def access_for(username):
-    """{"workspace", "role"} for a password account, or None if it's gone or
-    password sign-in is off. Checked on every request, not only at sign-in."""
+    """{"workspace", "role"} for a password account, or None if it's gone, turned
+    off, or may no longer use a password. Checked on every request, not only at
+    sign-in."""
     member = members_store.get(username)
     if (not member or not member["password_hash"] or member["disabled"]
-            or not password_login_on()):
+            or not password_login_on() or sso_required(member)):
         return None
     return {"workspace": member["workspace"], "role": member["role"]}
 
 
+def check_password(username, password):
+    """The member if the password is right and the account is on, else None.
+    Says nothing about whether they may use it (see sso_required)."""
+    member = members_store.get(username)
+    if (member and not member["disabled"]
+            and verify_password(password or "", member["password_hash"] or "")):
+        return member
+    return None
+
+
 def authenticate(username, password):
     """Return the user record (with 'username') if the login is right, else None."""
-    member = members_store.get(username)
-    if member and verify_password(password or "", member["password_hash"] or ""):
-        access = access_for(member["username"])
-        if access:
-            return {"username": member["username"], "name": member["name"], **access}
+    member = check_password(username, password)
+    access = access_for(member["username"]) if member else None
+    if access:
+        return {"username": member["username"], "name": member["name"], **access}
     return None
 
 
