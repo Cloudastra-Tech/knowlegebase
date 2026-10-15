@@ -143,3 +143,21 @@ def test_a_role_comes_from_the_override_then_the_groups_then_public(store):
     members_store.record_sso_login("pat@acme.com", "Pat Lee", "acme")  # a provider without rules
     pat = members_store.get("pat@acme.com")
     assert (pat["groups"], pat["name"]) == ([], "Pat Lee")       # the provider's name wins
+
+
+def test_an_interrupted_role_migration_is_finished_next_time(store, tmp_path):
+    """The column was added (ALTER TABLE commits by itself) but the copy wasn't."""
+    import sqlite3
+    members_store.get("nobody")                              # a current database
+    with sqlite3.connect(tmp_path / "app.db") as db:
+        db.execute("INSERT INTO members (username, workspace, name, role, created_at) "
+                   "VALUES ('boss', 'default', 'Boss', 'hr', 0)")
+        db.execute("DELETE FROM imports WHERE source = 'roles-as-overrides'")
+    store.restart()
+    assert members_store.get("boss")["override_role"] == "hr"
+
+
+def test_a_users_file_of_the_wrong_shape_is_skipped(store):
+    store("users.json", ["not", "a", "dict"])
+    store("sso.json", {"workspaces": ["also wrong"]})
+    assert members_store.list_members() == []

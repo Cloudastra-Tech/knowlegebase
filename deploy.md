@@ -225,8 +225,10 @@ commit them from the server or copy them back if you want them in the repo.
   only calls public addresses. For local testing, list it in `.env`:
   `SSO_ALLOW_PRIVATE_HOSTS=localhost:8180`.
 - **"Too many attempts. Wait a minute"** — the sign-in endpoints are rate-limited
-  per address. Behind a proxy, make sure uvicorn sees real client addresses
-  (`--proxy-headers --forwarded-allow-ips=<proxy>`), or everyone shares one limit.
+  per address (and overall). Set `FORWARDED_ALLOW_IPS` in `.env` to your reverse
+  proxy's address (e.g. `172.17.0.1` for nginx on the Docker host): uvicorn then
+  takes the client's address from the proxy only. The default, `*`, trusts the
+  `X-Forwarded-For` header from anyone, so a client can pose as many addresses.
 - **Someone is locked out after "Require single sign-on" was turned on** — only
   admins keep passwords. If the provider itself is broken, sign in as an admin
   with a password and turn it off under **Access → Sign-in**, or run

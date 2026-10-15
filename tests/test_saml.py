@@ -394,3 +394,25 @@ def test_a_saml_attribute_can_carry_the_groups(client, admin, conn, idp):
     finally:
         client.put(f"/api/admin/sign-in/connections/{conn['id']}/roles", headers=admin,
                    json={"group_claim": None, "rules": []})
+
+
+def test_an_expired_saml_test_never_turns_into_a_real_sign_in(client, admin, conn, idp):
+    import api
+    import members_store
+    started = client.post(f"/api/admin/sign-in/connections/{conn['id']}/test",
+                          headers=admin).json()
+    request = idp.read_request(client.get(started["url"]).headers["location"])
+    api._sso_tests[started["ticket"]]["expires"] = 0
+    location = post_answer(client, conn, idp.answer(request, "late@samlco.example"))
+    assert finish(client, location) == "/#sso-test"
+    assert members_store.get("late@samlco.example") is None
+
+
+def test_the_sp_metadata_is_built_once_per_version(client, conn, monkeypatch):
+    import saml_sp
+    calls = []
+    real = saml_sp.sp_metadata
+    monkeypatch.setattr(saml_sp, "sp_metadata", lambda *a: calls.append(1) or real(*a))
+    first = client.get(f"/api/auth/saml/{conn['id']}/metadata").text
+    assert client.get(f"/api/auth/saml/{conn['id']}/metadata").text == first
+    assert len(calls) <= 1

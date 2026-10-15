@@ -66,6 +66,7 @@ counts as HR everywhere here. An HR / Admin account can send "X-Role: public" to
 see the app as a public user would; the header can never raise anyone TO HR.
 """
 
+import asyncio
 import calendar
 import contextlib
 import json
@@ -84,6 +85,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from saml2 import time_util as saml2_time
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -121,8 +123,11 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET") or 
 
 SESSION_SECONDS = 12 * 60 * 60
 # Rate limits on the sign-in endpoints anyone can call, per client address and
-# minute. RATE_LIMITS=off turns them off (the tests do).
+# minute, plus a ceiling for all addresses together (an address can be faked in
+# X-Forwarded-For if the proxy settings trust anyone). RATE_LIMITS=off turns
+# them off (the tests do).
 LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20}
+ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 _hits = {}                # (bucket, address) -> recent times
 _hits_lock = threading.Lock()
 # Kept with the session (for signing out at the provider), never sent to the browser.
@@ -199,10 +204,14 @@ def rate_limit(request: Request, bucket):
         if len(_hits) > 10_000:                       # forget the quiet ones
             for k in [k for k, v in _hits.items() if not v or v[-1] < now - 60]:
                 del _hits[k]
-        recent = [t for t in _hits.get((bucket, address), []) if t > now - 60]
-        if len(recent) >= LIMITS[bucket]:
-            raise HTTPException(429, "Too many attempts. Wait a minute and try again.")
-        _hits[(bucket, address)] = recent + [now]
+            if len(_hits) > 10_000:                   # a flood of fake addresses
+                _hits.clear()
+        for key, limit in (((bucket, address), LIMITS[bucket]),
+                           ((bucket, "*"), LIMITS[bucket] * ALL_ADDRESSES)):
+            recent = [t for t in _hits.get(key, []) if t > now - 60]
+            if len(recent) >= limit:
+                raise HTTPException(429, "Too many attempts. Wait a minute and try again.")
+            _hits[key] = recent + [now]
 
 
 def public_user(user):
@@ -250,7 +259,7 @@ def auth_providers():
 
 
 @app.post("/api/auth/login")
-def login(body: LoginIn, request: Request):
+async def login(body: LoginIn, request: Request):
     rate_limit(request, "login")
     if not auth.password_login_on():
         raise HTTPException(403, "Password sign-in is turned off. Use single sign-on.")
@@ -262,25 +271,41 @@ def login(body: LoginIn, request: Request):
     if not members_store.has_password_accounts():
         raise HTTPException(503, "No user accounts exist yet. Create one with: "
                                  "python auth.py add <username>")
-    member = auth.check_password(body.username, body.password)
-    if not member:
-        time.sleep(1)                          # slow down password guessing
-        count += 1
-        _failed_logins[key] = ((0, time.time() + LOCKOUT_SECONDS)
-                               if count >= MAX_FAILED_LOGINS else (count, 0))
-        raise HTTPException(401, "Wrong username or password.")
-    _failed_logins.pop(key, None)
-    if auth.sso_required(member):              # told only once the password is right
+    # Hashing is slow on purpose: off the event loop.
+    member = await run_in_threadpool(auth.check_password, body.username, body.password)
+    if member and not auth.sso_required(member):
+        _failed_logins.pop(key, None)
+        user = {"username": member["username"], "name": member["name"],
+                **auth.access_for(member["username"])}
+        token = secrets.token_urlsafe(32)
+        sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
+        members_store.log_event(user["workspace"], "password", user["username"], "signed_in")
+        return {"token": token, "user": user}
+    if member:                                 # right password, but SSO is required
         members_store.log_event(member["workspace"], "password", member["username"],
                                 "refused", "sso_required")
-        raise HTTPException(403, "Your workspace uses single sign-on. Enter your work email "
-                                 "above to sign in.")
-    user = {"username": member["username"], "name": member["name"],
-            **auth.access_for(member["username"])}
-    token = secrets.token_urlsafe(32)
-    sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
-    members_store.log_event(user["workspace"], "password", user["username"], "signed_in")
-    return {"token": token, "user": user}
+    # A wrong password and a right one that may not be used get the same answer
+    # (and the same wait), so this can't be used to check passwords.
+    await asyncio.sleep(1)                     # slow down password guessing
+    count += 1
+    if len(_failed_logins) > 10_000:
+        for k in [k for k, (_, until) in _failed_logins.items() if until < time.time()]:
+            del _failed_logins[k]
+    _failed_logins[key] = ((0, time.time() + LOCKOUT_SECONDS)
+                           if count >= MAX_FAILED_LOGINS else (count, 0))
+    if _sso_domain(key):
+        raise HTTPException(403, "Your workspace uses single sign-on. Sign in with your work "
+                                 "account above.")
+    raise HTTPException(401, "Wrong username or password.")
+
+
+def _sso_domain(username):
+    """Is this an email on a domain whose workspace requires single sign-on?
+    (Decided from the domain alone, which the email lookup already reveals.)"""
+    if "@" not in username:
+        return False
+    workspace = members_store.workspace_for_domain(username.rpartition("@")[2])
+    return bool(workspace and members_store.requires_sso(workspace))
 
 
 # ---- Single sign-on (sso.py) ---------------------------------------------------
@@ -289,11 +314,29 @@ class CodeIn(BaseModel):
     code: str
 
 
+# The one-time code a sign-in ends with only works in the browser that started it:
+# /start puts an ID in this browser's (Lax, signed) sign-in cookie, the code is
+# tied to it, and /auth/sso/exchange (same-site POST, so the cookie comes along)
+# checks it. Otherwise someone could finish a sign-in as themselves and send
+# you the link, signing you in to their account.
+BROWSER_KEY = "sso_browser"
+
+
+def _mark_browser(request):
+    request.session.setdefault(BROWSER_KEY, secrets.token_urlsafe(16))
+
+
+def _code_for(request, user):
+    return sso.issue_code(user, request.session.get(BROWSER_KEY))
+
+
 @app.get("/api/auth/sso/{provider}/start")
 async def sso_start(provider: str, request: Request):
+    rate_limit(request, "sso_start")
     c = sso.client(provider)
     if not c:
         return RedirectResponse("/#login?error=sso_unavailable")
+    _mark_browser(request)
     try:
         return await c.authorize_redirect(
             request, _public_url(request, f"/api/auth/sso/{provider}/callback"),
@@ -335,12 +378,26 @@ async def _finish_sso(name, c, request, user_for):
     try:
         user = user_for(claims)
     except sso.NotAllowed as e:
+        _log_refusal(name, claims, e.reason)
         return RedirectResponse(f"/#login?error={e.reason}")
     except Exception:              # e.g. the database can't be read
         log.exception("SSO %s: couldn't decide who gets in", name)
         return RedirectResponse("/#login?error=sso_failed")
     members_store.log_event(user["workspace"], name, user["username"], "signed_in")
-    return RedirectResponse("/#sso?code=" + sso.issue_code(user))
+    return RedirectResponse("/#sso?code=" + _code_for(request, user))
+
+
+def _log_refusal(method, claims, reason):
+    """Show a refusal by a server-wide provider to the workspace whose domain it was."""
+    email = claims.get("email") or claims.get("preferred_username")
+    if not isinstance(email, str) or "@" not in email:
+        return
+    try:
+        workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
+        if workspace:
+            members_store.log_event(workspace, method, email.strip().lower(), "refused", reason)
+    except sqlite3.Error:
+        log.exception("Couldn't log a sign-in refusal")
 
 
 # ---- "Test sign-in": an admin tries a provider in a popup --------------------------
@@ -352,7 +409,11 @@ async def _finish_sso(name, c, request, user_for):
 SSO_TEST_SECONDS = 10 * 60
 _sso_tests = {}            # ticket -> {"workspace", "cid", "expires", "result"}
 _sso_tests_lock = threading.Lock()
-SSO_TEST_SESSION_KEY = "sso_test"
+# A test's OIDC state starts with this, and maps to its ticket in the sign-in
+# cookie: a test answer is never taken for a real sign-in, even once the ticket
+# has expired.
+TEST_STATE_PREFIX = "t."
+SSO_TESTS_SESSION_KEY = "sso_tests"
 
 
 def _new_sso_test(workspace, cid):
@@ -392,6 +453,30 @@ def _finish_sso_test(test, conn, result, sent=None):
 
 def _test_failure(code, detail):
     return {"ok": False, "reason": code, "detail": (detail or "")[:300] or None}
+
+
+def _connection_or_none(cid):
+    try:
+        return members_store.get_connection(cid)
+    except sqlite3.Error:
+        log.exception("Couldn't read sign-in connection %s", cid)
+        return None
+
+
+# Failed sign-ins are logged for the admin, but anyone can call a callback with
+# an error: only so many per provider per minute, so the log can't be flooded.
+FAILURES_LOGGED_PER_MINUTE = 20
+_failures_logged = {}      # connection id -> recent times
+
+
+def _log_failure(conn, detail):
+    now = time.time()
+    with _hits_lock:
+        recent = [t for t in _failures_logged.get(conn["id"], []) if t > now - 60]
+        if len(recent) >= FAILURES_LOGGED_PER_MINUTE:
+            return
+        _failures_logged[conn["id"]] = recent + [now]
+    members_store.log_event(conn["workspace"], conn["id"], None, "failed", detail)
 
 
 # A workspace's own provider, found from the email someone types on the login page.
@@ -434,16 +519,16 @@ async def sso_connection_start(cid: str, request: Request, login_hint: str = "",
                                test: str = ""):
     rate_limit(request, "sso_start")
     trial = _sso_test(test, cid)
-    conn = members_store.get_connection(cid) if trial else _usable_connection(cid, "oidc")
+    conn = _connection_or_none(cid) if trial else _usable_connection(cid, "oidc")
     if not conn or conn["protocol"] != "oidc":
         return RedirectResponse("/#login?error=sso_unavailable")
-    if trial:
-        request.session[SSO_TEST_SESSION_KEY] = {"cid": cid, "ticket": test}
-    else:
-        request.session.pop(SSO_TEST_SESSION_KEY, None)     # a real sign-in, not a test
+    _mark_browser(request)
     extra = {"login_hint": login_hint} if EMAIL_RE.match(login_hint) else {}
     if trial:
         extra["prompt"] = "login"          # show the admin the provider's sign-in page
+        extra["state"] = TEST_STATE_PREFIX + secrets.token_urlsafe(24)
+        tests = dict(list(request.session.get(SSO_TESTS_SESSION_KEY, {}).items())[-4:])
+        request.session[SSO_TESTS_SESSION_KEY] = {**tests, extra["state"]: test}
     try:
         return await sso.connection_client(conn).authorize_redirect(
             request, _public_url(request, f"/api/auth/sso/c/{cid}/callback"), **extra)
@@ -454,19 +539,41 @@ async def sso_connection_start(cid: str, request: Request, login_hint: str = "",
 
 @app.get("/api/auth/sso/c/{cid}/callback")
 async def sso_connection_callback(cid: str, request: Request):
-    marker = request.session.pop(SSO_TEST_SESSION_KEY, None) or {}
-    trial = _sso_test(marker.get("ticket"), cid) if marker.get("cid") == cid else None
-    conn = members_store.get_connection(cid) if trial else _usable_connection(cid, "oidc")
+    state = request.query_params.get("state", "")
+    trial = None
+    if state.startswith(TEST_STATE_PREFIX):
+        tests = request.session.get(SSO_TESTS_SESSION_KEY, {})
+        trial = _sso_test(tests.get(state), cid)
+        request.session[SSO_TESTS_SESSION_KEY] = {k: v for k, v in tests.items() if k != state}
+        if not trial:                      # expired or unknown: a test, never a sign-in
+            return RedirectResponse("/#sso-test", status_code=303)
+    conn = _connection_or_none(cid) if trial else _usable_connection(cid, "oidc")
     if not conn or conn["protocol"] != "oidc":
         return RedirectResponse("/#login?error=sso_unavailable")
-    claims, error, detail, id_token = await _provider_answer(
-        f"connection {cid}", sso.connection_client(conn), request)
+    # Did this browser start a sign-in here? (Authlib keeps its state in the cookie.)
+    started_here = any(k.startswith(f"_state_conn_{cid}_") for k in request.session)
+    try:
+        client = sso.connection_client(conn)
+    except Exception:              # e.g. its secret can't be decrypted any more
+        log.exception("SSO connection %s: can't use its settings", cid)
+        return RedirectResponse("/#login?error=sso_failed")
+    claims, error, detail, id_token = await _provider_answer(f"connection {cid}", client,
+                                                             request)
     if trial:
-        result = sso.try_connection(conn, claims) if claims is not None else \
-            _test_failure(error, detail)
+        try:
+            result = sso.try_connection(conn, claims) if claims is not None else \
+                _test_failure(error, detail)
+        except Exception as e:
+            log.exception("SSO connection %s: test failed", cid)
+            result = _test_failure("sso_failed", f"{type(e).__name__}: {e}")
         return _finish_sso_test(trial, conn, result, claims)
     if error:
-        members_store.log_event(conn["workspace"], cid, None, "failed", detail)
+        if started_here:
+            # The provider's error code only: its description is free text anyone
+            # could put in the link.
+            code = request.query_params.get("error", "")
+            _log_failure(conn, code if re.fullmatch(r"[a-z_]{1,40}", code) else
+                         "the provider's answer couldn't be checked")
         return RedirectResponse(f"/#login?error={error}")
     try:
         user = sso.user_for_connection(conn, claims)
@@ -479,7 +586,7 @@ async def sso_connection_callback(cid: str, request: Request):
     if conn["metadata"].get("end_session_endpoint") and id_token:
         user["id_token"] = id_token           # for signing out there (POST /auth/logout)
     members_store.log_event(conn["workspace"], cid, user["username"], "signed_in")
-    return RedirectResponse("/#sso?code=" + sso.issue_code(user))
+    return RedirectResponse("/#sso?code=" + _code_for(request, user))
 
 
 # ---- SAML (saml_sp.py) -------------------------------------------------------------
@@ -498,20 +605,36 @@ TEST_RELAY_PREFIX = "t:"
 def _saml_conn(cid, trial=None):
     """(connection, its keys), or (None, None) if it can't sign anyone in now.
     A test may use a connection that's turned off."""
-    conn = members_store.get_connection(cid) if trial else _usable_connection(cid, "saml")
+    conn = _connection_or_none(cid) if trial else _usable_connection(cid, "saml")
     if not conn or conn["protocol"] != "saml" or not saml_sp.xmlsec_binary():
         return None, None
-    return conn, members_store.connection_keys(cid)
+    try:
+        return conn, members_store.connection_keys(cid)
+    except Exception:              # e.g. INTEGRATIONS_KEY changed: can't decrypt its key
+        log.exception("SAML %s: can't read its signing key", cid)
+        return None, None
+
+
+_sp_metadata_cache = {}    # (connection id, updated_at, base URL) -> XML
 
 
 @app.get("/api/auth/saml/{cid}/metadata")
 def saml_metadata(cid: str, request: Request):
-    """Our SP's metadata, for the customer's IdP (public, like any SP's)."""
-    conn = members_store.get_connection(cid)
+    """Our SP's metadata, for the customer's IdP (public, like any SP's). Built
+    once per version of the connection: it needs the decrypted key."""
+    conn = _connection_or_none(cid)
     if not conn or conn["protocol"] != "saml" or not saml_sp.xmlsec_binary():
         raise HTTPException(404, "No such SAML sign-in.")
-    xml = saml_sp.sp_metadata(conn, members_store.connection_keys(cid), _public_url(request, ""))
-    return Response(xml, media_type="application/samlmetadata+xml")
+    base = _public_url(request, "")
+    key = (cid, conn["updated_at"], base)
+    if key not in _sp_metadata_cache:
+        _, keys = _saml_conn(cid, trial=True)
+        if not keys:
+            raise HTTPException(503, "This sign-in's settings can't be read. Tell the admin.")
+        if len(_sp_metadata_cache) > 1000:
+            _sp_metadata_cache.clear()
+        _sp_metadata_cache[key] = saml_sp.sp_metadata(conn, keys, base)
+    return Response(_sp_metadata_cache[key], media_type="application/samlmetadata+xml")
 
 
 @app.get("/api/auth/saml/{cid}/start")
@@ -529,6 +652,7 @@ def saml_start(cid: str, request: Request, test: str = ""):
         log.exception("SAML %s: couldn't start sign-in", cid)
         return RedirectResponse("/#login?error=sso_failed")
     members_store.remember_saml_request(cid, request_id, saml_sp.REQUEST_SECONDS)
+    _mark_browser(request)
     # This browser started it. Keep the last few, in case of several tabs.
     request.session[SAML_SESSION_KEY] = (request.session.get(SAML_SESSION_KEY, []) +
                                          [request_id])[-5:]
@@ -552,7 +676,7 @@ def saml_acs(cid: str, request: Request, SAMLResponse: str = Form(""),
     def refuse(detail):
         if trial:
             return _finish_sso_test(trial, conn, _test_failure("sso_failed", detail))
-        members_store.log_event(conn["workspace"], cid, None, "failed", detail)
+        _log_failure(conn, detail)
         return RedirectResponse("/#login?error=sso_failed", status_code=303)
 
     try:
@@ -596,13 +720,20 @@ def saml_done(cid: str, request: Request, k: str = ""):
     if request_id in tests:
         request.session[SAML_TESTS_SESSION_KEY] = {r: t for r, t in tests.items()
                                                    if r != request_id}
+        if not trial:                      # expired: a test, never a sign-in
+            return RedirectResponse("/#sso-test")
     conn, _ = _saml_conn(cid, trial)
     if not conn:
         return RedirectResponse("/#login?error=sso_unavailable")
     # The attributes too, for the provider's group rules.
     claims = {**(parked["sent"] or {}), "email": parked["email"], "name": parked["name"]}
     if trial:
-        return _finish_sso_test(trial, conn, sso.try_connection(conn, claims), parked["sent"])
+        try:
+            result = sso.try_connection(conn, claims)
+        except Exception as e:
+            log.exception("SAML %s: test failed", cid)
+            result = _test_failure("sso_failed", f"{type(e).__name__}: {e}")
+        return _finish_sso_test(trial, conn, result, parked["sent"])
     try:
         user = sso.user_for_connection(conn, claims)
     except sso.NotAllowed as e:
@@ -612,12 +743,12 @@ def saml_done(cid: str, request: Request, k: str = ""):
         log.exception("SAML %s: couldn't decide who gets in", cid)
         return RedirectResponse("/#login?error=sso_failed")
     members_store.log_event(conn["workspace"], cid, user["username"], "signed_in")
-    return RedirectResponse("/#sso?code=" + sso.issue_code(user))
+    return RedirectResponse("/#sso?code=" + _code_for(request, user))
 
 
 @app.post("/api/auth/sso/exchange")
-def sso_exchange(body: CodeIn):
-    user = sso.redeem_code(body.code)
+def sso_exchange(body: CodeIn, request: Request):
+    user = sso.redeem_code(body.code, request.session.get(BROWSER_KEY))
     if not user:
         raise HTTPException(401, "That sign-in expired. Please sign in again.")
     token = secrets.token_urlsafe(32)
@@ -871,6 +1002,10 @@ def verify_domain(domain: str, request: Request, user=Depends(require_admin)):
 
 @app.delete("/api/admin/sign-in/domains/{domain}")
 def delete_domain(domain: str, user=Depends(require_admin)):
+    domain = domain.strip().lower()
+    row = members_store.get_domain(ws_of(user), domain)
+    if row and row["verified_at"]:
+        _keep_a_way_in(user, ws_of(user), domain=domain)
     if not members_store.remove_domain(domain, workspace=ws_of(user)):
         raise HTTPException(404, "This workspace doesn't have that domain.")
     return {"ok": True}
@@ -909,11 +1044,17 @@ def edit_connection(cid: str, body: ConnectionPatch, request: Request,
         if key in fields:
             fields[key] = fields[key].strip()
     if "issuer" in fields:
+        if "keys" not in fields:
+            # Else the saved secret would go to whatever the new issuer's token
+            # endpoint is.
+            raise HTTPException(400, "Enter the client secret again when you change the issuer.")
         try:
             fields["issuer"] = sso_setup.normalize_issuer(fields["issuer"])
             fields["metadata"] = sso_setup.oidc_metadata(fields["issuer"])
         except sso_setup.SetupError as e:
             raise _setup_error(e)
+    if fields.get("enabled") is False:
+        _keep_a_way_in(user, ws, without=cid)
     if fields:
         conn = members_store.update_connection(ws, cid, **fields)
     return _connection_out(request, conn)
@@ -946,6 +1087,8 @@ def edit_saml_connection(cid: str, body: SamlConnectionIn, request: Request,
         fields["label"] = body.label.strip()
     if body.enabled is not None:
         fields["enabled"] = body.enabled
+        if body.enabled is False:
+            _keep_a_way_in(user, ws, without=cid)
     if any(v is not None for v in (body.metadata_url, body.metadata_xml, body.entity_id,
                                    body.sso_url, body.certificate, body.email_attribute)):
         fields["issuer"], fields["metadata"] = _saml_settings(body, old=conn["metadata"])
@@ -1000,8 +1143,31 @@ def set_group_roles(cid: str, body: GroupRulesIn, request: Request,
     return _connection_out(request, members_store.get_connection(cid))
 
 
+def _keep_a_way_in(user, ws, without=None, domain=None):
+    """Refuse a change that would lock out the admin making it (they signed in
+    through this provider, or with an email on this domain and have no password),
+    or leave "Require single sign-on" on with no way to sign in."""
+    if without and user.get("connection") == without:
+        raise HTTPException(400, "You're signed in through this provider, so this would sign "
+                                 "you out for good. Sign in another way first (for example, "
+                                 "an admin password).")
+    if domain and user.get("provider") and user["username"].endswith("@" + domain):
+        raise HTTPException(400, f"You signed in with an @{domain} address, so this would sign "
+                                 "you out for good. Sign in another way first.")
+    if not members_store.requires_sso(ws):
+        return
+    providers = [c for c in members_store.list_connections(ws, enabled_only=True)
+                 if c["id"] != without]
+    domains = [d for d in members_store.list_domains(ws)
+               if d["verified_at"] and d["domain"] != domain]
+    if not domains or not (providers or sso.configured()):
+        raise HTTPException(400, "Single sign-on is required, and this would leave no way to "
+                                 "sign in with it. Turn that off first (Sign-in rules).")
+
+
 @app.delete("/api/admin/sign-in/connections/{cid}")
 def delete_connection(cid: str, user=Depends(require_admin)):
+    _keep_a_way_in(user, ws_of(user), without=cid)
     if not members_store.delete_connection(ws_of(user), cid):
         raise HTTPException(404, "This workspace has no such sign-in provider.")
     return {"ok": True}

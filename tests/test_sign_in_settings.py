@@ -114,6 +114,7 @@ def new_connection(client, headers, label="Acme SSO"):
     ("https://idp.example.com/", "::1"),
     ("https://idp.example.com/", "::ffff:127.0.0.1"),
     ("https://idp.example.com/", "fd00::1"),
+    ("https://idp.example.com/", "64:ff9b::a00:5"),         # NAT64 for 10.0.0.5
     ("https://user:pw@idp.example.com/", PUBLIC_IP),
     ("http://localhost:8181/", "127.0.0.1"),             # only the listed port
 ])
@@ -276,9 +277,9 @@ def acme_sso(client, acme):
                                             if k in DOC}, "test")
 
 
-def callback(client, idp, conn, claims):
+def callback(client, idp, conn, claims, state="y"):
     idp.claims = claims
-    r = client.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state=y")
+    r = client.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state={state}")
     assert r.status_code in (302, 303, 307)
     return r.headers["location"]
 
@@ -363,6 +364,11 @@ def start_test(client, acme, conn):
     return body["ticket"], started.headers["location"]
 
 
+def state_of(location):
+    """The OAuth state the provider would send back (a test's starts with "t.")."""
+    return parse_qs(urlsplit(location).query)["state"][0]
+
+
 def result_of(client, acme, ticket):
     return client.get(f"/api/admin/sign-in/tests/{ticket}", headers=acme).json()
 
@@ -372,7 +378,7 @@ def test_an_admin_can_try_a_provider_without_signing_anyone_in(client, acme, acm
     import members_store
     import sso
     ticket, location = start_test(client, acme, acme_sso)
-    assert "prompt=login" in location                     # sign in fresh, as anyone
+    assert "prompt=login" in location and state_of(location).startswith("t.")
     assert result_of(client, acme, ticket) == {"done": False, "result": None}
     fake = type("P", (), {"authorize_access_token": None})()
 
@@ -381,7 +387,8 @@ def test_an_admin_can_try_a_provider_without_signing_anyone_in(client, acme, acm
                              "name": "Tess", "groups": ["eng", "hr"], "nonce": "x"}}
     fake.authorize_access_token = answer
     monkeypatch.setattr(sso, "connection_client", lambda conn: fake)
-    r = client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state=y")
+    r = client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x"
+                   f"&state={state_of(location)}")
     assert r.headers["location"] == "/#sso-test"           # no session code
     result = result_of(client, acme, ticket)["result"]
     assert result["ok"] and (result["email"], result["role"], result["new_member"]) == (
@@ -392,9 +399,16 @@ def test_an_admin_can_try_a_provider_without_signing_anyone_in(client, acme, acm
     assert events[0]["outcome"] == "test" and events[0]["connection"] == "Acme SSO"
 
 
-def test_a_test_reports_why_someone_would_be_refused(client, acme, acme_sso, idp):
-    ticket, _ = start_test(client, acme, acme_sso)
-    callback(client, idp, acme_sso, {"email": "x@globex.example", "email_verified": True})
+def test_a_test_reports_why_someone_would_be_refused(client, acme, acme_sso, monkeypatch):
+    import sso
+    ticket, location = start_test(client, acme, acme_sso)
+    fake = type("P", (), {})()
+
+    async def answer(request):
+        return {"userinfo": {"email": "x@globex.example", "email_verified": True}}
+    fake.authorize_access_token = answer
+    monkeypatch.setattr(sso, "connection_client", lambda conn: fake)
+    client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state={state_of(location)}")
     result = result_of(client, acme, ticket)["result"]
     assert (result["ok"], result["reason"], result["detail"]) == (
         False, "not_allowed", "globex.example isn't a verified domain of this workspace.")
@@ -513,7 +527,7 @@ def test_a_test_sign_in_shows_the_groups_and_the_role_they_give(client, acme, ac
     import sso
     set_rules(client, acme, acme_sso, [("it-admins", "admin")])
     try:
-        ticket, _ = start_test(client, acme, acme_sso)
+        ticket, location = start_test(client, acme, acme_sso)
         fake = type("P", (), {})()
 
         async def answer(request):
@@ -521,7 +535,8 @@ def test_a_test_sign_in_shows_the_groups_and_the_role_they_give(client, acme, ac
                                  "groups": ["it-admins"]}}
         fake.authorize_access_token = answer
         monkeypatch.setattr(sso, "connection_client", lambda conn: fake)
-        client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state=y")
+        client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x"
+                   f"&state={state_of(location)}")
         result = result_of(client, acme, ticket)["result"]
         assert (result["role"], result["role_source"], result["groups"]) == (
             "admin", "groups", ["it-admins"])
@@ -567,11 +582,22 @@ def test_requiring_sso_leaves_passwords_to_admins(client, acme, acme_sso):
     try:
         assert client.get("/api/admin/sign-in", headers=acme).json()["require_sso"] is True
         assert client.get("/api/auth/me", headers=hr_headers).status_code == 401   # live session
-        r = client.post("/api/auth/login", json={"username": "acme-hr",
-                                                 "password": "correct-horse"})
-        assert r.status_code == 403 and "single sign-on" in r.json()["detail"]
+        # A right password that may no longer be used looks just like a wrong one...
+        right = client.post("/api/auth/login", json={"username": "acme-hr",
+                                                     "password": "correct-horse"})
         wrong = client.post("/api/auth/login", json={"username": "acme-hr", "password": "nope"})
-        assert wrong.status_code == 401        # says nothing until the password is right
+        assert right.status_code == wrong.status_code == 401
+        assert right.json() == wrong.json()
+        # ...but an email on the workspace's domain is pointed to single sign-on,
+        # whatever the password (the email lookup reveals that much already).
+        import auth
+        import members_store
+        members_store.set_password("pw@acme.example", "PW", auth.hash_password("correct-horse"),
+                                   "acme")
+        for password in ("correct-horse", "nope"):
+            r = client.post("/api/auth/login", json={"username": "pw@acme.example",
+                                                     "password": password})
+            assert r.status_code == 403 and "single sign-on" in r.json()["detail"]
         as_user(client, "acme-admin")          # the admin's way in if the provider breaks
         events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
         assert ("acme-hr", "refused", "sso_required", "password") in [
@@ -642,3 +668,120 @@ def test_the_public_sign_in_endpoints_are_rate_limited(client, monkeypatch):
     codes = [client.post("/api/auth/sso/discover", json={"email": "x@acme.example"}).status_code
              for _ in range(api.LIMITS["discover"] + 1)]
     assert codes[-2] == 200 and codes[-1] == 429
+
+
+# ---- Fixes from the review ------------------------------------------------------------
+def fake_answer(monkeypatch, userinfo):
+    import sso
+    fake = type("P", (), {})()
+
+    async def answer(request):
+        return {"userinfo": userinfo}
+    fake.authorize_access_token = answer
+    monkeypatch.setattr(sso, "connection_client", lambda conn: fake)
+
+
+def test_a_sign_in_code_only_works_in_the_browser_that_started_it(client, acme_sso, monkeypatch):
+    """Someone can't finish a sign-in as themselves and send you the link."""
+    from fastapi.testclient import TestClient
+    import api
+    attacker = TestClient(api.app, follow_redirects=False)
+    location = attacker.get(f"/api/auth/sso/c/{acme_sso['id']}/start").headers["location"]
+    fake_answer(monkeypatch, {"email": "attacker@acme.example", "email_verified": True})
+    done = attacker.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x"
+                        f"&state={state_of(location)}").headers["location"]
+    code = done.split("code=")[1]
+    victim = TestClient(api.app, follow_redirects=False)
+    assert victim.post("/api/auth/sso/exchange", json={"code": code}).status_code == 401
+    # (and the code is spent: it can't be tried twice)
+    assert attacker.post("/api/auth/sso/exchange", json={"code": code}).status_code == 401
+
+
+def test_an_expired_test_never_turns_into_a_real_sign_in(client, acme, acme_sso, monkeypatch):
+    import api
+    import members_store
+    ticket, location = start_test(client, acme, acme_sso)
+    api._sso_tests[ticket]["expires"] = 0               # e.g. a slow MFA prompt
+    fake_answer(monkeypatch, {"email": "slow@acme.example", "email_verified": True})
+    r = client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state={state_of(location)}")
+    assert r.headers["location"] == "/#sso-test"
+    assert members_store.get("slow@acme.example") is None
+
+
+def test_clearing_group_rules_or_deleting_the_provider_takes_the_role_back(client, acme, idp):
+    import members_store
+    import sso_setup
+    conn = members_store.create_connection(
+        "acme", "oidc", "Temp", ISSUER, "kb", {"client_secret": "s"},
+        {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
+    set_rules(client, acme, conn, [("Engineering", "hr")])
+    headers = session_for(client, idp, conn, {"email": "eng@acme.example",
+                                              "email_verified": True, "groups": ["Engineering"]})
+    assert me(client, headers)["role"] == "hr"
+    set_rules(client, acme, conn, [("engineering", "admin")])   # applies now, from known groups
+    assert me(client, headers)["role"] == "admin"
+    set_rules(client, acme, conn, [])                          # no rules: no role from groups
+    assert me(client, headers)["role"] == "public"
+    set_rules(client, acme, conn, [("Engineering", "hr")])
+    assert me(client, headers)["role"] == "hr"
+    client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme)
+    assert members_store.get("eng@acme.example")["role"] == "public"
+
+
+def test_an_admin_cant_lock_themselves_or_everyone_out(client, monkeypatch):
+    import auth
+    import members_store
+    import sso_setup
+    members_store.set_password("solo-admin", "Solo", auth.hash_password("correct-horse"),
+                               "solo", "admin")
+    members_store.add_verified_domain("solo", "solo.example")
+    conn = members_store.create_connection(
+        "solo", "oidc", "Solo SSO", ISSUER, "kb", {"client_secret": "s"},
+        {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
+    members_store.set_role("boss@solo.example", "admin", workspace="solo")
+    location = client.get(f"/api/auth/sso/c/{conn['id']}/start").headers["location"]
+    fake_answer(monkeypatch, {"email": "boss@solo.example", "email_verified": True})
+    done = client.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state={state_of(location)}")
+    token = client.post("/api/auth/sso/exchange",
+                        json={"code": done.headers["location"].split("code=")[1]}).json()["token"]
+    boss = {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+    # Signed in through it, or with an email on it: refused, with the reason.
+    for r in (client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=boss),
+              client.patch(f"/api/admin/sign-in/connections/{conn['id']}", headers=boss,
+                           json={"enabled": False}),
+              client.delete("/api/admin/sign-in/domains/solo.example", headers=boss)):
+        assert r.status_code == 400 and "sign you out for good" in r.json()["detail"]
+    # With single sign-on required, the last provider or domain can't go either.
+    password_admin = as_user(client, "solo-admin")
+    client.put("/api/admin/sign-in/policy", headers=password_admin, json={"require_sso": True})
+    r = client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=password_admin)
+    assert r.status_code == 400 and "Single sign-on is required" in r.json()["detail"]
+    r = client.delete("/api/admin/sign-in/domains/solo.example", headers=password_admin)
+    assert r.status_code == 400
+    client.put("/api/admin/sign-in/policy", headers=password_admin, json={"require_sso": False})
+    assert client.delete(f"/api/admin/sign-in/connections/{conn['id']}",
+                         headers=password_admin).status_code == 200
+
+
+def test_changing_the_issuer_needs_the_secret_again(client, acme, acme_sso, provider_doc):
+    path = f"/api/admin/sign-in/connections/{acme_sso['id']}"
+    r = client.patch(path, headers=acme, json={"issuer": ISSUER})
+    assert r.status_code == 400 and "client secret" in r.json()["detail"]
+    assert client.patch(path, headers=acme, json={"issuer": ISSUER,
+                                                  "client_secret": "s3cret-value"}).status_code == 200
+
+
+def test_only_failures_from_a_real_sign_in_are_logged_and_never_verbatim(client, acme, acme_sso):
+    from fastapi.testclient import TestClient
+    import api
+    stranger = TestClient(api.app, follow_redirects=False)
+    stranger.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?error=x"
+                 "&error_description=Call+the+helpdesk+at+555")
+    events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
+    assert not any("helpdesk" in (e["reason"] or "") for e in events)
+    browser = TestClient(api.app, follow_redirects=False)
+    browser.get(f"/api/auth/sso/c/{acme_sso['id']}/start")
+    browser.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?error=access_denied"
+                "&error_description=Call+the+helpdesk+at+555")
+    events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
+    assert (events[0]["outcome"], events[0]["reason"]) == ("failed", "access_denied")

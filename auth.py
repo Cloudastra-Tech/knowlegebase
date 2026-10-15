@@ -107,7 +107,13 @@ def authenticate(username, password):
 def require_login():
     """Show the login form until someone signs in. Returns the signed-in user."""
     if st.session_state.get("user"):
-        return st.session_state.user
+        # Checked on every run, like the API does on every request: someone turned
+        # off, demoted, or now required to use single sign-on loses it straight away.
+        access = access_for(st.session_state.user["username"])
+        if access:
+            st.session_state.user.update(access)
+            return st.session_state.user
+        st.session_state.pop("user", None)
 
     st.title("🔐 Sign in")
     if not password_login_on():
@@ -162,6 +168,7 @@ def _option(args, flag, default):
 
 
 def _cli(args):
+    workspace_given = "--workspace" in args
     workspace, args = _option(args, "--workspace", workspaces.DEFAULT)  # add bob --workspace acme
     role, args = _option(args, "--role", None)                          # add bob --role hr
     if not workspaces.valid(workspace):
@@ -176,6 +183,8 @@ def _cli(args):
         if getpass.getpass("Repeat password: ") != password:
             sys.exit("Passwords don't match.")
         existed = members_store.get(username)
+        if existed and not workspace_given:
+            workspace = existed["workspace"]      # a password reset doesn't move anyone
         members_store.set_password(username, args[1], hash_password(password), workspace, role)
         print(f"{'Updated' if existed else 'Added'} {username} (workspace: {workspace}, "
               f"role: {members_store.get(username)['role']}).")
