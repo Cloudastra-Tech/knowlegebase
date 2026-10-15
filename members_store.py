@@ -407,6 +407,14 @@ def list_connections(workspace, enabled_only=False):
         return [_connection(r) for r in conn.execute(sql + " ORDER BY created_at", (workspace,))]
 
 
+def any_connections():
+    """Does any workspace have an enabled provider of its own? (The login page then
+    asks for an email; it says nothing about which workspaces.)"""
+    with _db() as conn:
+        return conn.execute("SELECT 1 FROM sso_connections WHERE enabled = 1 "
+                            "LIMIT 1").fetchone() is not None
+
+
 def delete_connection(workspace, cid):
     with _lock, _db() as conn:
         n = conn.execute("DELETE FROM sso_connections WHERE id = ? AND workspace = ?",

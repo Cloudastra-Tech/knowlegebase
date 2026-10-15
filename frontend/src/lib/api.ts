@@ -18,6 +18,15 @@ export interface User {
 export interface AuthOptions {
   providers: { id: string; name: string }[]
   password: boolean
+  // Some workspace has its own sign-in provider: ask for a work email first.
+  email_sso: boolean
+}
+
+// A workspace's own provider, found from an email. `url` starts sign-in.
+export interface SsoConnection {
+  id: string
+  name: string
+  url: string
 }
 
 export type IntegrationStatus =
@@ -186,6 +195,11 @@ export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/star
 
 export const api = {
   authOptions: () => request<AuthOptions>("/auth/providers"),
+  ssoDiscover: (email: string) =>
+    request<{ connections: SsoConnection[] }>("/auth/sso/discover", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
   // The provider sends the browser back to /#sso?code=...; swap the code for a session.
   ssoExchange: (code: string) =>
     request<{ token: string; user: User }>("/auth/sso/exchange", {
