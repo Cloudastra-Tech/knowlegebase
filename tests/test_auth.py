@@ -255,3 +255,16 @@ def test_password_login_can_be_turned_off(env, monkeypatch):
     r = env.post("/api/auth/login", json={"username": "admin", "password": "correct-horse"})
     assert r.status_code == 403
     assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # ends live sessions too
+
+
+def test_a_turned_off_password_account_cant_sign_in(env):
+    import auth
+    token = password_token(env, "staff")
+    auth._cli(["disable", "staff"])
+    try:
+        assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401
+        r = env.post("/api/auth/login", json={"username": "staff", "password": "correct-horse"})
+        assert r.status_code == 401
+    finally:
+        auth._cli(["enable", "staff"])
+    password_token(env, "staff")

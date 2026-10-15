@@ -452,3 +452,108 @@ def test_the_idp_addresses_are_known_before_the_provider_is_added(client, acme, 
                        json=body).status_code == 409
     assert client.post("/api/admin/sign-in/connections", headers=acme,
                        json={**body, "id": "../../x"}).status_code == 422
+
+
+# ---- Roles from groups, and members ------------------------------------------------
+def set_rules(client, acme, conn, rules, claim=None):
+    r = client.put(f"/api/admin/sign-in/connections/{conn['id']}/roles", headers=acme,
+                   json={"group_claim": claim, "rules": [{"group": g, "role": role}
+                                                         for g, role in rules]})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def me(client, headers):
+    return client.get("/api/auth/me", headers=headers).json()
+
+
+def test_groups_from_the_provider_set_the_role(client, acme, acme_sso, idp):
+    out = set_rules(client, acme, acme_sso, [("Engineering", "hr"), ("it-admins", "admin")])
+    assert out["group_rules"] == [{"group": "Engineering", "role": "hr"},
+                                  {"group": "it-admins", "role": "admin"}]
+    try:
+        claims = {"email": "grp@acme.example", "email_verified": True,
+                  "groups": ["engineering", "sales"]}
+        assert me(client, session_for(client, idp, acme_sso, claims))["role"] == "hr"
+        claims["groups"] = ["it-admins", "engineering"]
+        assert me(client, session_for(client, idp, acme_sso, claims))["role"] == "admin"
+        claims["groups"] = []                          # left the groups at the provider
+        assert me(client, session_for(client, idp, acme_sso, claims))["role"] == "public"
+    finally:
+        set_rules(client, acme, acme_sso, [])
+
+
+def test_a_nested_claim_can_carry_the_groups(client, acme, acme_sso, idp):
+    set_rules(client, acme, acme_sso, [("hr", "hr")], claim="realm_access.roles")
+    try:
+        claims = {"email": "nested@acme.example", "email_verified": True,
+                  "realm_access": {"roles": ["offline_access", "hr"]}}
+        assert me(client, session_for(client, idp, acme_sso, claims))["role"] == "hr"
+    finally:
+        set_rules(client, acme, acme_sso, [])
+
+
+def test_an_admin_override_beats_the_groups(client, acme, acme_sso, idp):
+    set_rules(client, acme, acme_sso, [("Engineering", "hr")])
+    try:
+        claims = {"email": "over@acme.example", "email_verified": True, "groups": ["Engineering"]}
+        headers = session_for(client, idp, acme_sso, claims)
+        path = "/api/admin/members/over@acme.example"
+        out = client.patch(path, headers=acme, json={"role": "public"}).json()
+        assert (out["role"], out["role_source"], out["group_role"]) == ("public", "override", "hr")
+        assert me(client, headers)["role"] == "public"                   # straight away
+        out = client.patch(path, headers=acme, json={"role": None}).json()
+        assert (out["role"], out["role_source"]) == ("hr", "groups")
+    finally:
+        set_rules(client, acme, acme_sso, [])
+
+
+def test_a_test_sign_in_shows_the_groups_and_the_role_they_give(client, acme, acme_sso,
+                                                               monkeypatch):
+    import sso
+    set_rules(client, acme, acme_sso, [("it-admins", "admin")])
+    try:
+        ticket, _ = start_test(client, acme, acme_sso)
+        fake = type("P", (), {})()
+
+        async def answer(request):
+            return {"userinfo": {"email": "would@acme.example", "email_verified": True,
+                                 "groups": ["it-admins"]}}
+        fake.authorize_access_token = answer
+        monkeypatch.setattr(sso, "connection_client", lambda conn: fake)
+        client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state=y")
+        result = result_of(client, acme, ticket)["result"]
+        assert (result["role"], result["role_source"], result["groups"]) == (
+            "admin", "groups", ["it-admins"])
+    finally:
+        set_rules(client, acme, acme_sso, [])
+
+
+def test_turning_someone_off_ends_their_access(client, acme, acme_sso, idp):
+    claims = {"email": "off@acme.example", "email_verified": True}
+    headers = session_for(client, idp, acme_sso, claims)
+    path = "/api/admin/members/off@acme.example"
+    assert client.patch(path, headers=acme, json={"disabled": True}).json()["disabled"]
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+    assert callback(client, idp, acme_sso, claims) == "/#login?error=disabled"
+    client.patch(path, headers=acme, json={"disabled": False})
+    assert callback(client, idp, acme_sso, claims).startswith("/#sso?code=")
+    assert client.delete(path, headers=acme).status_code == 200
+    assert "off@acme.example" not in [m["username"] for m in
+                                      client.get("/api/admin/members", headers=acme).json()["members"]]
+
+
+def test_members_are_managed_per_workspace_and_not_by_yourself(client, acme, globex, acme_sso,
+                                                               idp):
+    session_for(client, idp, acme_sso, {"email": "mine@acme.example", "email_verified": True})
+    listed = [m["username"] for m in client.get("/api/admin/members", headers=acme).json()["members"]]
+    assert "mine@acme.example" in listed and "globex-admin" not in listed
+    assert client.patch("/api/admin/members/mine@acme.example", headers=globex,
+                        json={"role": "admin"}).status_code == 404
+    assert client.patch("/api/admin/members/acme-admin", headers=acme,
+                        json={"role": "public"}).status_code == 400
+    assert client.delete("/api/admin/members/acme-admin", headers=acme).status_code == 400
+    hr = as_user(client, "acme-hr")
+    assert client.get("/api/admin/members", headers=hr).status_code == 403
+    assert client.patch("/api/admin/members/mine@acme.example", headers=acme,
+                        json={"role": "owner"}).status_code == 422

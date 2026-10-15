@@ -49,6 +49,9 @@ const SignInView = lazy(() =>
 )
 const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
 
+// How often to retry restoring a session while the server can't be reached (~1 min).
+const RESTORE_ATTEMPTS = 10
+
 // The screens a public user may see; anything else falls back to Chat.
 const publicScreen = (s: Screen): Screen => (s === "knowledge" ? s : "chat")
 
@@ -174,11 +177,29 @@ export default function App() {
       return
     }
     if (!session.token) return
-    api
-      .me()
-      .then(signedIn)
-      .catch(() => session.setToken(null))
-      .finally(() => setChecking(false))
+    // Only the server saying "no" (401) ends the session. If it can't be reached
+    // (restarting, a deploy, a network blip), keep it and try again for a while.
+    let timer: number | undefined
+    const restore = (attempt: number) => {
+      api
+        .me()
+        .then((u) => {
+          signedIn(u)
+          setChecking(false)
+        })
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 401) {
+            session.setToken(null)
+            setChecking(false)
+          } else if (attempt < RESTORE_ATTEMPTS) {
+            timer = window.setTimeout(() => restore(attempt + 1), Math.min(500 * 2 ** attempt, 8000))
+          } else {
+            setChecking(false)      // still signed in; the next reload tries again
+          }
+        })
+    }
+    restore(0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   function changeRole(next: Role) {
@@ -241,7 +262,7 @@ export default function App() {
       : []),
     // Who may sign in: admins only (HR manages documents, not access).
     ...(activeRole === "hr" && user.role === "admin"
-      ? [{ id: "sign-in" as Screen, label: "Sign-in" }]
+      ? [{ id: "sign-in" as Screen, label: "Access" }]
       : []),
   ]
 
@@ -369,7 +390,7 @@ export default function App() {
         {screen === "sign-in" && activeRole === "hr" && user.role === "admin" && (
           <div className="h-full overflow-y-auto">
             <LazyPage>
-              <SignInView workspace={user.workspace} />
+              <SignInView workspace={user.workspace} me={user.username} />
             </LazyPage>
           </div>
         )}

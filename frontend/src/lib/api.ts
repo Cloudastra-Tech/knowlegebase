@@ -52,6 +52,31 @@ export interface SignInConnection {
   metadata_url?: string | null
   email_attribute?: string | null
   signs_requests?: boolean
+  // Roles from the groups it sends (empty: it doesn't set roles)
+  group_claim: string | null
+  group_rules: GroupRule[]
+}
+
+export interface GroupRule {
+  group: string
+  role: AccountRole
+}
+
+// Where a member's role comes from: set by an admin, their groups, or neither.
+export type RoleSource = "override" | "groups" | "default"
+
+export interface Member {
+  username: string
+  name: string
+  role: AccountRole
+  role_source: RoleSource
+  override_role: AccountRole | null
+  group_role: AccountRole | null
+  groups: string[]
+  disabled: boolean
+  has_password: boolean
+  last_login_at: number | null
+  created_at: number
 }
 
 // What the IdP needs before the provider is added (GET /admin/sign-in/new-provider).
@@ -107,6 +132,8 @@ export interface SsoTestResult {
   email?: string | null
   name?: string
   role?: AccountRole
+  role_source?: RoleSource
+  groups?: string[] | null // null: the provider has no group rules
   new_member?: boolean
   sent: Record<string, string>
 }
@@ -319,6 +346,17 @@ export const signIn = {
       `/admin/sign-in/connections/${seg(id)}/test`,
       json("POST"),
     ),
+  setGroupRules: (id: string, group_claim: string, rules: GroupRule[]) =>
+    request<SignInConnection>(
+      `/admin/sign-in/connections/${seg(id)}/roles`,
+      json("PUT", { group_claim: group_claim || null, rules }),
+    ),
+  members: () => request<{ members: Member[] }>("/admin/members"),
+  // role: null goes back to the role their groups give
+  editMember: (username: string, body: { role?: AccountRole | null; disabled?: boolean }) =>
+    request<Member>(`/admin/members/${seg(username)}`, json("PATCH", body)),
+  removeMember: (username: string) =>
+    request<{ ok: boolean }>(`/admin/members/${seg(username)}`, json("DELETE")),
   testResult: (ticket: string) =>
     request<{ done: boolean; result: SsoTestResult | null }>(
       `/admin/sign-in/tests/${seg(ticket)}`,

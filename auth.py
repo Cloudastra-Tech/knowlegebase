@@ -13,7 +13,9 @@ PASSWORD_LOGIN=off (in .env) turns password sign-in off in both the API and Stre
 
 Manage accounts and domains from a terminal:
     python auth.py add <username> [--workspace <slug>] [--role hr]   # asks for the password
-    python auth.py role <username or email> <public|hr|admin> [--workspace <slug>]
+    python auth.py role <username or email> <public|hr|admin|groups> [--workspace <slug>]
+    python auth.py disable <username or email>        # no access until enabled again
+    python auth.py enable <username or email>
     python auth.py remove <username or email>
     python auth.py list
     python auth.py domain add <domain> [--workspace <slug>]          # single sign-on for @domain
@@ -21,6 +23,8 @@ Manage accounts and domains from a terminal:
     python auth.py domains
 `role` also works for someone who hasn't signed in yet: they're added to the
 workspace (default: "default") and get the role from their first sign-in.
+A role set here overrides the one their provider's groups give them; `groups`
+goes back to the groups.
 """
 
 import getpass
@@ -67,7 +71,8 @@ def access_for(username):
     """{"workspace", "role"} for a password account, or None if it's gone or
     password sign-in is off. Checked on every request, not only at sign-in."""
     member = members_store.get(username)
-    if not member or not member["password_hash"] or not password_login_on():
+    if (not member or not member["password_hash"] or member["disabled"]
+            or not password_login_on()):
         return None
     return {"workspace": member["workspace"], "role": member["role"]}
 
@@ -160,10 +165,17 @@ def _cli(args):
               f"role: {members_store.get(username)['role']}).")
     elif len(args) == 3 and args[0] == "role":
         username, role = args[1].strip().lower(), args[2].strip().lower()
-        if role not in members_store.ROLES:
-            sys.exit("Role must be public, hr or admin.")
-        members_store.set_role(username, role, workspace)
-        print(f"{username} is now {role} (workspace: {members_store.get(username)['workspace']}).")
+        if role not in (*members_store.ROLES, "groups"):
+            sys.exit("Role must be public, hr, admin or groups.")
+        members_store.set_role(username, None if role == "groups" else role, workspace)
+        member = members_store.get(username)
+        print(f"{username} is now {member['role']}"
+              f"{' (from their groups)' if role == 'groups' else ''} "
+              f"(workspace: {member['workspace']}).")
+    elif len(args) == 2 and args[0] in ("disable", "enable"):
+        if not members_store.set_disabled(args[1], args[0] == "disable"):
+            sys.exit(f"No account named {args[1]}.")
+        print(f"{args[1]} is {args[0]}d.")
     elif len(args) == 2 and args[0] == "remove":
         if not members_store.remove(args[1]):
             sys.exit(f"No account named {args[1]}.")
@@ -171,8 +183,11 @@ def _cli(args):
     elif args == ["list"]:
         members = members_store.list_members()
         for m in members:
+            source = ("set by hand" if m["override_role"] else
+                      "from groups" if m["group_role"] else "default")
             print(f"{m['username']:<32} workspace: {m['workspace']:<16} role: {m['role']:<7} "
-                  f"{'password' if m['has_password'] else 'single sign-on'}")
+                  f"({source}) {'password' if m['has_password'] else 'single sign-on'}"
+                  f"{'  DISABLED' if m['disabled'] else ''}")
         if not members:
             print("(no accounts)")
     elif len(args) == 3 and args[:2] == ["domain", "add"]:
