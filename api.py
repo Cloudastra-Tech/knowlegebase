@@ -20,6 +20,7 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     GET    /auth/sso/{provider}/callback   they send it back here (sso.py decides who gets in)
     POST   /auth/sso/discover     {email} -> {connections} the workspace's own sign-in providers
     GET    /auth/sso/c/{id}/start | /callback   the same, through one of those providers
+    GET    /auth/saml/{id}/metadata | /start  POST /acs  GET /done   ... when it's SAML
     POST   /auth/sso/exchange     {code} -> {token, user}   the one-time code from the callback
     POST   /auth/logout
     GET    /auth/me
@@ -48,6 +49,9 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     DELETE /admin/sign-in/domains/{domain}                                         (admin)
     POST   /admin/sign-in/connections {label, issuer, client_id, client_secret}    (admin)
     PATCH  /admin/sign-in/connections/{id} change any of those, or {enabled}       (admin)
+    POST   /admin/sign-in/saml-connections {label, metadata_url | metadata_xml |
+                                  entity_id + sso_url + certificate, email_attribute} (admin)
+    PATCH  /admin/sign-in/saml-connections/{id} change any of those, or {enabled}  (admin)
     DELETE /admin/sign-in/connections/{id}                                         (admin)
 Every document change re-indexes automatically; connectors re-sync every 30 minutes.
 
@@ -56,6 +60,7 @@ counts as HR everywhere here. An HR / Admin account can send "X-Role: public" to
 see the app as a public user would; the header can never raise anyone TO HR.
 """
 
+import calendar
 import contextlib
 import json
 import io
@@ -71,8 +76,9 @@ import urllib.parse
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
+from saml2 import time_util as saml2_time
 from starlette.middleware.sessions import SessionMiddleware
 
 load_dotenv()
@@ -82,9 +88,11 @@ import docs_store                    # noqa: E402
 import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
 import members_store                 # noqa: E402
+import saml_sp                       # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
 import sso_setup                     # noqa: E402
+import url_guard                     # noqa: E402
 import workspaces                    # noqa: E402
 from agent import build_agent        # noqa: E402
 from connectors import google_drive, notion  # noqa: E402
@@ -291,13 +299,19 @@ class EmailIn(BaseModel):
     email: str = Field(max_length=320)
 
 
-def _usable_connection(cid):
+def _usable_connection(cid, protocol):
     try:
         conn = members_store.get_connection(cid)
     except sqlite3.Error:
         log.exception("Couldn't read sign-in connection %s", cid)
         return None
-    return conn if conn and conn["enabled"] else None
+    return conn if conn and conn["enabled"] and conn["protocol"] == protocol else None
+
+
+def _start_url(conn, email):
+    if conn["protocol"] == "saml":
+        return f"/api/auth/saml/{conn['id']}/start"
+    return f"/api/auth/sso/c/{conn['id']}/start?" + urllib.parse.urlencode({"login_hint": email})
 
 
 @app.post("/api/auth/sso/discover")
@@ -310,14 +324,13 @@ def sso_discover(body: EmailIn):
     except sqlite3.Error:
         log.exception("Couldn't look up sign-in for an email")
         raise HTTPException(503, "Sign-in settings can't be read. Please try again.")
-    hint = urllib.parse.urlencode({"login_hint": email})
-    return {"connections": [{"id": c["id"], "name": c["label"],
-                             "url": f"/api/auth/sso/c/{c['id']}/start?{hint}"} for c in conns]}
+    return {"connections": [{"id": c["id"], "name": c["label"], "url": _start_url(c, email)}
+                            for c in conns]}
 
 
 @app.get("/api/auth/sso/c/{cid}/start")
 async def sso_connection_start(cid: str, request: Request, login_hint: str = ""):
-    conn = _usable_connection(cid)
+    conn = _usable_connection(cid, "oidc")
     if not conn:
         return RedirectResponse("/#login?error=sso_unavailable")
     extra = {"login_hint": login_hint} if EMAIL_RE.match(login_hint) else {}
@@ -331,11 +344,109 @@ async def sso_connection_start(cid: str, request: Request, login_hint: str = "")
 
 @app.get("/api/auth/sso/c/{cid}/callback")
 async def sso_connection_callback(cid: str, request: Request):
-    conn = _usable_connection(cid)
+    conn = _usable_connection(cid, "oidc")
     if not conn:
         return RedirectResponse("/#login?error=sso_unavailable")
     return await _finish_sso(f"connection {cid}", sso.connection_client(conn), request,
                              lambda claims: sso.user_for_connection(conn, claims))
+
+
+# ---- SAML (saml_sp.py) -------------------------------------------------------------
+# The IdP posts its answer from its own site, so our Lax cookie doesn't come with
+# it. /acs checks the answer and parks it for a minute; /done, a same-site GET,
+# checks the cookie set at /start, so an answer only signs in the browser that
+# asked for it (no logging someone in to an attacker's account).
+_saml_parked = {}          # key -> (connection id, request id, email, name, expires)
+_saml_lock = threading.Lock()
+SAML_PARK_SECONDS = 60
+SAML_SESSION_KEY = "saml_requests"
+
+
+def _saml_ready(cid):
+    conn = _usable_connection(cid, "saml")
+    if not conn or not saml_sp.xmlsec_binary():
+        return None, None
+    return conn, members_store.connection_keys(cid)
+
+
+@app.get("/api/auth/saml/{cid}/metadata")
+def saml_metadata(cid: str, request: Request):
+    """Our SP's metadata, for the customer's IdP (public, like any SP's)."""
+    conn = members_store.get_connection(cid)
+    if not conn or conn["protocol"] != "saml" or not saml_sp.xmlsec_binary():
+        raise HTTPException(404, "No such SAML sign-in.")
+    xml = saml_sp.sp_metadata(conn, members_store.connection_keys(cid), _public_url(request, ""))
+    return Response(xml, media_type="application/samlmetadata+xml")
+
+
+@app.get("/api/auth/saml/{cid}/start")
+def saml_start(cid: str, request: Request):
+    conn, keys = _saml_ready(cid)
+    if not conn:
+        return RedirectResponse("/#login?error=sso_unavailable")
+    try:
+        request_id, url = saml_sp.start(conn, keys, _public_url(request, ""))
+    except Exception:
+        log.exception("SAML %s: couldn't start sign-in", cid)
+        return RedirectResponse("/#login?error=sso_failed")
+    members_store.remember_saml_request(cid, request_id, saml_sp.REQUEST_SECONDS)
+    # This browser started it. Keep the last few, in case of several tabs.
+    request.session[SAML_SESSION_KEY] = (request.session.get(SAML_SESSION_KEY, []) +
+                                         [request_id])[-5:]
+    return RedirectResponse(url)
+
+
+@app.post("/api/auth/saml/{cid}/acs")
+def saml_acs(cid: str, request: Request, SAMLResponse: str = Form(""),
+             RelayState: str = Form("")):
+    conn, keys = _saml_ready(cid)
+    if not conn:
+        return RedirectResponse("/#login?error=sso_unavailable", status_code=303)
+    try:
+        answer = saml_sp.finish(conn, keys, _public_url(request, ""), SAMLResponse,
+                                members_store.open_saml_requests(cid))
+    except saml_sp.SamlError as e:
+        log.warning("SAML %s: refused an answer: %s", cid, e)
+        return RedirectResponse("/#login?error=sso_failed", status_code=303)
+    expires = time.time() + saml_sp.REQUEST_SECONDS
+    if answer["expires"]:
+        expires = calendar.timegm(saml2_time.str_to_time(answer["expires"]))
+    if not (members_store.close_saml_request(answer["request_id"]) and
+            members_store.first_use_of_assertion(answer["assertion_id"], expires)):
+        log.warning("SAML %s: refused a replayed answer", cid)
+        return RedirectResponse("/#login?error=sso_failed", status_code=303)
+    key, now = secrets.token_urlsafe(24), time.time()
+    with _saml_lock:
+        for k in [k for k, v in _saml_parked.items() if v[4] < now]:
+            del _saml_parked[k]
+        _saml_parked[key] = (cid, answer["request_id"], answer["email"], answer["name"],
+                             now + SAML_PARK_SECONDS)
+    return RedirectResponse(f"/api/auth/saml/{cid}/done?" + urllib.parse.urlencode({"k": key}),
+                            status_code=303)
+
+
+@app.get("/api/auth/saml/{cid}/done")
+def saml_done(cid: str, request: Request, k: str = ""):
+    with _saml_lock:
+        parked = _saml_parked.pop(k, None)
+    if not parked or parked[0] != cid or parked[4] < time.time():
+        return RedirectResponse("/#login?error=expired")
+    started_here = request.session.get(SAML_SESSION_KEY, [])
+    if parked[1] not in started_here:
+        log.warning("SAML %s: an answer arrived in a browser that didn't start it", cid)
+        return RedirectResponse("/#login?error=sso_failed")
+    request.session[SAML_SESSION_KEY] = [r for r in started_here if r != parked[1]]
+    conn = _usable_connection(cid, "saml")
+    if not conn:
+        return RedirectResponse("/#login?error=sso_unavailable")
+    try:
+        user = sso.user_for_connection(conn, {"email": parked[2], "name": parked[3]})
+    except sso.NotAllowed as e:
+        return RedirectResponse(f"/#login?error={e.reason}")
+    except Exception:
+        log.exception("SAML %s: couldn't decide who gets in", cid)
+        return RedirectResponse("/#login?error=sso_failed")
+    return RedirectResponse("/#sso?code=" + sso.issue_code(user))
 
 
 @app.post("/api/auth/sso/exchange")
@@ -385,12 +496,78 @@ def _domain_out(row):
             "verified_at": row["verified_at"], "txt_name": name, "txt_value": value}
 
 
+class SamlConnectionIn(BaseModel):
+    """The IdP's metadata from ONE of: a URL, the XML, or its three values by hand."""
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    metadata_url: str | None = Field(default=None, max_length=1000)
+    metadata_xml: str | None = Field(default=None, max_length=500_000)
+    entity_id: str | None = Field(default=None, max_length=500)
+    sso_url: str | None = Field(default=None, max_length=1000)
+    certificate: str | None = Field(default=None, max_length=20_000)
+    email_attribute: str | None = Field(default=None, max_length=200)
+    enabled: bool | None = None
+
+
 def _connection_out(request, c):
-    """Everything the admin screen shows; never the client secret."""
-    return {"id": c["id"], "protocol": c["protocol"], "label": c["label"],
-            "issuer": c["issuer"], "client_id": c["client_id"], "enabled": c["enabled"],
-            "created_at": c["created_at"], "last_login_at": c["last_login_at"],
+    """Everything the admin screen shows; never a secret."""
+    out = {"id": c["id"], "protocol": c["protocol"], "label": c["label"],
+           "issuer": c["issuer"], "enabled": c["enabled"],
+           "created_at": c["created_at"], "last_login_at": c["last_login_at"]}
+    if c["protocol"] == "saml":
+        entity_id, acs, metadata_url = saml_sp.sp_urls(_public_url(request, ""), c["id"])
+        settings = c["metadata"]
+        return {**out, "sp_entity_id": entity_id, "acs_url": acs,
+                "sp_metadata_url": metadata_url, "sso_url": settings.get("sso_url"),
+                "metadata_url": settings.get("metadata_url"),
+                "email_attribute": settings.get("email_attribute"),
+                "signs_requests": bool(settings.get("want_authn_requests_signed"))}
+    return {**out, "client_id": c["client_id"],
             "redirect_uri": _public_url(request, f"/api/auth/sso/c/{c['id']}/callback")}
+
+
+def _saml_settings(body, old=None):
+    """(IdP entity ID, settings) from the admin's input, checked. `old` settings
+    are kept for anything not given. Raises HTTPException(400)."""
+    if not saml_sp.xmlsec_binary():
+        raise HTTPException(400, "SAML isn't available on this server: xmlsec1 isn't "
+                                 "installed. Ask whoever runs it.")
+    settings = dict(old or {})
+    sources = [bool(body.metadata_url), bool(body.metadata_xml),
+               bool(body.entity_id or body.sso_url or body.certificate)]
+    if sum(sources) > 1:
+        raise HTTPException(400, "Give the identity provider's metadata URL, its metadata "
+                                 "XML, or its three values by hand: only one of them.")
+    try:
+        if body.metadata_url:
+            url = body.metadata_url.strip()
+            xml = sso_setup.fetch_saml_metadata(url).decode("utf-8", "replace")
+            settings.update(metadata_url=url)
+        elif body.metadata_xml:
+            xml = body.metadata_xml.strip()
+            settings.pop("metadata_url", None)
+        elif sources[2]:
+            if not (body.entity_id and body.sso_url and body.certificate):
+                raise HTTPException(400, "By hand, give all three: the identity provider's "
+                                         "entity ID, sign-in URL and certificate.")
+            xml = saml_sp.manual_idp_metadata(body.entity_id.strip(), body.sso_url.strip(),
+                                              body.certificate)
+            settings.pop("metadata_url", None)
+        elif old is None:
+            raise HTTPException(400, "Give the identity provider's metadata: a URL, the XML, "
+                                     "or its entity ID, sign-in URL and certificate.")
+        else:
+            xml = settings["idp_metadata"]
+        idp = saml_sp.read_idp_metadata(xml)
+        url_guard.require_https(idp["sso_url"])
+    except sso_setup.SetupError as e:
+        raise _setup_error(e)
+    except (saml_sp.SamlError, url_guard.UnsafeURL) as e:
+        raise HTTPException(400, f"SAML metadata: {e}")
+    settings.update(idp_metadata=xml, sso_url=idp["sso_url"],
+                    want_authn_requests_signed=idp["want_authn_requests_signed"])
+    if body.email_attribute is not None:
+        settings["email_attribute"] = body.email_attribute.strip() or None
+    return idp["entity_id"], settings
 
 
 def _setup_error(e):
@@ -447,8 +624,9 @@ def add_connection(body: ConnectionIn, request: Request, user=Depends(require_ad
         metadata = sso_setup.oidc_metadata(issuer)
     except sso_setup.SetupError as e:
         raise _setup_error(e)
-    conn = members_store.create_connection(ws_of(user), body.label.strip(), issuer,
-                                           body.client_id.strip(), body.client_secret,
+    conn = members_store.create_connection(ws_of(user), "oidc", body.label.strip(), issuer,
+                                           body.client_id.strip(),
+                                           {"client_secret": body.client_secret},
                                            metadata, user["username"])
     return _connection_out(request, conn)
 
@@ -460,7 +638,11 @@ def edit_connection(cid: str, body: ConnectionPatch, request: Request,
     conn = members_store.get_connection(cid)
     if not conn or conn["workspace"] != ws:
         raise HTTPException(404, "This workspace has no such sign-in provider.")
+    if conn["protocol"] != "oidc":
+        raise HTTPException(400, "That's a SAML provider: change it under saml-connections.")
     fields = body.model_dump(exclude_none=True)
+    if "client_secret" in fields:
+        fields["keys"] = {"client_secret": fields.pop("client_secret")}
     for key in ("label", "client_id"):
         if key in fields:
             fields[key] = fields[key].strip()
@@ -470,6 +652,41 @@ def edit_connection(cid: str, body: ConnectionPatch, request: Request,
             fields["metadata"] = sso_setup.oidc_metadata(fields["issuer"])
         except sso_setup.SetupError as e:
             raise _setup_error(e)
+    if fields:
+        conn = members_store.update_connection(ws, cid, **fields)
+    return _connection_out(request, conn)
+
+
+@app.post("/api/admin/sign-in/saml-connections")
+def add_saml_connection(body: SamlConnectionIn, request: Request, user=Depends(require_admin)):
+    if not (body.label or "").strip():
+        raise HTTPException(400, "Give the sign-in button a name.")
+    entity_id, settings = _saml_settings(body)
+    cid = members_store.new_connection_id()
+    sp_key, sp_cert = saml_sp.new_keypair(f"Knowledge assistant {cid}")
+    conn = members_store.create_connection(ws_of(user), "saml", body.label.strip(), entity_id,
+                                           None, {"sp_key": sp_key, "sp_cert": sp_cert},
+                                           settings, user["username"], cid=cid)
+    if body.enabled is False:
+        conn = members_store.update_connection(conn["workspace"], cid, enabled=False)
+    return _connection_out(request, conn)
+
+
+@app.patch("/api/admin/sign-in/saml-connections/{cid}")
+def edit_saml_connection(cid: str, body: SamlConnectionIn, request: Request,
+                         user=Depends(require_admin)):
+    ws = ws_of(user)
+    conn = members_store.get_connection(cid)
+    if not conn or conn["workspace"] != ws or conn["protocol"] != "saml":
+        raise HTTPException(404, "This workspace has no such SAML sign-in provider.")
+    fields = {}
+    if body.label is not None:
+        fields["label"] = body.label.strip()
+    if body.enabled is not None:
+        fields["enabled"] = body.enabled
+    if any(v is not None for v in (body.metadata_url, body.metadata_xml, body.entity_id,
+                                   body.sso_url, body.certificate, body.email_attribute)):
+        fields["issuer"], fields["metadata"] = _saml_settings(body, old=conn["metadata"])
     if fields:
         conn = members_store.update_connection(ws, cid, **fields)
     return _connection_out(request, conn)

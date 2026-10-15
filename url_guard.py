@@ -65,6 +65,12 @@ def _check_addresses(host, infos):
                             "which sign-in can't use.")
 
 
+def require_https(url):
+    """For addresses only the BROWSER visits (an IdP's sign-in page): https, or a
+    listed local host. Raises UnsafeURL."""
+    _parse(url)
+
+
 def _resolve(host, port):
     try:
         return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)

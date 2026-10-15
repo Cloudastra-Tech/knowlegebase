@@ -139,7 +139,7 @@ def connection_client(conn):
     c = OAuth().register(
         name=f"conn_{conn['id']}",
         client_id=conn["client_id"],
-        client_secret=members_store.connection_secret(conn["id"]),
+        client_secret=(members_store.connection_keys(conn["id"]) or {}).get("client_secret"),
         client_kwargs={"scope": SCOPES, "code_challenge_method": "S256", "timeout": 10,
                        "event_hooks": {"request": [url_guard.httpx_hook], "response": []}},
         **conn["metadata"],
@@ -240,7 +240,7 @@ def user_for_connection(conn, claims):
     if not member:
         raise NotAllowed("not_allowed")
     members_store.record_connection_login(conn["id"])
-    return {"username": email, "name": name, "provider": "oidc", "connection": conn["id"],
+    return {"username": email, "name": name, "provider": conn["protocol"], "connection": conn["id"],
             "org": None, "workspace": conn["workspace"], "role": member["role"]}
 
 

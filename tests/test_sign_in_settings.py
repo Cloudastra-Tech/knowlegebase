@@ -212,7 +212,7 @@ def test_a_provider_is_checked_and_its_secret_kept_encrypted(client, acme, provi
         raw, metadata = db.execute("SELECT secret, metadata FROM sso_connections WHERE id = ?",
                                    (conn["id"],)).fetchone()
     assert b"s3cret-value" not in raw
-    assert members_store.connection_secret(conn["id"]) == "s3cret-value"
+    assert members_store.connection_keys(conn["id"]) == {"client_secret": "s3cret-value"}
     assert "grant_types_supported" not in json.loads(metadata)
 
 
@@ -270,7 +270,8 @@ def acme_sso(client, acme):
     import members_store
     import sso_setup
     members_store.add_verified_domain("acme", "acme.example")
-    return members_store.create_connection("acme", "Acme SSO", ISSUER, "kb", "s3cret-value",
+    return members_store.create_connection("acme", "oidc", "Acme SSO", ISSUER, "kb",
+                                           {"client_secret": "s3cret-value"},
                                            {k: DOC[k] for k in sso_setup.METADATA_KEYS
                                             if k in DOC}, "test")
 
