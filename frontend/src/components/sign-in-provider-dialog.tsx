@@ -136,6 +136,13 @@ export function ProviderDialog({
     e.preventDefault()
     setError(null)
     setSaving(true)
+    const issuerChanged = !adding && protocol === "oidc" && issuer.trim() !== editing.issuer
+    if (issuerChanged && !clientSecret) {
+      // The server refuses too: the saved secret mustn't go to a new issuer.
+      setError("Enter the client secret again when you change the issuer.")
+      setSaving(false)
+      return
+    }
     try {
       let conn: SignInConnection
       if (protocol === "oidc") {
@@ -253,7 +260,11 @@ export function ProviderDialog({
                     id="provider-client-secret"
                     type="password"
                     autoComplete="off"
-                    placeholder={adding ? "" : "Leave empty to keep the current secret"}
+                    placeholder={
+                      adding || issuer.trim() !== editing.issuer
+                        ? ""
+                        : "Leave empty to keep the current secret"
+                    }
                     value={clientSecret}
                     onChange={(e) => setClientSecret(e.target.value)}
                     required={adding}
@@ -269,9 +280,7 @@ export function ProviderDialog({
                         onCheckedChange={(v) => setLogoutAtIdp(v === true)}
                       />
                       <div className="grid gap-1">
-                        <label htmlFor="provider-logout" className="text-sm font-medium">
-                          Also sign out at {editing.label}
-                        </label>
+                        <Label htmlFor="provider-logout">Also sign out at {editing.label}</Label>
                         <FieldDescription>
                           Signing out here also ends their {editing.label} session, which
                           signs them out of other apps that use it too. Register this sign-out
@@ -285,8 +294,9 @@ export function ProviderDialog({
             ) : (
               <>
                 <Field>
-                  <FieldLabel>Your provider's SAML metadata</FieldLabel>
+                  <FieldLabel id="saml-source-label">Your provider's SAML metadata</FieldLabel>
                   <RadioGroup
+                    aria-labelledby="saml-source-label"
                     value={source}
                     onValueChange={(v) => setSource(v as SamlSource)}
                     className="flex flex-wrap gap-x-5 gap-y-2"
