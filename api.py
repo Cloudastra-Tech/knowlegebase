@@ -52,6 +52,11 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     POST   /admin/sign-in/saml-connections {label, metadata_url | metadata_xml |
                                   entity_id + sso_url + certificate, email_attribute} (admin)
     PATCH  /admin/sign-in/saml-connections/{id} change any of those, or {enabled}  (admin)
+    PUT    /admin/sign-in/connections/{id}/roles {group_claim, rules: [{group, role}]}
+                                  roles from the groups a provider sends            (admin)
+    GET    /admin/members         everyone in this workspace, with where their role comes from
+    PATCH  /admin/members/{username} {role: public|hr|admin|null, disabled}       (admin)
+    DELETE /admin/members/{username}                                               (admin)
     DELETE /admin/sign-in/connections/{id}                                         (admin)
 Every document change re-indexes automatically; connectors re-sync every 30 minutes.
 
@@ -551,7 +556,8 @@ def saml_done(cid: str, request: Request, k: str = ""):
     conn, _ = _saml_conn(cid, trial)
     if not conn:
         return RedirectResponse("/#login?error=sso_unavailable")
-    claims = {"email": parked["email"], "name": parked["name"]}
+    # The attributes too, for the provider's group rules.
+    claims = {**(parked["sent"] or {}), "email": parked["email"], "name": parked["name"]}
     if trial:
         return _finish_sso_test(trial, conn, sso.try_connection(conn, claims), parked["sent"])
     try:
@@ -635,7 +641,10 @@ def _connection_out(request, c):
     """Everything the admin screen shows; never a secret."""
     out = {"id": c["id"], "protocol": c["protocol"], "label": c["label"],
            "issuer": c["issuer"], "enabled": c["enabled"],
-           "created_at": c["created_at"], "last_login_at": c["last_login_at"]}
+           "created_at": c["created_at"], "last_login_at": c["last_login_at"],
+           "group_claim": c.get("group_claim"),
+           "group_rules": [{"group": r["group_name"], "role": r["role"]}
+                           for r in members_store.group_rules(c["id"])]}
     if c["protocol"] == "saml":
         entity_id, acs, metadata_url = saml_sp.sp_urls(_public_url(request, ""), c["id"])
         settings = c["metadata"]
@@ -864,6 +873,28 @@ def test_result(ticket: str, user=Depends(require_admin)):
     if not test or test["workspace"] != ws_of(user) or test["expires"] < time.time():
         raise HTTPException(404, "That test has expired. Start it again.")
     return {"done": test["result"] is not None, "result": test["result"]}
+
+
+class GroupRule(BaseModel):
+    group: str = Field(min_length=1, max_length=256)
+    role: str = Field(pattern=r"^(public|hr|admin)$")
+
+
+class GroupRulesIn(BaseModel):
+    group_claim: str | None = Field(default=None, max_length=300)
+    rules: list[GroupRule] = Field(default_factory=list, max_length=200)
+
+
+@app.put("/api/admin/sign-in/connections/{cid}/roles")
+def set_group_roles(cid: str, body: GroupRulesIn, request: Request,
+                    user=Depends(require_admin)):
+    """Roles from the groups a provider sends: they apply at each person's next sign-in."""
+    ws = ws_of(user)
+    claim = (body.group_claim or "").strip() or None
+    if not members_store.set_group_rules(ws, cid, claim,
+                                         [(r.group, r.role) for r in body.rules]):
+        raise HTTPException(404, "This workspace has no such sign-in provider.")
+    return _connection_out(request, members_store.get_connection(cid))
 
 
 @app.delete("/api/admin/sign-in/connections/{cid}")
@@ -1364,6 +1395,59 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
     items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))
     return {"workspace": ws, "items": items,
             "outline": outline_on(ws)}         # searched live, so not listed here
+
+
+# ---- Members (admin) --------------------------------------------------------------
+class MemberPatch(BaseModel):
+    role: str | None = Field(default=None, pattern=r"^(public|hr|admin)$")  # null: from groups
+    disabled: bool | None = None
+
+
+def _member_out(m):
+    source = ("override" if m["override_role"] else
+              "groups" if m["group_role"] else "default")
+    return {"username": m["username"], "name": m["name"], "role": m["role"],
+            "role_source": source, "override_role": m["override_role"],
+            "group_role": m["group_role"], "groups": m["groups"], "disabled": m["disabled"],
+            "has_password": m["has_password"], "last_login_at": m["last_login_at"],
+            "created_at": m["created_at"]}
+
+
+def _workspace_member(user, username):
+    member = members_store.get(username)
+    if not member or member["workspace"] != ws_of(user):
+        raise HTTPException(404, "This workspace has no such member.")
+    if member["username"] == user["username"]:
+        # Also keeps at least one admin: the one asking.
+        raise HTTPException(400, "You can't change your own access. Ask another admin.")
+    return member
+
+
+@app.get("/api/admin/members")
+def list_members(user=Depends(require_admin)):
+    return {"members": [_member_out(m) for m in members_store.list_members(ws_of(user))]}
+
+
+@app.patch("/api/admin/members/{username}")
+def edit_member(username: str, body: MemberPatch, user=Depends(require_admin)):
+    member = _workspace_member(user, username)
+    if "role" in body.model_fields_set:
+        members_store.set_role(member["username"], body.role, member["workspace"])
+    if body.disabled is not None:
+        members_store.set_disabled(member["username"], body.disabled)
+    log.warning("%s changed %s's access: %s", user["username"], member["username"],
+                body.model_dump(exclude_unset=True))
+    m = next(x for x in members_store.list_members(member["workspace"])
+             if x["username"] == member["username"])
+    return _member_out(m)
+
+
+@app.delete("/api/admin/members/{username}")
+def delete_member(username: str, user=Depends(require_admin)):
+    member = _workspace_member(user, username)
+    members_store.remove(member["username"])
+    log.warning("%s removed %s", user["username"], member["username"])
+    return {"ok": True}
 
 
 @app.get("/api/health")

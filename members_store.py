@@ -15,11 +15,19 @@ It lives in the same small SQLite file as the sessions and integrations
     saml_assertions    SAML assertions already used, so none can be replayed
     sso_events         recent sign-ins and refusals through a workspace's providers,
                        for its admin (the newest EVENTS_KEPT per workspace)
+    group_role_rules   per provider: people in this group get this role
 
 ROLES, lowest to highest:
     public   chat over public documents
     hr       also HR documents, the Documents and Integrations screens
     admin    everything hr can, plus who may sign in (sign-in settings, members)
+
+Where a member's role comes from (the `role` column holds the result):
+    1. disabled          no access at all (a separate flag)
+    2. override_role     set by an admin (or `python auth.py role`)
+    3. group_role        from their groups at the provider, by the provider's
+                         rules (group_role_rules); updated at each sign-in
+    4. otherwise         public
 
 Until there's a screen for it, manage it with `python auth.py` (see its help).
 
@@ -71,9 +79,32 @@ def _db():
             if not _ready:
                 with conn:
                     _create_tables(conn)
+                    _add_columns(conn)
                     _import_old_files(conn)
                 _ready = True
     return conn
+
+
+# Columns added after the first release of a table: (table, column, definition).
+# SQLite can add a column in place; existing rows get the default.
+_NEW_COLUMNS = (
+    ("members", "override_role", "TEXT"),
+    ("members", "group_role", "TEXT"),
+    ("members", "groups", "TEXT"),                  # JSON list, as last sent
+    ("members", "disabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("sso_connections", "group_claim", "TEXT"),
+)
+
+
+def _add_columns(conn):
+    for table, column, definition in _NEW_COLUMNS:
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column in have:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        if (table, column) == ("members", "override_role"):
+            # Every role so far was set by hand: keep it, as an override.
+            conn.execute("UPDATE members SET override_role = role WHERE role != 'public'")
 
 
 def _create_tables(conn):
@@ -132,6 +163,11 @@ def _create_tables(conn):
         reason        TEXT,                -- why it was refused or failed
         at            REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id);
+    CREATE TABLE IF NOT EXISTS group_role_rules (
+        connection_id TEXT NOT NULL REFERENCES sso_connections(id) ON DELETE CASCADE,
+        group_name    TEXT NOT NULL,       -- compared without regard to case
+        role          TEXT NOT NULL CHECK (role IN ('public', 'hr', 'admin')),
+        PRIMARY KEY (connection_id, group_name));
     CREATE TABLE IF NOT EXISTS imports (
         source      TEXT PRIMARY KEY,      -- an old config file, copied in once
         imported_at REAL NOT NULL);
@@ -164,12 +200,13 @@ def _copy_users(conn, users):
         if not workspaces.valid(ws):
             continue
         _ensure_workspace(conn, ws)
+        role = "hr" if user.get("role") == "hr" else None
         conn.execute("""INSERT OR IGNORE INTO members
-                        (username, workspace, name, role, password_hash, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?)""",
+                        (username, workspace, name, role, override_role, password_hash,
+                         created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                      (username.strip().lower(), ws, user.get("name") or username,
-                      "hr" if user.get("role") == "hr" else "public",
-                      user.get("password"), time.time()))
+                      role or "public", role, user.get("password"), time.time()))
 
 
 def _copy_sso(conn, config):
@@ -189,11 +226,12 @@ def _copy_sso(conn, config):
         for email in ws.get("hr", []):
             email = email.strip().lower()
             conn.execute("""INSERT OR IGNORE INTO members
-                            (username, workspace, name, role, created_at)
-                            VALUES (?, ?, ?, 'hr', ?)""",
+                            (username, workspace, name, role, override_role, created_at)
+                            VALUES (?, ?, ?, 'hr', 'hr', ?)""",
                          (email, slug, email.split("@")[0], time.time()))
-            conn.execute("UPDATE members SET role = 'hr' WHERE username = ? AND workspace = ? "
-                         "AND role = 'public'", (email, slug))
+            conn.execute("UPDATE members SET role = 'hr', override_role = 'hr' "
+                         "WHERE username = ? AND workspace = ? AND role = 'public'",
+                         (email, slug))
 
 
 def _ensure_workspace(conn, slug):
@@ -292,19 +330,40 @@ def txt_record(row):
 
 
 # ---- Members -------------------------------------------------------------------
+def _member(row):
+    if not row:
+        return None
+    m = dict(row)
+    m["groups"] = json.loads(m.get("groups") or "[]")
+    m["disabled"] = bool(m.get("disabled"))
+    return m
+
+
+def _settle_role(conn, username):
+    """Recompute the effective role (see the top of this file)."""
+    conn.execute("UPDATE members SET role = COALESCE(override_role, group_role, 'public') "
+                 "WHERE username = ?", (username,))
+
+
 def get(username):
     """The member's row as a dict, or None."""
     with _db() as conn:
-        row = conn.execute("SELECT * FROM members WHERE username = ?",
-                           ((username or "").strip().lower(),)).fetchone()
-    return dict(row) if row else None
+        return _member(conn.execute("SELECT * FROM members WHERE username = ?",
+                                    ((username or "").strip().lower(),)).fetchone())
 
 
-def list_members():
+def list_members(workspace=None):
+    sql, args = "SELECT * FROM members", []
+    if workspace:
+        sql, args = sql + " WHERE workspace = ?", [workspace]
     with _db() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT username, workspace, name, role, password_hash IS NOT NULL AS has_password, "
-            "last_login_at FROM members ORDER BY workspace, username")]
+        rows = conn.execute(sql + " ORDER BY workspace, username", args).fetchall()
+    out = []
+    for r in rows:
+        m = _member(r)
+        m["has_password"] = m.pop("password_hash") is not None
+        out.append(m)
+    return out
 
 
 def has_password_accounts():
@@ -319,28 +378,46 @@ def set_password(username, name, password_hash, workspace, role=None):
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
         conn.execute("""INSERT INTO members
-                        (username, workspace, name, role, password_hash, created_at)
+                        (username, workspace, name, password_hash, override_role, created_at)
                         VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT (username) DO UPDATE SET
                             workspace = excluded.workspace,
                             password_hash = excluded.password_hash,
-                            role = COALESCE(?, members.role)""",
-                     (username, workspace, name, role or "public", password_hash, time.time(),
-                      role))
+                            override_role = COALESCE(excluded.override_role,
+                                                     members.override_role)""",
+                     (username, workspace, name, password_hash, role, time.time()))
+        _settle_role(conn, username)
 
 
 def set_role(username, role, workspace=workspaces.DEFAULT):
-    """Give someone a role. Someone who hasn't signed in yet is added to `workspace`,
-    so they have it from their first single sign-on."""
-    if role not in ROLES:
+    """Give someone a role, overriding their groups; None goes back to their groups.
+    Someone who hasn't signed in yet is added to `workspace`, so they have it from
+    their first single sign-on."""
+    if role is not None and role not in ROLES:
         raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
     username = username.strip().lower()
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
-        conn.execute("""INSERT INTO members (username, workspace, name, role, created_at)
+        conn.execute("""INSERT INTO members (username, workspace, name, override_role, created_at)
                         VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT (username) DO UPDATE SET role = excluded.role""",
+                        ON CONFLICT (username) DO UPDATE SET override_role = excluded.override_role""",
                      (username, workspace, username.split("@")[0], role, time.time()))
+        _settle_role(conn, username)
+
+
+def set_disabled(username, disabled):
+    """Turn someone's access off (or back on). False if there's no such member."""
+    with _lock, _db() as conn:
+        n = conn.execute("UPDATE members SET disabled = ? WHERE username = ?",
+                         (int(bool(disabled)), username.strip().lower())).rowcount
+    return n > 0
+
+
+def enabled_admins(workspace):
+    with _db() as conn:
+        return [r["username"] for r in conn.execute(
+            "SELECT username FROM members WHERE workspace = ? AND role = 'admin' "
+            "AND disabled = 0", (workspace,))]
 
 
 def remove(username):
@@ -351,17 +428,35 @@ def remove(username):
     return n > 0
 
 
-def record_sso_login(username, name, workspace):
+def record_sso_login(username, name, workspace, groups=None):
     """Someone just signed in with single sign-on: add them if they're new.
-    Returns their member row, or None if they already belong to another workspace."""
+    `groups` = (their groups, the role those give) from a provider with group
+    rules; it replaces what their groups gave them last time. Returns their
+    member row, or None if they already belong to another workspace."""
     username = username.strip().lower()
     with _lock, _db() as conn:
+        _ensure_workspace(conn, workspace)
         conn.execute("""INSERT OR IGNORE INTO members (username, workspace, name, created_at)
                         VALUES (?, ?, ?, ?)""", (username, workspace, name, time.time()))
-        conn.execute("UPDATE members SET last_login_at = ? WHERE username = ? AND workspace = ?",
-                     (time.time(), username, workspace))
+        # The provider's name for them is the current one.
+        conn.execute("UPDATE members SET last_login_at = ?, name = COALESCE(?, name) "
+                     "WHERE username = ? AND workspace = ?",
+                     (time.time(), name or None, username, workspace))
+        if groups is not None:
+            names, role = groups
+            conn.execute("UPDATE members SET groups = ?, group_role = ? "
+                         "WHERE username = ? AND workspace = ?",
+                         (json.dumps(names[:100]), role, username, workspace))
+        _settle_role(conn, username)
         row = conn.execute("SELECT * FROM members WHERE username = ?", (username,)).fetchone()
-    return dict(row) if row and row["workspace"] == workspace else None
+    return _member(row) if row and row["workspace"] == workspace else None
+
+
+def role_for_groups(rules, groups):
+    """The highest role the rules give these groups, or None if none matches."""
+    have = {g.strip().lower() for g in groups}
+    matched = [r["role"] for r in rules if r["group_name"].lower() in have]
+    return max(matched, key=ROLES.index) if matched else None
 
 
 # ---- A workspace's own sign-in providers ---------------------------------------
@@ -509,3 +604,33 @@ def recent_events(workspace, limit=50):
         return [dict(r) for r in conn.execute(
             "SELECT connection_id, email, outcome, reason, at FROM sso_events "
             "WHERE workspace = ? ORDER BY id DESC LIMIT ?", (workspace, limit))]
+
+
+# ---- Roles from a provider's groups ---------------------------------------------
+def group_rules(cid):
+    with _db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT group_name, role FROM group_role_rules WHERE connection_id = ? "
+            "ORDER BY group_name COLLATE NOCASE", (cid,))]
+
+
+def set_group_rules(workspace, cid, group_claim, rules):
+    """Replace a provider's group claim and rules ([(group, role)]). False if the
+    workspace has no such provider."""
+    for _, role in rules:
+        if role not in ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
+    with _lock, _db() as conn:
+        n = conn.execute("UPDATE sso_connections SET group_claim = ?, updated_at = ? "
+                         "WHERE id = ? AND workspace = ?",
+                         (group_claim, time.time(), cid, workspace)).rowcount
+        if not n:
+            return False
+        conn.execute("DELETE FROM group_role_rules WHERE connection_id = ?", (cid,))
+        seen = set()
+        for group, role in rules:
+            if group.strip().lower() not in seen:
+                seen.add(group.strip().lower())
+                conn.execute("INSERT INTO group_role_rules VALUES (?, ?, ?)",
+                             (cid, group.strip(), role))
+    return True

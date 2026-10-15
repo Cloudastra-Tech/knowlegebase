@@ -380,3 +380,17 @@ def test_a_failed_saml_test_says_why(client, admin, conn, idp):
     result = client.get(f"/api/admin/sign-in/tests/{ticket_url['ticket']}",
                         headers=admin).json()["result"]
     assert not result["ok"] and "signed" in result["detail"]
+
+
+def test_a_saml_attribute_can_carry_the_groups(client, admin, conn, idp):
+    r = client.put(f"/api/admin/sign-in/connections/{conn['id']}/roles", headers=admin,
+                   json={"group_claim": "Role", "rules": [{"group": "hr-team", "role": "hr"}]})
+    assert r.status_code == 200
+    try:
+        headers = sign_in(client, conn, idp, email="grouped@samlco.example",
+                          attributes={"mail": ["grouped@samlco.example"],
+                                      "Role": ["staff", "hr-team"]})
+        assert client.get("/api/auth/me", headers=headers).json()["role"] == "hr"
+    finally:
+        client.put(f"/api/admin/sign-in/connections/{conn['id']}/roles", headers=admin,
+                   json={"group_claim": None, "rules": []})

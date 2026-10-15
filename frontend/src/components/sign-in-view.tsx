@@ -12,6 +12,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { MembersView } from "@/components/members-view"
+import { GroupRulesDialog } from "@/components/sign-in-group-rules"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -43,6 +45,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   signIn,
   type SignInConnection,
@@ -51,6 +54,7 @@ import {
   type SignInSettings,
   type SsoTestResult,
 } from "@/lib/api"
+import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
@@ -62,11 +66,11 @@ const REASONS: Record<string, string> = {
   unverified: "The provider didn't send a verified email address.",
   cancelled: "They cancelled at the provider.",
   sso_failed: "The provider's answer couldn't be checked.",
+  disabled: "Their access has been turned off (Members).",
 }
 const reasonText = (reason?: string | null) => (reason ? (REASONS[reason] ?? reason) : "")
 
 const PROTOCOL = { oidc: "OpenID Connect", saml: "SAML" } as const
-const ROLE = { public: "Public", hr: "HR", admin: "Admin" } as const
 
 function Section({
   title,
@@ -223,11 +227,13 @@ function ProviderRow({
   conn,
   onEdit,
   onTest,
+  onRoles,
   onChange,
 }: {
   conn: SignInConnection
   onEdit: () => void
   onTest: () => void
+  onRoles: () => void
   onChange: () => void
 }) {
   const [confirm, setConfirm] = useState(false)
@@ -270,6 +276,13 @@ function ProviderRow({
           <p className="truncate text-sm text-muted-foreground">
             {conn.issuer} · last sign-in {timeAgo(conn.last_login_at)}
           </p>
+          <p className="text-xs text-muted-foreground">
+            {conn.group_rules.length
+              ? `Roles from groups: ${conn.group_rules
+                  .map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`)
+                  .join(", ")}`
+              : "Doesn't set roles"}
+          </p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={onTest}>
@@ -288,6 +301,7 @@ function ProviderRow({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onRoles}>Roles from groups</DropdownMenuItem>
               {conn.enabled && <DropdownMenuItem onSelect={toggle}>Turn off</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onSelect={() => setConfirm(true)}>
@@ -446,8 +460,15 @@ function TestDialog({
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
                 <p>
                   <span className="font-medium">{state.result.name}</span> ({state.result.email}) would
-                  sign in as <span className="font-medium">{ROLE[state.result.role ?? "public"]}</span>
+                  sign in as <span className="font-medium">{ROLE_LABEL[state.result.role ?? "public"]}</span>
+                  {state.result.role_source === "groups" && " (from their groups)"}
+                  {state.result.role_source === "override" && " (set by an admin)"}
                   {state.result.new_member ? ", as a new member." : "."}
+                  {state.result.groups && (
+                    <span className="mt-1 block text-xs">
+                      Groups found: {state.result.groups.length ? state.result.groups.join(", ") : "none"}
+                    </span>
+                  )}
                 </p>
               </div>
             ) : (
@@ -530,11 +551,39 @@ function Events({ events }: { events: SignInEvent[] }) {
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export function SignInView({ workspace }: { workspace: string }) {
+export function SignInView({ workspace, me }: { workspace: string; me: string }) {
+  const [tab, setTab] = useState<"sign-in" | "members">("sign-in")
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+            <ShieldCheck className="size-6" /> Access
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Who can sign in to the <span className="font-medium text-foreground">{workspace}</span>{" "}
+            workspace, and as what.
+          </p>
+        </div>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+          <TabsList>
+            <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
+            <TabsTrigger value="members">Members</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+      <div className="mt-6">{tab === "sign-in" ? <SignInSettingsView /> : <MembersView me={me} />}</div>
+    </div>
+  )
+}
+
+function SignInSettingsView() {
   const [settings, setSettings] = useState<SignInSettings | null>(null)
   const [editing, setEditing] = useState<SignInConnection | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [testing, setTesting] = useState<SignInConnection | null>(null)
+  const [roles, setRoles] = useState<SignInConnection | null>(null)
   const [opened, setOpened] = useState(0)     // remounts the dialogs, fresh, on each open
 
   const load = useCallback(() => {
@@ -550,6 +599,11 @@ export function SignInView({ workspace }: { workspace: string }) {
     setEditing(conn)
     setOpened((n) => n + 1)
     setDialogOpen(true)
+  }
+
+  function openRoles(conn: SignInConnection) {
+    setOpened((n) => n + 1)
+    setRoles(conn)
   }
 
   function openTest(conn: SignInConnection) {
@@ -575,28 +629,17 @@ export function SignInView({ workspace }: { workspace: string }) {
   const verified = settings?.domains.some((d) => d.verified) ?? false
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
-      <div>
-        <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <ShieldCheck className="size-6" /> Sign-in
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Let people sign in to the <span className="font-medium text-foreground">{workspace}</span>{" "}
-          workspace with your company's identity provider. Only emails on your verified domains
-          get in.
-        </p>
-      </div>
-
+    <div>
       {!settings ? (
-        <div className="mt-6 grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <Skeleton className="h-36 rounded-2xl" />
           <Skeleton className="h-48 rounded-2xl" />
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 gap-6">
           <Section
             title="Email domains"
-            description="Prove you own each domain your people's emails are on."
+            description="People sign in only with an email on a domain you've proved you own."
           >
             <div className="grid grid-cols-1 gap-3">
               {settings.domains.map((d) => (
@@ -627,6 +670,7 @@ export function SignInView({ workspace }: { workspace: string }) {
                   conn={c}
                   onEdit={() => openDialog(c)}
                   onTest={() => openTest(c)}
+                  onRoles={() => openRoles(c)}
                   onChange={load}
                 />
               ))}
@@ -653,6 +697,15 @@ export function SignInView({ workspace }: { workspace: string }) {
         onSaved={saved}
       />
       <TestDialog key={`test-${opened}`} conn={testing} onClose={closeTest} />
+      <GroupRulesDialog
+        key={`roles-${opened}`}
+        conn={roles}
+        onOpenChange={(open) => !open && setRoles(null)}
+        onSaved={() => {
+          setRoles(null)
+          load()
+        }}
+      />
     </div>
   )
 }

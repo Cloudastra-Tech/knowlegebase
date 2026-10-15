@@ -29,7 +29,9 @@ providers your organisation controls.
 A workspace's OWN provider ("connection", set up by its admin, stored in
 members_store.py) only signs people in to that workspace, and only with an
 email on a domain that workspace has verified. The login page finds it from
-the email someone types (connections_for_email).
+the email someone types (connections_for_email). If the admin gave it group
+rules, the groups it sends at sign-in set the person's role (see the top of
+members_store.py for how that combines with a role set by hand).
 
 Authlib does the OpenID Connect work: the redirect, state + PKCE, and checking
 the ID token's signature, audience, issuer and expiry.
@@ -50,6 +52,7 @@ CODE_SECONDS = 60           # the one-time code that hands a new session to the 
 
 LABELS = {"google": "Google", "microsoft": "Microsoft"}
 SCOPES = "openid email profile"
+DEFAULT_GROUP_CLAIM = "groups"
 _GENERIC_ID = re.compile(r"^[a-z][a-z0-9]{0,19}$")
 
 _oauth = OAuth()
@@ -207,7 +210,7 @@ def access_for(email, org=None, connection=None):
         if not conn or not conn["enabled"] or conn["workspace"] != workspace:
             return None
     member = members_store.get(email) if workspace else None
-    if not member or member["workspace"] != workspace:
+    if not member or member["workspace"] != workspace or member["disabled"]:
         return None
     return {"workspace": workspace, "role": member["role"]}
 
@@ -220,6 +223,8 @@ def user_for(provider, claims):
     member = members_store.record_sso_login(email, name, workspace) if workspace else None
     if not member:
         raise NotAllowed("not_allowed")
+    if member["disabled"]:
+        raise NotAllowed("disabled")
     return {"username": email, "name": name, "provider": provider, "org": org,
             "workspace": workspace, "role": member["role"]}
 
@@ -239,7 +244,42 @@ def check_connection_identity(conn, claims):
     member = members_store.get(email)
     if member and member["workspace"] != conn["workspace"]:
         raise NotAllowed("not_allowed")       # an account in another workspace
+    if member and member["disabled"]:
+        raise NotAllowed("disabled")
     return email, claims.get("name") or email.split("@")[0]
+
+
+def claim_values(claims, name):
+    """The values of a claim or SAML attribute, as a list of strings. Names are
+    matched without regard to case; one that isn't there whole may be a dotted
+    path into nested claims ("realm_access.roles"). Whole names come first, as
+    SAML attribute names are often URLs, dots and all."""
+    def lookup(container, key):
+        if not isinstance(container, dict):
+            return None
+        if key in container:
+            return container[key]
+        return next((v for k, v in container.items() if k.lower() == key.lower()), None)
+
+    value = lookup(claims, name)
+    if value is None and "." in name:
+        value = claims
+        for part in name.split("."):
+            value = lookup(value, part)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if v is not None]
+    return [str(value)]
+
+
+def groups_from(conn, claims):
+    """(groups, role they give) under the provider's rules, or None if it has none."""
+    rules = members_store.group_rules(conn["id"])
+    if not rules:
+        return None
+    groups = claim_values(claims, conn.get("group_claim") or DEFAULT_GROUP_CLAIM)
+    return groups, members_store.role_for_groups(rules, groups)
 
 
 def try_connection(conn, claims):
@@ -257,14 +297,20 @@ def try_connection(conn, claims):
                       else "This account belongs to another workspace.")
         return {"ok": False, "reason": e.reason, "detail": detail, "email": email or None}
     member = members_store.get(email)
+    found = groups_from(conn, claims)
+    override = member["override_role"] if member else None
+    group_role = found[1] if found else (member["group_role"] if member else None)
     return {"ok": True, "email": email, "name": name,
-            "role": member["role"] if member else "public", "new_member": member is None}
+            "role": override or group_role or "public",
+            "role_source": "override" if override else "groups" if group_role else "default",
+            "groups": found[0] if found else None, "new_member": member is None}
 
 
 def user_for_connection(conn, claims):
     """The session user for someone a workspace's own provider just signed in."""
     email, name = check_connection_identity(conn, claims)
-    member = members_store.record_sso_login(email, name, conn["workspace"])
+    member = members_store.record_sso_login(email, name, conn["workspace"],
+                                            groups=groups_from(conn, claims))
     if not member:
         raise NotAllowed("not_allowed")
     members_store.record_connection_login(conn["id"])
