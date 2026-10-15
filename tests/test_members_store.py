@@ -89,6 +89,15 @@ def test_single_sign_on_never_moves_an_account_between_workspaces(store):
     assert members_store.record_sso_login("pat@acme.com", "Pat", "acme")["role"] == "hr"
 
 
+def test_the_login_page_asks_for_an_email_once_any_provider_is_on(store):
+    assert not members_store.any_connections()
+    conn = members_store.create_connection("acme", "Acme", "https://idp.acme.com", "kb", "s", {},
+                                           "test")
+    assert members_store.any_connections()
+    members_store.update_connection("acme", conn["id"], enabled=False)
+    assert not members_store.any_connections()
+
+
 def test_roles_are_checked(store):
     with pytest.raises(ValueError):
         members_store.set_role("pat@acme.com", "owner")

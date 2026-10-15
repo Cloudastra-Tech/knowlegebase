@@ -290,6 +290,7 @@ def session_for(client, idp, conn, claims):
 
 
 def test_the_login_page_finds_the_provider_from_the_email(client, acme_sso):
+    assert client.get("/api/auth/providers").json()["email_sso"] is True
     found = client.post("/api/auth/sso/discover", json={"email": "Pat@Acme.example"}).json()
     ids = [c["id"] for c in found["connections"]]
     assert acme_sso["id"] in ids

@@ -13,7 +13,8 @@ Run it (from the project folder):
 then, in frontend/:   npm run dev     -> http://localhost:5173
 
 Endpoints (all under /api, all except login need "Authorization: Bearer <token>"):
-    GET    /auth/providers        which sign-in options the login page shows
+    GET    /auth/providers        which sign-in options the login page shows (email_sso:
+                                  ask for an email first, as some workspace has its own provider)
     POST   /auth/login            {username, password} -> {token, user}
     GET    /auth/sso/{provider}/start      send the browser to Google / Microsoft
     GET    /auth/sso/{provider}/callback   they send it back here (sso.py decides who gets in)
@@ -199,8 +200,13 @@ def ws_of(user):
 
 @app.get("/api/auth/providers")
 def auth_providers():
+    try:
+        email_sso = members_store.any_connections()
+    except sqlite3.Error:
+        log.exception("Couldn't read the sign-in connections")
+        email_sso = False
     return {"providers": [{"id": p, "name": sso.label(p)} for p in sso.configured()],
-            "password": auth.password_login_on()}
+            "password": auth.password_login_on(), "email_sso": email_sso}
 
 
 @app.post("/api/auth/login")
