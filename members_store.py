@@ -9,8 +9,10 @@ It lives in the same small SQLite file as the sessions and integrations
                        anyone in, and a domain is verified for one workspace at most
     members            everyone who can sign in: password accounts, and people
                        who signed in with single sign-on (or were given a role first)
-    sso_connections    a workspace's own sign-in provider (OpenID Connect for now),
-                       set up by its admin; the client secret is encrypted
+    sso_connections    a workspace's own sign-in provider (OpenID Connect or SAML),
+                       set up by its admin; its secrets are encrypted
+    saml_requests      SAML sign-ins in progress: an IdP's answer must match one, once
+    saml_assertions    SAML assertions already used, so none can be replayed
 
 ROLES, lowest to highest:
     public   chat over public documents
@@ -100,15 +102,23 @@ def _create_tables(conn):
         workspace     TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
         protocol      TEXT NOT NULL CHECK (protocol IN ('oidc', 'saml')),
         label         TEXT NOT NULL,       -- the sign-in button: "Continue with <label>"
-        issuer        TEXT,
-        client_id     TEXT,
-        secret        BLOB,                -- encrypted (secret_box.py)
-        metadata      TEXT NOT NULL DEFAULT '{}',  -- the provider's endpoints, as checked
+        issuer        TEXT,                -- OIDC issuer, or the SAML IdP's entity ID
+        client_id     TEXT,                -- OIDC only
+        secret        BLOB,                -- encrypted (secret_box.py): the OIDC client
+                                           -- secret, or our SAML signing key
+        metadata      TEXT NOT NULL DEFAULT '{}',  -- endpoints / IdP metadata, as checked
         enabled       INTEGER NOT NULL DEFAULT 1,
         created_by    TEXT,
         created_at    REAL NOT NULL,
         updated_at    REAL NOT NULL,
         last_login_at REAL);
+    CREATE TABLE IF NOT EXISTS saml_requests (
+        request_id    TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL REFERENCES sso_connections(id) ON DELETE CASCADE,
+        expires       REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS saml_assertions (
+        assertion_id  TEXT PRIMARY KEY,
+        expires       REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS imports (
         source      TEXT PRIMARY KEY,      -- an old config file, copied in once
         imported_at REAL NOT NULL);
@@ -346,32 +356,40 @@ def _connection(row):
     if not row:
         return None
     c = dict(row)
-    c.pop("secret", None)                 # only connection_secret() hands that out
+    c.pop("secret", None)                 # only connection_keys() hands that out
     c["metadata"] = json.loads(c["metadata"] or "{}")
     c["enabled"] = bool(c["enabled"])
     return c
 
 
-def create_connection(workspace, label, issuer, client_id, client_secret, metadata, created_by):
-    """Add an OpenID Connect provider to a workspace. Returns the connection."""
-    cid, now = secrets.token_hex(6), time.time()
+def create_connection(workspace, protocol, label, issuer, client_id, keys, metadata,
+                      created_by, cid=None):
+    """Add a sign-in provider to a workspace. `keys` (a dict) is stored encrypted:
+    {"client_secret"} for OpenID Connect, {"sp_key", "sp_cert"} for SAML.
+    Returns the connection."""
+    cid, now = cid or new_connection_id(), time.time()
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
         conn.execute("""INSERT INTO sso_connections
                         (id, workspace, protocol, label, issuer, client_id, secret, metadata,
                          created_by, created_at, updated_at)
-                        VALUES (?, ?, 'oidc', ?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (cid, workspace, label, issuer, client_id,
-                      secret_box.seal({"client_secret": client_secret}), json.dumps(metadata),
-                      created_by, now, now))
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (cid, workspace, protocol, label, issuer, client_id,
+                      secret_box.seal(keys), json.dumps(metadata), created_by, now, now))
     return get_connection(cid)
 
 
+def new_connection_id():
+    return secrets.token_hex(6)
+
+
 def update_connection(workspace, cid, **fields):
-    """Change a connection's label, issuer, client_id, client_secret, metadata or
-    enabled. Returns the connection, or None if the workspace has no such one."""
-    if "client_secret" in fields:
-        fields["secret"] = secret_box.seal({"client_secret": fields.pop("client_secret")})
+    """Change a connection's label, issuer, client_id, keys (merged into the
+    stored ones), metadata or enabled. Returns the connection, or None if the
+    workspace has no such one."""
+    if "keys" in fields:
+        fields["secret"] = secret_box.seal({**(connection_keys(cid) or {}),
+                                            **fields.pop("keys")})
     if "metadata" in fields:
         fields["metadata"] = json.dumps(fields["metadata"])
     if "enabled" in fields:
@@ -393,10 +411,11 @@ def get_connection(cid):
                                         (cid or "",)).fetchone())
 
 
-def connection_secret(cid):
+def connection_keys(cid):
+    """The connection's decrypted keys (see create_connection), or None."""
     with _db() as conn:
         row = conn.execute("SELECT secret FROM sso_connections WHERE id = ?", (cid,)).fetchone()
-    return (secret_box.unseal(row["secret"]) or {}).get("client_secret") if row else None
+    return secret_box.unseal(row["secret"]) if row else None
 
 
 def list_connections(workspace, enabled_only=False):
@@ -426,3 +445,35 @@ def record_connection_login(cid):
     with _lock, _db() as conn:
         conn.execute("UPDATE sso_connections SET last_login_at = ? WHERE id = ?",
                      (time.time(), cid))
+
+
+# ---- SAML: each answer used once ------------------------------------------------
+def remember_saml_request(cid, request_id, seconds):
+    now = time.time()
+    with _lock, _db() as conn:
+        conn.execute("DELETE FROM saml_requests WHERE expires < ?", (now,))
+        conn.execute("INSERT INTO saml_requests VALUES (?, ?, ?)", (request_id, cid, now + seconds))
+
+
+def open_saml_requests(cid):
+    """IDs of this connection's sign-ins still waiting for the IdP."""
+    with _db() as conn:
+        return [r["request_id"] for r in conn.execute(
+            "SELECT request_id FROM saml_requests WHERE connection_id = ? AND expires >= ?",
+            (cid, time.time()))]
+
+
+def close_saml_request(request_id):
+    """True the first time only: a request can be answered once."""
+    with _lock, _db() as conn:
+        return conn.execute("DELETE FROM saml_requests WHERE request_id = ?",
+                            (request_id,)).rowcount == 1
+
+
+def first_use_of_assertion(assertion_id, expires):
+    """True the first time an assertion is seen. It's remembered until it expires."""
+    now = time.time()
+    with _lock, _db() as conn:
+        conn.execute("DELETE FROM saml_assertions WHERE expires < ?", (now,))
+        return conn.execute("INSERT OR IGNORE INTO saml_assertions VALUES (?, ?)",
+                            (assertion_id, max(expires, now + 60))).rowcount == 1

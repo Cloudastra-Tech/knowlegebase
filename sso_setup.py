@@ -20,7 +20,7 @@ import httpx
 
 import url_guard
 
-DISCOVERY_MAX_BYTES = 200_000
+DISCOVERY_MAX_BYTES = 500_000     # a single IdP's SAML metadata is far smaller
 _DOMAIN = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 # What's kept from the settings document; Authlib reads these names.
 METADATA_KEYS = ("issuer", "authorization_endpoint", "token_endpoint", "jwks_uri",
@@ -66,19 +66,34 @@ def normalize_issuer(text):
     return issuer
 
 
-def _get(url):
+def _get(url, accept="application/json", field="issuer"):
     with httpx.Client(timeout=10, follow_redirects=False,
                       event_hooks={"request": [url_guard.httpx_hook_sync]}) as client:
-        with client.stream("GET", url, headers={"Accept": "application/json"}) as r:
+        with client.stream("GET", url, headers={"Accept": accept}) as r:
             if r.status_code != 200:
                 raise SetupError(f"The provider answered {r.status_code} at {url}. "
-                                 "Check the issuer address.")
+                                 f"Check the {field} address.")
             body = b""
             for chunk in r.iter_bytes():
                 body += chunk
                 if len(body) > DISCOVERY_MAX_BYTES:
                     raise SetupError("The provider's settings document is too large.")
     return body
+
+
+SAML_METADATA_TYPES = "application/samlmetadata+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1"
+
+
+def fetch_saml_metadata(url):
+    """GET an IdP's SAML metadata (url_guard-checked, size-capped)."""
+    try:
+        return _get(url, accept=SAML_METADATA_TYPES, field="metadata")
+    except SetupError:
+        raise
+    except url_guard.UnsafeURL as e:
+        raise SetupError(f"{url}: {e}") from None
+    except httpx.HTTPError:
+        raise SetupError(f"Couldn't reach {url} for the provider's SAML metadata.") from None
 
 
 def oidc_metadata(issuer):

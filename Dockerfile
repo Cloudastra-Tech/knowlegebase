@@ -33,9 +33,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# curl is only needed for the HEALTHCHECK below.
+# curl is only needed for the HEALTHCHECK below; xmlsec1 checks SAML signatures (saml_sp.py).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl xmlsec1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring in the pre-built Python packages from the builder stage.
