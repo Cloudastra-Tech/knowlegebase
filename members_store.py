@@ -27,7 +27,9 @@ Where a member's role comes from (the `role` column holds the result):
     1. disabled          no access at all (a separate flag)
     2. override_role     set by an admin (or `python auth.py role`)
     3. group_role        from their groups at the provider, by the provider's
-                         rules (group_role_rules); updated at each sign-in
+                         rules (group_role_rules); set at each sign-in through a
+                         workspace provider, and recomputed (from the groups last
+                         sent) when that provider's rules change or it's deleted
     4. otherwise         public
 
 Until there's a screen for it, manage it with `python auth.py` (see its help).
@@ -93,6 +95,7 @@ _NEW_COLUMNS = (
     ("members", "group_role", "TEXT"),
     ("members", "groups", "TEXT"),                  # JSON list, as last sent
     ("members", "disabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("members", "group_source", "TEXT"),            # the provider that set group_role
     ("sso_connections", "group_claim", "TEXT"),
     ("sso_connections", "logout_at_idp", "INTEGER NOT NULL DEFAULT 0"),
     ("workspaces", "require_sso", "INTEGER NOT NULL DEFAULT 0"),
@@ -102,12 +105,16 @@ _NEW_COLUMNS = (
 def _add_columns(conn):
     for table, column, definition in _NEW_COLUMNS:
         have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if column in have:
-            continue
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-        if (table, column) == ("members", "override_role"):
-            # Every role so far was set by hand: keep it, as an override.
-            conn.execute("UPDATE members SET override_role = role WHERE role != 'public'")
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    # Before group roles, every role was set by hand: keep each as an override.
+    # Done once, and marked in the same transaction as the copy (an ALTER TABLE
+    # commits on its own, so "the column is new" can't be the marker).
+    if not conn.execute("SELECT 1 FROM imports WHERE source = 'roles-as-overrides'").fetchone():
+        conn.execute("UPDATE members SET override_role = role "
+                     "WHERE role != 'public' AND override_role IS NULL AND group_role IS NULL")
+        conn.execute("INSERT INTO imports (source, imported_at) VALUES ('roles-as-overrides', ?)",
+                     (time.time(),))
 
 
 def _create_tables(conn):
@@ -198,7 +205,12 @@ def _import_old_files(conn):
 
 
 def _copy_users(conn, users):
-    for username, user in (users or {}).items():
+    if not isinstance(users, dict):
+        log.warning("users.json isn't a list of accounts by name; nothing imported from it")
+        return
+    for username, user in users.items():
+        if not isinstance(user, dict):
+            continue
         ws = user.get("workspace") or workspaces.DEFAULT
         if not workspaces.valid(ws):
             continue
@@ -213,8 +225,9 @@ def _copy_users(conn, users):
 
 
 def _copy_sso(conn, config):
-    for slug, ws in ((config or {}).get("workspaces") or {}).items():
-        if not workspaces.valid(slug):
+    found = config.get("workspaces") if isinstance(config, dict) else None
+    for slug, ws in (found if isinstance(found, dict) else {}).items():
+        if not workspaces.valid(slug) or not isinstance(ws, dict):
             continue
         _ensure_workspace(conn, slug)
         for domain in ws.get("domains", []):
@@ -450,11 +463,12 @@ def remove(username):
     return n > 0
 
 
-def record_sso_login(username, name, workspace, groups=None):
+def record_sso_login(username, name, workspace, groups=None, source=None):
     """Someone just signed in with single sign-on: add them if they're new.
-    `groups` = (their groups, the role those give) from a provider with group
-    rules; it replaces what their groups gave them last time. Returns their
-    member row, or None if they already belong to another workspace."""
+    `groups` = (their groups, the role those give) from workspace provider
+    `source`; it replaces what their groups gave them last time (a provider
+    without rules gives no role). Returns their member row, or None if they
+    already belong to another workspace."""
     username = username.strip().lower()
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
@@ -466,9 +480,9 @@ def record_sso_login(username, name, workspace, groups=None):
                      (time.time(), name or None, username, workspace))
         if groups is not None:
             names, role = groups
-            conn.execute("UPDATE members SET groups = ?, group_role = ? "
+            conn.execute("UPDATE members SET groups = ?, group_role = ?, group_source = ? "
                          "WHERE username = ? AND workspace = ?",
-                         (json.dumps(names[:100]), role, username, workspace))
+                         (json.dumps(names[:100]), role, source, username, workspace))
         _settle_role(conn, username)
         row = conn.execute("SELECT * FROM members WHERE username = ?", (username,)).fetchone()
     return _member(row) if row and row["workspace"] == workspace else None
@@ -570,6 +584,8 @@ def delete_connection(workspace, cid):
     with _lock, _db() as conn:
         n = conn.execute("DELETE FROM sso_connections WHERE id = ? AND workspace = ?",
                          (cid, workspace)).rowcount
+        if n:                              # roles its groups gave go with it
+            _regroup(conn, cid, [])
     return n > 0
 
 
@@ -660,4 +676,17 @@ def set_group_rules(workspace, cid, group_claim, rules):
                 conn.execute("INSERT INTO group_role_rules (connection_id, group_name, role) "
                              "VALUES (?, ?, ?)",
                              (cid, group.strip(), role))
+        _regroup(conn, cid, [{"group_name": g, "role": r} for g, r in rules])
     return True
+
+
+def _regroup(conn, cid, rules):
+    """The rules of provider `cid` changed: recompute the group role of everyone it
+    gave one to, from the groups it sent at their last sign-in. (No rules, or a
+    deleted provider: they lose it.)"""
+    for row in conn.execute("SELECT username, groups FROM members WHERE group_source = ?",
+                            (cid,)).fetchall():
+        role = role_for_groups(rules, json.loads(row["groups"] or "[]")) if rules else None
+        conn.execute("UPDATE members SET group_role = ? WHERE username = ?",
+                     (role, row["username"]))
+        _settle_role(conn, row["username"])

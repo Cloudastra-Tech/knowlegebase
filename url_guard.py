@@ -28,6 +28,10 @@ import socket
 from urllib.parse import urlsplit
 
 
+# IPv6 prefixes that carry an IPv4 address (NAT64): judge them as never public.
+_NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
+
+
 class UnsafeURL(ValueError):
     """The address isn't one the server may call. The message says why."""
 
@@ -60,7 +64,7 @@ def _check_addresses(host, infos):
         ip = ipaddress.ip_address(info[4][0].split("%")[0])
         if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
             ip = ip.ipv4_mapped
-        if not ip.is_global:
+        if not ip.is_global or any(ip in net for net in _NAT64):
             raise UnsafeURL(f"{host} points to a private network address, "
                             "which sign-in can't use.")
 

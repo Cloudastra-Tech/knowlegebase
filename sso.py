@@ -58,7 +58,7 @@ _GENERIC_ID = re.compile(r"^[a-z][a-z0-9]{0,19}$")
 _oauth = OAuth()
 _clients = {}
 _connection_clients = {}  # connection id -> (updated_at, Authlib client)
-_codes = {}                 # code -> (user, expires)
+_codes = {}                 # code -> (user, browser, expires)
 _codes_lock = threading.Lock()
 
 
@@ -236,7 +236,8 @@ def check_connection_identity(conn, claims):
     unverified is refused; one with no email_verified claim at all (Entra ID
     sends none) is accepted, since the domain check already limits it to the
     workspace's own."""
-    email = (claims.get("email") or "").strip().lower()
+    email = claims.get("email")
+    email = email.strip().lower() if isinstance(email, str) else ""
     if str(claims.get("email_verified")).lower() == "false" or "@" not in email:
         raise NotAllowed("unverified")
     if members_store.workspace_for_domain(email.rpartition("@")[2]) != conn["workspace"]:
@@ -274,12 +275,11 @@ def claim_values(claims, name):
 
 
 def groups_from(conn, claims):
-    """(groups, role they give) under the provider's rules, or None if it has none."""
-    rules = members_store.group_rules(conn["id"])
-    if not rules:
-        return None
+    """(groups, role they give) under the provider's rules. A provider without
+    rules gives no role, so a role its old rules gave doesn't linger."""
     groups = claim_values(claims, conn.get("group_claim") or DEFAULT_GROUP_CLAIM)
-    return groups, members_store.role_for_groups(rules, groups)
+    rules = members_store.group_rules(conn["id"])
+    return groups, members_store.role_for_groups(rules, groups) if rules else None
 
 
 def try_connection(conn, claims):
@@ -288,7 +288,8 @@ def try_connection(conn, claims):
     try:
         email, name = check_connection_identity(conn, claims)
     except NotAllowed as e:
-        email = (claims.get("email") or "").strip().lower()
+        email = claims.get("email")
+        email = email.strip().lower() if isinstance(email, str) else ""
         detail = None
         if e.reason == "not_allowed":          # which of the two rules it broke
             domain = email.rpartition("@")[2]
@@ -297,9 +298,9 @@ def try_connection(conn, claims):
                       else "This account belongs to another workspace.")
         return {"ok": False, "reason": e.reason, "detail": detail, "email": email or None}
     member = members_store.get(email)
-    found = groups_from(conn, claims)
+    found = groups_from(conn, claims) if members_store.group_rules(conn["id"]) else None
     override = member["override_role"] if member else None
-    group_role = found[1] if found else (member["group_role"] if member else None)
+    group_role = found[1] if found else None
     return {"ok": True, "email": email, "name": name,
             "role": override or group_role or "public",
             "role_source": "override" if override else "groups" if group_role else "default",
@@ -310,7 +311,8 @@ def user_for_connection(conn, claims):
     """The session user for someone a workspace's own provider just signed in."""
     email, name = check_connection_identity(conn, claims)
     member = members_store.record_sso_login(email, name, conn["workspace"],
-                                            groups=groups_from(conn, claims))
+                                            groups=groups_from(conn, claims),
+                                            source=conn["id"])
     if not member:
         raise NotAllowed("not_allowed")
     members_store.record_connection_login(conn["id"])
@@ -322,18 +324,23 @@ def user_for_connection(conn, claims):
 # The provider sends the BROWSER back to us, so the result has to travel in a
 # URL. Rather than put the session token there (history, logs), we send a short
 # one-time code that the site swaps for the session with a POST.
-def issue_code(user):
+def issue_code(user, browser=None):
+    """A one-time code for `user`, redeemable only by the browser that started the
+    sign-in (`browser`: the ID in its sign-in cookie; see api.py)."""
     code = secrets.token_urlsafe(24)
     now = time.time()
     with _codes_lock:
-        for c in [c for c, (_, exp) in _codes.items() if exp < now]:
+        for c in [c for c, (_, _, exp) in _codes.items() if exp < now]:
             del _codes[c]
-        _codes[code] = (user, now + CODE_SECONDS)
+        _codes[code] = (user, browser, now + CODE_SECONDS)
     return code
 
 
-def redeem_code(code):
-    """The user a code was issued for, once; None if unknown, used or expired."""
+def redeem_code(code, browser=None):
+    """The user a code was issued for, once; None if unknown, used, expired, or
+    redeemed by another browser."""
     with _codes_lock:
-        user, expires = _codes.pop(code or "", (None, 0))
-    return user if expires > time.time() else None
+        user, issued_to, expires = _codes.pop(code or "", (None, None, 0))
+    if expires < time.time() or not secrets.compare_digest(str(issued_to), str(browser)):
+        return None
+    return user
