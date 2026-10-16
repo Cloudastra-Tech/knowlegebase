@@ -1,27 +1,35 @@
 """
 auth.py  —  LOGIN: only people with an account can open the app.
 
-Users live in config/users.json (gitignored — never commit it):
-    {"swastik": {"name": "Swastik", "password": "pbkdf2$...$...$..."}}
-
-Passwords are never stored as plain text — only a salted PBKDF2 hash.
+Accounts live in the database (members_store.py, config/app.db). Passwords are
+never stored as plain text — only a salted PBKDF2 hash.
 Each account belongs to one WORKSPACE (company); it only sees that workspace's data.
-Each account has a ROLE: "public" (the default) or "hr" (HR / Admin: restricted
-documents, the Documents and Integrations screens).
-People who sign in with Google / Microsoft don't need an account here — see sso.py.
+Each account has a ROLE: "public" (the default), "hr" (HR / Admin: restricted
+documents, the Documents and Integrations screens) or "admin" (hr, plus who may
+sign in).
+People who sign in with Google / Microsoft / Okta get an account the first time
+(sso.py), on a domain their workspace has verified.
 PASSWORD_LOGIN=off (in .env) turns password sign-in off in both the API and Streamlit.
 
-Manage users from a terminal:
+Manage accounts and domains from a terminal:
     python auth.py add <username> [--workspace <slug>] [--role hr]   # asks for the password
-    python auth.py role <username> <public|hr>
-    python auth.py remove <username>
+    python auth.py role <username or email> <public|hr|admin|groups> [--workspace <slug>]
+    python auth.py disable <username or email>        # no access until enabled again
+    python auth.py enable <username or email>
+    python auth.py remove <username or email>
     python auth.py list
+    python auth.py domain add <domain> [--workspace <slug>]          # single sign-on for @domain
+    python auth.py domain remove <domain>
+    python auth.py domains
+`role` also works for someone who hasn't signed in yet: they're added to the
+workspace (default: "default") and get the role from their first sign-in.
+A role set here overrides the one their provider's groups give them; `groups`
+goes back to the groups.
 """
 
 import getpass
 import hashlib
 import hmac
-import json
 import os
 import secrets
 import sys
@@ -29,7 +37,9 @@ import time
 
 import streamlit as st
 
-USERS_FILE = os.getenv("USERS_FILE", os.path.join("config", "users.json"))
+import members_store
+import workspaces
+
 ITERATIONS = 200_000
 MAX_FAILED_ATTEMPTS = 5          # per browser session, then a cool-down
 LOCKOUT_SECONDS = 60
@@ -52,43 +62,44 @@ def verify_password(password, stored):
         return False
 
 
-# ---- User store --------------------------------------------------------------
-def load_users():
-    if not os.path.exists(USERS_FILE):
-        return {}
-    with open(USERS_FILE, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_users(users):
-    os.makedirs(os.path.dirname(USERS_FILE) or ".", exist_ok=True)
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
-
-
 def password_login_on():
     """PASSWORD_LOGIN=off leaves single sign-on as the only way in."""
     return os.getenv("PASSWORD_LOGIN", "on").strip().lower() not in ("off", "false", "0", "no")
 
 
+def sso_required(member):
+    """Must this account sign in with single sign-on? Its workspace says so, and
+    it isn't an admin (admins keep their password, in case the provider breaks)."""
+    return member["role"] != "admin" and members_store.requires_sso(member["workspace"])
+
+
 def access_for(username):
-    """{"workspace", "role"} for a password account, or None if it's gone or
-    password sign-in is off. Checked on every request, not only at sign-in."""
-    user = load_users().get(username)
-    if not user or not password_login_on():
+    """{"workspace", "role"} for a password account, or None if it's gone, turned
+    off, or may no longer use a password. Checked on every request, not only at
+    sign-in."""
+    member = members_store.get(username)
+    if (not member or not member["password_hash"] or member["disabled"]
+            or not password_login_on() or sso_required(member)):
         return None
-    return {"workspace": user.get("workspace", "default"),
-            "role": "hr" if user.get("role") == "hr" else "public"}
+    return {"workspace": member["workspace"], "role": member["role"]}
+
+
+def check_password(username, password):
+    """The member if the password is right and the account is on, else None.
+    Says nothing about whether they may use it (see sso_required)."""
+    member = members_store.get(username)
+    if (member and not member["disabled"]
+            and verify_password(password or "", member["password_hash"] or "")):
+        return member
+    return None
 
 
 def authenticate(username, password):
     """Return the user record (with 'username') if the login is right, else None."""
-    key = (username or "").strip().lower()
-    user = load_users().get(key)
-    if user and verify_password(password or "", user.get("password", "")):
-        access = access_for(key)
-        if access:
-            return {"username": key, "name": user.get("name", username), **access}
+    member = check_password(username, password)
+    access = access_for(member["username"]) if member else None
+    if access:
+        return {"username": member["username"], "name": member["name"], **access}
     return None
 
 
@@ -96,14 +107,20 @@ def authenticate(username, password):
 def require_login():
     """Show the login form until someone signs in. Returns the signed-in user."""
     if st.session_state.get("user"):
-        return st.session_state.user
+        # Checked on every run, like the API does on every request: someone turned
+        # off, demoted, or now required to use single sign-on loses it straight away.
+        access = access_for(st.session_state.user["username"])
+        if access:
+            st.session_state.user.update(access)
+            return st.session_state.user
+        st.session_state.pop("user", None)
 
     st.title("🔐 Sign in")
     if not password_login_on():
         st.error("Password sign-in is turned off (PASSWORD_LOGIN=off). "
                  "Use the main site to sign in with Google or Microsoft.")
         st.stop()
-    if not load_users():
+    if not members_store.has_password_accounts():
         st.error("No user accounts exist yet. An admin must create one first:\n\n"
                  "`python auth.py add <username>`")
         st.stop()
@@ -151,14 +168,13 @@ def _option(args, flag, default):
 
 
 def _cli(args):
-    users = load_users()
-    workspace, args = _option(args, "--workspace", "default")   # add bob --workspace acme
-    role, args = _option(args, "--role", None)                   # add bob --role hr
-    import workspaces
+    workspace_given = "--workspace" in args
+    workspace, args = _option(args, "--workspace", workspaces.DEFAULT)  # add bob --workspace acme
+    role, args = _option(args, "--role", None)                          # add bob --role hr
     if not workspaces.valid(workspace):
         sys.exit("Workspace must be lowercase letters, digits or '-', e.g. acme-corp.")
-    if role not in (None, "public", "hr"):
-        sys.exit("Role must be public or hr.")
+    if role not in (None, *members_store.ROLES):
+        sys.exit("Role must be public, hr or admin.")
     if len(args) == 2 and args[0] == "add":
         username = args[1].strip().lower()
         password = getpass.getpass(f"Password for {username}: ")
@@ -166,36 +182,59 @@ def _cli(args):
             sys.exit("Password must be at least 8 characters.")
         if getpass.getpass("Repeat password: ") != password:
             sys.exit("Passwords don't match.")
-        existed = username in users
-        role = role or users.get(username, {}).get("role", "public")   # keep it on a reset
-        users[username] = {"name": users.get(username, {}).get("name", args[1]),
-                           "password": hash_password(password), "workspace": workspace,
-                           "role": role}
-        save_users(users)
-        print(f"{'Updated' if existed else 'Added'} {username} "
-              f"(workspace: {workspace}, role: {role}).")
+        existed = members_store.get(username)
+        if existed and not workspace_given:
+            workspace = existed["workspace"]      # a password reset doesn't move anyone
+        members_store.set_password(username, args[1], hash_password(password), workspace, role)
+        print(f"{'Updated' if existed else 'Added'} {username} (workspace: {workspace}, "
+              f"role: {members_store.get(username)['role']}).")
     elif len(args) == 3 and args[0] == "role":
         username, role = args[1].strip().lower(), args[2].strip().lower()
-        if username not in users:
-            sys.exit(f"No user named {args[1]}.")
-        if role not in ("public", "hr"):
-            sys.exit("Role must be public or hr.")
-        users[username]["role"] = role
-        save_users(users)
-        print(f"{username} is now {role}.")
+        if role not in (*members_store.ROLES, "groups"):
+            sys.exit("Role must be public, hr, admin or groups.")
+        members_store.set_role(username, None if role == "groups" else role, workspace)
+        member = members_store.get(username)
+        print(f"{username} is now {member['role']}"
+              f"{' (from their groups)' if role == 'groups' else ''} "
+              f"(workspace: {member['workspace']}).")
+    elif len(args) == 2 and args[0] in ("disable", "enable"):
+        if not members_store.set_disabled(args[1], args[0] == "disable"):
+            sys.exit(f"No account named {args[1]}.")
+        print(f"{args[1]} is {args[0]}d.")
     elif len(args) == 2 and args[0] == "remove":
-        if users.pop(args[1].strip().lower(), None) is None:
-            sys.exit(f"No user named {args[1]}.")
-        save_users(users)
+        if not members_store.remove(args[1]):
+            sys.exit(f"No account named {args[1]}.")
         print(f"Removed {args[1]}.")
     elif args == ["list"]:
-        for name in sorted(users):
-            print(f"{name:<20} workspace: {users[name].get('workspace', 'default'):<16} "
-                  f"role: {users[name].get('role', 'public')}")
-        if not users:
-            print("(no users)")
+        members = members_store.list_members()
+        for m in members:
+            source = ("set by hand" if m["override_role"] else
+                      "from groups" if m["group_role"] else "default")
+            print(f"{m['username']:<32} workspace: {m['workspace']:<16} role: {m['role']:<7} "
+                  f"({source}) {'password' if m['has_password'] else 'single sign-on'}"
+                  f"{'  DISABLED' if m['disabled'] else ''}")
+        if not members:
+            print("(no accounts)")
+    elif len(args) == 3 and args[:2] == ["domain", "add"]:
+        try:
+            members_store.add_verified_domain(workspace, args[2])
+        except ValueError as e:
+            sys.exit(str(e))
+        print(f"People with an @{args[2].strip().lower()} address can now sign in to "
+              f"{workspace} with single sign-on.")
+    elif len(args) == 3 and args[:2] == ["domain", "remove"]:
+        if not members_store.remove_domain(args[2]):
+            sys.exit(f"No workspace has {args[2]}.")
+        print(f"Removed {args[2]}. People on it are signed out on their next request.")
+    elif args == ["domains"]:
+        domains = members_store.list_domains()
+        for d in domains:
+            print(f"{d['domain']:<32} workspace: {d['workspace']:<16} "
+                  f"{'verified' if d['verified_at'] else 'not verified'}")
+        if not domains:
+            print("(no domains: nobody can use single sign-on yet)")
     else:
-        sys.exit(__doc__.split("Manage users from a terminal:")[1])
+        sys.exit(__doc__.split("Manage accounts and domains from a terminal:")[1])
 
 
 if __name__ == "__main__":

@@ -124,12 +124,20 @@ LAYER 2 — GUARDRAILS          "the backup net"
 ## 🔑 Where your role comes from
 
 ```
-  Sign in ──► password account (users.json, "role": "hr" or not)
-          └─► Google / Microsoft ──► sso.py checks config/sso.json:
-                                       • is your email's domain listed?  no → turned away
-                                       • is your email in the "hr" list? yes → HR / Admin
-                                                                         no  → public
+  Sign in ──► password account ──► allowed unless the workspace requires single sign-on
+          │                        (admins always keep theirs)
+          └─► single sign-on: Google / Microsoft, or the workspace's own Okta / Entra /
+              SAML provider ──► sso.py checks the database (members_store.py):
+                                 • is your email's domain verified by this workspace?
+                                   no → turned away
+                                 • your role, in this order:
+                                     access turned off           → no access
+                                     a role an admin set          → that role
+                                     your groups at the provider  → the highest rule
+                                     otherwise                    → public
 ```
+`admin` is HR plus control over who may sign in (the **Access** screen); the
+app treats both as HR / Admin. Groups are read at each sign-in.
 Your role is looked up again on **every request**, so taking someone's HR role
 away works straight away. The website can *lower* it (an HR user can "view as
 public"), but it can never *raise* it — the server decides.

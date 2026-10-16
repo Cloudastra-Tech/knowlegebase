@@ -29,7 +29,7 @@ import {
   type User,
 } from "@/lib/api"
 
-type Screen = "chat" | "knowledge" | "docs" | "integrations"
+type Screen = "chat" | "knowledge" | "docs" | "integrations" | "sign-in"
 
 // Each page is its own download, so a visitor on the landing page doesn't load the
 // chat (markdown rendering) and a public user never loads the HR screens.
@@ -44,7 +44,13 @@ const KnowledgeView = lazy(() =>
 const LandingPage = lazy(() =>
   import("@/components/landing-page").then((m) => ({ default: m.LandingPage })),
 )
+const SignInView = lazy(() =>
+  import("@/components/sign-in-view").then((m) => ({ default: m.SignInView })),
+)
 const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
+
+// How often to retry restoring a session while the server can't be reached (~1 min).
+const RESTORE_ATTEMPTS = 10
 
 // The screens a public user may see; anything else falls back to Chat.
 const publicScreen = (s: Screen): Screen => (s === "knowledge" ? s : "chat")
@@ -127,7 +133,8 @@ export default function App() {
         .then((u) => {
           if (session.token !== token) return       // signed out meanwhile
           setUser(u)
-          if (u.role !== "hr") setScreen(publicScreen)
+          if (u.role === "public") setScreen(publicScreen)
+          else if (u.role !== "admin") setScreen((s) => (s === "sign-in" ? "chat" : s))
         })
         .catch((err) => {
           // Access removed altogether. (/auth/* 401s skip the unauthorized handler.)
@@ -170,11 +177,29 @@ export default function App() {
       return
     }
     if (!session.token) return
-    api
-      .me()
-      .then(signedIn)
-      .catch(() => session.setToken(null))
-      .finally(() => setChecking(false))
+    // Only the server saying "no" (401) ends the session. If it can't be reached
+    // (restarting, a deploy, a network blip), keep it and try again for a while.
+    let timer: number | undefined
+    const restore = (attempt: number) => {
+      api
+        .me()
+        .then((u) => {
+          signedIn(u)
+          setChecking(false)
+        })
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 401) {
+            session.setToken(null)
+            setChecking(false)
+          } else if (attempt < RESTORE_ATTEMPTS) {
+            timer = window.setTimeout(() => restore(attempt + 1), Math.min(500 * 2 ** attempt, 8000))
+          } else {
+            setChecking(false)      // still signed in; the next reload tries again
+          }
+        })
+    }
+    restore(0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   function changeRole(next: Role) {
@@ -189,10 +214,12 @@ export default function App() {
   }
 
   async function signOut() {
-    await api.logout().catch(() => {})
+    const out = await api.logout().catch(() => null)
     session.setToken(null)
     setUser(null)
     setScreen("chat")
+    // The admin set this provider to sign people out there too.
+    if (out?.logout_url) window.location.assign(out.logout_url)
   }
 
   if (checking) {
@@ -215,8 +242,8 @@ export default function App() {
     )
   }
 
-  // Only an HR account gets HR; it can also "view as" public. Everyone else is public.
-  const canAdmin = user.role === "hr"
+  // Only an HR or admin account gets HR; it can also "view as" public. Everyone else is public.
+  const canAdmin = user.role !== "public"
   const activeRole: Role = canAdmin ? role : "public"
 
   const initials = user.name
@@ -235,24 +262,30 @@ export default function App() {
           { id: "integrations" as Screen, label: "Integrations" },
         ]
       : []),
+    // Who may sign in: admins only (HR manages documents, not access).
+    ...(activeRole === "hr" && user.role === "admin"
+      ? [{ id: "sign-in" as Screen, label: "Access" }]
+      : []),
   ]
 
   return (
     <IndexStatusProvider>
     <div className="flex h-svh flex-col">
       <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-12 max-w-6xl items-center gap-8 px-4">
-          <span className="select-none text-sm font-semibold tracking-tight">
-            Knowledge<span className="font-normal text-muted-foreground"> assistant</span>
+        <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
+          <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
+            Knowledge
+            <span className="hidden font-normal text-muted-foreground sm:inline"> assistant</span>
           </span>
 
-          <nav className="flex h-full items-center gap-6">
+          {/* On a phone the tabs scroll sideways instead of widening the page. */}
+          <nav className="flex h-full min-w-0 items-center gap-5 overflow-x-auto [scrollbar-width:none] sm:gap-6">
             {navItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => openScreen(item.id)}
                 className={cn(
-                  "relative flex h-full items-center text-sm transition-colors",
+                  "relative flex h-full shrink-0 items-center whitespace-nowrap text-sm transition-colors",
                   screen === item.id
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -260,13 +293,13 @@ export default function App() {
               >
                 {item.label}
                 {screen === item.id && (
-                  <span className="absolute inset-x-0 -bottom-px h-px bg-foreground" />
+                  <span className="absolute inset-x-0 bottom-0 h-px bg-foreground" />
                 )}
               </button>
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <div className="mr-2">
               <IndexStatusText />
             </div>
@@ -353,6 +386,13 @@ export default function App() {
                 onOpenDocuments={() => openScreen("docs")}
                 openDrivePicker={openDrivePicker}
               />
+            </LazyPage>
+          </div>
+        )}
+        {screen === "sign-in" && activeRole === "hr" && user.role === "admin" && (
+          <div className="h-full overflow-y-auto">
+            <LazyPage>
+              <SignInView workspace={user.workspace} me={user.username} />
             </LazyPage>
           </div>
         )}
