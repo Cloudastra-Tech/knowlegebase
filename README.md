@@ -120,6 +120,23 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+### On Linux / macOS
+
+The commands above are for Windows PowerShell. The same steps in bash:
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements-dev.txt     # also installs requirements.txt
+cp .env.example .env                             # then paste your OPENAI_API_KEY
+venv/bin/python ingest.py
+venv/bin/python auth.py add <username> --role hr
+venv/bin/uvicorn api:app --reload --port 8010    # terminal 1: the API
+cd frontend && npm install && npm run dev        # terminal 2: the website
+venv/bin/python -m pytest
+```
+The SAML tests need the `xmlsec1` program (`sudo apt-get install xmlsec1`), or export
+`XMLSEC_BINARY=<path to xmlsec1>` in the shell (the tests don't read `.env`); without it
+they are skipped.
+
 ### Or: the original Streamlit app
 ```powershell
 streamlit run app.py
