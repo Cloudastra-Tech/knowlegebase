@@ -14,7 +14,34 @@ export const queries = {
   // The signed-in person's saved chats. An answer's visibility depends on the role
   // the app is viewed as, so it's part of the key.
   conversations: () =>
-    queryOptions({ queryKey: ["conversations", session.role], queryFn: api.conversations }),
+    queryOptions({
+      queryKey: ["conversations", session.role],
+      queryFn: () => api.conversations(),
+    }),
+  // Searching them: an answer the role can't read now never matches.
+  conversationSearch: (q: string) =>
+    queryOptions({
+      queryKey: ["conversations", session.role, "search", q],
+      queryFn: () => api.searchConversations(q),
+      enabled: q.trim().length > 0,
+      meta: { silent: true },
+    }),
+  // How long chats are kept, and whether they may be shared (everyone sees it).
+  chatSettings: () => queryOptions({ queryKey: ["chat-settings"], queryFn: api.chatSettings }),
+  // The links made to one chat that still work.
+  shares: (conversationId: string) =>
+    queryOptions({
+      queryKey: ["shares", conversationId],
+      queryFn: () => api.shares(conversationId),
+    }),
+  // A share link as the viewer may see it; a dead link is shown on the page itself.
+  sharedChat: (token: string) =>
+    queryOptions({
+      queryKey: ["shared", session.role, token],
+      queryFn: () => api.openShare(token),
+      retry: false,
+      meta: { silent: true },
+    }),
   conversation: (id: string) =>
     queryOptions({
       queryKey: ["conversations", session.role, id],

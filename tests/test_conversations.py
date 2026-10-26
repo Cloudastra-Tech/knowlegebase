@@ -139,8 +139,8 @@ def test_a_conversation_and_its_answers_are_saved(client):
 
 def test_empty_conversations_are_not_listed(client):
     new_chat(client, "sam")
-    assert client.get("/api/conversations", headers=headers(client, "sam")).json() == {
-        "conversations": []}
+    assert client.get("/api/conversations", headers=headers(client, "sam")).json()[
+        "conversations"] == []
 
 
 def test_conversations_can_be_renamed_and_deleted_by_their_owner_only(client):

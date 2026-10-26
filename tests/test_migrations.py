@@ -20,13 +20,16 @@ from migrations import legacy
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
-HEAD = "0007"                                    # the newest migration
+HEAD = "0008"                                    # the newest migration
+# The tables SQLite keeps behind an FTS5 table.
+FTS_SHADOWS = ("data", "idx", "content", "docsize", "config")
 # Made by migrations after the baseline.
 NEWER_TABLES = {"jobs", "search_indexes", "conversations", "messages", "message_feedback",
                 "audit_events", "invites", "sync_state", "source_items", "sync_runs",
                 "scim_tokens", "scim_groups", "scim_group_members", "scim_group_rules",
                 "question_log", "insights_daily", "source_stats", "insights_docs", "content_gaps",
-                "eval_candidates"}
+                "eval_candidates", "conversation_folders", "chat_settings", "shares",
+                "conversation_search", *(f"conversation_search_{shadow}" for shadow in FTS_SHADOWS)}
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
           ("workspaces", "role_source"), ("sessions", "username"), ("sessions", "workspace")}
@@ -69,8 +72,9 @@ def schema(path):
             continue
         indexes = {}
         for ix in conn.execute(f"PRAGMA index_list({name})"):
-            where = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?",
-                                 (ix["name"],)).fetchone()[0]
+            # (A WITHOUT ROWID table's primary key has no row of its own here.)
+            where = (conn.execute("SELECT sql FROM sqlite_master WHERE name = ?",
+                                  (ix["name"],)).fetchone() or [None])[0]
             if where:
                 where = re.sub(r"\s+", " ", where.split(" WHERE ", 1)[1]) if ix["partial"] else ""
             key = ix["name"] if ix["origin"] == "c" else ix["origin"]
@@ -91,8 +95,9 @@ def schema(path):
 
 def rows(path):
     conn = _connect(path)
-    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-              if r[0] not in INTERNAL]
+    # (An FTS5 table's WITHOUT ROWID shadows have no rowid; its text is in the others.)
+    tables = [r[0] for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+              if r[0] not in INTERNAL and "WITHOUT ROWID" not in (r[1] or "").upper()]
     out = {t: {r["_rowid"]: {k: r[k] for k in r.keys() if k != "_rowid"}
                for r in conn.execute(f"SELECT rowid AS _rowid, * FROM {t}")} for t in tables}
     conn.close()
