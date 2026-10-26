@@ -23,6 +23,7 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     GET    /auth/saml/{id}/metadata | /start  POST /acs  GET /done   ... when it's SAML
     POST   /auth/sso/exchange     {code} -> {token, user}   the one-time code from the callback
     POST   /auth/logout           -> {logout_url}: also sign out at the provider, if it's set to
+    POST   /auth/logout-everywhere  end all of this person's sessions, on every device
     GET    /auth/me
     POST   /chat                  {question, role} -> {answer, sources, steps}
     POST   /chat/stream           same, streamed live (steps + answer tokens) as SSE
@@ -60,7 +61,11 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     GET    /admin/members         everyone in this workspace, with where their role comes from
     PATCH  /admin/members/{username} {role: public|hr|admin|null, disabled}       (admin)
     DELETE /admin/members/{username}                                               (admin)
+    POST   /admin/members/{username}/sign-out   end all their sessions                (admin)
     DELETE /admin/sign-in/connections/{id}                                         (admin)
+Chat, uploads, re-index and sync now are rate-limited per person and per workspace
+(USER_LIMITS); request bodies and uploaded files are size-capped (_BodyLimit,
+upload_docs); every response carries security headers (_SecurityHeaders).
 Every document change re-indexes automatically; connectors re-sync every 30 minutes;
 SAML providers set up from a metadata URL fetch it again daily (or as it says).
 
@@ -126,6 +131,100 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET") or 
                    session_cookie="kb_oauth", max_age=10 * 60, same_site="lax",
                    https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
 
+
+class _BodyLimit:
+    """Refuse a request body over UPLOAD_MAX_REQUEST_MB with a 413: at once when
+    its Content-Length says so, else as soon as that much has arrived. So a huge
+    upload is never taken in (each file has its own, smaller limit: upload_docs)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        limit_mb = _env_int("UPLOAD_MAX_REQUEST_MB", UPLOAD_MAX_REQUEST_MB)
+        limit, received = limit_mb * 1024 * 1024, 0
+        too_big = HTTPException(413, f"That's too much to send at once: the limit is {limit_mb} "
+                                     "MB. Send fewer or smaller files.")
+        try:
+            length = int(dict(scope["headers"]).get(b"content-length", b"0"))
+        except ValueError:
+            length = 0
+        if length > limit:
+            response = Response(json.dumps({"detail": too_big.detail}), 413,
+                                media_type="application/json", headers={"Connection": "close"})
+            return await response(scope, receive, send)
+
+        async def counted():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise too_big           # FastAPI answers it with a 413
+            return message
+
+        await self.app(scope, counted, send)
+
+
+# Content Security Policy for the site (the built React app, frontend/dist) and
+# the API. Scripts only from this server: no inline or injected ones. Styles may
+# be inline (UI libraries add <style> tags at run time, e.g. the toasts) and come
+# from Google Fonts, like the fonts themselves (frontend/index.html). Sign-in needs nothing
+# extra: the IdP posts SAML answers from its own page, and every move to a
+# provider is a redirect or a top-level navigation, not a form of ours.
+CSP = ("default-src 'self'; script-src 'self'; "
+       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; "
+       "connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+       "frame-ancestors 'none'")
+# FastAPI's own API pages (/docs, /redoc) load their scripts from a CDN, inline.
+API_DOCS_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+                "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                "img-src 'self' data: https://fastapi.tiangolo.com https://cdn.redoc.ly; "
+                "worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
+                "base-uri 'self'; frame-ancestors 'none'")
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+                    "Referrer-Policy": "same-origin",
+                    "Permissions-Policy": "camera=(), microphone=(), geolocation=()"}
+HSTS_SECONDS = 180 * 24 * 60 * 60        # HSTS_MAX_AGE in the environment; 0 turns it off
+
+
+class _SecurityHeaders:
+    """Security headers on every response. HSTS only over https: as the browser
+    saw it, so behind a proxy that ends TLS this needs uvicorn's --proxy-headers
+    (Dockerfile) to trust its X-Forwarded-Proto."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        csp = API_DOCS_CSP if path in (app.docs_url, app.redoc_url) else CSP
+        headers = {**SECURITY_HEADERS, "Content-Security-Policy": csp}
+        hsts = _env_int("HSTS_MAX_AGE", HSTS_SECONDS, minimum=0)
+        if scope.get("scheme") == "https" and hsts:
+            headers["Strict-Transport-Security"] = f"max-age={hsts}"
+
+        async def with_headers(message):
+            if message["type"] == "http.response.start":
+                have = {k.lower() for k, _ in message.get("headers", [])}
+                message.setdefault("headers", [])
+                message["headers"] = list(message["headers"]) + [
+                    (k.lower().encode(), v.encode()) for k, v in headers.items()
+                    if k.lower().encode() not in have]
+            await send(message)
+
+        await self.app(scope, receive, with_headers)
+
+
+app.add_middleware(_BodyLimit)
+app.add_middleware(_SecurityHeaders)      # added last, so outermost: on every answer
+
 SESSION_SECONDS = 12 * 60 * 60
 # Rate limits on the sign-in endpoints anyone can call, per client address and
 # minute, plus a ceiling for all addresses together (an address can be faked in
@@ -134,8 +233,16 @@ SESSION_SECONDS = 12 * 60 * 60
 LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20,
           "signup": 10}
 ALL_ADDRESSES = 20                       # x the per-address limit, per minute
-_hits = {}                # (bucket, address) -> recent times
+# Limits on what a signed-in person can make the server do (it costs OpenAI calls
+# or indexing time), per minute: (per person, per workspace). Each can be set in
+# the environment, e.g. RATE_LIMIT_CHAT_USER=40, RATE_LIMIT_CHAT_WORKSPACE=600.
+USER_LIMITS = {"chat": (20, 300), "upload": (30, 120), "reindex": (5, 20), "sync": (5, 20)}
+_hits = {}                # (bucket, address | user | workspace) -> recent times
 _hits_lock = threading.Lock()
+# Uploads: each file, and each request as a whole, in MB (UPLOAD_MAX_FILE_MB,
+# UPLOAD_MAX_REQUEST_MB). Every other request body has the per-request limit too.
+UPLOAD_MAX_FILE_MB = 25
+UPLOAD_MAX_REQUEST_MB = 100
 # Kept with the session (for signing out at the provider), never sent to the browser.
 PRIVATE_USER_KEYS = ("id_token",)
 
@@ -202,22 +309,67 @@ def current_user(authorization: str = Header(default="")):
     return {**user, **access}
 
 
-def rate_limit(request: Request, bucket):
-    if os.getenv("RATE_LIMITS", "on").strip().lower() in ("off", "false", "0", "no"):
-        return
-    address, now = (request.client.host if request.client else "?"), time.time()
+def _rate_limits_on():
+    return os.getenv("RATE_LIMITS", "on").strip().lower() not in ("off", "false", "0", "no")
+
+
+def _take(checks):
+    """Count one hit against each (key, limit, message) for the last minute, or
+    none if any is used up: then a 429 with that message and Retry-After."""
+    now = time.time()
     with _hits_lock:
         if len(_hits) > 10_000:                       # forget the quiet ones
             for k in [k for k, v in _hits.items() if not v or v[-1] < now - 60]:
                 del _hits[k]
             if len(_hits) > 10_000:                   # a flood of fake addresses
                 _hits.clear()
-        for key, limit in (((bucket, address), LIMITS[bucket]),
-                           ((bucket, "*"), LIMITS[bucket] * ALL_ADDRESSES)):
+        recents = []
+        for key, limit, message in checks:
             recent = [t for t in _hits.get(key, []) if t > now - 60]
             if len(recent) >= limit:
-                raise HTTPException(429, "Too many attempts. Wait a minute and try again.")
+                wait = max(1, int(recent[-limit] + 60 - now + 0.999))
+                raise HTTPException(429, message.format(wait=wait, s="" if wait == 1 else "s"),
+                                    headers={"Retry-After": str(wait)})
+            recents.append((key, recent))
+        for key, recent in recents:
             _hits[key] = recent + [now]
+
+
+def rate_limit(request: Request, bucket):
+    if not _rate_limits_on():
+        return
+    address = request.client.host if request.client else "?"
+    message = "Too many attempts. Wait {wait} second{s} and try again."
+    _take([((bucket, address), LIMITS[bucket], message),
+           ((bucket, "*"), LIMITS[bucket] * ALL_ADDRESSES, message)])
+
+
+def user_limit(user, bucket):
+    """Per person and per workspace limits (USER_LIMITS) on something costly."""
+    if not _rate_limits_on():
+        return
+    per_user, per_workspace = (_env_int(f"RATE_LIMIT_{bucket.upper()}_{who}", default)
+                               for who, default in zip(("USER", "WORKSPACE"),
+                                                       USER_LIMITS[bucket]))
+    verb, noun = {"chat": ("asked", "question"), "upload": ("uploaded files", "time"),
+                  "reindex": ("started", "re-index"), "sync": ("started", "sync")}[bucket]
+
+    def did(n):
+        return f"{verb} {n} {noun}{'' if n == 1 else 'es' if noun.endswith('x') else 's'}"
+    _take([((bucket, "user", user["username"]), per_user,
+            f"You've {did(per_user)} in the last minute, the most one person can. "
+            "Try again in {wait} second{s}."),
+           ((bucket, "workspace", ws_of(user)), per_workspace,
+            f"Your workspace has {did(per_workspace)} in the last minute, the most it can. "
+            "Try again in {wait} second{s}.")])
+
+
+def _env_int(name, default, minimum=1):
+    """A whole number from the environment, or `default` if it isn't set (or isn't one)."""
+    try:
+        return max(minimum, int(os.getenv(name, "")))
+    except ValueError:
+        return default
 
 
 def public_user(user):
@@ -1093,6 +1245,14 @@ def _provider_logout_url(request, user):
     return end + ("&" if "?" in end else "?") + urllib.parse.urlencode(params)
 
 
+@app.post("/api/auth/logout-everywhere")
+def logout_everywhere(user=Depends(current_user)):
+    """Ends every session this person has, on every device, this one included."""
+    ended = sessions_store.delete_user(user["username"])
+    log.warning("%s signed out everywhere (%d sessions)", user["username"], ended)
+    return {"ok": True, "ended": ended}
+
+
 @app.get("/api/auth/me")
 def me(user=Depends(current_user)):
     return public_user(user)
@@ -1583,6 +1743,7 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
+    user_limit(user, "chat")
     ws = ws_of(user)
     with _gate:
         if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
@@ -1616,6 +1777,7 @@ def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_r
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
+    user_limit(user, "chat")
     ws = ws_of(user)
     with _gate:
         if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
@@ -1702,6 +1864,7 @@ def _schedule_index(ws):
 @app.post("/api/reindex")
 def reindex(user=Depends(require_hr)):
     """Manual re-index (changes already re-index automatically)."""
+    user_limit(user, "reindex")
     _schedule_index(ws_of(user))
     return index_status(user)
 
@@ -1736,7 +1899,13 @@ def _existing_path(ws, access, name):
 def list_docs(user=Depends(require_hr)):
     root = workspaces.docs_root(ws_of(user))
     docs = [{k: d[k] for k in ("access", "name", "size")} for d in docs_store.list_docs(root)]
-    return {"docs": docs}
+    return {"docs": docs, "upload_limits": _upload_limits()}
+
+
+def _upload_limits():
+    """For the upload screen, so it can say so before sending a file that's too big."""
+    return {"file_mb": _env_int("UPLOAD_MAX_FILE_MB", UPLOAD_MAX_FILE_MB),
+            "request_mb": _env_int("UPLOAD_MAX_REQUEST_MB", UPLOAD_MAX_REQUEST_MB)}
 
 
 @app.get("/api/docs/{access}/{name}")
@@ -1786,21 +1955,40 @@ def delete_doc(access: str, name: str, user=Depends(require_hr)):
 @app.post("/api/docs/upload")
 def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"),
                 user=Depends(require_hr)):
+    """The files arrive already on disk (Starlette spools big ones to temporary
+    files), with the whole request capped by _BodyLimit. Each is checked (size,
+    and that it is what its name says) before any is saved."""
+    user_limit(user, "upload")
     ws = ws_of(user)
     if access not in docs_store.ACCESS_LEVELS:
         raise HTTPException(400, "Access must be public or restricted.")
-    saved = []
+    max_mb = _env_int("UPLOAD_MAX_FILE_MB", UPLOAD_MAX_FILE_MB)
+    picked = []
     for f in files:
         if not f.filename.lower().endswith(docs_store.EXTENSIONS):
             continue
         name = docs_store.safe_name(f.filename)
-        if name:
-            docs_store.save(access, name, f.file.read(), workspaces.docs_root(ws))
-            saved.append(name)
-    if not saved:
+        if not name:
+            continue
+        f.file.seek(0, os.SEEK_END)
+        size = f.file.tell()
+        f.file.seek(0)
+        if size > max_mb * 1024 * 1024:
+            raise HTTPException(413, f"{f.filename} is {size / 1024 / 1024:.1f} MB. Files can be "
+                                     f"up to {max_mb} MB each. Nothing was uploaded.")
+        head = f.file.read(8192)
+        f.file.seek(0)
+        if not docs_store.content_matches(name, head):
+            kind = "PDF" if name.endswith(".pdf") else "plain text"
+            raise HTTPException(415, f"{f.filename} isn't a {kind} file, though its name says "
+                                     "so. Nothing was uploaded.")
+        picked.append((name, f))
+    if not picked:
         raise HTTPException(400, "Please choose at least one .txt or .pdf file.")
+    for name, f in picked:
+        docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
     _schedule_index(ws)
-    return {"saved": saved}
+    return {"saved": [name for name, _ in picked]}
 
 
 # ---- Integrations ------------------------------------------------------------
@@ -1952,6 +2140,7 @@ def integration_callback(provider: str, state: str = "", code: str = "", error: 
 @app.post("/api/integrations/{provider}/sync")
 def integration_sync(provider: str, user=Depends(require_hr)):
     _connector(provider)
+    user_limit(user, "sync")
     ws = ws_of(user)
     if not integrations_store.get(ws, provider):
         raise HTTPException(400, f"{LABELS[provider]} isn't connected.")
@@ -2131,6 +2320,8 @@ def edit_member(username: str, body: MemberPatch, user=Depends(require_admin)):
         members_store.set_role(member["username"], body.role, member["workspace"])
     if body.disabled is not None:
         members_store.set_disabled(member["username"], body.disabled)
+        if body.disabled:          # out now, on every device, not at their next click
+            sessions_store.delete_user(member["username"], member["workspace"])
     log.warning("%s changed %s's access: %s", user["username"], member["username"],
                 body.model_dump(exclude_unset=True))
     m = next(x for x in members_store.list_members(member["workspace"])
@@ -2142,8 +2333,20 @@ def edit_member(username: str, body: MemberPatch, user=Depends(require_admin)):
 def delete_member(username: str, user=Depends(require_admin)):
     member = _workspace_member(user, username)
     members_store.remove(member["username"])
+    sessions_store.delete_user(member["username"], member["workspace"])
     log.warning("%s removed %s", user["username"], member["username"])
     return {"ok": True}
+
+
+@app.post("/api/admin/members/{username}/sign-out")
+def sign_out_member(username: str, user=Depends(require_admin)):
+    """End every session a member has. They can sign in again (unless their access
+    is off): for a lost laptop, say."""
+    member = _workspace_member(user, username)
+    ended = sessions_store.delete_user(member["username"], member["workspace"])
+    log.warning("%s signed %s out everywhere (%d sessions)", user["username"],
+                member["username"], ended)
+    return {"ok": True, "ended": ended}
 
 
 @app.get("/api/health")
