@@ -20,6 +20,8 @@ from migrations import legacy
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
+HEAD = "0002"                                    # the newest migration
+NEWER_TABLES = {"jobs", "search_indexes"}        # made by migrations after the baseline
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
           ("workspaces", "role_source"), ("sessions", "username"), ("sessions", "workspace")}
@@ -116,8 +118,8 @@ def fresh(tmp_path):
 
 
 def test_an_empty_database_gets_every_table_at_the_newest_migration(fresh):
-    assert version(fresh) == [legacy.BASELINE]
-    assert set(schema(fresh)) == legacy.APP_TABLES
+    assert version(fresh) == [HEAD]
+    assert set(schema(fresh)) == legacy.APP_TABLES | NEWER_TABLES
     conn = sqlite3.connect(fresh)
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     conn.close()
@@ -142,7 +144,7 @@ def test_an_old_database_is_upgraded_in_place_keeping_every_row(fixture, fresh, 
 
     db.migrate(path)
 
-    assert version(path) == [legacy.BASELINE]
+    assert version(path) == [HEAD]
     assert schema(path) == schema(fresh)
     after = rows(path)
     for table, old in before.items():
@@ -160,7 +162,7 @@ def test_an_old_database_is_upgraded_in_place_keeping_every_row(fixture, fresh, 
     conn.close()
 
     db.migrate(path)                                 # again: nothing to do, nothing lost
-    assert rows(path) == after and version(path) == [legacy.BASELINE]
+    assert rows(path) == after and version(path) == [HEAD]
 
 
 def _upgraded(fixture, tmp_path):
@@ -250,7 +252,7 @@ def test_workers_starting_together_upgrade_it_once(tmp_path):
         w.start()
     for w in workers:
         w.join()
-    assert errors == [] and version(path) == [legacy.BASELINE]
+    assert errors == [] and version(path) == [HEAD]
 
 
 def test_connections_have_the_settings_the_stores_rely_on(tmp_path, monkeypatch):
@@ -273,5 +275,5 @@ def test_the_alembic_command_line_upgrades_the_same_way(tmp_path, monkeypatch):
     command.current(config)                      # looking doesn't adopt it
     assert tables(path) == {"sessions", "integrations"}
     command.upgrade(config, "head")
-    assert version(path) == [legacy.BASELINE] and "members" in tables(path)
+    assert version(path) == [HEAD] and "members" in tables(path)
     assert rows(path)["sessions"][1]["workspace"] == "acme"

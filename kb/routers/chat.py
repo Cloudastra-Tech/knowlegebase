@@ -8,10 +8,8 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from starlette.concurrency import run_in_threadpool
 
 from agent import Cancelled
-from kb import state
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
 from kb.services import agents
@@ -32,17 +30,9 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     if not question:
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
-    ws = ws_of(user)
-    with state.gate:
-        if not state.gate.wait_for(lambda: not state.gate_of(ws)["indexing"], timeout=120):
-            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
-        state.gate_of(ws)["active"] += 1
-    try:
-        answer, trace, sources = agents.get_agent(ws, role)(question, with_sources=True)
-    finally:
-        with state.gate:
-            state.gate_of(ws)["active"] -= 1
-            state.gate.notify_all()
+    # No waiting for re-indexing: it changes the index document by document, or
+    # builds a new one beside it (services/indexing.py).
+    answer, trace, sources = agents.get_agent(ws_of(user), role)(question, with_sources=True)
     return {"answer": answer, "sources": sources, "steps": _steps(trace)}
 
 
@@ -51,14 +41,6 @@ def _steps(trace):
              "output": t["output"][:STEP_PREVIEW_CHARS]
              + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
             for t in trace]
-
-
-def _enter_chat(ws):
-    """Count a question in, once its workspace's index isn't being swapped."""
-    with state.gate:
-        if not state.gate.wait_for(lambda: not state.gate_of(ws)["indexing"], timeout=120):
-            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
-        state.gate_of(ws)["active"] += 1
 
 
 @router.post("/api/chat/stream")
@@ -76,7 +58,6 @@ async def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(cur
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
     ws = ws_of(user)
-    await run_in_threadpool(_enter_chat, ws)      # may wait: keep the event loop free
 
     loop = asyncio.get_running_loop()
     events = asyncio.Queue()
@@ -102,9 +83,6 @@ async def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(cur
                           ws, role, len(question))
             put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
         finally:
-            with state.gate:
-                state.gate_of(ws)["active"] -= 1
-                state.gate.notify_all()
             put(None)
 
     threading.Thread(target=work, daemon=True).start()
