@@ -184,7 +184,8 @@ output_guard = Guard().use(BlockSalaryLeak(on_fail="exception"))
 
 # Guardrails reports usage (guard / validator names and results, not the text)
 # to its own servers unless ~/.guardrailsrc says not to — and an image built
-# without the Hub token has no such file. Turn it off. Done last: every new Guard() re-reads the default.
+# without the Hub token has no such file. Turn it off. Done last: every new
+# Guard() re-reads the default.
 for _g in (generic_guard, salary_input_guard, output_guard):
     _g.configure(allow_metrics_collection=False)
 
