@@ -5,7 +5,10 @@ Saved chats around the agent (conversations_store.py holds the rows):
                  every read, so an owner demoted from HR stops seeing answers built
                  from restricted documents, even in their own chats.
   start_turn()   a question in a conversation: saves it, and loads the history the
-                 follow-up is answered with (bounded by turns and size).
+                 follow-up is answered with (bounded by turns and size). Also an
+                 edited question or a regenerated answer: a new branch (C10).
+  view()         the messages shown, each with its versions (‹ 2 / 3 ›).
+  markdown_of()  an answer for the clipboard, its citations as footnotes (C25).
   outcome()      the state an answer ends in (answered, not_found, ...) and the
                  highest access level of everything the model read for it.
 
@@ -15,6 +18,7 @@ an admin changed their role), their next question starts a NEW conversation, so
 answers built under one role never become context for another.
 """
 
+import re
 import time
 import urllib.parse
 
@@ -75,10 +79,10 @@ def present(message, role, admin=False, feedback=None):
         return out
     if not visible_to(role, message):
         return {**out, "content": "", "withheld": True, "sources": [], "steps": [],
-                "standalone_question": None, "feedback": None}
+                "standalone_question": None, "feedback": None, "followups": []}
     out.update(sources=message.get("sources") or [], steps=message.get("steps") or [],
                standalone_question=message.get("standalone_question"),
-               feedback=_feedback_view(feedback))
+               feedback=_feedback_view(feedback), followups=message.get("followups") or [])
     if admin:                       # the raw tool input and output (steps panel)
         out["trace"] = message.get("trace") or []
     return out
@@ -113,45 +117,128 @@ def history_for(path, role):
     return history, max_access(levels)
 
 
-def start_turn(ws, owner, role, conversation_id, question, retry_of=None):
-    """Save a question in a conversation (or, with retry_of, ask the question of a
-    failed or stopped answer again) and the empty answer to fill in. Returns a dict:
-    conversation, question, user_message_id, message_id, history, history_access,
-    and new_conversation (True when a role change started a new one, see above)."""
+def _answer_to_ask_again(ws, owner, role, conv, mid, states, refusal):
+    """The question of answer `mid` in this conversation, if it may be asked again
+    (its state is one of `states`, or any finished one when states is None)."""
+    answer = store.get_message(ws, owner, mid)
+    state = present(answer, role)["state"] if answer else None
+    if (not answer or answer["conversation_id"] != conv["id"] or answer["author"] != "assistant"
+            or (state not in states if states else state == "pending")):
+        raise HTTPException(400, refusal)
+    question = store.get_message(ws, owner, answer["parent_id"])
+    if not question:
+        raise HTTPException(400, refusal)
+    return question
+
+
+def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regenerate_of=None,
+               edit_of=None):
+    """Save a question in a conversation and the empty answer to fill in. Or:
+       retry_of       ask the question of a failed or stopped answer again
+       regenerate_of  a new answer to the same question beside a finished one (C10)
+       edit_of        `question` replaces an earlier question: a new question beside
+                      it, answered with the conversation before it (C10)
+    The new answer (and edited question) are siblings of the old ones, which stay:
+    the chat shows the new branch, and the "‹ 2 / 3 ›" controls switch back.
+    Returns a dict: conversation, question, user_message_id, message_id, history,
+    history_access, and new_conversation (True when a role change started a new
+    one, see above)."""
     conv = store.get(ws, owner, conversation_id)
     if not conv:
         raise HTTPException(404, "That conversation doesn't exist.")
-    retried = None
+    again, parent_id = None, conv["active_leaf_id"]
     if retry_of:
-        failed = store.get_message(ws, owner, retry_of)
-        if (not failed or failed["conversation_id"] != conv["id"]
-                or failed["author"] != "assistant"
-                or present(failed, role)["state"] not in RETRY_STATES):
-            raise HTTPException(400, "Only an answer that failed or was stopped can be retried.")
-        retried = store.get_message(ws, owner, failed["parent_id"])
-        if not retried:
-            raise HTTPException(400, "Only an answer that failed or was stopped can be retried.")
-        question = retried["content"]
+        again = _answer_to_ask_again(ws, owner, role, conv, retry_of, RETRY_STATES,
+                                     "Only an answer that failed or was stopped can be retried.")
+    elif regenerate_of:
+        again = _answer_to_ask_again(ws, owner, role, conv, regenerate_of, None,
+                                     "Only a finished answer can be written again.")
+    elif edit_of:
+        edited = store.get_message(ws, owner, edit_of)
+        if not edited or edited["conversation_id"] != conv["id"] or edited["author"] != "user":
+            raise HTTPException(400, "Only a question in this chat can be edited.")
+        parent_id = edited["parent_id"]
+    if again:
+        question = again["content"]
     if not question:
         raise HTTPException(400, "Please type a question.")
 
     new_conversation = conv["role_used"] != role
     if new_conversation:
         conv = store.create(ws, owner, role)
-        retried = None                # asked afresh in the new one
-    if retried:
-        path = store.path(conv["id"], retried["parent_id"])
-        user_message_id = retried["id"]
+        again, parent_id = None, None     # asked afresh in the new one
+    if again:
+        path = store.path(conv["id"], again["parent_id"])
+        user_message_id = again["id"]
     else:
-        path = store.path(conv["id"], conv["active_leaf_id"])
-        user_message_id = store.add_message(conv["id"], "user", question,
-                                            parent_id=conv["active_leaf_id"])
+        path = store.path(conv["id"], parent_id)
+        user_message_id = store.add_message(conv["id"], "user", question, parent_id=parent_id)
     message_id = store.add_message(conv["id"], "assistant", "", parent_id=user_message_id)
     history, history_access = history_for(path, role)
+    first = not path
     conv = store.get(ws, owner, conv["id"])
     return {"conversation": conv, "question": question, "user_message_id": user_message_id,
             "message_id": message_id, "history": history, "history_access": history_access,
-            "new_conversation": new_conversation}
+            "new_conversation": new_conversation,
+            # The chat's first question, titled from it (suggestions.chat_title).
+            "first_question": first and conv["title_source"] == "auto" and not again}
+
+
+# ---- What a viewer sees of a conversation ------------------------------------------------
+def view(conv, messages, leaf_id, role, admin=False, feedback=None):
+    """The messages from the first to `leaf_id` as `role` may see them, each with
+    the versions beside it (siblings: edits and regenerated answers)."""
+    path = store.path(conv["id"], leaf_id, messages)
+    versions = store.siblings(messages)
+    feedback = feedback or {}
+    return [{**present(m, role, admin, feedback.get(m["id"])), "siblings": versions[m["id"]]}
+            for m in path]
+
+
+def forked_from(ws, owner, conv):
+    """{conversation_id, title} of the chat a fork was branched from, while it's there."""
+    mid = conv.get("forked_from_message_id")
+    found = store.conversation_of_message(ws, owner, mid) if mid else None
+    return {"conversation_id": found["id"], "title": found["title"]} if found else None
+
+
+def markdown_of(message):
+    """An answer as markdown, its [S#] markers as footnotes ([^1]) and its sources
+    listed under it (C25): what Copy puts on the clipboard. Call only for an answer
+    the reader may see (visible_to)."""
+    sources = message.get("sources") or []
+    numbered = {s["n"]: s for s in sources if isinstance(s.get("n"), int)}
+    used = []
+
+    def footnote(m):
+        n = int(m.group(1))
+        if n not in numbered:
+            return ""
+        if n not in used:
+            used.append(n)
+        return f"[^{used.index(n) + 1}]"
+    text = re.sub(r"[ \t]*\[S(\d{1,3})\]", footnote, message.get("content") or "").strip()
+    notes = []
+    for i, n in enumerate(used, 1):
+        notes.append(f"[^{i}]: {_source_line(numbered[n])}")
+    others = [s for s in sources if not isinstance(s.get("n"), int)]
+    for s in others:                      # pages read whole, Wikipedia: no marker
+        notes.append(f"- {_source_line(s)}")
+    if notes:
+        text += "\n\n" + "\n".join(notes)
+    return text
+
+
+def _source_line(s):
+    title = s.get("title") or "Untitled"
+    where = [p for p in (s.get("heading_path"),
+                         f"page {s['page']}" if s.get("page") else None) if p]
+    line = f"[{title}]({s['url']})" if s.get("url") else title
+    if where:
+        line += f", {', '.join(where)}"
+    provider = ("General knowledge · " if s.get("kind") == "general_knowledge" else "") + (
+        s.get("provider") or "")
+    return f"{line} — {provider}" if provider else line
 
 
 def _wikipedia_sources(trace):

@@ -1,8 +1,9 @@
 import { lazy, useState } from "react"
-import { ChevronDown, LogOut, MonitorSmartphone } from "lucide-react"
+import { ChevronDown, KeyRound, LogOut, MonitorSmartphone } from "lucide-react"
 import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
 
+import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
 import {
@@ -108,7 +109,9 @@ export default function App() {
 
   return (
     <IndexStatusProvider>
-    <div className="flex h-svh flex-col">
+    <div className="flex h-dvh flex-col">
+      {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts. */}
+      <CommandPalette user={user} role={activeRole} />
       <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
           <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
@@ -186,6 +189,12 @@ export default function App() {
                     {user.username.includes("@") ? user.username : `@${user.username}`}
                   </div>
                 </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/api-keys">
+                    <KeyRound /> API keys
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut}>
                   <LogOut /> Sign out

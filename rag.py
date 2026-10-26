@@ -264,6 +264,19 @@ class HybridRetriever:
         self.reranker = reranker
         self.intros = {}      # source -> its first chunks (set by load_chain)
 
+    @staticmethod
+    def _hits(retriever, query, k):
+        """retriever's chunks for query: as many as it returns by itself, or k of
+        them when k is given (each retriever is shared by every question at
+        once, so its own setting is left as it is)."""
+        if k and hasattr(retriever, "vectorstore"):           # Chroma, with its filter
+            return retriever.vectorstore.similarity_search(
+                query, k=k, filter=retriever.search_kwargs.get("filter"))
+        if k and hasattr(retriever, "vectorizer"):            # BM25
+            return retriever.vectorizer.get_top_n(retriever.preprocess_func(query),
+                                                  retriever.docs, n=k)
+        return retriever.invoke(query)
+
     def intros_for(self, docs, max_docs=2):
         """The opening chunks of the top documents among `docs` that aren't
         already included — added to the context, not used for ranking."""
@@ -272,21 +285,25 @@ class HybridRetriever:
         return [i for src in sources for i in self.intros.get(src, [])
                 if i.page_content not in have]
 
-    def invoke(self, query, dense_query=None, dense_queries=None):
+    def invoke(self, query, dense_query=None, dense_queries=None, k=None):
         """query: what the user asked — the KEYWORD search uses exactly this.
         dense_query: an enriched version for the MEANING search only (e.g.
         the question + a HyDE guess); defaults to query. dense_queries: several
         (multi-query), each searched by meaning and fused like the rest. A
         guessed answer must not feed keyword search: its invented words would
         match real chunks.
+        k: how many chunks (default top_k), each search asked for as many (at
+        least the reranker's pool, when one is plugged in).
         Each chunk comes back as a copy whose metadata also says how it was
         found ("why this source"): rank (1 = best, after fusion and any
         rerank), dense_rank and bm25_rank (None when that search didn't return
         it), fused_rank and rerank_score (with a reranker), and its chunk_id."""
+        want = k or self.top_k
+        each = max(k, self.pool) if k and self.reranker else k
         # Run the searches. Each returns an ORDERED list of chunks (best first).
-        lists = [("dense_rank", self.dense.invoke(q))
+        lists = [("dense_rank", self._hits(self.dense, q, each))
                  for q in (dense_queries or [dense_query or query])]
-        lists.append(("bm25_rank", self.bm25.invoke(query)))
+        lists.append(("bm25_rank", self._hits(self.bm25, query, each)))
 
         # Score every chunk by its rank in each list (RRF).
         scores = {}        # chunk text -> fused score
@@ -301,26 +318,26 @@ class HybridRetriever:
                 seen[name] = min(seen.get(name, rank + 1), rank + 1)
 
         # Sort by fused score (highest first): the candidates.
-        order = sorted(scores, key=scores.get, reverse=True)[: self.pool]
-        fused = {k: n for n, k in enumerate(order, 1)}
+        order = sorted(scores, key=scores.get, reverse=True)[: max(self.pool, want)]
+        fused = {key: n for n, key in enumerate(order, 1)}
         rerank = {}
         if self.reranker and order:
             # The reranker reads the question with each candidate and reorders them.
-            ranked = self.reranker(query, [Document(page_content=k, id=docs[k].id,
-                                                    metadata=dict(docs[k].metadata))
-                                           for k in order])
+            ranked = self.reranker(query, [Document(page_content=key, id=docs[key].id,
+                                                    metadata=dict(docs[key].metadata))
+                                           for key in order])
             order = [d.page_content for d in ranked if d.page_content in fused]
             rerank = {d.page_content: d.metadata.get("rerank_score") for d in ranked}
-        order = prefer_recent(order, {k: docs[k].metadata for k in order}, self.rrf_k)
-        best = order[: self.top_k]
-        return [Document(page_content=k, id=docs[k].id, metadata={
-                    **docs[k].metadata,
-                    "chunk_id": docs[k].metadata.get("chunk_id") or docs[k].id,
-                    "rank": n, "dense_rank": ranks[k].get("dense_rank"),
-                    "bm25_rank": ranks[k].get("bm25_rank"),
-                    **({"fused_rank": fused[k], "rerank_score": rerank.get(k)}
+        order = prefer_recent(order, {key: docs[key].metadata for key in order}, self.rrf_k)
+        best = order[:want]
+        return [Document(page_content=key, id=docs[key].id, metadata={
+                    **docs[key].metadata,
+                    "chunk_id": docs[key].metadata.get("chunk_id") or docs[key].id,
+                    "rank": n, "dense_rank": ranks[key].get("dense_rank"),
+                    "bm25_rank": ranks[key].get("bm25_rank"),
+                    **({"fused_rank": fused[key], "rerank_score": rerank.get(key)}
                        if self.reranker else {})})
-                for n, k in enumerate(best, 1)]
+                for n, key in enumerate(best, 1)]
 
 
 def _timestamp(meta):

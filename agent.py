@@ -1190,6 +1190,9 @@ def build_agent(role="public", collection=None, outline=True):
             return answer, trace, sources
         return answer + format_sources(sources), trace
 
+    # The same search without the agent (kb/services/retrieval.py: the public API's
+    # /search, the MCP server's search_knowledge), already scoped to the role.
+    run.retriever = retriever
     return run
 
 

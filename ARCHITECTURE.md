@@ -274,6 +274,73 @@ one to `eval_candidates`, a test-set candidate for `eval/golden`.
 
 ---
 
+## 💾 Chat history and sharing
+
+A chat is a tree of messages (`messages.parent_id`); the one shown is the path down
+to `conversations.active_leaf_id`. Editing a question or writing an answer again
+adds a **sibling** and moves the leaf there, so the old version stays one click
+away ("‹ 1 / 2 ›"). "Branch in new chat" copies the path into a new conversation.
+
+One rule covers every way an answer can be read again: `visible_to(role, message)`
+(`kb/services/conversations.py`) compares the reader's role **now** with the
+highest access level of everything the model read for that answer. It applies to
+the owner's own chat (after a demotion, or "view as public"), to search, to Copy,
+and to share links:
+
+- **Search** (`conversation_search`, SQLite FTS5) keeps each row's access level,
+  and the query only matches rows the searcher's role may read, so a withheld
+  answer's words can never find its chat.
+- **Share links** (`kb/services/shares.py`) store only the token's sha256, work
+  for the same workspace only, expire (never after retention) and can be revoked.
+  Each answer is checked against the **lowest** of the viewer's role, the sharer's
+  role now and the role it was shared as; one that fails is withheld whole, not
+  just its sources (chat.md D1), with "Ask it yourself".
+- **Retention**: `chat_settings.retention_days` per workspace (default a year,
+  D4); the nightly `chat_retention` job deletes older chats through the normal
+  delete, so feedback, links, search rows and the question log's text go too.
+  Answers promoted to `eval_candidates` are copies and stay (D2).
+
+---
+
+## 🔌 Public API, API keys and the MCP server
+
+Every surface asks through one service, `kb/services/answering.ask()`: the web
+chat, the public API and the MCP server get the same agent, guards, `[S#]`
+citations, `max_access` and question log (with `surface` web / api / mcp).
+
+```
+  browser session ──► /api/*   (the app's own API: changes with the site)
+  API key ──────────► /api/v1  (kb/routers/api_v1.py: the stable, public one)
+  personal API key ─► /mcp     (kb/mcp_server.py: MCP, Streamable HTTP, stateless)
+                         │
+                         └──► kb/api_auth.py ──► answering.ask() / retrieval.search()
+```
+
+- **Keys** (`api_keys_store.py`, table `api_keys`): `kb_live_<prefix>_<secret>`,
+  shown once, kept as a SHA-256 hash. A **personal** key acts as the member who
+  made it, with their role looked up on every call (`kb/api_auth.py`), so
+  demoting, turning off or removing them limits the key at once. A **service**
+  key (admins only) acts as a public user, never HR, and stops when its admin
+  is no longer one. Scopes: `ask`, `search`, `docs:read`, `docs:write` (HR /
+  Admin), `audit:read` (admins). Keys last 7, 30, 90 (default) or 365 days.
+- **Settings** (`api_settings`): the API and the MCP server on or off per
+  workspace, and which MCP tools agents get (`read_document` is off by default:
+  it returns whole documents). Admins set them on Access → API & MCP; everyone
+  manages their own keys on the API keys page (account menu).
+- **Limits and audit**: every key call is rate-limited per key and per workspace
+  (`RATE_LIMIT_API_KEY`, 60 / minute; `RATE_LIMIT_API_WORKSPACE`, 600), a
+  question also counts as one of its person's chat questions, and every call is
+  audited (`actor_type` api_key, `details.surface` api / mcp, the key's prefix;
+  a question by its length and outcome, never its text).
+- **OpenAPI**: `/api/v1/openapi.json` describes `/api/v1` only and is always on;
+  FastAPI's own `/docs` (the whole internal API) stays off in production.
+- **MCP auth** is a personal key as a bearer token, for headless clients and
+  the configs the API keys page shows (Claude Code, Claude Desktop through
+  `mcp-remote`, Cursor). OAuth 2.1 sign-in for MCP clients (the MCP
+  authorization spec, federating to this app's sign-in) is a follow-up.
+
+---
+
 ## 🗄️ Database migrations
 
 Accounts, sign-in providers, sessions and integrations live in one SQLite file,

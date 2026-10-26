@@ -73,7 +73,7 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
         max_access="restricted", latency_ms=None, tokens_in=None, tokens_out=None,
         model=None, at=None, tokens_cached=None):
     """Log one question. Text is stored as given: the caller has applied the mode.
-    tokens_cached: how many of tokens_in OpenAI's prompt cache served (migration 0008)."""
+    tokens_cached: how many of tokens_in OpenAI's prompt cache served (migration 0010)."""
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}")
     at = time.time() if at is None else at

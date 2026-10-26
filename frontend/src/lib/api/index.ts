@@ -1,6 +1,7 @@
 // The backend client, split by domain. Import from "@/lib/api": `api` and `signIn`
 // keep the shape they had when this was one file.
 
+import { apiKeysApi } from "@/lib/api/api-keys"
 import { auditApi } from "@/lib/api/audit"
 import { authApi } from "@/lib/api/auth"
 import { chatApi } from "@/lib/api/chat"
@@ -12,6 +13,7 @@ import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 
 export * from "@/lib/api/types"
 export type * from "@/lib/api/insights"
+export type * from "@/lib/api/api-keys"
 export {
   ApiError,
   session,
@@ -27,3 +29,6 @@ export const signIn = { ...signInSettingsApi, ...membersApi, ...auditApi }
 
 // Insights, the question log's settings, answer feedback and the test set.
 export const insights = insightsApi
+
+// API keys for the public API and the MCP server: one's own, and the workspace's (admin).
+export const apiKeys = apiKeysApi

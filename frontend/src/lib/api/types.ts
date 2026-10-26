@@ -441,6 +441,7 @@ export interface ChatReply {
   state: AnswerState
   standalone_question?: string | null // a follow-up as it was searched
   message_id?: string | null // saved in a conversation
+  followups?: string[] // up to 3 questions to ask next (kb/services/suggestions.py)
 }
 
 // Events from POST /api/chat/stream (kb/routers/chat.py chat_stream).
@@ -457,6 +458,7 @@ export type StreamEvent =
   | { type: "step_start"; id: string; tool: string; label: string }
   | { type: "step_end"; id: string; tool: string; result: string }
   | { type: "answer"; text: string; sources?: Source[] } // sources: when the cited ones change
+  | { type: "title"; id: string; title: string } // a new chat's title, from its first question
   | ({ type: "done" } & ChatReply)
   | { type: "error"; message: string; message_id?: string | null }
 
@@ -466,8 +468,72 @@ export interface ConversationSummary {
   title: string
   role_used: Role
   role_changed: boolean // viewed as another role now: the next question starts a new chat
+  pinned: boolean
+  folder_id: string | null
   created_at: number
   updated_at: number
+}
+
+export interface ChatFolder {
+  id: string
+  name: string
+  sort: number
+  created_at: number
+}
+
+export interface ConversationList {
+  conversations: ConversationSummary[]
+  folders: ChatFolder[]
+}
+
+// GET /api/conversations/search: one result per chat. The snippet marks each match
+// with \u0002 ... \u0003 (lib/chat-history.ts splitSnippet).
+export interface ChatSearchResult {
+  conversation_id: string
+  message_id: string | null // null: the title matched
+  title: string
+  snippet: string
+  updated_at: number
+}
+
+// PATCH /api/conversations/{id}: any of these.
+export interface ConversationEdit {
+  title?: string
+  pinned?: boolean
+  folder_id?: string | null
+  active_leaf_id?: string // show the branch through this message
+}
+
+// GET /api/chat-settings (everyone), PUT /api/admin/chat-settings (admins).
+export interface ChatSettings {
+  retention_days: number | null // null: kept until deleted
+  sharing_enabled: boolean
+  updated_by: string | null
+  updated_at: number | null
+  retention_choices: (number | null)[]
+}
+
+// A link to a chat or one answer (kb/routers/shares.py). token / url: only when made.
+export interface ShareLink {
+  id: string
+  kind: "chat" | "answer"
+  message_id: string | null
+  created_at: number
+  expires_at: number | null
+  token?: string
+  url?: string
+  restricted?: boolean // some answers are only for HR / Admin
+}
+
+// GET /api/shared/{token}: what the viewer may see of a link.
+export interface SharedChat {
+  kind: "chat" | "answer"
+  title: string
+  shared_by: string
+  created_at: number
+  expires_at: number | null
+  withheld: number // answers the viewer may not read
+  messages: (SavedMessage & { question?: string | null; copy?: string | null })[]
 }
 
 // One line of the steps panel ("Searching company docs · found 2 relevant documents").
@@ -506,10 +572,15 @@ export interface SavedMessage {
   trace?: Step[] // admins only
   standalone_question?: string | null
   feedback?: Feedback | null
+  followups?: string[]
+  // It and the other versions of it (edits of a question, answers written again),
+  // oldest first: "‹ 2 / 3 ›".
+  siblings?: string[]
 }
 
 export interface Conversation extends ConversationSummary {
   messages: SavedMessage[]
+  forked_from?: { conversation_id: string; title: string } | null // "Branch in new chat"
 }
 
 export interface IndexStatus {

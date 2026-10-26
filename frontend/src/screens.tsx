@@ -29,8 +29,14 @@ const IntegrationsView = lazy(() =>
 const InsightsView = lazy(() =>
   import("@/components/insights-view").then((m) => ({ default: m.InsightsView })),
 )
+const ApiKeysView = lazy(() =>
+  import("@/components/api-keys-view").then((m) => ({ default: m.ApiKeysView })),
+)
 const KnowledgeView = lazy(() =>
   import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
+)
+const SharedView = lazy(() =>
+  import("@/components/shared-view").then((m) => ({ default: m.SharedView })),
 )
 const LandingPage = lazy(() =>
   import("@/components/landing-page").then((m) => ({ default: m.LandingPage })),
@@ -164,11 +170,30 @@ export function DocsScreen() {
   )
 }
 
+export function ApiKeysScreen() {
+  return (
+    <Screen>
+      <ApiKeysView />
+    </Screen>
+  )
+}
+
 export function KnowledgeScreen() {
   const activeRole = useActiveRole()
   return (
     <Screen>
       <KnowledgeView key={activeRole} />
+    </Screen>
+  )
+}
+
+// /s/:token: a shared chat or answer, as the viewer's role may see it.
+export function SharedScreen() {
+  const { token = "" } = useParams()
+  const activeRole = useActiveRole()
+  return (
+    <Screen>
+      <SharedView key={`${activeRole}-${token}`} token={token} />
     </Screen>
   )
 }

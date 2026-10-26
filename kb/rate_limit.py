@@ -23,6 +23,10 @@ ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 # the environment, e.g. RATE_LIMIT_CHAT_USER=40, RATE_LIMIT_CHAT_WORKSPACE=600.
 USER_LIMITS = {"chat": (20, 300), "upload": (30, 120), "reindex": (5, 20), "sync": (5, 20),
                "invite": (10, 30)}
+# Calls with an API key (the public API and the MCP server, kb/api_auth.py), per
+# minute: (per key, all of a workspace's keys together). RATE_LIMIT_API_KEY,
+# RATE_LIMIT_API_WORKSPACE. A question also counts as one of its person's "chat".
+KEY_LIMITS = (60, 600)
 
 
 def rate_limits_on():
@@ -80,3 +84,17 @@ def user_limit(user, bucket):
            ((bucket, "workspace", ws_of(user)), per_workspace,
             f"Your workspace has {did(per_workspace)} in the last minute, the most it can. "
             "Try again in {wait} second{s}.")])
+
+
+def key_limit(key_id, workspace):
+    """Per API key and per workspace limits (KEY_LIMITS) on calls made with keys."""
+    if not rate_limits_on():
+        return
+    per_key, per_workspace = (env_int(f"RATE_LIMIT_API_{who}", default)
+                              for who, default in zip(("KEY", "WORKSPACE"), KEY_LIMITS))
+    _take([(("api", "key", key_id), per_key,
+            f"This API key has made {per_key} calls in the last minute, the most one key can. "
+            "Try again in {wait} second{s}."),
+           (("api", "workspace", workspace), per_workspace,
+            f"Your workspace's API keys have made {per_workspace} calls in the last minute, "
+            "the most they can. Try again in {wait} second{s}.")])

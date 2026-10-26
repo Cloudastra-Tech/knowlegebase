@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner"
 
 import { ActivityView } from "@/components/activity-view"
+import { ApiAccessView } from "@/components/api-access-view"
 import { MembersView } from "@/components/members-view"
 import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
@@ -1180,7 +1181,7 @@ function Provisioning({
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export type AccessTab = "sign-in" | "members" | "activity"
+export type AccessTab = "sign-in" | "members" | "activity" | "api"
 
 // The Activity tab's "Sign-ins": the same events as the sign-in settings show.
 function SignInActivity() {
@@ -1220,6 +1221,7 @@ export function SignInView({
             <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
+            <TabsTrigger value="api">API &amp; MCP</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -1228,6 +1230,8 @@ export function SignInView({
           <SignInSettingsView workspace={workspace} onOpenIntegrations={onOpenIntegrations} />
         ) : tab === "members" ? (
           <MembersView me={me} />
+        ) : tab === "api" ? (
+          <ApiAccessView />
         ) : (
           <ActivityView signIns={<SignInActivity />} />
         )}

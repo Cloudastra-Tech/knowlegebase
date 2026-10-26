@@ -14,15 +14,16 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import conversations_store
-from agent import Cancelled
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
-from kb.services import agents, conversations, indexing, passages, question_log
+from kb.services import answering, conversations, indexing, passages, suggestions
+from kb.services.answering import Cancelled
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
 
 STEP_PREVIEW_CHARS = 600
+TITLE_WAIT = 5                  # seconds an answer waits, at most, for its chat's title
 
 
 class ChatIn(BaseModel):
@@ -32,6 +33,8 @@ class ChatIn(BaseModel):
 class StreamIn(ChatIn):
     conversation_id: str | None = None   # saved in it, with its history; None: a one-off
     retry_of: str | None = None          # ask the question of this failed answer again
+    regenerate_of: str | None = None     # a new answer beside this finished one
+    edit_of: str | None = None           # `question` replaces this earlier question
 
 
 @router.post("/api/chat")
@@ -40,22 +43,15 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     if not question:
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
-    ws = ws_of(user)
-    out = {}
-    # No waiting for re-indexing: it changes the index document by document, or
-    # builds a new one beside it (services/indexing.py).
     try:
-        answer, trace, sources = question_log.tracked(agents.get_agent(ws, role), ws, user, role,
-                                                      "api")(question, with_sources=True, out=out)
-    except Exception as e:
+        # Logged as "api": this one-shot endpoint isn't what the site uses.
+        done = answering.ask(ws_of(user), user, role, question, surface="api")
+    except answering.Failed as e:
         # OpenAI down, a bad key, ...: say so plainly instead of a bare 500.
-        log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
-                      ws, role, len(question))
-        raise HTTPException(502, f"The assistant couldn't answer just now ({type(e).__name__}). "
+        raise HTTPException(502, f"The assistant couldn't answer just now ({e.kind}). "
                                  "Please try again in a moment.")
-    answer_state, sources, _ = conversations.outcome(answer, trace, sources, out)
-    return {"answer": answer, "sources": sources, "state": answer_state,
-            "steps": _steps(trace, user["role"] == "admin")}
+    return {"answer": done.answer, "sources": done.sources, "state": done.state,
+            "steps": _steps(done.trace, user["role"] == "admin")}
 
 
 @router.get("/api/passages/{chunk_id}")
@@ -93,15 +89,19 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
          step_end    {"id", "tool", "result"}       e.g. "found 2 relevant documents"
          answer      {"text", "sources"?}           the answer so far (PII already masked,
                                                     [S#] checked); sources when they change
+         title       {"id", "title"}                a new chat's title, from its first
+                                                    question (saved conversations only)
          done        {"answer", "sources", "steps", "state", "standalone_question",
-                      "message_id"}                 the final, checked answer
+                      "message_id", "followups"}    the final, checked answer
          error       {"message", "message_id"}
     With a conversation_id the question and its answer are saved there, and the
-    conversation so far is the history it's answered with. If the browser goes
-    away mid-answer (or the Stop button), the agent is told to stop and what was
-    written so far is saved as a stopped answer."""
+    conversation so far is the history it's answered with. retry_of, regenerate_of
+    and edit_of ask again in a new branch (conversations.start_turn). If the
+    browser goes away mid-answer (or the Stop button), the agent is told to stop
+    and what was written so far is saved as a stopped answer."""
     question = body.question.strip()
-    if not body.conversation_id and (body.retry_of or not question):
+    again = body.retry_of or body.regenerate_of or body.edit_of
+    if not body.conversation_id and (again or not question):
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
     ws = ws_of(user)
@@ -110,9 +110,18 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
     turn = None
     if body.conversation_id:
         turn = await run_in_threadpool(conversations.start_turn, ws, user["username"], role,
-                                       body.conversation_id, question, body.retry_of)
+                                       body.conversation_id, question, body.retry_of,
+                                       body.regenerate_of, body.edit_of)
         question = turn["question"]
     history_access = turn["history_access"] if turn else "public"
+    # A new chat's title, written beside the answer (one small model call at most).
+    title = {}
+    titling = None
+    if turn and turn["first_question"]:
+        def make_title():
+            title["text"] = suggestions.chat_title(question)
+        titling = threading.Thread(target=make_title, daemon=True)
+        titling.start()
 
     loop = asyncio.get_running_loop()
     events = asyncio.Queue()
@@ -151,34 +160,47 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
 
     started = time.monotonic()
 
+    def put_title():
+        """Save a new chat's title once it's written (waiting a little for it)."""
+        if not titling:
+            return
+        titling.join(TITLE_WAIT)
+        text = title.get("text")
+        try:
+            if text and conversations_store.set_auto_title(turn["conversation"]["id"], text):
+                put({"type": "title", "id": turn["conversation"]["id"], "title": text})
+        except Exception:
+            log.exception("Chat: couldn't save a chat's title in workspace %s", ws)
+
     def work():
         out = {}
 
         def standalone():                          # only when it differs from the question
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
-            answer, trace, sources = question_log.tracked(agents.get_agent(ws, role), ws, user,
-                                                          role, "web", turn)(
-                question, with_sources=True, on_event=on_event, cancel=stop,
-                history=turn["history"] if turn else None, out=out)
-            answer_state, sources, access = conversations.outcome(answer, trace, sources, out,
-                                                                  history_access)
-            save(answer, answer_state, out, sources=sources, trace=_steps(trace),
-                 max_access=access, standalone_question=standalone())
-            put({"type": "done", "answer": answer, "sources": sources,
-                 "steps": _steps(trace, admin), "state": answer_state,
-                 "standalone_question": standalone(),
+            done = answering.ask(ws, user, role, question, surface="web", turn=turn,
+                                 on_event=on_event, cancel=stop, out=out)
+            followups = suggestions.followups(question, done.answer, done.state, done.sources)
+            save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
+                 max_access=done.max_access, standalone_question=done.standalone,
+                 followups=followups)
+            put_title()
+            put({"type": "done", "answer": done.answer, "sources": done.sources,
+                 "steps": _steps(done.trace, admin), "state": done.state,
+                 "standalone_question": done.standalone, "followups": followups,
                  "message_id": turn["message_id"] if turn else None})
         except Cancelled:                          # nobody is listening any more
             # What was shown, with the passages its markers cite so far.
             save(seen["text"], "stopped", out, sources=out.get("sources") or [],
                  standalone_question=standalone())
+            put_title()
         except Exception as e:                     # show it in the chat, keep serving
-            # Not the question itself: it's tenant data (its length helps spot limits).
-            log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
-                          ws, role, len(question))
-            message = f"Something went wrong: {type(e).__name__}"
+            if not isinstance(e, answering.Failed):  # ask() logs its own failures
+                log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
+                              ws, role, len(question))
+            message = f"Something went wrong: {getattr(e, 'kind', type(e).__name__)}"
             save(message, "error", out)
+            put_title()
             put({"type": "error", "message": message,
                  "message_id": turn["message_id"] if turn else None})
         finally:
