@@ -45,6 +45,8 @@ OPENAI_API_KEY=sk-REPLACE_ME
 # Optional — only if using the Outline wiki tools:
 OUTLINE_URL=https://app.cloudastra.co
 OUTLINE_API_TOKEN=
+OUTLINE_MIN_ROLE=public       # who gets the wiki: public (everyone) or hr (HR / Admin only)
+OUTLINE_COLLECTIONS=          # optional comma-separated collection ids; blank = all the token sees
 CF_ACCESS_CLIENT_ID=
 CF_ACCESS_CLIENT_SECRET=
 EOF

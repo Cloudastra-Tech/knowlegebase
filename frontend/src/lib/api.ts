@@ -212,8 +212,12 @@ export interface Integration {
   connected_by?: string | null
   last_sync_at?: number | null
   last_error?: string | null
+  access?: ConnectorAccess // who may ask about a connection's synced files
   folders?: DriveFolder[]
 }
+
+// "restricted": HR and admins only (the default). "everyone": the whole workspace.
+export type ConnectorAccess = "restricted" | "everyone"
 
 // Something picked to sync from Google Drive: a folder, a Shared Drive or one file.
 export interface DriveFolder {
@@ -549,6 +553,11 @@ export const api = {
     request<{ ok: boolean }>(`/integrations/${provider}/sync`, { method: "POST" }),
   disconnectIntegration: (provider: string) =>
     request<{ ok: boolean }>(`/integrations/${provider}`, { method: "DELETE" }),
+  setIntegrationAccess: (provider: string, access: ConnectorAccess) =>
+    request<{ access: ConnectorAccess }>(`/integrations/${provider}/access`, {
+      method: "PUT",
+      body: JSON.stringify({ access }),
+    }),
   connectDrive: () => api.connectIntegration("google_drive"),
   syncDrive: () => api.syncIntegration("google_drive"),
   driveFolders: (parent?: string) =>
