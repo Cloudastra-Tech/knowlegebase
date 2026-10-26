@@ -75,21 +75,29 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
   const general = source.kind === "general_knowledge"
   const isWiki = source.provider.toLowerCase().includes("outline")
   const Icon = general ? Globe : isWiki ? BookOpen : FileText
+  const label = general ? `General knowledge · ${source.provider}` : source.provider
   const body = (
     <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted/60">
       <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium">
         {index}
       </span>
       <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate font-medium">{source.title}</span>
-      <Badge variant={general ? "outline" : "secondary"} className="shrink-0">
-        {general ? `General knowledge · ${source.provider}` : source.provider}
+      {/* On a phone the provider goes under the title, so the title keeps the width. */}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{source.title}</span>
+        <span className="block truncate text-xs text-muted-foreground sm:hidden">{label}</span>
+      </span>
+      <Badge
+        variant={general ? "outline" : "secondary"}
+        className="hidden max-w-[45%] sm:inline-flex"
+      >
+        <span className="truncate">{label}</span>
       </Badge>
       {source.url && <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />}
     </div>
   )
   return source.url ? (
-    <a href={source.url} target="_blank" rel="noreferrer">
+    <a href={source.url} target="_blank" rel="noreferrer" className="min-w-0">
       {body}
     </a>
   ) : (
@@ -500,7 +508,7 @@ export function AssistantMessage({ message, actions }: { message: Message; actio
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Sources
             </p>
-            <div className="grid gap-2">
+            <div className="grid min-w-0 grid-cols-1 gap-2">
               {sources.map((s, i) => (
                 <SourceCard key={`${s.provider}-${s.title}`} source={s} index={i + 1} />
               ))}

@@ -178,6 +178,8 @@ export function ChatView({ role }: { role: Role }) {
         update((m) => ({ ...m, id: e.message_id }))
         change((s) => ({
           ...s,
+          // A new chat takes its first question as its title.
+          conversation: s.conversation && { ...s.conversation, title: e.title ?? s.conversation.title },
           messages: s.messages.map((m) =>
             m.key === questionKey ? { ...m, id: e.user_message_id } : m,
           ),
@@ -418,7 +420,7 @@ function ChatHeader({
       <p className="min-w-0 flex-1 truncate text-sm font-medium">{conversation?.title ?? ""}</p>
       <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="text-muted-foreground">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" aria-label="History">
             <History />
             <span className="hidden sm:inline">History</span>
           </Button>
@@ -441,6 +443,7 @@ function ChatHeader({
         variant="ghost"
         size="sm"
         className="text-muted-foreground"
+        aria-label="New chat"
         onClick={() => onOpen("/chat")}
       >
         <SquarePen />

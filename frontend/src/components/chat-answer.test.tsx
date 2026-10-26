@@ -101,7 +101,8 @@ describe("answer states", () => {
       ],
     })
     expect(screen.getByText("General knowledge, not from your documents")).toBeInTheDocument()
-    expect(screen.getByText("General knowledge · Wikipedia")).toBeInTheDocument()
+    // Under the title on phones, as a badge from sm.
+    expect(screen.getAllByText("General knowledge · Wikipedia")).toHaveLength(2)
   })
 
   it("hides an answer the viewer's role can't see any more", () => {
