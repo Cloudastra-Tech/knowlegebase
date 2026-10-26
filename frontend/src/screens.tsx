@@ -152,16 +152,23 @@ export function KnowledgeScreen() {
 
 const CONNECT_ERRORS: Record<string, string> = {
   access_denied: "Access was not granted.",
+  consent_denied: "Access was not granted, so nothing was connected.",
+  cancelled: "Connecting was cancelled.",
   expired: "The connection request expired. Please try again.",
+  no_refresh_token:
+    "The provider didn't allow access while you're away. Remove the app's access in your account settings, then connect again.",
   connect_failed: "Couldn't finish connecting. Please try again.",
 }
+const CONNECTOR_NAMES: Record<string, string> = { google_drive: "Google Drive", notion: "Notion" }
 
-// Back from Google's / Notion's consent screen: /integrations?connected=... or ?error=...
+// Back from a provider's consent screen: /integrations?connected=... or ?error=...
 export function IntegrationsScreen() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
-  // The picker opens by itself only on arrival from Google.
-  const [openDrivePicker] = useState(() => !!params.get("connected") && params.get("choose") === "1")
+  // The picker opens by itself only on arrival from a provider, when nothing is picked yet.
+  const [openPickerFor] = useState(() =>
+    params.get("choose") === "1" ? params.get("connected") : null,
+  )
   const shown = useRef(false)
 
   useEffect(() => {
@@ -171,10 +178,10 @@ export function IntegrationsScreen() {
     const error = params.get("error")
     if (!connected && !error) return
     if (connected) {
-      const name = connected === "notion" ? "Notion" : "Google Drive"
+      const name = CONNECTOR_NAMES[connected] ?? "The integration"
       toast.success(
         params.get("choose") === "1"
-          ? `${name} connected. Now choose which folders or files to sync.`
+          ? `${name} connected. Now choose what to sync.`
           : `${name} connected. Syncing…`,
       )
     }
@@ -186,7 +193,7 @@ export function IntegrationsScreen() {
     <Screen>
       <IntegrationsView
         onOpenDocuments={() => navigate("/documents")}
-        openDrivePicker={openDrivePicker}
+        openPickerFor={openPickerFor}
       />
     </Screen>
   )

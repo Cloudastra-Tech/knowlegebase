@@ -14,6 +14,11 @@ list it in .env:
     SSO_ALLOW_PRIVATE_HOSTS=localhost:8180
 Listed host:port pairs may also use plain http.
 
+Connectors whose address an admin types in (an Outline server, a website to
+crawl) are checked the same way with check_connector(), against their OWN
+list, CONNECTOR_ALLOW_PRIVATE_HOSTS (for a test site on this machine), so
+opening sign-in to a local IdP never opens the crawler to localhost.
+
 The check runs when the settings are saved and again on every request
 (an httpx event hook), since a host's DNS can change after it was saved.
 httpx looks the host up again to connect, so a DNS server that answers
@@ -36,12 +41,15 @@ class UnsafeURL(ValueError):
     """The address isn't one the server may call. The message says why."""
 
 
-def _allowed_private():
-    return {h.strip().lower() for h in os.getenv("SSO_ALLOW_PRIVATE_HOSTS", "").split(",")
-            if h.strip()}
+SSO_ALLOW = "SSO_ALLOW_PRIVATE_HOSTS"
+CONNECTOR_ALLOW = "CONNECTOR_ALLOW_PRIVATE_HOSTS"
 
 
-def _parse(url):
+def _allowed_private(env=SSO_ALLOW):
+    return {h.strip().lower() for h in os.getenv(env, "").split(",") if h.strip()}
+
+
+def _parse(url, env=SSO_ALLOW):
     """(host, port, allowed_private) for a URL, or UnsafeURL."""
     try:
         parts = urlsplit(url)
@@ -51,13 +59,13 @@ def _parse(url):
     host = (parts.hostname or "").lower()
     if not host or parts.username or parts.password:
         raise UnsafeURL("That isn't a valid web address.")
-    allowed = f"{host}:{port}" in _allowed_private()
+    allowed = f"{host}:{port}" in _allowed_private(env)
     if parts.scheme != "https" and not (allowed and parts.scheme == "http"):
         raise UnsafeURL("The address must start with https://.")
     return host, port, allowed
 
 
-def _check_addresses(host, infos):
+def _check_addresses(host, infos, who="sign-in"):
     if not infos:
         raise UnsafeURL(f"{host} can't be found.")
     for info in infos:
@@ -66,7 +74,7 @@ def _check_addresses(host, infos):
             ip = ip.ipv4_mapped
         if not ip.is_global or any(ip in net for net in _NAT64):
             raise UnsafeURL(f"{host} points to a private network address, "
-                            "which sign-in can't use.")
+                            f"which {who} can't use.")
 
 
 def require_https(url):
@@ -82,11 +90,17 @@ def _resolve(host, port):
         raise UnsafeURL(f"{host} can't be found.") from None
 
 
-def check(url):
+def check(url, allow_env=SSO_ALLOW):
     """Raise UnsafeURL unless the server may call `url`."""
-    host, port, allowed = _parse(url)
+    host, port, allowed = _parse(url, allow_env)
     if not allowed:
-        _check_addresses(host, _resolve(host, port))
+        _check_addresses(host, _resolve(host, port),
+                         "connectors" if allow_env == CONNECTOR_ALLOW else "sign-in")
+
+
+def check_connector(url):
+    """check() for an address a connector calls (CONNECTOR_ALLOW_PRIVATE_HOSTS)."""
+    check(url, CONNECTOR_ALLOW)
 
 
 async def check_async(url):

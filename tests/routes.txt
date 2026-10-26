@@ -23,8 +23,10 @@ GET    /api/health health_check -
 GET    /api/health/ready ready_check -
 GET    /api/index/status index_status current_user
 GET    /api/integrations list_integrations current_user,current_role
-GET    /api/integrations/google_drive/folders drive_folders require_hr
+GET    /api/integrations/catalog integrations_catalog -
 GET    /api/integrations/{provider}/callback integration_callback -
+GET    /api/integrations/{provider}/containers integration_containers require_hr
+GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role
 PATCH  /api/admin/members/{username} edit_member require_admin
 PATCH  /api/admin/sign-in/connections/{cid} edit_connection require_admin
@@ -46,11 +48,12 @@ POST   /api/chat/stream chat_stream current_user,current_role
 POST   /api/docs create_doc require_hr
 POST   /api/docs/upload upload_docs require_hr
 POST   /api/integrations/{provider}/connect integration_connect require_hr
+POST   /api/integrations/{provider}/setup integration_setup require_hr
 POST   /api/integrations/{provider}/sync integration_sync require_hr
 POST   /api/reindex reindex require_hr
 PUT    /api/admin/sign-in/connections/{cid}/roles set_group_roles require_admin
 PUT    /api/admin/sign-in/group-admin-days set_group_admin_days require_admin
 PUT    /api/admin/sign-in/policy set_policy require_admin
 PUT    /api/docs/{access}/{name} save_doc require_hr
-PUT    /api/integrations/google_drive/folders drive_set_folders require_hr
 PUT    /api/integrations/{provider}/access integration_access require_hr
+PUT    /api/integrations/{provider}/containers integration_set_containers require_hr

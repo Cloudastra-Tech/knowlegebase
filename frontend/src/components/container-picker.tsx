@@ -1,0 +1,461 @@
+import { useEffect, useState } from "react"
+import { toast } from "sonner"
+import {
+  BookOpen,
+  ChevronRight,
+  FileSpreadsheet,
+  FileText,
+  FileType,
+  Folder,
+  Globe,
+  HardDrive,
+  Loader2,
+  Plus,
+  Search,
+  X,
+} from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { api, type Container, type Integration } from "@/lib/api"
+
+const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
+
+export function ContainerIcon({ item, className = "size-4" }: { item: Container; className?: string }) {
+  const cls = `${className} shrink-0 text-muted-foreground`
+  if (item.kind === "drive") return <HardDrive className={cls} />
+  if (item.kind === "folder") return <Folder className={cls} />
+  if (item.kind === "collection") return <BookOpen className={cls} />
+  if (item.kind === "url") return <Globe className={cls} />
+  if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
+  if (item.mimeType === "application/pdf") return <FileType className={cls} />
+  return <FileText className={cls} />
+}
+
+// What the dialog says for each connector's picker.
+const COPY: Record<string, { title: string; description: string; root: string; empty: string }> = {
+  google_drive: {
+    title: "Choose what to sync",
+    description:
+      "Tick whole folders (sub-folders and new files included) or single files. Only what you pick is synced.",
+    root: "My Drive",
+    empty: "No folders or supported files here.",
+  },
+  notion: {
+    title: "Choose pages to sync",
+    description:
+      "Tick the pages to sync; their sub-pages come with them. With none ticked, every page shared with the integration is synced.",
+    root: "Shared pages",
+    empty: "No pages are shared with the integration yet. Share some in Notion first.",
+  },
+  outline: {
+    title: "Choose collections to sync",
+    description: "Tick the wiki collections to sync. Nothing is synced until you pick one.",
+    root: "Collections",
+    empty: "No collections this token can read.",
+  },
+}
+
+const copyFor = (item: Integration) =>
+  COPY[item.id] ?? {
+    title: `Choose what to sync from ${item.name}`,
+    description: "Tick what should be searchable.",
+    root: item.name,
+    empty: "Nothing to pick here.",
+  }
+
+// Pick what a connection syncs: a folder tree (Drive), a list (Notion pages,
+// Outline collections) or a list of addresses (a website). One dialog for all.
+export function ContainerPicker({
+  item,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  item: Integration
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  if (item.picker === "urls")
+    return <UrlPicker item={item} open={open} onOpenChange={onOpenChange} onSaved={onSaved} />
+  return <TreePicker item={item} open={open} onOpenChange={onOpenChange} onSaved={onSaved} />
+}
+
+function TreePicker({
+  item,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  item: Integration
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  const initial = item.containers ?? []
+  const tree = item.picker === "tree"
+  const copy = copyFor(item)
+  const [path, setPath] = useState<Container[]>([]) // breadcrumb; [] = top level
+  // What's inside the level being shown, tagged with its parent so a stale
+  // listing never shows while the next one loads (null = loading).
+  const [listing, setListing] = useState<{ parent?: string; items: Container[] } | null>(null)
+  const [selected, setSelected] = useState<Container[]>(initial)
+  const [filter, setFilter] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  // Each time the dialog opens: start from the saved picks, at the top level.
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setSelected(initial)
+      setPath([])
+      setListing(null)
+      setFilter("")
+    }
+  }
+
+  const parent = path.at(-1)?.id
+  const items = listing && listing.parent === parent ? listing.items : null
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    api
+      .integrationContainers(item.id, parent)
+      .then(({ items }) => !cancelled && setListing({ parent, items }))
+      .catch((err) => {
+        toast.error(errorText(err))
+        if (!cancelled) setListing({ parent, items: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, parent, item.id])
+
+  const isPicked = (f: Container) => selected.some((s) => s.id === f.id)
+  // Already covered because a folder above it in the breadcrumb is picked.
+  const coveredByParent = path.some((p) => selected.some((s) => s.id === p.id))
+  const shown = (items ?? []).filter(
+    (f) => !filter || f.name.toLowerCase().includes(filter.toLowerCase()),
+  )
+
+  function toggle(f: Container) {
+    setSelected((cur) => (isPicked(f) ? cur.filter((s) => s.id !== f.id) : [...cur, f]))
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.setIntegrationContainers(item.id, selected)
+      toast.success(
+        selected.length
+          ? `Syncing ${selected.length} item${selected.length === 1 ? "" : "s"}…`
+          : item.picker_required
+            ? `Nothing selected. ${item.name} items were removed from search.`
+            : `Syncing everything shared with ${item.name}…`,
+      )
+      onSaved()
+      onOpenChange(false)
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
+        </DialogHeader>
+
+        {tree ? (
+          <div className="flex flex-wrap items-center gap-1 text-sm">
+            <Button variant="ghost" size="xs" onClick={() => setPath([])}>
+              {copy.root}
+            </Button>
+            {path.map((p, i) => (
+              <span key={p.id} className="flex items-center gap-1">
+                <ChevronRight className="size-3.5 text-muted-foreground" />
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="max-w-40"
+                  onClick={() => setPath(path.slice(0, i + 1))}
+                >
+                  <span className="truncate">{p.name}</span>
+                </Button>
+              </span>
+            ))}
+          </div>
+        ) : (
+          (items?.length ?? 0) > 8 && (
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter"
+                aria-label="Filter"
+                className="pl-8"
+              />
+            </div>
+          )
+        )}
+
+        <div className="h-72 overflow-y-auto rounded-xl border">
+          {items === null ? (
+            <div className="space-y-2 p-3">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-2/3" />
+            </div>
+          ) : shown.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">{copy.empty}</p>
+          ) : (
+            shown.map((f) => (
+              <div
+                key={f.id}
+                className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0 hover:bg-muted/50"
+              >
+                <Checkbox
+                  id={`pick-${f.id}`}
+                  checked={coveredByParent || isPicked(f)}
+                  disabled={coveredByParent}
+                  onCheckedChange={() => toggle(f)}
+                  aria-label={`Sync ${f.name}`}
+                />
+                <ContainerIcon item={f} />
+                {tree && f.has_children ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPath([...path, f])}
+                    className="h-auto min-w-0 flex-1 justify-between px-1 py-0.5 font-normal"
+                    title="Open folder"
+                  >
+                    <span className="truncate">
+                      {f.name}
+                      {f.kind === "drive" && (
+                        <span className="ml-1.5 text-xs text-muted-foreground">Shared Drive</span>
+                      )}
+                    </span>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                ) : (
+                  <label
+                    htmlFor={`pick-${f.id}`}
+                    className="min-w-0 flex-1 cursor-pointer truncate text-sm"
+                  >
+                    {f.name}
+                  </label>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        <PickedChips selected={selected} onRemove={toggle} required={!!item.picker_required} />
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Loader2 className="animate-spin" />}
+            Save and sync
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PickedChips({
+  selected,
+  onRemove,
+  required,
+}: {
+  selected: Container[]
+  onRemove: (c: Container) => void
+  required: boolean
+}) {
+  return (
+    <div className="min-h-8">
+      {selected.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {required ? "Nothing selected: nothing will be synced." : "Nothing selected: everything shared is synced."}
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((s) => (
+            <span
+              key={s.id}
+              className="flex max-w-60 items-center gap-1 rounded-full bg-muted py-1 pr-1 pl-2 text-xs"
+            >
+              <ContainerIcon item={s} className="size-3" />
+              <span className="truncate">{s.name}</span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="size-5 rounded-full"
+                onClick={() => onRemove(s)}
+                aria-label={`Remove ${s.name}`}
+              >
+                <X className="size-3" />
+              </Button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// A website: the addresses to start from (pages or sitemaps) and how far to go.
+function UrlPicker({
+  item,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  item: Integration
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  const [urls, setUrls] = useState<string[]>([])
+  const [maxPages, setMaxPages] = useState("")
+  const [maxDepth, setMaxDepth] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      const saved = (item.containers ?? []).map((c) => c.id)
+      setUrls(saved.length ? saved : [""])
+      setMaxPages(String(item.limits?.max_pages ?? 200))
+      setMaxDepth(String(item.limits?.max_depth ?? 3))
+    }
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const picked = urls.map((u) => u.trim()).filter(Boolean)
+      await api.setIntegrationContainers(
+        item.id,
+        picked.map((u) => ({ id: u, name: u, kind: "url" })),
+        { max_pages: Number(maxPages) || undefined, max_depth: Number(maxDepth) || undefined },
+      )
+      toast.success(picked.length ? "Saved. Crawling…" : "No addresses: the site's pages were removed from search.")
+      onSaved()
+      onOpenChange(false)
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <form onSubmit={save} className="grid gap-4">
+          <DialogHeader>
+            <DialogTitle>Pages to crawl</DialogTitle>
+            <DialogDescription>
+              Start addresses (a page, or a sitemap ending in .xml). Only pages on the same site
+              are followed, and robots.txt is obeyed.
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup className="gap-3">
+            {urls.map((u, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Input
+                  value={u}
+                  onChange={(e) => setUrls(urls.map((x, j) => (j === i ? e.target.value : x)))}
+                  placeholder="https://docs.example.com"
+                  aria-label={`Start address ${i + 1}`}
+                  inputMode="url"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setUrls(urls.filter((_, j) => j !== i))}
+                  aria-label={`Remove start address ${i + 1}`}
+                >
+                  <X />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              onClick={() => setUrls([...urls, ""])}
+              disabled={urls.length >= 20}
+            >
+              <Plus /> Add an address
+            </Button>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor="crawl-max-pages">Most pages</FieldLabel>
+                <Input
+                  id="crawl-max-pages"
+                  type="number"
+                  min={1}
+                  max={2000}
+                  value={maxPages}
+                  onChange={(e) => setMaxPages(e.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="crawl-max-depth">Links deep</FieldLabel>
+                <Input
+                  id="crawl-max-depth"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={maxDepth}
+                  onChange={(e) => setMaxDepth(e.target.value)}
+                />
+              </Field>
+            </div>
+            <FieldDescription>
+              A crawl stops at the page limit and says so; nothing is removed after a crawl that
+              stopped early.
+            </FieldDescription>
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 className="animate-spin" />}
+              Save and crawl
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}

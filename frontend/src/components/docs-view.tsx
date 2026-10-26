@@ -248,8 +248,9 @@ function UploadDialog({
           <DialogHeader>
             <DialogTitle>Upload files</DialogTitle>
             <DialogDescription>
-              TXT or PDF{limits ? `, up to ${limits.file_mb} MB each` : ""}. A file with the
-              same name is replaced.
+              Text, PDF, Word, PowerPoint, Excel, Markdown or HTML
+              {limits ? `, up to ${limits.file_mb} MB each` : ""}. A file with the same name is
+              replaced.
             </DialogDescription>
           </DialogHeader>
           <button
@@ -270,7 +271,7 @@ function UploadDialog({
           <input
             ref={inputRef}
             type="file"
-            accept=".txt,.pdf"
+            accept=".txt,.pdf,.md,.html,.docx,.pptx,.xlsx"
             multiple
             hidden
             onChange={(e) => pick(Array.from(e.target.files ?? []))}
@@ -410,8 +411,8 @@ function DocEditor({
         {!isText ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             <FileText className="size-8" />
-            PDFs can't be edited here. Download it, change it, then upload it again with the
-            same name to replace it.
+            Only text files can be edited here. Download it, change it, then upload it again
+            with the same name to replace it.
           </div>
         ) : loading ? (
           <div className="space-y-2">

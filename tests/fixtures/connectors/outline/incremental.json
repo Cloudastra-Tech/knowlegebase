@@ -1,0 +1,18 @@
+{
+ "hosts": {"wiki.example.com": "93.184.216.34"},
+ "exchanges": [
+  {"request": {"method": "POST", "url": "https://wiki.example.com/api/documents.list",
+               "json": {"collectionId": "col-eng", "sort": "updatedAt", "direction": "DESC"}},
+   "response": {"status": 200, "json": {"data": [
+    {"id": "doc-3", "title": "Incident review", "text": "Write it within 48 hours.",
+     "url": "/doc/incident-review-GhI789", "updatedAt": "2026-10-26T09:00:00.000Z",
+     "collectionId": "col-eng", "parentDocumentId": null},
+    {"id": "doc-1", "title": "Deploys", "text": "# Deploys\n\nWe deploy on **Tuesdays**.",
+     "url": "/doc/deploys-AbC123", "updatedAt": "2026-10-20T10:00:00.000Z",
+     "collectionId": "col-eng", "parentDocumentId": null},
+    {"id": "doc-2", "title": "On-call", "text": "Page the on-call engineer via the rota.",
+     "url": "/doc/on-call-DeF456", "updatedAt": "2026-10-01T10:00:00.000Z",
+     "collectionId": "col-eng", "parentDocumentId": "doc-1"}
+   ], "pagination": {"limit": 100, "offset": 0}, "ok": true}}}
+ ]
+}

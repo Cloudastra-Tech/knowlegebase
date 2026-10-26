@@ -12,6 +12,12 @@ export const queries = {
   knowledge: () => queryOptions({ queryKey: ["knowledge", session.role], queryFn: api.knowledge }),
   docs: () => queryOptions({ queryKey: ["docs"], queryFn: api.listDocs }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
+  // One connection's sync history and skipped items (the history sheet).
+  integrationRuns: (provider: string) =>
+    queryOptions({
+      queryKey: ["integrations", provider, "runs"],
+      queryFn: () => api.integrationRuns(provider),
+    }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.

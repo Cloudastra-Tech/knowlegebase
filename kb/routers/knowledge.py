@@ -1,6 +1,5 @@
 """What the assistant can search, as the Knowledge page lists it."""
 
-import json
 import logging
 import os
 
@@ -9,7 +8,9 @@ from fastapi import APIRouter, Depends
 import docs_store
 import ingest
 import integrations_store
+import sync_store
 import workspaces
+from connectors import registry
 from kb.deps import current_role, current_user, ws_of
 from kb.services import agents, indexing
 
@@ -24,6 +25,7 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
     Public users only see public items (like search itself)."""
     ws = ws_of(user)
     root = workspaces.docs_root(ws)
+    sync_store.import_manifests(ws)
 
     # Chunks per file in the index (by file path), straight from Chroma.
     chunks = {}
@@ -49,25 +51,22 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
                       "url": None, "modified": os.path.getmtime(d["path"]),
                       "size": d["size"], "chunks": indexed(d["path"])})
 
+    # Synced files: what source_items says each connector folder holds.
     levels = integrations_store.chunk_access_levels(ws)
     connectors_dir = os.path.join(root, "connectors")
     for provider in sorted(os.listdir(connectors_dir)) if os.path.isdir(connectors_dir) else []:
         folder = os.path.join(connectors_dir, provider)
-        try:
-            with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
-                manifest = json.load(f)
-        except (OSError, ValueError):
-            continue
         access = levels.get(provider, "restricted")       # as ingest.py tags them
         if role != "hr" and access == "restricted":
             continue
-        for name, info in manifest.items():
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path):
+        for item in sync_store.items(ws, provider).values():
+            name = item.get("file_name")
+            path = os.path.join(folder, name) if name else None
+            if not path or not os.path.isfile(path):
                 continue
-            items.append({"title": info.get("title") or name,
-                          "source": info.get("provider") or provider, "access": access,
-                          "url": info.get("url"), "modified": info.get("modified"),
+            items.append({"title": item.get("title") or name,
+                          "source": registry.label(provider), "access": access,
+                          "url": item.get("url"), "modified": item.get("modified"),
                           "size": os.path.getsize(path), "chunks": indexed(path)})
 
     items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))

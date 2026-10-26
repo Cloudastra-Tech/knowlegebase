@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
-  BookOpen,
   FileText,
   FolderCog,
   Globe,
+  History,
   Loader2,
   Lock,
+  Plug,
   RefreshCw,
   TriangleAlert,
   Unplug,
@@ -19,6 +20,7 @@ import {
   siGoogledrive,
   siJira,
   siNotion,
+  siOutline,
   siZendesk,
   type SimpleIcon,
 } from "simple-icons"
@@ -34,7 +36,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { DriveFolderPicker, DriveItemIcon } from "@/components/drive-folder-picker"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
+import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
+import { SyncHistorySheet } from "@/components/sync-history-sheet"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -47,12 +52,31 @@ import { timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-function BrandIcon({ icon }: { icon: SimpleIcon }) {
-  return (
-    <svg viewBox="0 0 24 24" className="size-5 fill-current" aria-hidden>
-      <path d={icon.path} />
-    </svg>
-  )
+// Brand marks by the registry's simple-icons slug (connectors/registry.py).
+const BRANDS: Record<string, SimpleIcon> = {
+  googledrive: siGoogledrive,
+  notion: siNotion,
+  outline: siOutline,
+  confluence: siConfluence,
+  jira: siJira,
+  github: siGithub,
+  dropbox: siDropbox,
+  zendesk: siZendesk,
+}
+const LETTERS: Record<string, string> = { sharepoint: "S", slack: "#" }
+
+function ConnectorIcon({ item }: { item: Integration }) {
+  const brand = item.icon ? BRANDS[item.icon] : undefined
+  if (brand)
+    return (
+      <svg viewBox="0 0 24 24" className="size-5 fill-current" aria-hidden>
+        <path d={brand.path} />
+      </svg>
+    )
+  if (item.id === "uploads") return <FileText className="size-5" />
+  if (item.id === "website") return <Globe className="size-5" />
+  if (LETTERS[item.id]) return <span className="text-xs font-semibold">{LETTERS[item.id]}</span>
+  return <Plug className="size-5" />
 }
 
 const STATUS: Record<IntegrationStatus, { label: string; tone: "on" | "busy" | "bad" | "off" }> = {
@@ -86,30 +110,18 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
   )
 }
 
-function Card({
-  icon,
-  title,
-  subtitle,
-  status,
-  children,
-}: {
-  icon: React.ReactNode
-  title: string
-  subtitle: string
-  status: IntegrationStatus
-  children?: React.ReactNode
-}) {
+function Card({ item, children }: { item: Integration; children?: React.ReactNode }) {
   return (
-    <div className="flex flex-col rounded-2xl border border-border/70 bg-background p-5">
+    <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-          {icon}
+          <ConnectorIcon item={item} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium">{title}</p>
-          <p className="text-sm text-muted-foreground">{subtitle}</p>
+          <p className="font-medium">{item.name}</p>
+          <p className="text-sm text-muted-foreground">{item.description}</p>
         </div>
-        <StatusBadge status={status} />
+        <StatusBadge status={item.status} />
       </div>
       {children && <div className="mt-4 flex flex-1 flex-col">{children}</div>}
     </div>
@@ -118,22 +130,18 @@ function Card({
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="truncate text-sm font-medium">{value}</p>
     </div>
   )
 }
 
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
 // Who may ask about a connection's synced files. Shared by every connector card.
 // Opening them to everyone asks for confirmation; closing them again doesn't.
-function AccessControl({
-  item,
-  onChange,
-}: {
-  item: Integration
-  onChange: () => void
-}) {
+function AccessControl({ item, onChange }: { item: Integration; onChange: () => void }) {
   const access: ConnectorAccess = item.access ?? "restricted"
   const [saving, setSaving] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -210,7 +218,8 @@ function AccessControl({
   )
 }
 
-function GoogleDriveCard({
+// One connector, whatever it is: drawn from its registry entry and connection state.
+function ConnectorCard({
   item,
   onChange,
   autoOpenPicker,
@@ -219,11 +228,17 @@ function GoogleDriveCard({
   onChange: () => void
   autoOpenPicker?: boolean
 }) {
-  const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null)
-  const folders = item.folders ?? []
+  const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | "confirm" | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const picks = item.containers ?? []
+  const unit = item.unit ?? "items"
+  const hasPicker = !!item.picker && item.picker !== "none"
+  const nothingPicked = !!item.picker_required && picks.length === 0
+
   // Just connected and nothing picked yet: open the picker (once per arrival).
-  const shouldAutoOpen = !!autoOpenPicker && !folders.length
+  const shouldAutoOpen = !!autoOpenPicker && nothingPicked
   const [autoOpened, setAutoOpened] = useState(false)
   if (shouldAutoOpen !== autoOpened) {
     setAutoOpened(shouldAutoOpen)
@@ -231,21 +246,25 @@ function GoogleDriveCard({
   }
 
   async function connect() {
+    if (item.auth !== "oauth") {
+      setFormOpen(true)
+      return
+    }
     setBusy("connect")
     try {
-      const { url } = await api.connectDrive()
-      window.location.href = url // off to Google's consent screen
+      const { url } = await api.connectIntegration(item.id)
+      window.location.href = url // off to the provider's consent screen
     } catch (err) {
       toast.error(errorText(err))
       setBusy(null)
     }
   }
 
-  async function sync() {
-    setBusy("sync")
+  async function sync(opts: { full?: boolean; confirm_deletes?: boolean } = {}) {
+    setBusy(opts.confirm_deletes ? "confirm" : "sync")
     try {
-      await api.syncDrive()
-      toast.success("Syncing Google Drive…")
+      await api.syncIntegration(item.id, opts)
+      toast.success(opts.confirm_deletes ? "Removing them…" : `Syncing ${item.name}…`)
       onChange()
     } catch (err) {
       toast.error(errorText(err))
@@ -257,8 +276,8 @@ function GoogleDriveCard({
   async function disconnect() {
     setBusy("disconnect")
     try {
-      await api.disconnectDrive()
-      toast.success("Google Drive disconnected. Its files were removed from search.")
+      await api.disconnectIntegration(item.id)
+      toast.success(`${item.name} disconnected. Its ${unit} were removed from search.`)
       onChange()
     } catch (err) {
       toast.error(errorText(err))
@@ -268,85 +287,155 @@ function GoogleDriveCard({
   }
 
   const connected = ["connected", "syncing", "error"].includes(item.status)
+  const reconnect = item.error?.code === "auth_expired"
+  const fixSettings = item.error?.code === "config" || item.error?.code === "not_found"
+  const limit = item.last_run?.limit_reached ?? 0
 
   return (
-    <Card
-      icon={<BrandIcon icon={siGoogledrive} />}
-      title="Google Drive"
-      subtitle="Docs, Sheets, PDFs and text files"
-      status={item.status}
-    >
+    <Card item={item}>
       {item.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">
-          The server needs a Google OAuth client before Drive can be connected
-          (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Ask your admin to set it up.
+          The server needs an OAuth app before {item.name} can be connected
+          {item.setup_env ? ` (${item.setup_env})` : ""}. Ask your admin to set it up.
         </p>
       )}
 
       {item.status === "disconnected" && (
         <>
           <p className="text-sm text-muted-foreground">
-            Read-only access. After connecting, you choose which folders or files to sync.
-            Nothing else is touched. Synced files stay up to date every 30 minutes and are cited with a link
-            back to Drive.
+            {item.auth === "url"
+              ? "Crawls public pages of a site you name, follows its links on the same site and keeps them up to date. Answers link back to each page."
+              : item.picker_required
+                ? `Read-only. After connecting, you choose what to sync; nothing else is touched. Answers link back to ${item.name}.`
+                : `Read-only. Answers cite each page with a link back to ${item.name}.`}
           </p>
+          {item.live_search && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Until then, this workspace searches the server's own wiki live.
+            </p>
+          )}
           <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
             {busy === "connect" && <Loader2 className="animate-spin" />}
-            Connect Google Drive
+            {item.auth === "url" ? "Add a website" : `Connect ${item.name}`}
           </Button>
         </>
       )}
 
       {connected && (
         <>
-          {folders.length === 0 ? (
-            <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-dashed p-3">
-              <p className="text-sm text-muted-foreground">
-                Nothing is synced yet. Choose the folders or files your team should search.
-              </p>
-              <Button size="sm" onClick={() => setPickerOpen(true)}>
-                <FolderCog /> Choose what to sync
-              </Button>
-            </div>
-          ) : (
-            <div className="mb-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">Syncing</p>
-                <button
-                  onClick={() => setPickerOpen(true)}
-                  className="text-xs font-medium underline-offset-4 hover:underline"
-                >
-                  Edit selection
-                </button>
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {folders.map((f) => (
-                  <span
-                    key={f.id}
-                    className="flex max-w-60 items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
-                  >
-                    <DriveItemIcon item={f} className="size-3" />
-                    <span className="truncate">{f.name}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
+          {item.error && item.status === "error" && (
+            <Alert variant="destructive" className="mb-3">
+              <TriangleAlert />
+              <AlertTitle>The last sync didn't finish</AlertTitle>
+              <AlertDescription>{item.error.message}</AlertDescription>
+            </Alert>
           )}
+          {(item.held_deletes ?? 0) > 0 && (
+            <Alert className="mb-3">
+              <TriangleAlert />
+              <AlertTitle>
+                {item.held_deletes} {unit} would be removed
+              </AlertTitle>
+              <AlertDescription>
+                That's a large share of what this connection syncs, so nothing was removed. If
+                they were really deleted or unshared, remove them; otherwise check the
+                connection.
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" variant="outline" className="mt-2" disabled={busy !== null}>
+                      {busy === "confirm" && <Loader2 className="animate-spin" />}
+                      Remove them
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Remove {item.held_deletes} {unit} from search?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        They are no longer in {item.name}, or no longer shared with this
+                        connection. Their copies and search entries are deleted here; nothing
+                        changes in {item.name}.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Keep them for now</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => sync({ confirm_deletes: true })}>
+                        Remove them
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {hasPicker &&
+            (picks.length === 0 ? (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed p-3">
+                <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+                  {item.picker_required
+                    ? "Nothing is synced yet. Choose what your team should search."
+                    : "Everything shared with the integration is synced."}
+                </p>
+                <Button size="sm" onClick={() => setPickerOpen(true)}>
+                  <FolderCog /> {item.picker_required ? "Choose what to sync" : "Narrow it down"}
+                </Button>
+              </div>
+            ) : (
+              <div className="mb-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">Syncing</p>
+                  <Button
+                    variant="link"
+                    size="xs"
+                    className="h-auto px-0"
+                    onClick={() => setPickerOpen(true)}
+                  >
+                    Edit selection
+                  </Button>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {picks.map((f) => (
+                    <span
+                      key={f.id}
+                      className="flex max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs sm:max-w-60"
+                    >
+                      <ContainerIcon item={f} className="size-3" />
+                      <span className="truncate">{f.name}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+
           <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
             <Stat label="Account" value={item.account || "—"} />
-            <Stat label="Files" value={item.doc_count ?? 0} />
+            <Stat
+              label={capitalize(unit)}
+              value={
+                item.skipped_count
+                  ? `${item.doc_count ?? 0} (+${item.skipped_count} skipped)`
+                  : (item.doc_count ?? 0)
+              }
+            />
             <Stat label="Last sync" value={item.status === "syncing" ? "now" : timeAgo(item.last_sync_at)} />
           </div>
-          <AccessControl item={item} onChange={onChange} />
-          {item.status === "error" && item.last_error && (
-            <p className="mt-3 text-sm text-destructive">{item.last_error}</p>
+          {limit > 0 && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" />
+              The last sync stopped at {limit} {unit}, the limit for one connection. Pick less,
+              or ask your admin to raise the limit.
+            </p>
           )}
+          <AccessControl item={item} onChange={onChange} />
+
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="outline"
-              onClick={sync}
-              disabled={busy !== null || item.status === "syncing" || !folders.length}
+              onClick={() => sync()}
+              disabled={busy !== null || item.status === "syncing" || nothingPicked}
             >
               {busy === "sync" || item.status === "syncing" ? (
                 <Loader2 className="animate-spin" />
@@ -355,9 +444,22 @@ function GoogleDriveCard({
               )}
               Sync now
             </Button>
-            {item.status === "error" && (
+            <Button size="sm" variant="outline" onClick={() => setHistoryOpen(true)}>
+              <History /> History
+            </Button>
+            {reconnect && (
               <Button size="sm" onClick={connect} disabled={busy !== null}>
                 Reconnect
+              </Button>
+            )}
+            {fixSettings && hasPicker && (
+              <Button size="sm" onClick={() => setPickerOpen(true)}>
+                Check what it syncs
+              </Button>
+            )}
+            {item.auth === "oauth" && item.id === "notion" && !reconnect && (
+              <Button size="sm" variant="outline" onClick={connect} disabled={busy !== null}>
+                Share more pages
               </Button>
             )}
             <AlertDialog>
@@ -368,10 +470,10 @@ function GoogleDriveCard({
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Disconnect Google Drive?</AlertDialogTitle>
+                  <AlertDialogTitle>Disconnect {item.name}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Google access is revoked and every synced Drive file is deleted from this
-                    workspace and its search index. Your files in Google Drive are not touched.
+                    Every synced {item.name} item is deleted from this workspace and its search
+                    index. Nothing changes in {item.name} itself.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -381,162 +483,42 @@ function GoogleDriveCard({
               </AlertDialogContent>
             </AlertDialog>
           </div>
-          <DriveFolderPicker
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            initial={folders}
-            onSaved={onChange}
-          />
-        </>
-      )}
-    </Card>
-  )
-}
-
-function NotionCard({ item, onChange }: { item: Integration; onChange: () => void }) {
-  const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null)
-
-  async function connect() {
-    setBusy("connect")
-    try {
-      const { url } = await api.connectIntegration("notion")
-      window.location.href = url // Notion's screen, where the pages to share are picked
-    } catch (err) {
-      toast.error(errorText(err))
-      setBusy(null)
-    }
-  }
-
-  async function sync() {
-    setBusy("sync")
-    try {
-      await api.syncIntegration("notion")
-      toast.success("Syncing Notion…")
-      onChange()
-    } catch (err) {
-      toast.error(errorText(err))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function disconnect() {
-    setBusy("disconnect")
-    try {
-      await api.disconnectIntegration("notion")
-      toast.success("Notion disconnected. Its pages were removed from search.")
-      onChange()
-    } catch (err) {
-      toast.error(errorText(err))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const connected = ["connected", "syncing", "error"].includes(item.status)
-
-  return (
-    <Card
-      icon={<BrandIcon icon={siNotion} />}
-      title="Notion"
-      subtitle="Pages, sub-pages and database rows"
-      status={item.status}
-    >
-      {item.status === "not_configured" && (
-        <p className="text-sm text-muted-foreground">
-          The server needs a Notion public integration before Notion can be connected
-          (NOTION_CLIENT_ID / NOTION_CLIENT_SECRET). Ask your admin to set it up.
-        </p>
-      )}
-
-      {item.status === "disconnected" && (
-        <>
-          <p className="text-sm text-muted-foreground">
-            Read-only. On Notion's screen you pick exactly which pages to share; only those
-            and their sub-pages are synced, then cited with a link back to Notion.
-          </p>
-          <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
-            {busy === "connect" && <Loader2 className="animate-spin" />}
-            Connect Notion
-          </Button>
-        </>
-      )}
-
-      {connected && (
-        <>
-          <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
-            <Stat label="Workspace" value={item.account || "—"} />
-            <Stat label="Pages" value={item.doc_count ?? 0} />
-            <Stat label="Last sync" value={item.status === "syncing" ? "now" : timeAgo(item.last_sync_at)} />
-          </div>
-          <AccessControl item={item} onChange={onChange} />
-          {item.status === "error" && item.last_error && (
-            <p className="mt-3 text-sm text-destructive">{item.last_error}</p>
+          {hasPicker && (
+            <ContainerPicker
+              item={item}
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              onSaved={onChange}
+            />
           )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={sync}
-              disabled={busy !== null || item.status === "syncing"}
-            >
-              {busy === "sync" || item.status === "syncing" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <RefreshCw />
-              )}
-              Sync now
-            </Button>
-            <Button size="sm" variant="outline" onClick={connect} disabled={busy !== null}>
-              <FolderCog /> Change pages
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="sm" variant="ghost" className="text-destructive" disabled={busy !== null}>
-                  <Unplug /> Disconnect
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Disconnect Notion?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Every synced Notion page is deleted from this workspace and its search index.
-                    Your pages in Notion are not touched. To remove our access on Notion's side
-                    too, open Notion → Settings → Connections.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={disconnect}>Disconnect</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          <SyncHistorySheet item={item} open={historyOpen} onOpenChange={setHistoryOpen} />
         </>
+      )}
+
+      {item.auth && item.auth !== "oauth" && (
+        <IntegrationConnectDialog
+          item={item}
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          onConnected={(choose) => {
+            onChange()
+            if (choose) setPickerOpen(true)
+          }}
+        />
       )}
     </Card>
   )
 }
-
-const SOON: { name: string; icon?: SimpleIcon; letter?: string }[] = [
-  { name: "Confluence", icon: siConfluence },
-  { name: "SharePoint", letter: "S" },
-  { name: "Slack", letter: "#" },
-  { name: "Jira", icon: siJira },
-  { name: "GitHub", icon: siGithub },
-  { name: "Dropbox", icon: siDropbox },
-  { name: "Zendesk", icon: siZendesk },
-]
 
 export function IntegrationsView({
   onOpenDocuments,
-  openDrivePicker,
+  openPickerFor,
 }: {
   onOpenDocuments: () => void
-  openDrivePicker?: boolean
+  openPickerFor?: string | null // just connected: open this connector's picker
 }) {
   const queryClient = useQueryClient()
-  // While Drive syncs, refresh every few seconds (and nudge the index bar).
+  // While a connection syncs, refresh every few seconds (and nudge the index bar).
   const { data, dataUpdatedAt } = useQuery({
     ...queries.integrations(),
     refetchInterval: (query) =>
@@ -555,10 +537,9 @@ export function IntegrationsView({
     if (syncing) refreshIndex()
   }, [syncing, dataUpdatedAt, refreshIndex])
 
-  const byId = Object.fromEntries((items ?? []).map((i) => [i.id, i])) as Record<
-    Integration["id"],
-    Integration | undefined
-  >
+  const live = (items ?? []).filter((i) => i.availability === "live" && i.id !== "uploads")
+  const uploads = items?.find((i) => i.id === "uploads")
+  const soon = (items ?? []).filter((i) => i.availability === "soon")
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -578,71 +559,49 @@ export function IntegrationsView({
       ) : (
         <>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {byId.google_drive && (
-              <GoogleDriveCard
-                item={byId.google_drive}
+            {live.map((item) => (
+              <ConnectorCard
+                key={item.id}
+                item={item}
                 onChange={load}
-                autoOpenPicker={openDrivePicker}
+                autoOpenPicker={openPickerFor === item.id}
               />
-            )}
+            ))}
 
-            {byId.notion && <NotionCard item={byId.notion} onChange={load} />}
-
-            {byId.uploads && (
-              <Card
-                icon={<FileText className="size-5" />}
-                title="Uploaded files"
-                subtitle="PDF and text files you upload"
-                status="connected"
-              >
+            {uploads && (
+              <Card item={uploads}>
                 <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
-                  <Stat label="Files" value={byId.uploads.doc_count ?? 0} />
+                  <Stat label="Files" value={uploads.doc_count ?? 0} />
                 </div>
                 <Button size="sm" variant="outline" className="mt-4 w-fit" onClick={onOpenDocuments}>
                   Manage documents
                 </Button>
               </Card>
             )}
-
-            {byId.outline && (
-              <Card
-                icon={<BookOpen className="size-5" />}
-                title="Outline wiki"
-                subtitle="Searched live on every question"
-                status={byId.outline.status}
-              >
-                <p className="text-sm text-muted-foreground">
-                  {byId.outline.status === "connected"
-                    ? "Connected by the server admin. Answers link straight to the wiki page."
-                    : "Not available for this workspace yet."}
-                </p>
-              </Card>
-            )}
           </div>
 
-          <div className="mt-10">
-            <p className="text-sm font-medium">Coming soon</p>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {SOON.map((s) => (
-                <div
-                  key={s.name}
-                  className="flex items-center gap-2.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground"
-                >
-                  <span className="flex size-6 items-center justify-center">
-                    {s.icon ? (
-                      <BrandIcon icon={s.icon} />
-                    ) : (
-                      <span className="text-xs font-semibold">{s.letter}</span>
-                    )}
-                  </span>
-                  {s.name}
-                </div>
-              ))}
+          {soon.length > 0 && (
+            <div className="mt-10">
+              <p className="text-sm font-medium">Coming soon</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {soon.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex min-w-0 items-center gap-2.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground"
+                  >
+                    <span className="flex size-6 shrink-0 items-center justify-center">
+                      <ConnectorIcon item={s} />
+                    </span>
+                    <span className="truncate">{s.name}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Need something else? Most tools with an API can be connected, and any public site
+                can be added as a website.
+              </p>
             </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Need something else? Most tools with an API can be connected.
-            </p>
-          </div>
+          )}
         </>
       )}
     </div>

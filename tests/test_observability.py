@@ -4,7 +4,6 @@ UI only shows as a message (chat, re-index, connector sync) reach the log too.
 """
 
 import logging
-import types
 
 import pytest
 
@@ -126,15 +125,25 @@ def test_a_failed_reindex_is_logged(monkeypatch, caplog, jobs_paused):
     assert ws in record.message and record.exc_info
 
 
-def test_a_failed_connector_sync_is_logged(monkeypatch, caplog):
+def test_a_failed_connector_sync_is_logged(monkeypatch, caplog, tmp_path):
+    import integrations_store
+    from connectors import base
     from kb.services import sync
 
-    def broken_sync(ws):
-        raise ConnectionError("notion down")
+    class Broken(base.Connector):
+        def changes(self, ctx, cursor):
+            raise ConnectionError("notion down")
+            yield
 
-    monkeypatch.setitem(sync.CONNECTORS, "notion", types.SimpleNamespace(sync=broken_sync))
-    with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
-        sync.sync("acme", "notion")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(sync.CONNECTORS, "notion", Broken())
+    integrations_store.connect("acme", "notion", "Acme", {"access_token": "x"}, "admin")
+    try:
+        with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
+            with pytest.raises(ConnectionError):
+                sync.sync("acme", "notion")
+    finally:
+        integrations_store.remove("acme", "notion")
     [record] = [r for r in caplog.records if r.message.startswith("Sync:")]
     assert "notion" in record.message and "acme" in record.message and record.exc_info
 
