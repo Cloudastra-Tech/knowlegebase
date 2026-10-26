@@ -105,9 +105,40 @@ def _tool_error(name, e):
     return f"Error: {e}"
 
 
+def _outline_collections():
+    """OUTLINE_COLLECTIONS: comma-separated Outline collection ids the assistant
+    may search and read. Empty = every collection the server's token can see."""
+    return [c.strip() for c in os.getenv("OUTLINE_COLLECTIONS", "").split(",") if c.strip()]
+
+
 def _outline_post(endpoint, payload, timeout=15):
     """Shared helper: POST to the Outline API, handling auth + Cloudflare Access.
-    Returns (json, error_string). Used by both Outline tools below."""
+    Returns (json, error_string). Used by both Outline tools below.
+    With OUTLINE_COLLECTIONS set, searches run once per allowed collection (Outline's
+    `collectionId` filter, which older self-hosted servers also know) and documents
+    are also checked here, so nothing outside those collections gets through."""
+    allowed = _outline_collections()
+    if not allowed or endpoint not in ("documents.search", "documents.info"):
+        return _outline_request(endpoint, payload, timeout)
+    if endpoint == "documents.info":
+        data, err = _outline_request(endpoint, payload, timeout)
+        if not err and ((data or {}).get("data") or {}).get("collectionId") not in allowed:
+            return None, "Error: that document isn't in a wiki collection this assistant may read."
+        return data, err
+    results = []
+    for collection_id in allowed:
+        data, err = _outline_request(endpoint, {**payload, "collectionId": collection_id},
+                                     timeout)
+        if err:
+            return None, err
+        results += [r for r in (data or {}).get("data", [])
+                    if (r.get("document") or {}).get("collectionId") in allowed]
+    results.sort(key=lambda r: -(r.get("ranking") or 0))
+    return {"data": results[:payload.get("limit") or len(results)]}, None
+
+
+def _outline_request(endpoint, payload, timeout=15):
+    """One POST to the Outline API (see _outline_post)."""
     base = os.getenv("OUTLINE_URL", "https://app.cloudastra.co").rstrip("/")
     token = os.getenv("OUTLINE_API_TOKEN")
     if not token:

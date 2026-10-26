@@ -16,9 +16,11 @@ This file is imported by app.py. You can also test it directly:
 """
 
 import os
+import re
+import unicodedata
 from dotenv import load_dotenv
 
-import re
+import regex      # Unicode-aware regular expressions (\p{L} = any letter, any script)
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma
@@ -35,12 +37,20 @@ INTRO_CHUNKS = 3        # ...at most this many per document (title + summary)
 
 # ----------------------------------------------------------------------------
 # Phase 3 retrieval upgrades — ON/OFF switches.
-# Each ON adds ONE extra gpt-4o-mini call per question (more tokens).
-# They shine on BIG document sets; on this tiny demo the effect is small.
-# Set to False to save tokens.
+# HyDE adds ONE extra gpt-4o-mini call per question (more tokens, ~1 s).
+# Turn it off with RAG_HYDE=off in .env. Measure with evaluate.py before
+# changing the default.
 # ----------------------------------------------------------------------------
-USE_HYDE = True      # expand a vague question before searching
-USE_RERANK = True    # reorder retrieved chunks so the best one is first
+USE_HYDE = os.getenv("RAG_HYDE", "on").strip().lower() not in ("0", "off", "false", "no")
+
+# RERANK: a slot for a REAL reranker (a cross-encoder or a rerank API) —
+# a callable (question, docs) -> docs, best first. None = keep the fused order.
+# It only pays off over a LARGER candidate pool than the context keeps (e.g.
+# fuse 30-50 chunks, rerank, keep the top 4), so plugging one in also means
+# raising the k of both searches and HybridRetriever's top_k in load_chain.
+# (The old LLM rerank reordered the same 4 chunks it was given: one extra
+# call that changed nothing about WHICH chunks the model read.)
+RERANKER = None
 
 
 # This is the INSTRUCTION we give the AI. Notice the strict rules:
@@ -111,7 +121,8 @@ def load_chain(role="public", collection=None):
             metas.append(meta)
 
     if texts:
-        bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas)
+        bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas,
+                                                  preprocess_func=tokenize)
         bm25_retriever.k = 4
     else:                       # an empty workspace: nothing to search yet
         bm25_retriever = _NoHits()
@@ -137,6 +148,23 @@ def load_chain(role="public", collection=None):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     return retriever, llm
+
+
+_DIGIT_GROUPS = re.compile(r"(?<=\d),(?=\d)")
+_WORD = regex.compile(r"[\p{L}\p{N}\p{M}]+")    # letters, digits, accents/vowel signs
+
+
+def tokenize(text):
+    """How BM25 splits text into words (for the chunks AND the question).
+    The default is a plain str.split(): case-sensitive, with punctuation stuck
+    to words, so "policy?" never matched "policy" and "Refund" never matched
+    "refund". Here: normalise Unicode (NFKC: full-width "ＰＲＯ" -> "PRO"),
+    case-fold, join digit groups ("2,000" -> "2000"), then keep runs of
+    letters/digits in ANY script. Accents and vowel signs stay part of the
+    word (dropping them would break e.g. Hindi). One-letter words are dropped,
+    single digits kept ("plan 2")."""
+    text = _DIGIT_GROUPS.sub("", unicodedata.normalize("NFKC", text or "").casefold())
+    return [w for w in _WORD.findall(text) if len(w) > 1 or w.isdigit()]
 
 
 class _NoHits:
@@ -172,9 +200,13 @@ class HybridRetriever:
         return [i for src in sources for i in self.intros.get(src, [])
                 if i.page_content not in have]
 
-    def invoke(self, query):
+    def invoke(self, query, dense_query=None):
+        """query: what the user asked — the KEYWORD search uses exactly this.
+        dense_query: an enriched version for the MEANING search only (e.g.
+        the question + a HyDE guess); defaults to query. A guessed answer must
+        not feed keyword search: its invented words would match real chunks."""
         # Run both searches. Each returns an ORDERED list of chunks (best first).
-        dense_hits = self.dense.invoke(query)
+        dense_hits = self.dense.invoke(dense_query or query)
         bm25_hits = self.bm25.invoke(query)
 
         # Score every chunk by its rank in each list (RRF).
@@ -207,31 +239,6 @@ def hyde_expand(question, llm):
     return llm.invoke(prompt).content
 
 
-def rerank(question, docs, llm, top_n=4):
-    """
-    RERANK: the retriever ranks chunks fast but roughly. Here we ask the AI to
-    RE-ORDER them by how well each truly answers the question, then keep the best.
-    One LLM call reads all chunks and returns the order (e.g. "2,0,1,3").
-    This pushes the single best chunk to the top — accuracy with small k.
-    """
-    if not docs:
-        return docs
-    listing = "\n\n".join(f"[{i}] {d.page_content[:300]}" for i, d in enumerate(docs))
-    prompt = (
-        "Order the chunks from MOST to LEAST relevant for answering the question. "
-        "Reply ONLY with the chunk numbers, comma-separated (e.g. 2,0,1).\n\n"
-        f"Question: {question}\n\nChunks:\n{listing}\n\nOrder:"
-    )
-    resp = llm.invoke(prompt).content
-    order = [int(x) for x in re.findall(r"\d+", resp) if int(x) < len(docs)]
-    # Rebuild the list in the new order, then append any the AI forgot.
-    reranked = [docs[i] for i in order]
-    for i, d in enumerate(docs):
-        if i not in order:
-            reranked.append(d)
-    return reranked[:top_n]
-
-
 def answer_question(question, retriever, llm, role="public"):
     """Run the full Retrieve -> Augment -> Generate -> Guard flow."""
 
@@ -244,18 +251,18 @@ def answer_question(question, retriever, llm, role="public"):
     if not ok:
         return reason, None          # None = blocked by a guard (not "no results")
 
-    # ---- 0. HyDE (optional) — enrich the search query ------------------
-    search_query = question
+    # ---- 0. HyDE (optional) — enrich the MEANING search only -----------
+    dense_query = question
     if USE_HYDE:
-        search_query = question + "\n" + hyde_expand(question, llm)
+        dense_query = question + "\n" + hyde_expand(question, llm)
 
     # ---- 1. RETRIEVE ---------------------------------------------------
-    # Search the vector DB for chunks whose MEANING matches the (enriched) query.
-    docs = retriever.invoke(search_query)
+    # Keyword search gets the question as asked; meaning search the enriched one.
+    docs = retriever.invoke(question, dense_query=dense_query)
 
-    # ---- 1b. RERANK (optional) — put the best chunk first --------------
-    if USE_RERANK:
-        docs = rerank(question, docs, llm, top_n=4)
+    # ---- 1b. RERANK (only if a real reranker is plugged in, see RERANKER)
+    if RERANKER:
+        docs = RERANKER(question, docs)
 
     # ---- 1c. Add how the top documents BEGIN (title / summary), so a chunk
     # from the middle of a document is read in context. Citations still come

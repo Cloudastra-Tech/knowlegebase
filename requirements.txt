@@ -9,6 +9,7 @@ langchain-community==0.4.2 # extra loaders (e.g. reading PDFs / text files)
 langchain-chroma==1.1.0    # connects LangChain to the Chroma vector database
 chromadb==1.5.9            # the vector database itself (stores embeddings, runs search)
 rank-bm25==0.2.2           # keyword search (BM25) for hybrid retrieval — Stage 2
+regex==2026.9.29           # Unicode-aware word splitting for BM25 (rag.tokenize); already a tiktoken dependency
 requests==2.34.2           # call free web APIs (Frankfurter, Wikipedia) — agent tools
 guardrails-ai==0.11.0      # the open-source safety library (validates input/output)
 streamlit==1.65.0          # the chat UI you type into (runs in your browser)

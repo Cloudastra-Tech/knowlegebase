@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
-import { BookOpen, FileText, FolderCog, Loader2, RefreshCw, Unplug } from "lucide-react"
+import {
+  BookOpen,
+  FileText,
+  FolderCog,
+  Globe,
+  Loader2,
+  Lock,
+  RefreshCw,
+  TriangleAlert,
+  Unplug,
+} from "lucide-react"
 import {
   siConfluence,
   siDropbox,
@@ -26,8 +36,10 @@ import {
 import { DriveFolderPicker, DriveItemIcon } from "@/components/drive-folder-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, type Integration, type IntegrationStatus } from "@/lib/api"
+import { api, type ConnectorAccess, type Integration, type IntegrationStatus } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
 import { timeAgo } from "@/lib/utils"
 
@@ -107,6 +119,91 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="truncate text-sm font-medium">{value}</p>
+    </div>
+  )
+}
+
+// Who may ask about a connection's synced files. Shared by every connector card.
+// Opening them to everyone asks for confirmation; closing them again doesn't.
+function AccessControl({
+  item,
+  onChange,
+}: {
+  item: Integration
+  onChange: () => void
+}) {
+  const access: ConnectorAccess = item.access ?? "restricted"
+  const [saving, setSaving] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const { refresh: refreshIndex } = useIndexStatus()
+  const ids = `${item.id}-access`
+
+  async function save(next: ConnectorAccess) {
+    setSaving(true)
+    try {
+      await api.setIntegrationAccess(item.id, next)
+      toast.success(
+        next === "everyone"
+          ? `Everyone can now ask about ${item.name} files. Re-indexing…`
+          : `Only HR and admins can now ask about ${item.name} files. Re-indexing…`,
+      )
+      onChange()
+      refreshIndex()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-border/70 p-3">
+      <p className="text-sm font-medium" id={`${ids}-label`}>
+        Who can ask about these files
+      </p>
+      <RadioGroup
+        aria-labelledby={`${ids}-label`}
+        value={access}
+        onValueChange={(v) => (v === "everyone" ? setConfirming(true) : save("restricted"))}
+        disabled={saving}
+        className="mt-2 gap-2"
+      >
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="restricted" id={`${ids}-restricted`} />
+          <Label htmlFor={`${ids}-restricted`} className="font-normal">
+            <Lock className="size-3.5 text-muted-foreground" /> HR and admins
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="everyone" id={`${ids}-everyone`} />
+          <Label htmlFor={`${ids}-everyone`} className="font-normal">
+            <Globe className="size-3.5 text-muted-foreground" /> Everyone in the workspace
+          </Label>
+        </div>
+      </RadioGroup>
+      {access === "everyone" && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+          <TriangleAlert className="mt-px size-3.5 shrink-0" />
+          Everyone in the workspace can ask about these files, whatever their sharing is in{" "}
+          {item.name}.
+        </p>
+      )}
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Let everyone ask about {item.name} files?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Everyone in the workspace will be able to ask about these files, and answers can
+              quote them, whoever they're shared with in {item.name}. Only do this if nothing synced
+              here is confidential.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep HR and admins only</AlertDialogCancel>
+            <AlertDialogAction onClick={() => save("everyone")}>Let everyone ask</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -238,6 +335,7 @@ function GoogleDriveCard({
             <Stat label="Files" value={item.doc_count ?? 0} />
             <Stat label="Last sync" value={item.status === "syncing" ? "now" : timeAgo(item.last_sync_at)} />
           </div>
+          <AccessControl item={item} onChange={onChange} />
           {item.status === "error" && item.last_error && (
             <p className="mt-3 text-sm text-destructive">{item.last_error}</p>
           )}
@@ -369,6 +467,7 @@ function NotionCard({ item, onChange }: { item: Integration; onChange: () => voi
             <Stat label="Pages" value={item.doc_count ?? 0} />
             <Stat label="Last sync" value={item.status === "syncing" ? "now" : timeAgo(item.last_sync_at)} />
           </div>
+          <AccessControl item={item} onChange={onChange} />
           {item.status === "error" && item.last_error && (
             <p className="mt-3 text-sm text-destructive">{item.last_error}</p>
           )}

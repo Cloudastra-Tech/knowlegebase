@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Save,
   Trash2,
+  TriangleAlert,
   Upload,
 } from "lucide-react"
 
@@ -24,6 +25,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -43,7 +45,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import { api, type Access, type Doc } from "@/lib/api"
+import { api, type Access, type Doc, type UploadLimits } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
@@ -173,16 +175,45 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
   )
 }
 
-function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
+const MB = 1024 * 1024
+
+// Why these files can't go, before sending them (the server checks again).
+function tooBig(files: File[], limits: UploadLimits | null) {
+  if (!limits) return null
+  const big = files.filter((f) => f.size > limits.file_mb * MB)
+  if (big.length)
+    return `${big.map((f) => `${f.name} (${formatSize(f.size)})`).join(", ")} ${
+      big.length === 1 ? "is" : "are"
+    } over the ${limits.file_mb} MB limit for one file.`
+  const total = files.reduce((sum, f) => sum + f.size, 0)
+  if (total > limits.request_mb * MB)
+    return `These files come to ${formatSize(total)}, over the ${limits.request_mb} MB limit for one upload. Upload them in smaller batches.`
+  return null
+}
+
+function UploadDialog({
+  onUploaded,
+  limits,
+}: {
+  onUploaded: () => void
+  limits: UploadLimits | null
+}) {
   const [open, setOpen] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [access, setAccess] = useState<Access>("public")
   const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const problem = error ?? tooBig(files, limits)
+
+  function pick(picked: File[]) {
+    setFiles(picked)
+    setError(null)
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!files.length) return
+    if (!files.length || problem) return
     setUploading(true)
     try {
       const { saved } = await api.uploadDocs(files, access)
@@ -191,14 +222,20 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
       setOpen(false)
       setFiles([])
     } catch (err) {
-      toast.error(errorText(err))
+      setError(errorText(err))         // e.g. too big (413), or not what its name says (415)
     } finally {
       setUploading(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        setError(null)
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <Upload /> Upload
@@ -209,7 +246,8 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
           <DialogHeader>
             <DialogTitle>Upload files</DialogTitle>
             <DialogDescription>
-              TXT or PDF. A file with the same name is replaced.
+              TXT or PDF{limits ? `, up to ${limits.file_mb} MB each` : ""}. A file with the
+              same name is replaced.
             </DialogDescription>
           </DialogHeader>
           <button
@@ -218,7 +256,7 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault()
-              setFiles(Array.from(e.dataTransfer.files))
+              pick(Array.from(e.dataTransfer.files))
             }}
             className="flex flex-col items-center gap-2 rounded-lg border-2 border-dashed px-4 py-8 text-sm text-muted-foreground transition-colors hover:bg-muted/50"
           >
@@ -233,14 +271,20 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
             accept=".txt,.pdf"
             multiple
             hidden
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            onChange={(e) => pick(Array.from(e.target.files ?? []))}
           />
+          {problem && (
+            <Alert variant="destructive" className="border-destructive/30 bg-destructive/5">
+              <TriangleAlert />
+              <AlertDescription className="text-destructive/90">{problem}</AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-2">
             <Label>Who can see them?</Label>
             <AccessPicker value={access} onChange={setAccess} idPrefix="upload" />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={uploading || !files.length}>
+            <Button type="submit" disabled={uploading || !files.length || !!problem}>
               {uploading && <Loader2 className="animate-spin" />}
               Upload
             </Button>
@@ -393,6 +437,7 @@ export function DocsView() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | Access>("all")
   const [selected, setSelected] = useState<Doc | null>(null)
+  const [uploadLimits, setUploadLimits] = useState<UploadLimits | null>(null)
 
   const refresh = useCallback(
     (select?: { access: Access; name: string }) =>
@@ -400,6 +445,7 @@ export function DocsView() {
         .listDocs()
         .then((data) => {
           setDocs(data.docs)
+          setUploadLimits(data.upload_limits ?? null)
           refreshIndex()                    // a change just started a re-index
           setSelected((current) => {
             const wanted = select ?? current
@@ -456,7 +502,7 @@ export function DocsView() {
           </div>
           <div className="flex gap-2 px-4">
             <NewDocDialog onCreated={(d) => refresh(d)} />
-            <UploadDialog onUploaded={() => refresh()} />
+            <UploadDialog onUploaded={() => refresh()} limits={uploadLimits} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2">
             {loading ? (
