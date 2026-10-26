@@ -343,6 +343,15 @@ the one writing. Once Chroma runs as a server (engineering plan P2-1), set
 jobs a process runs at once (default 2); several workers may run, since a job is
 claimed in the database first.
 
+Two more periodic jobs feed the admin Insights screen: `insights_rollup` (daily:
+rolls up the question log and clears question text past each workspace's
+retention) and `insights_gaps` (weekly: embeds unanswered questions and names
+each group with one small model call). Put them in a worker's `JOB_KINDS` with
+the other periodic jobs if you split the work. Optional knobs:
+`INSIGHTS_NEVER_CITED_DAYS` (30), `INSIGHTS_STALE_DAYS` (180),
+`INSIGHTS_STALE_MIN_CITED` (3), `INSIGHTS_GAP_WINDOW_DAYS` (30),
+`INSIGHTS_GAP_MIN_SIZE` (3) and `INSIGHTS_GAP_SIMILARITY` (0.75).
+
 ## Health checks and error tracking
 
 - `GET /api/health` — the process is up. Always 200 while it runs; the Docker
