@@ -187,8 +187,8 @@ def test_the_sp_metadata_has_what_an_idp_needs(client, conn):
 
 def test_the_login_page_finds_a_saml_provider(client, conn):
     found = client.post("/api/auth/sso/discover", json={"email": "x@samlco.example"}).json()
-    assert {"id": conn["id"], "name": "SamlCo SSO",
-            "url": f"/api/auth/saml/{conn['id']}/start"} in found["connections"]
+    assert {"id": conn["id"], "name": "SamlCo SSO", "url": f"/api/auth/saml/{conn['id']}/start",
+            "kind": None} in found["connections"]           # no logo for an unknown IdP
 
 
 def test_the_email_can_come_from_the_name_id_alone(client, conn, idp):

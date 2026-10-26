@@ -1,0 +1,359 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T14:20:30+00:00",
+  "title": "Design System: Knowledge assistant",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Graphite Ink",
+        "canonical": "oklch(0.205 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "primary-foreground": {
+        "role": "neutral",
+        "displayName": "Paper Ink",
+        "canonical": "oklch(0.985 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Paper White",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Near-Black Text",
+        "canonical": "oklch(0.145 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Fog",
+        "canonical": "oklch(0.97 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Slate Grey Text",
+        "canonical": "oklch(0.556 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(0.922 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "ring": {
+        "role": "neutral",
+        "displayName": "Focus Grey",
+        "canonical": "oklch(0.708 0 0)",
+        "tonalRamp": [
+          "oklch(0.145 0 0)",
+          "oklch(0.205 0 0)",
+          "oklch(0.269 0 0)",
+          "oklch(0.439 0 0)",
+          "oklch(0.556 0 0)",
+          "oklch(0.708 0 0)",
+          "oklch(0.922 0 0)",
+          "oklch(0.97 0 0)"
+        ]
+      },
+      "destructive": {
+        "role": "error",
+        "displayName": "Signal Red",
+        "canonical": "oklch(0.577 0.245 27.325)",
+        "tonalRamp": [
+          "oklch(0.15 0.245 27.325)",
+          "oklch(0.27 0.245 27.325)",
+          "oklch(0.39 0.245 27.325)",
+          "oklch(0.51 0.245 27.325)",
+          "oklch(0.63 0.245 27.325)",
+          "oklch(0.75 0.245 27.325)",
+          "oklch(0.87 0.245 27.325)",
+          "oklch(0.95 0.245 27.325)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Landing hero headline only; 2.25rem on phones, 3.75rem from sm."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Landing section titles and the CTA band; 1.875rem on phones."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "One per app screen, and the sign-in card heading."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "Titles of bordered panels inside a screen."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Nearly all running text; inputs render at 1rem below md."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Segment labels, footnotes, disclosure triggers, badge text; usually muted."
+      }
+    },
+    "shadows": [
+      {
+        "name": "auth-card",
+        "value": "0 1px 3px rgb(0 0 0 / 0.06), 0 12px 32px -12px rgb(0 0 0 / 0.14)",
+        "purpose": "The borderless sign-in / create-workspace card on the Fog ground."
+      },
+      {
+        "name": "composer-rest",
+        "value": "0 2px 20px -6px rgba(0,0,0,0.12)",
+        "purpose": "Chat composer at rest."
+      },
+      {
+        "name": "composer-focus",
+        "value": "0 4px 28px -8px rgba(0,0,0,0.2)",
+        "purpose": "Chat composer while focused."
+      },
+      {
+        "name": "showcase",
+        "value": "0 20px 60px -24px rgba(0,0,0,0.25)",
+        "purpose": "Landing page product preview."
+      },
+      {
+        "name": "tab-active",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+        "purpose": "Active in-content tab chip (Tailwind shadow-sm)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-transition",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Tailwind default behind transition-colors / transition-all on buttons, inputs, links."
+      },
+      {
+        "name": "route-pass-reveal",
+        "value": "300ms fade-in + 4px rise (tw-animate-css), motion-safe only",
+        "purpose": "Values landing in the route pass once a domain resolves."
+      },
+      {
+        "name": "press",
+        "value": "translateY(1px) on :active",
+        "purpose": "Button press nudge."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action on a form or screen: Continue, Sign in with password when alone, Create.",
+      "html": "<button class=\"ds-btn-primary\">Continue</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 10px; border-radius:10px; border:1px solid transparent; font:500 14px/1 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:all 150ms cubic-bezier(0.4,0,0.2,1); outline:none; background:var(--primary, oklch(0.205 0 0)); color:var(--primary-foreground, oklch(0.985 0 0)); } .ds-btn-primary:hover { background:color-mix(in oklch, var(--primary, oklch(0.205 0 0)) 80%, transparent); } .ds-btn-primary:focus-visible { border-color:var(--ring, oklch(0.708 0 0)); box-shadow:0 0 0 3px color-mix(in oklch, var(--ring, oklch(0.708 0 0)) 50%, transparent); } .ds-btn-primary:active { transform:translateY(1px); }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Alternative routes beside a primary; every 'Continue with <provider>' button.",
+      "html": "<button class=\"ds-btn-outline\"><svg viewBox=\"0 0 24 24\" width=\"14\" height=\"14\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M1 1h10v10H1zM13 1h10v10H13zM1 13h10v10H1zM13 13h10v10H13z\"/></svg>Continue with Microsoft</button>",
+      "css": ".ds-btn-outline { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 10px; border-radius:10px; border:1px solid transparent; font:500 14px/1 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:all 150ms cubic-bezier(0.4,0,0.2,1); outline:none; padding-left:8px; background:var(--background, oklch(1 0 0)); color:var(--foreground, oklch(0.145 0 0)); border-color:var(--border, oklch(0.922 0 0)); } .ds-btn-outline:hover { background:var(--muted, oklch(0.97 0 0)); } .ds-btn-outline:focus-visible { border-color:var(--ring, oklch(0.708 0 0)); box-shadow:0 0 0 3px color-mix(in oklch, var(--ring, oklch(0.708 0 0)) 50%, transparent); } .ds-btn-outline:active { transform:translateY(1px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A real action that sits under a primary, e.g. the password form beneath email-first sign-in.",
+      "html": "<button class=\"ds-btn-secondary\">Sign in with password</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 10px; border-radius:10px; border:1px solid transparent; font:500 14px/1 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:all 150ms cubic-bezier(0.4,0,0.2,1); outline:none; background:var(--muted, oklch(0.97 0 0)); color:var(--primary, oklch(0.205 0 0)); } .ds-btn-secondary:hover { background:color-mix(in oklch, var(--muted, oklch(0.97 0 0)), var(--foreground, oklch(0.145 0 0)) 5%); } .ds-btn-secondary:focus-visible { border-color:var(--ring, oklch(0.708 0 0)); box-shadow:0 0 0 3px color-mix(in oklch, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+    },
+    {
+      "name": "Marketing Pill Button",
+      "kind": "button",
+      "refersTo": "button-marketing",
+      "description": "Landing-page actions only: the same primary fill on a full pill, 36px tall.",
+      "html": "<button class=\"ds-btn-pill\">Get started <svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg></button>",
+      "css": ".ds-btn-pill { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 10px; border-radius:10px; border:1px solid transparent; font:500 14px/1 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:all 150ms cubic-bezier(0.4,0,0.2,1); outline:none; height:36px; padding:0 24px; border-radius:9999px; background:var(--primary, oklch(0.205 0 0)); color:var(--primary-foreground, oklch(0.985 0 0)); } .ds-btn-pill:hover { background:color-mix(in oklch, var(--primary, oklch(0.205 0 0)) 80%, transparent); } .ds-btn-pill:focus-visible { border-color:var(--ring, oklch(0.708 0 0)); box-shadow:0 0 0 3px color-mix(in oklch, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "shadcn Field stack: 14px label, 32px input, muted description or red error below.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-email\">Work email</label><input class=\"ds-input\" id=\"ds-email\" placeholder=\"you@company.com\"><p class=\"ds-field-desc\">We'll find your workspace from the domain.</p></div>",
+      "css": ".ds-field { display:flex; flex-direction:column; gap:8px; font-family:'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; max-width:320px; } .ds-field-label { font-size:14px; font-weight:500; color:var(--foreground, oklch(0.145 0 0)); } .ds-input { height:32px; padding:4px 10px; border:1px solid var(--border, oklch(0.922 0 0)); border-radius:10px; background:transparent; color:var(--foreground, oklch(0.145 0 0)); font:400 14px 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; outline:none; transition:border-color 150ms, box-shadow 150ms; } .ds-input::placeholder { color:var(--muted-foreground, oklch(0.556 0 0)); } .ds-input:focus-visible { border-color:var(--ring, oklch(0.708 0 0)); box-shadow:0 0 0 3px color-mix(in oklch, var(--ring, oklch(0.708 0 0)) 50%, transparent); } .ds-input[aria-invalid=true] { border-color:var(--destructive, oklch(0.577 0.245 27.325)); box-shadow:0 0 0 3px color-mix(in oklch, var(--destructive, oklch(0.577 0.245 27.325)) 20%, transparent); } .ds-field-desc { margin:0; font-size:14px; color:var(--muted-foreground, oklch(0.556 0 0)); }"
+    },
+    {
+      "name": "Tabs",
+      "kind": "nav",
+      "refersTo": "tabs-list",
+      "description": "In-content tabs: a Fog rail with a white active chip (the sign-in card's Sign in / Create a workspace).",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button class=\"ds-tab\" role=\"tab\" aria-selected=\"true\">Sign in</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">Create a workspace</button></div>",
+      "css": ".ds-tabs { display:flex; width:352px; height:32px; padding:3px; border-radius:10px; background:var(--muted, oklch(0.97 0 0)); font-family:'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; } .ds-tab { flex:1; border:1px solid transparent; border-radius:8px; background:transparent; color:color-mix(in oklch, var(--foreground, oklch(0.145 0 0)) 60%, transparent); font:500 14px 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:all 150ms; } .ds-tab:hover { color:var(--foreground, oklch(0.145 0 0)); } .ds-tab[aria-selected=true] { background:var(--background, oklch(1 0 0)); color:var(--foreground, oklch(0.145 0 0)); box-shadow:0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); } .ds-tab:focus-visible { outline:1px solid var(--ring, oklch(0.708 0 0)); border-color:var(--ring, oklch(0.708 0 0)); box-shadow:0 0 0 3px color-mix(in oklch, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+    },
+    {
+      "name": "App Header Navigation",
+      "kind": "nav",
+      "description": "Sticky translucent header: wordmark with muted half, text tabs, 1px underline on the active one.",
+      "html": "<header class=\"ds-nav\"><span class=\"ds-wordmark\">Knowledge<span> assistant</span></span><nav><a class=\"ds-nav-link\" aria-current=\"page\" href=\"#\">Ask</a><a class=\"ds-nav-link\" href=\"#\">Integrations</a><a class=\"ds-nav-link\" href=\"#\">Sign-in</a></nav></header>",
+      "css": ".ds-nav { display:flex; align-items:center; gap:32px; height:48px; padding:0 16px; border-bottom:1px solid color-mix(in oklch, var(--border, oklch(0.922 0 0)) 60%, transparent); background:color-mix(in oklch, var(--background, oklch(1 0 0)) 80%, transparent); backdrop-filter:blur(12px); font-family:'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; } .ds-wordmark { font-size:14px; font-weight:600; letter-spacing:-0.025em; color:var(--foreground, oklch(0.145 0 0)); } .ds-wordmark span { font-weight:400; color:var(--muted-foreground, oklch(0.556 0 0)); } .ds-nav nav { display:flex; gap:24px; height:100%; } .ds-nav-link { position:relative; display:flex; align-items:center; font-size:14px; color:var(--muted-foreground, oklch(0.556 0 0)); text-decoration:none; transition:color 150ms; } .ds-nav-link:hover, .ds-nav-link[aria-current=page] { color:var(--foreground, oklch(0.145 0 0)); } .ds-nav-link[aria-current=page]::after { content:''; position:absolute; left:0; right:0; bottom:0; height:1px; background:var(--foreground, oklch(0.145 0 0)); } .ds-nav-link:focus-visible { outline:2px solid var(--ring, oklch(0.708 0 0)); outline-offset:2px; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "The app's flat container: 18px radius, 70% hairline, no shadow.",
+      "html": "<section class=\"ds-panel\"><h3>Members</h3><p>Everyone who can sign in to this workspace, and their role.</p></section>",
+      "css": ".ds-panel { max-width:420px; padding:20px; border:1px solid color-mix(in oklch, var(--border, oklch(0.922 0 0)) 70%, transparent); border-radius:18px; background:var(--background, oklch(1 0 0)); font-family:'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; } .ds-panel h3 { margin:0 0 4px; font-size:16px; font-weight:500; color:var(--foreground, oklch(0.145 0 0)); } .ds-panel p { margin:0; font-size:14px; color:var(--muted-foreground, oklch(0.556 0 0)); }"
+    },
+    {
+      "name": "Route Pass",
+      "kind": "custom",
+      "refersTo": "route-pass-resolved",
+      "description": "Signature of the sign-in surface: under the work-email field, the resolved Workspace, Sign in with, and Roles from.",
+      "html": "<div class=\"ds-route\" aria-live=\"polite\"><div class=\"ds-route-seg\"><span class=\"ds-route-label\">Workspace</span><span class=\"ds-route-value\">Acme Corp</span></div><div class=\"ds-route-seg\"><span class=\"ds-route-label\">Sign in with</span><span class=\"ds-route-value\"><svg viewBox=\"0 0 24 24\" width=\"14\" height=\"14\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M1 1h10v10H1zM13 1h10v10H13zM1 13h10v10H1zM13 13h10v10H13z\"/></svg>Microsoft Entra ID</span></div><div class=\"ds-route-seg\"><span class=\"ds-route-label\">Roles from</span><span class=\"ds-route-value\">Entra groups</span></div></div>",
+      "css": ".ds-route { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,1fr); max-width:352px; overflow:hidden; border:1px solid color-mix(in oklch, var(--foreground, oklch(0.145 0 0)) 15%, transparent); border-radius:10px; background:var(--background, oklch(1 0 0)); font:400 14px 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; color:var(--foreground, oklch(0.145 0 0)); transition:background-color 150ms, border-color 150ms; } .ds-route-seg { display:flex; flex-direction:column; gap:2px; min-width:0; padding:10px 12px; } .ds-route-seg + .ds-route-seg { border-left:1px solid var(--border, oklch(0.922 0 0)); } .ds-route-label { font-size:12px; color:var(--muted-foreground, oklch(0.556 0 0)); } .ds-route-value { display:flex; align-items:center; gap:6px; font-weight:500; line-height:1.375; animation:ds-route-in 300ms ease-out both; } .ds-route-value svg { flex-shrink:0; } @keyframes ds-route-in { from { opacity:0; transform:translateY(4px); } } @media (prefers-reduced-motion: reduce) { .ds-route-value { animation:none; } } @media (max-width:639px) { .ds-route { grid-template-columns:1fr; } .ds-route-seg { flex-direction:row; justify-content:space-between; align-items:center; padding:8px 12px; } .ds-route-seg + .ds-route-seg { border-left:0; border-top:1px solid var(--border, oklch(0.922 0 0)); } }"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Full-pill 20px label; outline variant carries muted text.",
+      "html": "<span class=\"ds-badge\">Admin</span> <span class=\"ds-badge ds-badge-outline\">Public</span>",
+      "css": ".ds-badge { display:inline-flex; align-items:center; height:20px; padding:2px 8px; border:1px solid transparent; border-radius:9999px; background:var(--primary, oklch(0.205 0 0)); color:var(--primary-foreground, oklch(0.985 0 0)); font:500 12px 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; white-space:nowrap; } .ds-badge-outline { background:transparent; border-color:var(--border, oklch(0.922 0 0)); color:var(--foreground, oklch(0.145 0 0)); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Plain Ledger",
+    "overview": "Knowledge assistant looks like a well-kept ledger: white paper, graphite ink, hairline rules, and nothing on the page that can't account for itself. The palette is achromatic. Hierarchy comes from weight, size and the step between graphite and grey text, never from hue. That restraint is what lets the few things that carry meaning (a cited source, a resolved sign-in route, a red error) read instantly.\n\nThe system is shadcn/ui on the `radix-nova` style with a neutral base colour, set entirely in Plus Jakarta Sans. Density is moderate: 32px controls, 14px body text, 20px panel padding. Surfaces are flat and outlined by default; at most one element per screen is lifted with a soft, layered shadow, and it is always the thing you act on (the sign-in card, the chat composer, the landing page's product preview).\n\nTwo registers share the same tokens. The marketing register (landing page) uses larger type, pill-shaped buttons and generous 80–112px section spacing. The working register (chat, Integrations, Sign-in settings, Members, the sign-in page) uses 10px-radius controls, 24px screen titles and 16–24px rhythm.",
+    "keyCharacteristics": [
+      "Achromatic OKLCH neutrals; graphite primary on white.",
+      "One family, Plus Jakarta Sans, at weights 400 / 500 / 600; tight tracking on every heading.",
+      "Hairline borders at reduced opacity (`border` at 70%) do the structural work; shadows are rare and soft.",
+      "Rounded but not soft: 10px controls, 14px cards, 18px panels, pills reserved for marketing actions, badges and avatars.",
+      "Things that resolve show their answer in place (cited sources under an answer, the route pass under the email field)."
+    ],
+    "rules": [
+      {
+        "name": "The No-Hue Rule",
+        "body": "Structure, hierarchy and emphasis are carried by the neutral ramp alone. Colour enters only as a semantic signal (error) or as a third party's own mark (provider logos, integration brand colour on hover).",
+        "section": "colors"
+      },
+      {
+        "name": "The Tight Heading Rule",
+        "body": "Every semibold heading uses tight tracking (-0.025em) and `text-balance`; body text never does.",
+        "section": "typography"
+      },
+      {
+        "name": "The Muted Half Rule",
+        "body": "The wordmark and the hero headline split into a foreground half and a Slate Grey half. Emphasis by subtraction, not by colour or size.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Lifted Thing Rule",
+        "body": "A screen gets at most one custom shadow, and it goes on the primary interaction surface. Everything else is a bordered, flat plane.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** build every control from the shadcn primitives in `frontend/src/components/ui` (`Button`, `Input`, `Field`, `Tabs`, `Badge`, `Select`, `Textarea`) on the tokens in `frontend/src/index.css`.",
+      "**Do** keep hierarchy achromatic: Graphite Ink and Near-Black for emphasis, Slate Grey for everything secondary.",
+      "**Do** outline flat planes with the Hairline at 70% and reserve the soft layered shadow for the one element the visitor acts on next.",
+      "**Do** use 10px radius for interactive elements and 18px for app panels; pills only for badges, avatars, chips and landing-page buttons.",
+      "**Do** set one Title (24px semibold, tight tracking) per app screen and 16px medium for panel titles.",
+      "**Do** show a resolved state in place, next to the thing that caused it (the route pass, sources under an answer), with motion behind `motion-safe`.",
+      "**Do** use Lucide for interface icons and simple-icons paths for provider and integration marks."
+    ],
+    "donts": [
+      "**Don't** introduce a brand hue for emphasis, links or active states; the palette has none.",
+      "**Don't** add new raw Tailwind palette colours (`emerald-*`, `amber-*`, etc.). Existing success and warning uses are drift awaiting tokens, not a precedent.",
+      "**Don't** put a shadow on every card; a screen with two lifted surfaces has lost its focal point.",
+      "**Don't** use native `<input>`, `<select>`, `<textarea>` or date/month inputs.",
+      "**Don't** add off-scale font sizes (`text-[11px]`, `text-[10px]`, `text-[15px]`); use Label (12px) or Body (14px).",
+      "**Don't** rely on the `.dark` token set; dark mode is not switched on anywhere in the shipped app."
+    ]
+  }
+}

@@ -156,8 +156,8 @@ def test_a_domain_signs_nobody_in_until_dns_proves_it(client, acme, dns_txt):
     assert (row["domain"], row["verified"], row["txt_name"]) == (
         "acme.example", False, "_knowledge-assistant.acme.example")
     assert row["txt_value"].startswith("kb-verify=")
-    assert client.post("/api/auth/sso/discover", json={"email": "a@acme.example"}).json() == {
-        "connections": []}
+    found = client.post("/api/auth/sso/discover", json={"email": "a@acme.example"}).json()
+    assert (found["connections"], found["workspace"]) == ([], None)
     r = client.post("/api/admin/sign-in/domains/acme.example/verify", headers=acme)
     assert r.status_code == 400 and "No TXT record" in r.json()["detail"]
     dns_txt[row["txt_name"]] = ["kb-verify=someone-elses-token"]
@@ -305,8 +305,8 @@ def test_the_login_page_finds_the_provider_from_the_email(client, acme_sso):
     assert acme_sso["id"] in ids
     url = next(c["url"] for c in found["connections"] if c["id"] == acme_sso["id"])
     assert url == f"/api/auth/sso/c/{acme_sso['id']}/start?login_hint=pat%40acme.example"
-    assert client.post("/api/auth/sso/discover",
-                       json={"email": "pat@unknown.example"}).json() == {"connections": []}
+    unknown = client.post("/api/auth/sso/discover", json={"email": "pat@unknown.example"}).json()
+    assert (unknown["connections"], unknown["workspace"]) == ([], None)
     assert client.post("/api/auth/sso/discover", json={"email": "not-an-email"}).status_code == 400
 
 
