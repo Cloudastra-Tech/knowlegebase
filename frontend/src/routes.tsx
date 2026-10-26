@@ -5,6 +5,7 @@ import { AuthRoot } from "@/components/auth-root"
 import { SsoTestDone } from "@/components/sso-test-done"
 import {
   AccessScreen,
+  ApiKeysScreen,
   DocsScreen,
   HrOnly,
   Home,
@@ -23,10 +24,12 @@ import {
 //   /sso               back from a sign-in provider (see lib/legacy-hash.ts)
 //   /sso-test          the window of an admin's "Test sign-in"
 //   /chat, /knowledge  everyone signed in
+//   /api-keys          their own API keys (the public API and the MCP server)
 //   /chat/:id          one of their saved conversations
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
-//   /admin/sign-in, /admin/members, /admin/activity   admins (the Access screen's tabs)
+//   /admin/sign-in, /admin/members, /admin/activity, /admin/api   admins (the Access
+//                      screen's tabs)
 //   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
 //   /invite/:token     accept an invite (signed in or not)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
@@ -58,6 +61,7 @@ export const routes: RouteObject[] = [
               { path: "chat", element: null },
               { path: "chat/:conversationId", element: null }, // a saved conversation
               { path: "knowledge", Component: KnowledgeScreen },
+              { path: "api-keys", Component: ApiKeysScreen }, // everyone's own keys
               {
                 Component: HrOnly,
                 children: [
@@ -81,6 +85,7 @@ export const routes: RouteObject[] = [
                   { path: "sign-in", element: <AccessScreen tab="sign-in" /> },
                   { path: "members", element: <AccessScreen tab="members" /> },
                   { path: "activity", element: <AccessScreen tab="activity" /> },
+                  { path: "api", element: <AccessScreen tab="api" /> },
                 ],
               },
             ],

@@ -486,6 +486,13 @@ commit them from the server or copy them back if you want them in the repo.
   workspace, per minute. Raise them in `.env`: `RATE_LIMIT_CHAT_USER` (default 20),
   `RATE_LIMIT_CHAT_WORKSPACE` (300), and the same `_USER` / `_WORKSPACE` pair for
   `UPLOAD` (30 / 120), `REINDEX` (5 / 20) and `SYNC` (5 / 20).
+- **"This API key has made 60 calls in the last minute"** — calls with API keys
+  (`/api/v1` and `/mcp`) are limited per key and per workspace:
+  `RATE_LIMIT_API_KEY` (default 60) and `RATE_LIMIT_API_WORKSPACE` (600).
+- **An MCP client can't connect** — behind nginx, `/mcp` must reach the app like
+  `/api` does (the app serves it itself, at exactly `/mcp`, no trailing slash),
+  with `proxy_buffering off` so answers aren't held back. The key must be a
+  personal one, and Access → API & MCP must have the MCP server on.
 - **An upload is refused as too large** — files can be up to `UPLOAD_MAX_FILE_MB`
   (25) each and `UPLOAD_MAX_REQUEST_MB` (100) per upload; the second also caps any
   other request body. Behind nginx, `client_max_body_size` must be at least as big

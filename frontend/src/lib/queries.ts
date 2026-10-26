@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query"
 
-import { api, insights, session, signIn } from "@/lib/api"
+import { api, apiKeys, insights, session, signIn } from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
 // After a change, invalidate the key and the screens showing it load it again.
@@ -53,6 +53,9 @@ export const queries = {
   evalCases: () => queryOptions({ queryKey: ["eval-cases"], queryFn: insights.evalCases }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
   scimSettings: () => queryOptions({ queryKey: ["scim-settings"], queryFn: signIn.scim }),
+  // API keys: the signed-in person's own, and (admin) the workspace's API and MCP settings.
+  myApiKeys: () => queryOptions({ queryKey: ["api-keys", "mine"], queryFn: apiKeys.myApiKeys }),
+  adminApi: () => queryOptions({ queryKey: ["api-keys", "admin"], queryFn: apiKeys.adminApi }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

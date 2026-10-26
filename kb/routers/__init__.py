@@ -103,6 +103,18 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
   health.py
     GET    /health                the process is up (Docker's HEALTHCHECK)
     GET    /health/ready          can it serve: database, index, key, guards (503 if not)
+  api_keys.py
+    GET    /me/api-keys           my API keys, the scopes I may give them, the API / MCP URLs
+    POST   /me/api-keys           {name, scopes, days} -> the key, shown once
+    DELETE /me/api-keys/{id}      revoke one of mine
+    GET    /admin/api             API and MCP settings, every key in the workspace     (admin)
+    PUT    /admin/api             {api_enabled, mcp_enabled, mcp_tools}               (admin)
+    POST   /admin/api/service-keys  a key acting as a public user, shown once         (admin)
+    DELETE /admin/api/keys/{id}   revoke any key in the workspace                    (admin)
+  api_v1.py    (the public API: "Authorization: Bearer kb_live_...", an API key, not a session)
+    POST   /v1/ask | /v1/search   GET /v1/sources | /v1/audit | /v1/openapi.json
+    GET | POST | DELETE /v1/documents ...   see the module; the API we keep stable
+And /mcp (kb/mcp_server.py, outside /api): the MCP server, with personal API keys.
 
 Chat, uploads, re-index and sync now are rate-limited per person and per workspace
 (kb/rate_limit.py); request bodies and uploaded files are size-capped
@@ -110,7 +122,8 @@ Chat, uploads, re-index and sync now are rate-limited per person and per workspa
 (middleware.SecurityHeaders). Every document change re-indexes automatically;
 connectors re-sync every 30 minutes; SAML providers set up from a metadata URL
 fetch it again daily (or as it says). FastAPI's own /docs, /redoc and
-/openapi.json are only on when settings.api_docs_on().
+/openapi.json are only on when settings.api_docs_on(); /api/v1/openapi.json
+(the public API's alone) is always there.
 
 tests/routes.txt is the full list (method, path, endpoint, guard);
 tests/test_routes.py fails when it changes, so a change to it is deliberate.

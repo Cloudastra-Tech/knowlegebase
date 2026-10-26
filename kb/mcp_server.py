@@ -7,7 +7,7 @@ AUTH. "Authorization: Bearer kb_live_..." with a PERSONAL API key (kb/api_auth.p
 answers follow the person, with their role looked up on every call, so a shared
 workspace key can't be used here. The workspace comes from the key. OAuth 2.1
 (the MCP authorization spec) for clients that sign people in themselves is a
-follow-up (sign-in-guide.md, "API and MCP").
+follow-up (ARCHITECTURE.md, "Public API, API keys and the MCP server").
 
 TOOLS, each needing a scope of the key and turned on by the workspace's admins
 (api_keys_store.settings; read_document is off unless they turn it on, since it

@@ -163,7 +163,7 @@ def test_what_a_key_may_be_given(kb):
                 "/api/admin/api/service-keys").status_code == 403
     assert make(kb.session(w), {"scopes": ["docs:write"]},
                 "/api/admin/api/service-keys").status_code == 400
-    for _ in range(api_keys_store.MAX_PERSONAL - 0):
+    for _ in range(api_keys_store.MAX_PERSONAL):
         make(staff, {"scopes": ["ask"]})
     assert "Revoke one" in make(staff, {"scopes": ["ask"]}).json()["detail"]
 
@@ -271,9 +271,13 @@ def test_a_service_key_acts_as_a_public_user_only(kb):
     assert kb.client.post("/api/v1/ask", headers=bearer(key),
                           json={"question": "Hi", "conversation_id": "new"}).status_code == 400
     # It stops once the admin who made it isn't one.
-    members_store.set_password(f"boss@{w}.example", "Boss", auth.hash_password("x"), w, "admin")
-    kb.client.patch(f"/api/admin/members/admin@{w}.example",
-                    headers=kb.session(w), json={"role": "hr"})
+    members_store.set_password(f"boss@{w}.example", "Boss", auth.hash_password("correct-horse"),
+                               w, "admin")
+    boss = kb.client.post("/api/auth/login", json={"username": f"boss@{w}.example",
+                                                   "password": "correct-horse"}).json()["token"]
+    r = kb.client.patch(f"/api/admin/members/admin@{w}.example", json={"role": "hr"},
+                        headers={"Authorization": f"Bearer {boss}", "X-Role": "hr"})
+    assert r.status_code == 200, r.text
     assert kb.client.get("/api/v1/sources", headers=bearer(key)).status_code == 401
 
 
@@ -314,6 +318,13 @@ def test_ask_answers_with_citations_and_keeps_a_conversation(kb):
     assert messages[1]["state"] == "answered"
     assert kb.client.post("/api/v1/ask", headers=bearer(key),
                           json={"question": "x", "conversation_id": "nope"}).status_code == 404
+    # In the question log (Insights) as asked through the API, by the key's person.
+    import question_log_store
+    logged = question_log_store.rows(w)
+    assert {r["surface"] for r in logged} == {"api"} and len(logged) == 3
+    assert {r["user"] for r in logged} == {f"staff@{w}.example"}
+    assert {r["message_id"] for r in logged} == {None} | {m["id"] for m in messages
+                                                           if m["author"] == "assistant"}
 
 
 def test_ask_can_stream(kb):
@@ -328,7 +339,7 @@ def test_ask_can_stream(kb):
     assert events[-1]["state"] == "answered" and events[-1]["sources"]
 
 
-def test_a_refused_question_is_an_answer_not_an_error(kb):
+def test_empty_and_oversized_input_is_refused(kb):
     w = kb.workspace_with_docs()
     key = kb.key(w, "staff", ["ask", "search"])
     r = kb.client.post("/api/v1/ask", headers=bearer(key), json={"question": "x" * 4001})
