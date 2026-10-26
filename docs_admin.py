@@ -17,6 +17,8 @@ import streamlit as st
 
 import docs_store
 import ingest
+import integrations_store
+import workspaces
 
 DOCS_FOLDER = docs_store.DOCS_FOLDER
 ACCESS_FOLDERS = {"Public": "public", "Restricted (HR only)": "restricted"}
@@ -38,7 +40,8 @@ def _reindex():
     """Re-run ingest.py, then drop the cached agents so they reload the new DB."""
     log = io.StringIO()
     with contextlib.redirect_stdout(log):
-        summary = ingest.main()
+        summary = ingest.main(connector_access=integrations_store.chunk_access_levels(
+            workspaces.DEFAULT))
     st.cache_resource.clear()
     return summary, log.getvalue()
 

@@ -1,9 +1,19 @@
 import { lazy, useEffect, useState } from "react"
-import { ChevronDown, LogOut } from "lucide-react"
+import { ChevronDown, LogOut, MonitorSmartphone } from "lucide-react"
 import { toast } from "sonner"
 
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -63,6 +73,7 @@ export default function App() {
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
   const [openDrivePicker, setOpenDrivePicker] = useState(false)
+  const [confirmSignOutAll, setConfirmSignOutAll] = useState(false)
   // Signed out: the landing page, or the sign-in page at #login (or #login?error=...),
   // opened on its Create a workspace tab at #signup.
   const authHash = () => /^#(login|signup)/.test(window.location.hash)
@@ -230,6 +241,20 @@ export default function App() {
     if (out?.logout_url) window.location.assign(out.logout_url)
   }
 
+  // Every session of this account ends (a lost laptop, a shared computer), this one too.
+  async function signOutEverywhere() {
+    try {
+      await api.logoutEverywhere()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't sign out everywhere.")
+      return
+    }
+    session.setToken(null)
+    setUser(null)
+    setScreen("chat")
+    toast.success("Signed out on every device.")
+  }
+
   if (checking) {
     return (
       <div className="flex min-h-svh items-center justify-center">
@@ -348,7 +373,7 @@ export default function App() {
                   </Avatar>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuLabel>
                   <div className="text-sm font-medium">{user.name}</div>
                   <div className="text-xs font-normal text-muted-foreground">
@@ -359,8 +384,27 @@ export default function App() {
                 <DropdownMenuItem onClick={signOut}>
                   <LogOut /> Sign out
                 </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setConfirmSignOutAll(true)}>
+                  <MonitorSmartphone /> Sign out everywhere
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <AlertDialog open={confirmSignOutAll} onOpenChange={setConfirmSignOutAll}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Sign out everywhere?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You're signed out on every device and browser where you're signed in,
+                    this one included. Use it if you lost a device or signed in on a computer
+                    that isn't yours.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={signOutEverywhere}>Sign out everywhere</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
         <IndexProgressBar />

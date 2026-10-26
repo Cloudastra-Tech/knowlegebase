@@ -32,6 +32,7 @@ Run a quick demo:  python agent.py
 """
 
 import ast
+import logging
 import operator
 import os
 import re
@@ -48,6 +49,8 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from rag import load_chain, answer_question
 from safety import check_prompt_injection, redact_pii
+
+log = logging.getLogger("uvicorn.error")
 
 
 # ---- Calculator: arithmetic only --------------------------------------------
@@ -95,9 +98,47 @@ def _safe(text):
     return str(text).encode(enc, "replace").decode(enc, "replace")
 
 
+def _tool_error(name, e):
+    """What a tool tells the model when an outside service fails. Logged by type
+    only: the message can carry the question's words (e.g. in a URL)."""
+    log.warning("Agent: the %s tool failed (%s)", name, type(e).__name__)
+    return f"Error: {e}"
+
+
+def _outline_collections():
+    """OUTLINE_COLLECTIONS: comma-separated Outline collection ids the assistant
+    may search and read. Empty = every collection the server's token can see."""
+    return [c.strip() for c in os.getenv("OUTLINE_COLLECTIONS", "").split(",") if c.strip()]
+
+
 def _outline_post(endpoint, payload, timeout=15):
     """Shared helper: POST to the Outline API, handling auth + Cloudflare Access.
-    Returns (json, error_string). Used by both Outline tools below."""
+    Returns (json, error_string). Used by both Outline tools below.
+    With OUTLINE_COLLECTIONS set, searches run once per allowed collection (Outline's
+    `collectionId` filter, which older self-hosted servers also know) and documents
+    are also checked here, so nothing outside those collections gets through."""
+    allowed = _outline_collections()
+    if not allowed or endpoint not in ("documents.search", "documents.info"):
+        return _outline_request(endpoint, payload, timeout)
+    if endpoint == "documents.info":
+        data, err = _outline_request(endpoint, payload, timeout)
+        if not err and ((data or {}).get("data") or {}).get("collectionId") not in allowed:
+            return None, "Error: that document isn't in a wiki collection this assistant may read."
+        return data, err
+    results = []
+    for collection_id in allowed:
+        data, err = _outline_request(endpoint, {**payload, "collectionId": collection_id},
+                                     timeout)
+        if err:
+            return None, err
+        results += [r for r in (data or {}).get("data", [])
+                    if (r.get("document") or {}).get("collectionId") in allowed]
+    results.sort(key=lambda r: -(r.get("ranking") or 0))
+    return {"data": results[:payload.get("limit") or len(results)]}, None
+
+
+def _outline_request(endpoint, payload, timeout=15):
+    """One POST to the Outline API (see _outline_post)."""
     base = os.getenv("OUTLINE_URL", "https://app.cloudastra.co").rstrip("/")
     token = os.getenv("OUTLINE_API_TOKEN")
     if not token:
@@ -324,7 +365,7 @@ def build_agent(role="public", collection=None, outline=True):
             value = data["rates"][to_currency]
             return f"{amount} {from_currency} = {value} {to_currency}"
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("convert_currency", e)
 
     @tool
     def wikipedia(topic: str) -> str:
@@ -339,7 +380,7 @@ def build_agent(role="public", collection=None, outline=True):
             data = requests.get(url, headers=headers, timeout=10).json()
             return data.get("extract", "No summary found.")
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("wikipedia", e)
 
     @tool
     def search_outline(query: str) -> str:
@@ -408,7 +449,7 @@ def build_agent(role="public", collection=None, outline=True):
                 lines.append(f"- {title} (id: {doc_id}): {snippet}")
             return "\n".join(lines)
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("search_outline", e)
 
     @tool
     def read_outline_doc(document_id: str) -> str:
@@ -431,7 +472,7 @@ def build_agent(role="public", collection=None, outline=True):
                 text = text[:8000] + "\n\n...(document truncated)"
             return f"# {title}\n\n{text}"
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("read_outline_doc", e)
 
     tools = [search_docs, calculator, convert_currency, wikipedia]
     if outline:                       # only workspaces with the wiki connected

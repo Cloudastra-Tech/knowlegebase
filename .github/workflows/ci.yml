@@ -31,6 +31,12 @@ jobs:
       - run: pytest
         env:
           OPENAI_API_KEY: sk-test-not-used
+      # Retrieval regression gate and leak suite (eval/harness.py): no secrets, a
+      # stand-in embedding. pytest runs the same checks; this step prints the scores.
+      - name: Retrieval eval gate and leak suite
+        run: python -m eval.harness --gate
+        env:
+          OPENAI_API_KEY: sk-test-not-used
 
   frontend:
     runs-on: ubuntu-latest
