@@ -40,6 +40,8 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     GET    /integrations/{provider}/callback    the provider redirects back here
     GET    /integrations/google_drive/folders   browse folders to pick         (HR / Admin)
     PUT    /integrations/google_drive/folders   {folders} choose what to sync  (HR / Admin)
+    PUT    /integrations/{provider}/access      {access: restricted|everyone}
+                                  who may ask about its files, then re-index  (HR / Admin)
     POST   /integrations/{provider}/sync        sync now                      (HR / Admin)
     DELETE /integrations/{provider}             disconnect + delete copies    (HR / Admin)
   ({provider} = google_drive | notion)
@@ -1551,15 +1553,28 @@ class ChatIn(BaseModel):
     question: str
 
 
-def outline_on(ws):
-    """The Outline wiki is configured server-wide (.env) for the default workspace."""
-    return ws == workspaces.DEFAULT and bool(os.getenv("OUTLINE_API_TOKEN"))
+OUTLINE_ROLES = {"public": ("public", "hr"), "hr": ("hr",)}   # OUTLINE_MIN_ROLE -> roles
+
+
+def outline_on(ws, role):
+    """The Outline wiki is configured server-wide (.env) for the default workspace.
+    It is searched with ONE server-wide token, so the wiki has no per-user
+    permissions: OUTLINE_MIN_ROLE says which roles get it at all (public, the
+    default, = everyone; hr = HR / Admin only). An unknown value turns it off."""
+    if ws != workspaces.DEFAULT or not os.getenv("OUTLINE_API_TOKEN"):
+        return False
+    wanted = os.getenv("OUTLINE_MIN_ROLE", "public").strip().lower() or "public"
+    if wanted not in OUTLINE_ROLES:
+        log.warning("OUTLINE_MIN_ROLE=%r isn't public or hr; the Outline wiki is off", wanted)
+        return False
+    return role in OUTLINE_ROLES[wanted]
 
 
 def get_agent(ws, role):
     with _agents_lock:
         if (ws, role) not in _agents:
-            _agents[(ws, role)] = build_agent(role, workspaces.collection(ws), outline_on(ws))
+            _agents[(ws, role)] = build_agent(role, workspaces.collection(ws),
+                                              outline_on(ws, role))
         return _agents[(ws, role)]
 
 
@@ -1653,7 +1668,9 @@ def _run_index(ws):
             with _ingest_lock, contextlib.redirect_stdout(io.StringIO()):
                 summary = ingest.main(progress=progress,
                                       docs_folder=workspaces.docs_root(ws),
-                                      collection=workspaces.collection(ws))
+                                      collection=workspaces.collection(ws),
+                                      connector_access=integrations_store
+                                      .chunk_access_levels(ws))
             with _agents_lock:
                 for key in [k for k in _agents if k[0] == ws]:
                     del _agents[key]   # next question loads the new index
@@ -1873,14 +1890,15 @@ def _integration_info(ws, provider):
             "account": row and row["account"], "connected_by": row and row["connected_by"],
             "last_sync_at": row and row["last_sync_at"],
             "doc_count": (row and row["doc_count"]) or 0,
-            "last_error": row and row["last_error"]}
+            "last_error": row and row["last_error"],
+            "access": integrations_store.access_of(row)}
     if provider == google_drive.PROVIDER:
         info["folders"] = ((row and row.get("settings")) or {}).get("folders", [])
     return info
 
 
 @app.get("/api/integrations")
-def list_integrations(user=Depends(current_user)):
+def list_integrations(user=Depends(current_user), role=Depends(current_role)):
     ws = ws_of(user)
     return {"workspace": ws, "integrations": [
         {"id": "uploads", "name": "Uploaded files", "status": "connected",
@@ -1888,7 +1906,7 @@ def list_integrations(user=Depends(current_user)):
         _integration_info(ws, "google_drive"),
         _integration_info(ws, "notion"),
         {"id": "outline", "name": "Outline wiki",
-         "status": "connected" if outline_on(ws) else "unavailable"},
+         "status": "connected" if outline_on(ws, role) else "unavailable"},
     ]}
 
 
@@ -1948,6 +1966,29 @@ def integration_disconnect(provider: str, user=Depends(require_hr)):
     c.disconnect(ws)
     _schedule_index(ws)            # drop its files from the search index
     return {"ok": True}
+
+
+class AccessIn(BaseModel):
+    access: str = Field(pattern=r"^(restricted|everyone)$")
+
+
+@app.put("/api/integrations/{provider}/access")
+def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
+    """Who may ask about this connection's files: HR and admins only
+    ("restricted", the default) or everyone in the workspace. The files are
+    re-indexed so their chunks carry the new level."""
+    _connector(provider)
+    ws = ws_of(user)
+    row = integrations_store.get(ws, provider)
+    if not row:
+        raise HTTPException(400, f"{LABELS[provider]} isn't connected.")
+    if integrations_store.access_of(row) != body.access:
+        integrations_store.update(ws, provider,
+                                  settings=dict(row.get("settings") or {}, access=body.access))
+        log.warning("%s set who can ask about %s files in %s to %s", user["username"],
+                    LABELS[provider], ws, body.access)
+        _schedule_index(ws)
+    return {"access": body.access}
 
 
 class FoldersIn(BaseModel):
@@ -2017,6 +2058,7 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
                       "url": None, "modified": os.path.getmtime(d["path"]),
                       "size": d["size"], "chunks": indexed(d["path"])})
 
+    levels = integrations_store.chunk_access_levels(ws)
     connectors_dir = os.path.join(root, "connectors")
     for provider in sorted(os.listdir(connectors_dir)) if os.path.isdir(connectors_dir) else []:
         folder = os.path.join(connectors_dir, provider)
@@ -2025,18 +2067,21 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
                 manifest = json.load(f)
         except (OSError, ValueError):
             continue
+        access = levels.get(provider, "restricted")       # as ingest.py tags them
+        if role != "hr" and access == "restricted":
+            continue
         for name, info in manifest.items():
             path = os.path.join(folder, name)
             if not os.path.isfile(path):
                 continue
             items.append({"title": info.get("title") or name,
-                          "source": info.get("provider") or provider, "access": "public",
+                          "source": info.get("provider") or provider, "access": access,
                           "url": info.get("url"), "modified": info.get("modified"),
                           "size": os.path.getsize(path), "chunks": indexed(path)})
 
     items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))
     return {"workspace": ws, "items": items,
-            "outline": outline_on(ws)}         # searched live, so not listed here
+            "outline": outline_on(ws, role)}         # searched live, so not listed here
 
 
 # ---- Members (admin) --------------------------------------------------------------

