@@ -1,8 +1,11 @@
 # knowlegebase
 
 RAG chat app: FastAPI API (`api.py`, port 8010) + React/shadcn site (`frontend/`, Vite proxies
-`/api` to 8010). Streamlit `app.py` is legacy. Default branch `main`; sign-in code is `auth.py`,
-`sso.py`, `saml_sp.py`, `members_store.py`. Architecture: `ARCHITECTURE.md`; ops: `deploy.md`.
+`/api` to 8010). Sign-in code is `auth.py`, `sso.py`, `saml_sp.py`, `members_store.py`.
+Architecture: `ARCHITECTURE.md`; ops: `deploy.md`.
+
+Branches: `main` is production. Feature work branches from `dev` and PRs go into `dev` (CI runs
+on both); `dev` is promoted to `main` only when the owner says so.
 
 Linux setup (Python 3.12, venv dir is `venv/`):
 

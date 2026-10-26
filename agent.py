@@ -41,14 +41,16 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import requests
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_core.messages import (HumanMessage, SystemMessage, AIMessage, ToolMessage,
+                                     message_chunk_to_message)
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from rag import load_chain, answer_question
-from safety import check_prompt_injection, redact_pii
+from rag import ROLE_ACCESS, load_chain, answer_question
+from safety import check_prompt_injection, check_question, redact_pii
 
 log = logging.getLogger("uvicorn.error")
 
@@ -298,53 +300,134 @@ def step_result(tool, output, found_docs=None):
     return "done"
 
 
+def _blocked_note(message):
+    """What search_docs tells the agent when a guard refused the question."""
+    return (f"BLOCKED BY ACCESS RULES: {message} Do not search any other tool "
+            "for this; just tell the user this message.")
+
+
+class Cancelled(Exception):
+    """run() was stopped through its `cancel` event (e.g. the asker went away)."""
+
+
+class _Run:
+    """Everything that belongs to ONE question. The agent itself (retriever,
+    tools, compiled graph) is cached and shared by every question in a workspace
+    and role; the state of a question lives here instead and reaches the nodes
+    and tools through config["configurable"]["run"]. So questions run at the
+    same time without waiting for, or mixing up, each other."""
+
+    def __init__(self, on_event=None, cancel=None):
+        # CITATIONS: every tool that reads a document records it here, and the
+        # answer's "Sources" are built from it — so citations come from what was
+        # ACTUALLY read, not from what the model claims it read.
+        self.cited = []
+        # GUARD refusals: if a safety check blocks the question (e.g. a public
+        # user asking for staff salary), we return that exact message to the user,
+        # instead of letting the agent keep searching and reword it as "not found".
+        self.blocked = []
+        self.on_event = on_event          # LIVE STEPS: progress for the UI, if anyone listens
+        self.cancel = cancel or threading.Event()
+        self.guards = []                  # (name, future of (ok, message)), in order
+        self.refused_by = None            # the input guard that blocked the question
+        self._lock = threading.Lock()     # tools can run in parallel threads
+
+    def emit(self, event):
+        if self.on_event:
+            self.on_event(event)
+
+    def cite(self, title, provider, url=None):
+        entry = {"title": title, "provider": provider, "url": url}
+        with self._lock:
+            if entry not in self.cited:
+                self.cited.append(entry)
+
+    def block(self, message):
+        with self._lock:
+            if message not in self.blocked:
+                self.blocked.append(message)
+
+    def check_cancelled(self):
+        if self.cancel.is_set():
+            raise Cancelled()
+
+    def verdict(self):
+        """(ok, message) of the input guards, waiting for them to finish. They are
+        read in the order they used to run in, so the same message wins. Called
+        before anything found is shown or given to a model."""
+        for name, job in self.guards:
+            ok, message = job.result()
+            if not ok:
+                self.refused_by = name
+                self.block(message)
+                return False, message
+        self.check_cancelled()
+        return True, ""
+
+
+class _Held:
+    """Passes events on only after release(); until then it keeps them, and
+    drop() throws them away. Steps found while the guards still run wait here."""
+
+    def __init__(self, emit):
+        self.emit, self.events, self.state = emit, [], "held"
+        self.lock = threading.Lock()
+
+    def __call__(self, event):
+        with self.lock:
+            if self.state == "open":
+                self.emit(event)
+            elif self.state == "held":
+                self.events.append(event)
+
+    def release(self):
+        with self.lock:
+            self.state = "open"
+            for event in self.events:
+                self.emit(event)
+            self.events = []
+
+    def drop(self):
+        with self.lock:
+            self.state, self.events = "dropped", []
+
+
+def _run_of(config):
+    return config["configurable"]["run"]
+
+
 def build_agent(role="public", collection=None, outline=True):
     """Create an agent for a given user role. Returns a run(question) function.
     collection: the workspace's search index (None = default workspace).
-    outline: whether this workspace has the Outline wiki connected."""
+    outline: whether this workspace has the Outline wiki connected.
+    The returned run() can be called from several threads at once."""
     retriever, rag_llm = load_chain(role, collection)
+    allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
 
-    # CITATIONS: every tool that reads a document records it here. run() clears
-    # it per question and appends a "Sources" list built from it — so citations
-    # come from what was ACTUALLY read, not from what the model claims it read.
-    cited = []
-    # GUARD refusals: if a tool's safety check blocks the question (e.g. a public
-    # user asking for staff salary), we return that exact message to the user,
-    # instead of letting the agent keep searching and reword it as "not found".
-    blocked = []
-    # LIVE STEPS: run(..., on_event=fn) sets this so nodes can report progress.
-    emit_holder = [None]
-
-    def emit(event):
-        if emit_holder[0]:
-            emit_holder[0](event)
-
-    def cite(title, provider, url=None):
-        entry = {"title": title, "provider": provider, "url": url}
-        if entry not in cited:
-            cited.append(entry)
+    def search_docs_for(run, question, guard=None):
+        answer, docs = answer_question(question, retriever, rag_llm, role, guard=guard)
+        if docs is None:                 # a guard refused before any answer was written
+            run.block(answer)
+            return _blocked_note(answer)
+        for d in _chunks_used(answer, docs):
+            source = d.metadata.get("source", "")
+            if d.metadata.get("title"):          # synced from a connector (e.g. Drive)
+                run.cite(d.metadata["title"], d.metadata.get("provider") or "Connected source",
+                         d.metadata.get("url") or None)
+            elif source:
+                run.cite(os.path.basename(source), "Company documents")
+        return answer
 
     # ---- The TOOLS the agent can choose from --------------------------------
+    # (`config` is filled in by LangGraph and hidden from the model.)
     @tool
-    def search_docs(question: str) -> str:
+    def search_docs(question: str, config: RunnableConfig) -> str:
         """Search the company's documents: files uploaded on the Documents screen
         and files synced from connected tools such as Google Drive / Google Docs:
         policies (leave, refund, HR), handbooks, pricing, support hours, stipend,
         FAQs, PDFs and any other files added there. Try this FIRST for any
         question about the company, its policies or its products."""
-        answer, docs = answer_question(question, retriever, rag_llm, role)
-        if docs is None:                 # a guard refused before any search ran
-            blocked.append(answer)
-            return (f"BLOCKED BY ACCESS RULES: {answer} Do not search any other tool "
-                    "for this; just tell the user this message.")
-        for d in _chunks_used(answer, docs):
-            source = d.metadata.get("source", "")
-            if d.metadata.get("title"):          # synced from a connector (e.g. Drive)
-                cite(d.metadata["title"], d.metadata.get("provider") or "Connected source",
-                     d.metadata.get("url") or None)
-            elif source:
-                cite(os.path.basename(source), "Company documents")
-        return answer
+        return search_docs_for(_run_of(config), question)
 
     @tool
     def calculator(expression: str) -> str:
@@ -452,7 +535,7 @@ def build_agent(role="public", collection=None, outline=True):
             return _tool_error("search_outline", e)
 
     @tool
-    def read_outline_doc(document_id: str) -> str:
+    def read_outline_doc(document_id: str, config: RunnableConfig) -> str:
         """Read the FULL text of one Outline wiki document, given its id.
         First call search_outline to find the right document and copy its id,
         then call this to read the whole document before answering a detailed
@@ -466,7 +549,7 @@ def build_agent(role="public", collection=None, outline=True):
             text = (doc.get("text") or "").strip()
             if not text:
                 return f"'{title}' has no readable text."
-            cite(title, "Outline wiki", _outline_doc_url(doc))
+            _run_of(config).cite(title, "Outline wiki", _outline_doc_url(doc))
             # Cap very long docs so we don't blow up the token budget.
             if len(text) > 8000:
                 text = text[:8000] + "\n\n...(document truncated)"
@@ -536,85 +619,123 @@ def build_agent(role="public", collection=None, outline=True):
     # MessagesState is a tiny built-in state: just {"messages": [...]} that
     # auto-appends new messages. This replaces the hand-managed `messages` list.
 
-    def agent_node(state):
+    def agent_node(state, config):
         """The 'think' step: ask the LLM what to do next, given the conversation."""
-        # We prepend SYSTEM each call so the rules are always in view.
-        ai = llm.invoke([SYSTEM] + state["messages"])
-        return {"messages": [ai]}
+        run = _run_of(config)
+        run.check_cancelled()
+        # We prepend SYSTEM each call so the rules are always in view. Streamed,
+        # so a cancelled run stops mid-answer (leaving the loop closes the stream).
+        reply = None
+        for chunk in llm.stream([SYSTEM] + state["messages"]):
+            run.check_cancelled()
+            reply = chunk if reply is None else reply + chunk
+        return {"messages": [message_chunk_to_message(reply) if reply is not None
+                             else AIMessage(content="")]}
 
-    def retrieve_node(state):
+    def retrieve_node(state, config):
         """RETRIEVAL-FIRST (industry standard for company assistants): search the
         company docs for EVERY question, in code, before the agent runs — so an
         answer can never skip the docs because the model guessed the question was
         "general knowledge". The search is recorded as an ordinary search_docs
         call, so citations, guard blocks and the steps panel work unchanged; the
         agent then decides only what ELSE it needs (another query, Outline,
-        calculator, Wikipedia)."""
+        calculator, Wikipedia).
+        The input guards started by run() are still working while this searches.
+        Nothing found is shown, or put in front of a model, until they pass."""
+        run = _run_of(config)
         question = next((m.content for m in reversed(state["messages"])
                          if isinstance(m, HumanMessage)), "")
         if not needs_retrieval(question):
+            run.verdict()                 # small talk / arithmetic: just the guards
             return {"messages": []}
         # Every connected company source is searched, in code, IN PARALLEL:
         # the index (uploads + Google Drive + Notion) and, where connected, the
         # Outline wiki (searched live). The user never has to name the source.
-        searches = [("retrieve_docs", search_docs, "search_docs", {"question": question})]
+        searches = [("retrieve_docs", "search_docs", {"question": question},
+                     lambda: search_docs_for(run, question, guard=run.verdict))]
         if outline:
-            searches.append(("retrieve_wiki", search_outline, "search_outline",
-                             {"query": question}))
-        for call_id, _, name, args in searches:
-            emit({"type": "step_start", "id": call_id, "tool": name,
-                  "label": step_label(name, args)})
+            searches.append(("retrieve_wiki", "search_outline", {"query": question},
+                             lambda: search_outline.invoke({"query": question})))
+        steps = _Held(run.emit)           # the steps panel waits for the guards too
+        for call_id, name, args, _ in searches:
+            steps({"type": "step_start", "id": call_id, "tool": name,
+                   "label": step_label(name, args)})
 
-        before = len(cited)
+        before = len(run.cited)
 
         def run_one(item):
-            call_id, tool_fn, name, args = item
-            out = tool_fn.invoke(args)
-            found = len(cited) - before if name == "search_docs" else None
-            emit({"type": "step_end", "id": call_id, "tool": name,
-                  "result": step_result(name, out, found)})
+            call_id, name, _, search = item
+            out = search()
+            found = len(run.cited) - before if name == "search_docs" else None
+            steps({"type": "step_end", "id": call_id, "tool": name,
+                   "result": step_result(name, out, found)})
             return out
 
-        with ThreadPoolExecutor(max_workers=len(searches)) as pool:
-            outputs = list(pool.map(run_one, searches))
+        pool = ThreadPoolExecutor(max_workers=len(searches))
+        try:
+            jobs = [pool.submit(run_one, item) for item in searches]
+            ok, message = run.verdict()
+        finally:
+            pool.shutdown(wait=False)     # a refused question doesn't wait for them
+        if not ok:
+            steps.drop()
+            if run.refused_by == "injection":
+                return {"messages": []}   # as before: refused before any search
+            # An access rule refused it: show the blocked search, as before.
+            run.emit({"type": "step_start", "id": "retrieve_docs", "tool": "search_docs",
+                      "label": step_label("search_docs", {})})
+            note = _blocked_note(message)
+            run.emit({"type": "step_end", "id": "retrieve_docs", "tool": "search_docs",
+                      "result": step_result("search_docs", note)})
+            return {"messages": [
+                AIMessage(content="", tool_calls=[{"id": "retrieve_docs", "name": "search_docs",
+                                                   "args": {"question": question}}]),
+                ToolMessage(content=note, tool_call_id="retrieve_docs", name="search_docs"),
+            ]}
+        steps.release()
+        outputs = [job.result() for job in jobs]
 
         return {"messages": [
             AIMessage(content="", tool_calls=[{"id": call_id, "name": name, "args": args}
-                                              for call_id, _, name, args in searches]),
+                                              for call_id, name, args, _ in searches]),
             *[ToolMessage(content=out, tool_call_id=call_id, name=name)
-              for (call_id, _, name, _), out in zip(searches, outputs)],
+              for (call_id, name, _, _), out in zip(searches, outputs)],
         ]}
+
+    def after_retrieve(state, config):
+        """A question an input guard refused ends here: no model sees it."""
+        return END if _run_of(config).refused_by else "agent"
 
     builder = StateGraph(MessagesState)
     builder.add_node("retrieve", retrieve_node)
     builder.add_node("agent", agent_node)
     builder.add_node("tools", ToolNode(tools))     # runs whatever tool the LLM asked for
     builder.add_edge(START, "retrieve")            # ALWAYS search the docs first
-    builder.add_edge("retrieve", "agent")
+    builder.add_conditional_edges("retrieve", after_retrieve, ["agent", END])
     # tools_condition routes to "tools" if the LLM made tool calls, else to END.
     builder.add_conditional_edges("agent", tools_condition)
     builder.add_edge("tools", "agent")             # after a tool runs, think again
     graph = builder.compile()
 
     # ---- RUN: same signature as before -> (answer, trace) ------------------
-    # app.py doesn't change. We run the graph, then rebuild the tool-call
+    # Callers don't change. We run the graph, then rebuild the tool-call
     # "trace" from the final message list so the UI can show each step.
-    # One question at a time per agent: `cited` is shared, so two overlapping
-    # questions would otherwise mix up each other's citations.
-    lock = threading.Lock()
+    # The graph and tools are shared; each call gets its own _Run, so questions
+    # in the same workspace and role run side by side.
 
-    def _stream(user_input, on_event):
+    def _stream(user_input, on_event, run, config):
         """Run the graph while reporting each step and the answer tokens live.
         Returns the full message list, like graph.invoke would."""
         messages = [HumanMessage(content=user_input)]
         text = ""                         # the answer streamed so far
         started = {}                      # tool call id -> cited count at start
-        for mode, data in graph.stream({"messages": list(messages)},
+        for mode, data in graph.stream({"messages": list(messages)}, config,
                                        stream_mode=["updates", "messages"]):
+            run.check_cancelled()         # leaving the loop stops the graph
             if mode == "messages":
                 chunk, meta = data
                 if (meta.get("langgraph_node") == "agent" and isinstance(chunk.content, str)
-                        and chunk.content and not blocked):
+                        and chunk.content and not run.blocked):
                     text += chunk.content
                     # Mask PII on the text so far, so it never flashes on screen.
                     on_event({"type": "answer", "text": redact_pii(text)})
@@ -628,41 +749,43 @@ def build_agent(role="public", collection=None, outline=True):
                             text = ""
                             on_event({"type": "answer", "text": ""})
                         for tc in m.tool_calls:
-                            started[tc["id"]] = len(cited)
+                            started[tc["id"]] = len(run.cited)
                             on_event({"type": "step_start", "id": tc["id"], "tool": tc["name"],
                                       "label": step_label(tc["name"], tc["args"])})
                     elif node == "tools" and isinstance(m, ToolMessage):
-                        found = len(cited) - started.get(m.tool_call_id, len(cited))
+                        found = len(run.cited) - started.get(m.tool_call_id, len(run.cited))
                         on_event({"type": "step_end", "id": m.tool_call_id, "tool": m.name,
                                   "result": step_result(m.name, m.content, found)})
         return messages
 
-    def run(user_input, with_sources=False, on_event=None):
+    def run(user_input, with_sources=False, on_event=None, cancel=None):
         """Answer a question -> (answer, trace).
         with_sources=True -> (answer, trace, sources) with the sources as a list
         of {title, provider, url} instead of a markdown list in the answer.
-        on_event(dict) -> stream progress: step_start / step_end / answer events."""
-        if on_event:
-            on_event({"type": "status", "text": "Checking your question"})
-        # GUARD (input): block prompt-injection / jailbreak before doing any work.
-        ok, msg = check_prompt_injection(user_input)
-        if not ok:
-            return (msg, [], []) if with_sources else (msg, [])
+        on_event(dict) -> stream progress: step_start / step_end / answer events.
+        cancel: a threading.Event; once it is set the run stops at the next
+        checkpoint and raises Cancelled (e.g. the browser closed the stream)."""
+        state = _Run(on_event, cancel)
+        state.emit({"type": "status", "text": "Checking your question"})
+        # GUARDS (input): prompt-injection / jailbreak, and the question rules
+        # (length, toxicity, staff salary for public users) that search_docs
+        # applies. They run ALONGSIDE the search, not before it; the search
+        # waits for them before anything it found is shown or answered from.
+        guards = ThreadPoolExecutor(max_workers=2)
+        state.guards.append(("injection", guards.submit(check_prompt_injection, user_input)))
+        if needs_retrieval(user_input):   # the question rules guard the docs search
+            state.guards.append(("question", guards.submit(check_question, user_input,
+                                                           allow_restricted)))
+        guards.shutdown(wait=False)
 
-        with lock:
-            cited.clear()      # citations are per question
-            blocked.clear()
-            emit_holder[0] = on_event
-            try:
-                if on_event:
-                    messages = _stream(user_input, on_event)
-                else:
-                    messages = graph.invoke(
-                        {"messages": [HumanMessage(content=user_input)]})["messages"]
-            finally:
-                emit_holder[0] = None
-            sources = list(cited)
-            blocked_reply = list(blocked)
+        config = {"configurable": {"run": state}}
+        if on_event:
+            messages = _stream(user_input, on_event, state, config)
+        else:
+            messages = graph.invoke({"messages": [HumanMessage(content=user_input)]},
+                                    config)["messages"]
+        sources = list(state.cited)
+        blocked_reply = list(state.blocked)
 
         # Map each tool result back to its call id so we can pair them up.
         outputs = {m.tool_call_id: m.content for m in messages

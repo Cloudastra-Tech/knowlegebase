@@ -41,13 +41,33 @@ RUN apt-get update \
 # Bring in the pre-built Python packages from the builder stage.
 COPY --from=builder /install /usr/local
 
+# Guardrails Hub toxicity validator (safety.py's generic guard). The Hub token is
+# a BUILD SECRET, never a build-arg or a file in git: put it in
+# guardrails_token.secret (gitignored) and build with docker-compose.guardrails.yml
+# (deploy.md, step 4). Without the secret (CI, fresh clones) this step is skipped
+# and no token ends up in the image; safety.py then logs an ERROR at startup.
+# With it, `guardrails configure` writes ~/.guardrailsrc, which stays in the image
+# because remote inferencing (--no-install-local-models, no torch) needs the token
+# at runtime — so an image built with the secret must never be pushed anywhere
+# public. BuildKit does not re-run this step when only the secret changes: after
+# adding or rotating the token, build with --no-cache.
+RUN --mount=type=secret,id=gr_token,required=false \
+    if [ -s /run/secrets/gr_token ]; then \
+      { guardrails configure --token "$(cat /run/secrets/gr_token)" --disable-metrics --enable-remote-inferencing \
+        && guardrails hub install hub://guardrails/toxic_language --no-install-local-models --quiet \
+        && echo "Guardrails Hub: toxicity validator installed"; } \
+      || echo "WARNING: Guardrails Hub install failed - building WITHOUT the toxicity validator"; \
+    else \
+      echo "Guardrails Hub: no gr_token build secret - skipping the toxicity validator (see deploy.md)"; \
+    fi
+
 # Copy the app (docs come along via the build context; chroma_db is gitignored
 # and gets rebuilt on first boot — see CMD).
 COPY . .
 # The built React site, served by api.py.
 COPY --from=web /web/dist ./frontend/dist
 
-# Same port the Streamlit version used, so nginx needs no change.
+# Port 8501, which the reverse proxy (nginx) in front already points at.
 EXPOSE 8501
 
 # Simple health check so orchestrators know when the app is up.
@@ -58,7 +78,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
 # then launch the API + site bound to all interfaces. ONE worker on purpose:
 # sign-in codes, OAuth states, the re-index queue and login lockouts live in
 # memory, so several workers would not share them (sessions are in SQLite).
-# FORWARDED_ALLOW_IPS: the reverse proxy's address. Only it may say (in
-# X-Forwarded-For) who the client is; "*" trusts anyone, so clients can pose as
-# other addresses and get around the per-address sign-in limits.
-CMD ["sh", "-c", "if [ ! -d chroma_db ] || [ -z \"$(ls -A chroma_db 2>/dev/null)\" ]; then echo 'Building chroma_db via ingest.py...'; python ingest.py; fi; exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8501} --proxy-headers --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-*}"]
+# FORWARDED_ALLOW_IPS: who may say (in X-Forwarded-For) who the client is. The
+# default trusts loopback and the private ranges Docker gives its bridge networks
+# (172.16.0.0/12, 192.168.0.0/16): nginx on the host reaches the published port
+# through the bridge gateway (e.g. 172.18.0.1), while internet clients keep their
+# public address and are not trusted. Never "*": that trusts anyone, so clients
+# could pose as other addresses and get around the per-address sign-in limits.
+CMD ["sh", "-c", "if [ ! -d chroma_db ] || [ -z \"$(ls -A chroma_db 2>/dev/null)\" ]; then echo 'Building chroma_db via ingest.py...'; python ingest.py; fi; exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8501} --proxy-headers --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16}"]

@@ -17,8 +17,8 @@ def server(tmp_path, monkeypatch):
     and the key that encrypted it."""
     from fastapi.testclient import TestClient
     import api
+    import db as app_db
     import ingest
-    import members_store
     import secret_box
 
     key = Fernet.generate_key().decode()
@@ -33,7 +33,7 @@ def server(tmp_path, monkeypatch):
     import chromadb
     chromadb.PersistentClient(path=str(index)).get_or_create_collection("langchain")
 
-    monkeypatch.setattr(members_store, "DB_PATH", str(db))
+    monkeypatch.setattr(app_db, "DB_PATH", str(db))
     monkeypatch.setattr(ingest, "DB_FOLDER", str(index))
     monkeypatch.setattr(secret_box, "KEY_PATH", str(tmp_path / "integrations.key"))
     client = TestClient(api.app)
@@ -47,16 +47,17 @@ def ready(client):
 
 
 def test_a_healthy_server_is_ready(server):
-    assert ready(server) == (200, {"ok": True, "checks": {
-        "database": "ok", "search_index": "ok", "integrations_key": "ok"}})
+    status, body = ready(server)
+    assert (status, body["ok"]) == (200, True)
+    assert body["checks"] == {"database": "ok", "search_index": "ok", "integrations_key": "ok"}
 
 
 def test_liveness_stays_200_when_not_ready(server, monkeypatch):
-    import members_store
-    monkeypatch.setattr(members_store, "DB_PATH", str(server.paths["db"]) + ".missing")
+    import db as app_db
+    monkeypatch.setattr(app_db, "DB_PATH", str(server.paths["db"]) + ".missing")
     assert ready(server)[0] == 503
     r = server.get("/api/health")
-    assert (r.status_code, r.json()) == (200, {"ok": True})
+    assert (r.status_code, r.json()["ok"]) == (200, True)
 
 
 def test_a_missing_database_is_not_ready(server):
@@ -133,3 +134,22 @@ def test_a_fresh_install_without_secrets_or_key_is_ready(server, monkeypatch):
     conn.close()
     assert ready(server)[0] == 200
     assert not server.paths["key"].exists()
+
+
+@pytest.mark.parametrize("active, required, status, check", [
+    (False, False, 200, None),       # reported under "guards", not a failed check
+    (False, True, 503, "REQUIRE_TOXICITY_GUARD is set but the toxicity guard is not installed"),
+    (True, True, 200, "ok"),
+])
+def test_readiness_reports_the_toxicity_guard(server, monkeypatch, active, required, status, check):
+    import safety
+    monkeypatch.setattr(safety, "toxicity_guard_active", active)
+    if required:
+        monkeypatch.setenv("REQUIRE_TOXICITY_GUARD", "1")
+    else:
+        monkeypatch.delenv("REQUIRE_TOXICITY_GUARD", raising=False)
+    got, body = ready(server)
+    assert got == status
+    assert body["checks"].get("toxicity_guard") == check
+    assert body["guards"] == {"toxicity": "active" if active else "missing",
+                              "toxicity_required": required}

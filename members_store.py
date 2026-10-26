@@ -2,7 +2,9 @@
 members_store.py  —  WHO may sign in to which workspace, and with which role.
 
 It lives in the same small SQLite file as the sessions and integrations
-(config/app.db), so it can be changed from the app instead of by editing files:
+(config/app.db, opened by db.py; its tables are made and changed by the
+migrations in migrations/), so it can be changed from the app instead of by
+editing files:
 
     workspaces         one row per company; require_sso turns passwords off for
                        everyone but its admins (their way in if the provider breaks)
@@ -51,7 +53,7 @@ alone, so it doesn't change with the button someone clicks.
       (they keep it, and the admin is warned in the sign-in events). Checked on
       each of their requests, and for everyone when the members are listed.
     * Databases from before role sources: the provider with rules that signed
-      someone in last became the role source (see _add_columns).
+      someone in last became the role source (migrations/legacy.py).
 
 Until there's a screen for it, manage it with `python auth.py` (see its help).
 
@@ -70,10 +72,10 @@ import sqlite3
 import threading
 import time
 
+import db
 import secret_box
 import workspaces
 
-DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
 USERS_FILE = os.getenv("USERS_FILE", os.path.join("config", "users.json"))
 SSO_FILE = os.getenv("SSO_CONFIG", os.path.join("config", "sso.json"))
 
@@ -84,14 +86,22 @@ STAFF_ROLES = ("hr", "admin")      # see HR documents and the HR / Admin screens
 TXT_PREFIX = "_knowledge-assistant"
 EVENTS_KEPT = 500
 # 'warning': role-source admin kept; 'updated' / 'attention': a SAML provider's
-# metadata changed by itself, or needs a look.
+# metadata changed by itself, or needs a look. sso_events' CHECK allows exactly
+# these: a new one needs a migration.
 EVENT_OUTCOMES = ('signed_in', 'refused', 'failed', 'test', 'warning', 'updated', 'attention')
 GROUP_ADMIN_DAYS = 30              # group-given admin lasts this long without a sign-in
+                                   # (the column's default in the schema too)
 
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
-_ready = False                     # tables made and the old files imported, this process
+_ready = False                     # the old files imported, this process
 _warned = {}                       # username -> when they were last kept as the only admin
+
+
+def __getattr__(name):
+    if name == "DB_PATH":          # the database file, as api.py's readiness check reads it
+        return db.DB_PATH
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class RoleSourceTaken(Exception):
@@ -110,190 +120,16 @@ class NoAdminLeft(Exception):
         self.admins = admins
 
 
-def _connect():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
 def _db():
     global _ready
-    conn = _connect()
+    conn = db.connect()
     if not _ready:
         with _lock:
             if not _ready:
                 with conn:
-                    _create_tables(conn)
-                    _add_columns(conn)
                     _import_old_files(conn)
                 _ready = True
     return conn
-
-
-# Columns added after the first release of a table: (table, column, definition).
-# SQLite can add a column in place; existing rows get the default.
-_NEW_COLUMNS = (
-    ("members", "override_role", "TEXT"),
-    ("members", "group_role", "TEXT"),
-    ("members", "groups", "TEXT"),                  # JSON list, as last sent
-    ("members", "disabled", "INTEGER NOT NULL DEFAULT 0"),
-    ("members", "group_source", "TEXT"),            # the provider that set group_role
-    ("members", "groups_updated_at", "REAL"),       # when the role source last sent them
-    ("sso_connections", "group_claim", "TEXT"),
-    ("sso_connections", "logout_at_idp", "INTEGER NOT NULL DEFAULT 0"),
-    # SAML metadata fetched again from its URL (api.py): the last success, the
-    # last try, when it's next due, why a fetched change wasn't applied, and
-    # what went wrong last time.
-    ("sso_connections", "metadata_refreshed_at", "REAL"),
-    ("sso_connections", "metadata_fetched_at", "REAL"),
-    ("sso_connections", "metadata_due_at", "REAL"),
-    ("sso_connections", "needs_review", "TEXT"),
-    ("sso_connections", "metadata_error", "TEXT"),
-    ("workspaces", "require_sso", "INTEGER NOT NULL DEFAULT 0"),
-    ("sso_events", "ref", "TEXT"),                  # shown to the person it failed for
-    ("workspaces", "role_source", "TEXT"),          # the provider whose groups set roles
-    ("workspaces", "group_admin_days", f"INTEGER NOT NULL DEFAULT {GROUP_ADMIN_DAYS}"),
-)
-
-
-def _add_columns(conn):
-    for table, column, definition in _NEW_COLUMNS:
-        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if column not in have:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-    # Before group roles, every role was set by hand: keep each as an override.
-    # Done once, and marked in the same transaction as the copy (an ALTER TABLE
-    # commits on its own, so "the column is new" can't be the marker).
-    if not conn.execute("SELECT 1 FROM imports WHERE source = 'roles-as-overrides'").fetchone():
-        conn.execute("UPDATE members SET override_role = role "
-                     "WHERE role != 'public' AND override_role IS NULL AND group_role IS NULL")
-        conn.execute("INSERT INTO imports (source, imported_at) VALUES ('roles-as-overrides', ?)",
-                     (time.time(),))
-    # Before role sources, any provider with rules set roles. Make the one with
-    # rules that signed someone in last each workspace's role source, and count
-    # the groups already known as sent at their last sign-in, so expiry starts
-    # from there. Group roles already given are left as they are.
-    if not conn.execute("SELECT 1 FROM imports WHERE source = 'role-source'").fetchone():
-        for row in conn.execute("""SELECT slug FROM workspaces
-                                   WHERE role_source IS NULL""").fetchall():
-            pick = conn.execute("""SELECT id FROM sso_connections c WHERE workspace = ?
-                                   AND EXISTS (SELECT 1 FROM group_role_rules
-                                               WHERE connection_id = c.id)
-                                   ORDER BY last_login_at IS NULL, last_login_at DESC,
-                                            created_at LIMIT 1""", (row["slug"],)).fetchone()
-            if pick:
-                conn.execute("UPDATE workspaces SET role_source = ? WHERE slug = ?",
-                             (pick["id"], row["slug"]))
-        conn.execute("UPDATE members SET groups_updated_at = COALESCE(last_login_at, ?) "
-                     "WHERE groups IS NOT NULL AND groups_updated_at IS NULL", (time.time(),))
-        conn.execute("INSERT INTO imports (source, imported_at) VALUES ('role-source', ?)",
-                     (time.time(),))
-    _allow_new_event_outcomes(conn)
-
-
-def _allow_new_event_outcomes(conn):
-    """sso_events from before some outcome in EVENT_OUTCOMES: SQLite can't change
-    a CHECK in place, so copy the table into one that allows them all, keeping
-    every row and column (all or nothing)."""
-    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'sso_events'").fetchone()["sql"]
-    check = re.search(r"CHECK \(outcome IN \(([^)]*)\)\)", sql)
-    if not check:
-        raise RuntimeError("sso_events isn't the table this code knows; not changing it")
-    if all(f"'{o}'" in check.group(1) for o in EVENT_OUTCOMES):
-        return
-    if not conn.in_transaction:
-        conn.execute("BEGIN IMMEDIATE")    # another worker may be starting up too
-        return _allow_new_event_outcomes(conn)
-    allowed = ", ".join(f"'{o}'" for o in EVENT_OUTCOMES)
-    new = sql.replace("CREATE TABLE sso_events", "CREATE TABLE sso_events_new", 1)
-    new = new.replace(check.group(0), f"CHECK (outcome IN ({allowed}))", 1)
-    columns = ", ".join(r["name"] for r in conn.execute("PRAGMA table_info(sso_events)"))
-    conn.execute("SAVEPOINT event_outcomes")
-    conn.execute(new)
-    conn.execute(f"INSERT INTO sso_events_new ({columns}) SELECT {columns} FROM sso_events")
-    conn.execute("DROP TABLE sso_events")
-    conn.execute("ALTER TABLE sso_events_new RENAME TO sso_events")
-    conn.execute("CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS sso_events_by_connection "
-                 "ON sso_events(connection_id, id)")
-    conn.execute("RELEASE event_outcomes")
-
-
-def _create_tables(conn):
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS workspaces (
-        slug        TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        created_at  REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS signup_codes_used (
-        code_hash  TEXT PRIMARY KEY,           -- sha256 of an invite code (WORKSPACE_SIGNUP_CODES)
-        workspace  TEXT NOT NULL,
-        used_at    REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS workspace_domains (
-        workspace    TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
-        domain       TEXT NOT NULL,
-        verify_token TEXT,                 -- for the DNS check (sign-in settings)
-        verified_at  REAL,                 -- NULL until the workspace proves it owns it
-        PRIMARY KEY (workspace, domain));
-    -- A domain can be claimed by several workspaces, but VERIFIED by one at most.
-    CREATE UNIQUE INDEX IF NOT EXISTS one_verified_owner
-        ON workspace_domains(domain) WHERE verified_at IS NOT NULL;
-    CREATE TABLE IF NOT EXISTS members (
-        username      TEXT PRIMARY KEY,    -- the email for single sign-on
-        workspace     TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
-        name          TEXT NOT NULL,
-        role          TEXT NOT NULL DEFAULT 'public'
-                      CHECK (role IN ('public', 'hr', 'admin')),
-        password_hash TEXT,                -- NULL: single sign-on only
-        created_at    REAL NOT NULL,
-        last_login_at REAL);
-    CREATE TABLE IF NOT EXISTS sso_connections (
-        id            TEXT PRIMARY KEY,
-        workspace     TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
-        protocol      TEXT NOT NULL CHECK (protocol IN ('oidc', 'saml')),
-        label         TEXT NOT NULL,       -- the sign-in button: "Continue with <label>"
-        issuer        TEXT,                -- OIDC issuer, or the SAML IdP's entity ID
-        client_id     TEXT,                -- OIDC only
-        secret        BLOB,                -- encrypted (secret_box.py): the OIDC client
-                                           -- secret, or our SAML signing key
-        metadata      TEXT NOT NULL DEFAULT '{}',  -- endpoints / IdP metadata, as checked
-        enabled       INTEGER NOT NULL DEFAULT 1,
-        created_by    TEXT,
-        created_at    REAL NOT NULL,
-        updated_at    REAL NOT NULL,
-        last_login_at REAL);
-    CREATE TABLE IF NOT EXISTS saml_requests (
-        request_id    TEXT PRIMARY KEY,
-        connection_id TEXT NOT NULL REFERENCES sso_connections(id) ON DELETE CASCADE,
-        expires       REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS saml_assertions (
-        assertion_id  TEXT PRIMARY KEY,
-        expires       REAL NOT NULL);
-    CREATE TABLE IF NOT EXISTS sso_events (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        workspace     TEXT NOT NULL,
-        connection_id TEXT,
-        email         TEXT,
-        outcome       TEXT NOT NULL
-                      CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test',
-                                         'warning', 'updated', 'attention')),
-        reason        TEXT,                -- why it was refused or failed (a code
-                                           -- from sso_errors.py, never provider
-                                           -- text), or the warning / metadata change
-        at            REAL NOT NULL);
-    CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id);
-    CREATE INDEX IF NOT EXISTS sso_events_by_connection ON sso_events(connection_id, id);
-    CREATE TABLE IF NOT EXISTS group_role_rules (
-        connection_id TEXT NOT NULL REFERENCES sso_connections(id) ON DELETE CASCADE,
-        group_name    TEXT NOT NULL,       -- compared without regard to case
-        role          TEXT NOT NULL CHECK (role IN ('public', 'hr', 'admin')),
-        PRIMARY KEY (connection_id, group_name));
-    CREATE TABLE IF NOT EXISTS imports (
-        source      TEXT PRIMARY KEY,      -- an old config file, copied in once
-        imported_at REAL NOT NULL);
-    """)
 
 
 # ---- The old config files, copied in once -------------------------------------

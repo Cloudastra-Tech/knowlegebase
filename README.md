@@ -66,9 +66,9 @@ Your question → RETRIEVE matching chunks → AUGMENT the prompt with them
 | `frontend/` | The website (React + shadcn/ui). |
 | `auth.py` / `sso.py` | Sign-in: username + password accounts, and single sign-on (Google, Microsoft, each workspace's own provider). |
 | `members_store.py` | Who may sign in where, and as what: workspaces, domains, members, roles, providers (SQLite). |
+| `db.py` / `migrations/` | Opens `config/app.db` (SQLite) for every store, and keeps its schema up to date with Alembic migrations. |
 | `saml_sp.py` / `sso_setup.py` / `url_guard.py` | SAML sign-in; checks run when an admin sets up a provider; only calling public addresses. |
 | `sign-in-guide.md` | For a workspace's admin: connecting their identity provider. |
-| `app.py` | The original Streamlit chat website (still works; the React site is the main one). |
 | `docs/` | Your `.txt` and `.pdf` files: `docs/public/` for everyone, `docs/restricted/` for HR / Admin. |
 | `tests/` | Automatic checks — run `pytest`. |
 | `inspect_tokens.py` | Bonus: *see* how text becomes tokens (Phase 1 concept). |
@@ -136,12 +136,6 @@ venv/bin/python -m pytest
 The SAML tests need the `xmlsec1` program (`sudo apt-get install xmlsec1`), or export
 `XMLSEC_BINARY=<path to xmlsec1>` in the shell (the tests don't read `.env`); without it
 they are skipped.
-
-### Or: the original Streamlit app
-```powershell
-streamlit run app.py
-```
-Same assistant, simpler screen. It uses the same password accounts and roles.
 
 ---
 

@@ -158,13 +158,14 @@ def test_setting_who_can_ask_checks_its_input(env, provider, body, status):
 
 
 def test_an_existing_connection_without_the_setting_is_restricted(env):
+    import db
     import integrations_store
     client, ws = env
     connect_notion(ws)
     # Made before the setting existed: chosen folders, no access key; and an
     # older row whose settings column is empty.
     integrations_store.update(ws, "notion", settings={"folders": [{"id": "f1"}]})
-    with sqlite3.connect(integrations_store.DB_PATH) as conn:
+    with sqlite3.connect(db.DB_PATH) as conn:
         conn.execute("INSERT INTO integrations (workspace, provider, status) "
                      "VALUES (?, 'google_drive', 'connected')", (ws,))
         conn.execute("UPDATE integrations SET settings=NULL WHERE workspace=? "

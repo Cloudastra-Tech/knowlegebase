@@ -1,5 +1,6 @@
 # Keep the image small and NEVER bake secrets into it.
 .env
+guardrails_token.secret
 venv/
 .venv/
 .git/
@@ -10,7 +11,7 @@ __pycache__/
 *.md
 Dockerfile
 .dockerignore
-docker-compose.yml
+docker-compose*.yml
 config/
 frontend/node_modules/
 frontend/dist/

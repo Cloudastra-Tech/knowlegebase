@@ -14,8 +14,9 @@ import os
 
 from cryptography.fernet import Fernet
 
-DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
-KEY_PATH = os.path.join(os.path.dirname(DB_PATH) or ".", "integrations.key")
+import db
+
+KEY_PATH = os.path.join(os.path.dirname(db.DB_PATH) or ".", "integrations.key")
 
 
 def _fernet():

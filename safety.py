@@ -22,6 +22,8 @@ THE 3 PIECES OF GUARDRAILS:
 ------------------------------------------------------------------------------
 """
 
+import logging
+import os
 import re
 
 from dotenv import load_dotenv
@@ -36,6 +38,8 @@ from langchain_openai import ChatOpenAI
 
 # Load OPENAI_API_KEY from .env NOW, before we ever build an OpenAI client.
 load_dotenv()
+
+log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 
 
 # ----------------------------------------------------------------------------
@@ -158,13 +162,17 @@ class MaxLength(Validator):
 # a user who is authorized to see the data.
 # ----------------------------------------------------------------------------
 generic_validators = [MaxLength(on_fail="exception")]      # always on
+toxicity_guard_active = False
 try:
     from guardrails.hub import ToxicLanguage
     generic_validators.append(ToxicLanguage(threshold=0.5, validation_method="sentence",
                                             on_fail="exception"))
+    toxicity_guard_active = True
 except ImportError:
-    print("[safety] Hub toxicity validator not installed — toxicity check skipped. "
-          "Run: guardrails hub install hub://guardrails/toxic_language")
+    # Loud on purpose: in Docker this means the image was built without the
+    # Guardrails Hub token (deploy.md, step 4), and chat runs with no toxicity check.
+    log.error("[safety] Hub toxicity validator not installed — toxicity check is OFF. "
+              "Run: guardrails hub install hub://guardrails/toxic_language")
 
 generic_guard = Guard()
 for _v in generic_validators:
@@ -175,10 +183,30 @@ salary_input_guard = Guard().use(BlockStaffSalary(on_fail="exception"))
 output_guard = Guard().use(BlockSalaryLeak(on_fail="exception"))
 
 # Guardrails reports usage (guard / validator names and results, not the text)
-# to its own servers unless ~/.guardrailsrc says not to — and the Docker image
-# has no such file. Turn it off. Done last: every new Guard() re-reads the default.
+# to its own servers unless ~/.guardrailsrc says not to — and an image built
+# without the Hub token has no such file. Turn it off. Done last: every new
+# Guard() re-reads the default.
 for _g in (generic_guard, salary_input_guard, output_guard):
     _g.configure(allow_metrics_collection=False)
+
+
+def _toxicity_guard_required():
+    return os.getenv("REQUIRE_TOXICITY_GUARD", "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def guards_status():
+    """Which optional guards are running, for the health check."""
+    return {"toxicity": "active" if toxicity_guard_active else "missing",
+            "toxicity_required": _toxicity_guard_required()}
+
+
+def require_guards():
+    """Called when the server starts. REQUIRE_TOXICITY_GUARD=1 refuses to run
+    without the toxicity validator, instead of only logging that it is missing."""
+    if _toxicity_guard_required() and not toxicity_guard_active:
+        raise RuntimeError("REQUIRE_TOXICITY_GUARD is set but the Guardrails Hub toxicity "
+                           "validator is not installed (build the image with the gr_token "
+                           "secret, see deploy.md)")
 
 
 # ----------------------------------------------------------------------------
