@@ -394,20 +394,21 @@ def test_a_token_only_reaches_its_own_workspace(client):
 
 def test_only_verified_domains_or_invited_addresses_are_provisioned(client, tenant):
     t = tenant
-    r = t.call("POST", "/scim/v2/Users", {"userName": "someone@elsewhere.example"})
+    elsewhere = f"other-{uuid.uuid4().hex[:8]}.example"   # no workspace has it
+    r = t.call("POST", "/scim/v2/Users", {"userName": f"someone@{elsewhere}"})
     assert r.status_code == 403
-    assert t.events()[-1] == ("someone@elsewhere.example", "scim_domain")
-    assert members_store.get("someone@elsewhere.example") is None
+    assert t.events()[-1] == (f"someone@{elsewhere}", "scim_domain")
+    assert members_store.get(f"someone@{elsewhere}") is None
 
     r = client.post("/api/admin/members/invite", headers=t.h,
-                    json={"email": "contractor@elsewhere.example", "role": "hr"})
+                    json={"email": f"contractor@{elsewhere}", "role": "hr"})
     assert r.status_code == 200, r.text
-    r = t.call("POST", "/scim/v2/Users", {"userName": "contractor@elsewhere.example"})
+    r = t.call("POST", "/scim/v2/Users", {"userName": f"contractor@{elsewhere}"})
     assert r.status_code == 201, r.text
-    m = members_store.get("contractor@elsewhere.example")
+    m = members_store.get(f"contractor@{elsewhere}")
     assert m["workspace"] == t.ws and m["role"] == "hr"            # the invited role
     invites = client.get("/api/admin/members/invites", headers=t.h).json()
-    assert "contractor@elsewhere.example" not in json.dumps(invites)  # used up
+    assert f"contractor@{elsewhere}" not in json.dumps(invites)  # used up
 
     other = Tenant(client)
     _user(other, "bob")
