@@ -89,6 +89,7 @@ export default function App() {
       ? [
           { to: "/documents", section: "/documents", label: "Documents" },
           { to: "/integrations", section: "/integrations", label: "Integrations" },
+          { to: "/admin/insights", section: "/admin/insights", label: "Insights" },
         ]
       : []),
     // Who may sign in: admins only (HR manages documents, not access).
@@ -96,8 +97,14 @@ export default function App() {
       ? [{ to: "/admin/sign-in", section: "/admin", label: "Access" }]
       : []),
   ]
-  const isOpen = (section: string) =>
+  const under = (section: string) =>
     location.pathname === section || location.pathname.startsWith(`${section}/`)
+  // The most specific section wins: /admin/insights is Insights, not Access (/admin).
+  const current = navItems
+    .map((item) => item.section)
+    .filter(under)
+    .sort((a, b) => b.length - a.length)[0]
+  const isOpen = (section: string) => section === current
 
   return (
     <IndexStatusProvider>
@@ -211,7 +218,7 @@ export default function App() {
 
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={isOpen("/chat") ? "h-full" : "hidden"}>
+        <div className={under("/chat") ? "h-full" : "hidden"}>
           <LazyPage>
             <ChatView role={activeRole} />
           </LazyPage>

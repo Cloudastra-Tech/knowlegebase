@@ -17,7 +17,7 @@ import conversations_store
 from agent import Cancelled
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
-from kb.services import agents, conversations, indexing, passages
+from kb.services import agents, conversations, indexing, passages, question_log
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -45,7 +45,8 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     # No waiting for re-indexing: it changes the index document by document, or
     # builds a new one beside it (services/indexing.py).
     try:
-        answer, trace, sources = agents.get_agent(ws, role)(question, with_sources=True, out=out)
+        answer, trace, sources = question_log.tracked(agents.get_agent(ws, role), ws, user, role,
+                                                      "api")(question, with_sources=True, out=out)
     except Exception as e:
         # OpenAI down, a bad key, ...: say so plainly instead of a bare 500.
         log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
@@ -156,7 +157,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         def standalone():                          # only when it differs from the question
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
-            answer, trace, sources = agents.get_agent(ws, role)(
+            answer, trace, sources = question_log.tracked(agents.get_agent(ws, role), ws, user,
+                                                          role, "web", turn)(
                 question, with_sources=True, on_event=on_event, cancel=stop,
                 history=turn["history"] if turn else None, out=out)
             answer_state, sources, access = conversations.outcome(answer, trace, sources, out,
