@@ -50,7 +50,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from rag import ROLE_ACCESS, load_chain, answer_question
-from safety import check_prompt_injection, check_question, redact_pii
+from safety import MAX_QUESTION_CHARS, check_prompt_injection, check_question, redact_pii
 
 log = logging.getLogger("uvicorn.error")
 
@@ -228,6 +228,17 @@ def _is_not_found(answer):
     return bool(m) and (len(answer) < 280 or m.start() < 60)
 
 
+def coverage(answer, sources):
+    """How much of the question the answer says the documents cover: "none" (it
+    couldn't find it), "partial" (it answers from sources, but notes something
+    they don't say) or "full"."""
+    if _is_not_found(answer):
+        return "none"
+    if sources and _NOT_FOUND.search(answer or ""):
+        return "partial"
+    return "full"
+
+
 def _chunks_used(answer, docs, min_overlap=0.3):
     """The retrieved chunks the answer actually draws on.
     Retrieval returns the top-k chunks even when only one is relevant, so we
@@ -330,6 +341,12 @@ class _Run:
         self.cancel = cancel or threading.Event()
         self.guards = []                  # (name, future of (ok, message)), in order
         self.refused_by = None            # the input guard that blocked the question
+        # What the retrieval searches for: the question, or a follow-up rewritten
+        # to stand on its own (run(history=...)).
+        self.search_for = None
+        # The access level of EVERY chunk put in front of a model, cited or not:
+        # the answer may repeat any of them, so its readers are checked against all.
+        self.access = set()
         self._lock = threading.Lock()     # tools can run in parallel threads
 
     def emit(self, event):
@@ -341,6 +358,10 @@ class _Run:
         with self._lock:
             if entry not in self.cited:
                 self.cited.append(entry)
+
+    def saw(self, docs):
+        with self._lock:
+            self.access.update(d.metadata.get("access", "public") for d in docs)
 
     def block(self, message):
         with self._lock:
@@ -396,6 +417,25 @@ def _run_of(config):
     return config["configurable"]["run"]
 
 
+HISTORY_PROMPT = (
+    "Rewrite the user's last question so it can be understood on its own, without the "
+    "conversation: replace words like \"it\", \"she\", \"that plan\" or \"the second one\" "
+    "with what they refer to. Keep the user's own words otherwise, and keep it one "
+    "question. Do not answer it. Reply with the rewritten question only.\n\n"
+    "Conversation:\n{turns}\n\nLast question: {question}\n\nRewritten question:")
+
+
+def standalone_question(history, question, llm):
+    """A follow-up rewritten to stand on its own, from the conversation so far (one
+    small model call): what the retrieval searches for, and what the input guards
+    check besides the question as typed."""
+    turns = "\n".join(f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+                      for m in history)
+    reply = llm.invoke(HISTORY_PROMPT.format(turns=turns, question=question)).content
+    text = " ".join(str(reply or "").split())
+    return text[:MAX_QUESTION_CHARS] or question
+
+
 def build_agent(role="public", collection=None, outline=True):
     """Create an agent for a given user role. Returns a run(question) function.
     collection: the workspace's search index (None = default workspace).
@@ -409,6 +449,7 @@ def build_agent(role="public", collection=None, outline=True):
         if docs is None:                 # a guard refused before any answer was written
             run.block(answer)
             return _blocked_note(answer)
+        run.saw(docs)
         for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
             if d.metadata.get("title"):          # synced from a connector (e.g. Drive)
@@ -643,8 +684,9 @@ def build_agent(role="public", collection=None, outline=True):
         The input guards started by run() are still working while this searches.
         Nothing found is shown, or put in front of a model, until they pass."""
         run = _run_of(config)
-        question = next((m.content for m in reversed(state["messages"])
-                         if isinstance(m, HumanMessage)), "")
+        asked = next((m.content for m in reversed(state["messages"])
+                      if isinstance(m, HumanMessage)), "")
+        question = run.search_for or asked
         if not needs_retrieval(question):
             run.verdict()                 # small talk / arithmetic: just the guards
             return {"messages": []}
@@ -658,8 +700,10 @@ def build_agent(role="public", collection=None, outline=True):
                              lambda: search_outline.invoke({"query": question})))
         steps = _Held(run.emit)           # the steps panel waits for the guards too
         for call_id, name, args, _ in searches:
-            steps({"type": "step_start", "id": call_id, "tool": name,
-                   "label": step_label(name, args)})
+            label = step_label(name, args)
+            if name == "search_docs" and question != asked:   # a rewritten follow-up
+                label = f"Searching company docs for “{question}”"
+            steps({"type": "step_start", "id": call_id, "tool": name, "label": label})
 
         before = len(run.cited)
 
@@ -723,10 +767,10 @@ def build_agent(role="public", collection=None, outline=True):
     # The graph and tools are shared; each call gets its own _Run, so questions
     # in the same workspace and role run side by side.
 
-    def _stream(user_input, on_event, run, config):
+    def _stream(messages, on_event, run, config):
         """Run the graph while reporting each step and the answer tokens live.
         Returns the full message list, like graph.invoke would."""
-        messages = [HumanMessage(content=user_input)]
+        messages = list(messages)
         text = ""                         # the answer streamed so far
         started = {}                      # tool call id -> cited count at start
         for mode, data in graph.stream({"messages": list(messages)}, config,
@@ -758,32 +802,62 @@ def build_agent(role="public", collection=None, outline=True):
                                   "result": step_result(m.name, m.content, found)})
         return messages
 
-    def run(user_input, with_sources=False, on_event=None, cancel=None):
+    def run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
+            out=None):
         """Answer a question -> (answer, trace).
         with_sources=True -> (answer, trace, sources) with the sources as a list
         of {title, provider, url} instead of a markdown list in the answer.
         on_event(dict) -> stream progress: step_start / step_end / answer events.
         cancel: a threading.Event; once it is set the run stops at the next
-        checkpoint and raises Cancelled (e.g. the browser closed the stream)."""
+        checkpoint and raises Cancelled (e.g. the browser closed the stream).
+        history: the conversation so far, oldest first, as [{"role": "user" or
+        "assistant", "content"}], already bounded by the caller. The model sees
+        it, and a follow-up is rewritten into a standalone question for the search.
+        out: a dict filled in as the run goes, so it is there after Cancelled too:
+          standalone  the question searched (the rewritten follow-up, or user_input)
+          access      the access levels of every chunk a model read (a set)
+          blocked     an input guard refused the question          (once done)
+          coverage    "none" / "partial" / "full", see coverage()  (once done)"""
         state = _Run(on_event, cancel)
+        report = {} if out is None else out
+        report.update(standalone=user_input, access=state.access)
         state.emit({"type": "status", "text": "Checking your question"})
         # GUARDS (input): prompt-injection / jailbreak, and the question rules
         # (length, toxicity, staff salary for public users) that search_docs
         # applies. They run ALONGSIDE the search, not before it; the search
         # waits for them before anything it found is shown or answered from.
-        guards = ThreadPoolExecutor(max_workers=2)
-        state.guards.append(("injection", guards.submit(check_prompt_injection, user_input)))
-        if needs_retrieval(user_input):   # the question rules guard the docs search
-            state.guards.append(("question", guards.submit(check_question, user_input,
-                                                           allow_restricted)))
-        guards.shutdown(wait=False)
+        retrieval = needs_retrieval(user_input)
+        guards = ThreadPoolExecutor(max_workers=4)
+
+        def check(question):
+            state.guards.append(("injection", guards.submit(check_prompt_injection, question)))
+            if retrieval:                 # the question rules guard the docs search
+                state.guards.append(("question", guards.submit(check_question, question,
+                                                               allow_restricted)))
+
+        try:
+            check(user_input)
+            # A FOLLOW-UP ("and what is her pay?") is searched as a standalone
+            # question, rewritten while the guards above run. The guards check it
+            # as well as what was typed: each alone can look harmless while
+            # together they ask for what this role may not see.
+            if history and retrieval:
+                state.search_for = standalone_question(history, user_input, rag_llm)
+                report["standalone"] = state.search_for
+                if state.search_for != user_input:
+                    check(state.search_for)
+        finally:
+            guards.shutdown(wait=False)
+        state.check_cancelled()
 
         config = {"configurable": {"run": state}}
+        messages = [*(HumanMessage(content=m["content"]) if m["role"] == "user"
+                      else AIMessage(content=m["content"]) for m in history or []),
+                    HumanMessage(content=user_input)]
         if on_event:
-            messages = _stream(user_input, on_event, state, config)
+            messages = _stream(messages, on_event, state, config)
         else:
-            messages = graph.invoke({"messages": [HumanMessage(content=user_input)]},
-                                    config)["messages"]
+            messages = graph.invoke({"messages": messages}, config)["messages"]
         sources = list(state.cited)
         blocked_reply = list(state.blocked)
 
@@ -807,6 +881,8 @@ def build_agent(role="public", collection=None, outline=True):
             sources = []
         elif _is_not_found(answer):       # "I couldn't find..." -> nothing to cite
             sources = []
+        report.update(blocked=bool(blocked_reply),
+                      coverage="full" if blocked_reply else coverage(answer, sources))
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = redact_pii(answer)
         # CITATIONS: list every document the tools actually read.
