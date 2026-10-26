@@ -1,10 +1,11 @@
+import { AsciiBrain } from "@/components/ascii-art"
 import { LoginForm } from "@/components/login-form"
 import type { User } from "@/lib/api"
 
 // The sign-in and sign-up page, after the Watermelon UI "auth-11" block: a dark
-// split screen, the picture panel on the left (large screens), the form on the
-// right. It's dark on its own (the `dark` class switches the theme tokens), the
-// rest of the app stays light.
+// split screen, the landing page's moving ASCII brain on the left (large
+// screens), the form on the right. It's dark on its own (the `dark` class
+// switches the theme tokens), the rest of the app stays light.
 export function LoginPage({
   onLogin,
   onBack,
@@ -13,15 +14,11 @@ export function LoginPage({
   onBack?: () => void
 }) {
   return (
-    <div className="dark flex min-h-svh w-full flex-col bg-background text-foreground antialiased selection:bg-foreground/20 lg:flex-row">
+    <div className="dark flex min-h-svh w-full flex-col bg-background text-foreground antialiased [--ascii-accent:oklch(0.82_0.15_160)] selection:bg-[var(--ascii-accent)]/30 lg:flex-row">
       <div className="relative hidden p-4 lg:flex lg:min-h-svh lg:w-1/2">
-        <div className="relative size-full overflow-hidden rounded-[32px] border">
-          <img
-            src="/auth/sign-in.avif"
-            alt=""
-            className="absolute inset-0 size-full object-cover"
-          />
-          <div className="absolute inset-0 bg-linear-to-t from-background via-background/20 to-transparent" />
+        <div className="relative size-full overflow-hidden rounded-[32px] border bg-[radial-gradient(60%_45%_at_50%_36%,color-mix(in_oklch,var(--ascii-accent)_9%,transparent),transparent)]">
+          <AsciiBrain framing="panel" className="absolute inset-0" />
+          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-linear-to-t from-background via-background/80 to-transparent" />
           <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-10 pb-14 text-center">
             <p className="text-4xl font-medium tracking-tight text-balance xl:text-5xl">
               Your company's knowledge,{" "}
