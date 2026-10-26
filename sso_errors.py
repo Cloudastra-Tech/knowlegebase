@@ -136,6 +136,12 @@ ERRORS = {
     "sso_required": (
         "Single sign-on is required, so their password can't be used",
         "They should sign in with single sign-on.", False),
+    # ---- Warnings (members_store.py) ----
+    "last_admin_kept": (
+        "Their admin comes from groups the role source hasn't sent in a while, but "
+        "they're the only admin, so they keep it",
+        "Make someone else admin (Members), or have them sign in through the role source.",
+        False),
     # ---- Anything else ----
     "sso_failed": (
         "Something went wrong on this server",

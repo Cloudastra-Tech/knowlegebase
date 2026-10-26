@@ -33,7 +33,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { signIn, type AccountRole, type Member } from "@/lib/api"
 import { ROLE_LABEL } from "@/lib/roles"
-import { timeAgo } from "@/lib/utils"
+import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -123,6 +123,21 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
             </SelectContent>
           </Select>
           <p className="mt-0.5 text-xs text-muted-foreground">{roleNote(m)}</p>
+          {m.role_source === "groups" && m.groups_updated_at && (
+            <p
+              className={cn(
+                "text-xs",
+                m.admin_kept ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+              )}
+              title={
+                m.admin_kept
+                  ? "Their admin from groups has expired, but they're the only admin, so they keep it. Make someone else admin, or have them sign in through the role source."
+                  : undefined
+              }
+            >
+              Groups updated {timeAgo(m.groups_updated_at)}
+            </p>
+          )}
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

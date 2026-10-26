@@ -165,6 +165,68 @@ function SignInRules({ settings, onChange }: { settings: SignInSettings; onChang
   )
 }
 
+function GroupAdminExpiry({
+  settings,
+  onChange,
+}: {
+  settings: SignInSettings
+  onChange: () => void
+}) {
+  const [days, setDays] = useState(String(settings.group_admin_days))
+  const [saving, setSaving] = useState(false)
+  const n = Number(days)
+  const valid = days.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= 3650
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await signIn.setGroupAdminDays(n)
+      toast.success(
+        n
+          ? `Admin from groups now lasts ${n} days without a sign-in through the role source.`
+          : "Admin from groups no longer expires.",
+      )
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="grid gap-2">
+      <Label htmlFor="group-admin-days">Expire admin from groups</Label>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span>After</span>
+        <Input
+          id="group-admin-days"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={3650}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+          className="w-20"
+        />
+        <span>days without a sign-in through the role source</span>
+        {valid && n !== settings.group_admin_days && (
+          <Button type="submit" size="sm" variant="outline" disabled={saving}>
+            {saving && <Loader2 className="animate-spin" />}
+            Save
+          </Button>
+        )}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Their groups are only checked when they sign in, so admin from groups that are this
+        old drops to what the rest of their groups give. 0 = never. Roles you set on the
+        Members tab don't expire, and the last admin always keeps it.
+      </p>
+    </form>
+  )
+}
+
 // ---- Domains -----------------------------------------------------------------------
 function DomainRow({ domain, onChange }: { domain: SignInDomain; onChange: () => void }) {
   const [checking, setChecking] = useState(false)
@@ -279,14 +341,20 @@ function AddDomain({ onAdded }: { onAdded: () => void }) {
 }
 
 // ---- Providers ---------------------------------------------------------------------
+// "kb-admins → Admin, …"
+const ruleText = (conn: SignInConnection) =>
+  conn.group_rules.map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`).join(", ")
+
 function ProviderRow({
   conn,
+  roleSource,
   onEdit,
   onTest,
   onRoles,
   onChange,
 }: {
   conn: SignInConnection
+  roleSource: SignInConnection | null
   onEdit: () => void
   onTest: () => void
   onRoles: () => void
@@ -308,6 +376,7 @@ function ProviderRow({
       setRefreshing(false)
     }
   }
+  const isSource = roleSource?.id === conn.id
 
   async function toggle() {
     try {
@@ -348,16 +417,23 @@ function ProviderRow({
                 <span className="size-1.5 rounded-full bg-destructive" /> Failing
               </Badge>
             )}
+            {isSource && (
+              <Badge variant="secondary" className="font-normal">
+                Role source
+              </Badge>
+            )}
           </div>
           <p className="truncate text-sm text-muted-foreground">
             {conn.issuer} · last sign-in {timeAgo(conn.last_login_at)}
           </p>
           <p className="text-xs text-muted-foreground">
-            {conn.group_rules.length
-              ? `Roles from groups: ${conn.group_rules
-                  .map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`)
-                  .join(", ")}`
-              : "Doesn't set roles"}
+            {isSource
+              ? `Sets roles (role source). Roles from groups: ${ruleText(conn)}`
+              : !conn.group_rules.length
+                ? "Doesn't set roles"
+                : roleSource
+                  ? `Doesn't set roles: they come from ${roleSource.label}, so its rules (${ruleText(conn)}) aren't used`
+                  : `Doesn't set roles until you save its rules again (${ruleText(conn)})`}
           </p>
         </div>
         <div className="flex gap-2">
@@ -435,7 +511,10 @@ function ProviderRow({
             <AlertDialogTitle>Delete {conn.label}?</AlertDialogTitle>
             <AlertDialogDescription>
               Nobody can sign in with it any more, and everyone signed in through it is signed
-              out on their next click. To pause it instead, turn it off.
+              out on their next click.
+              {isSource &&
+                " It's your role source, so the roles its groups gave are gone too, and no provider sets roles until you give one rules."}{" "}
+              To pause it instead, turn it off.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -609,6 +688,8 @@ function TestDialog({
                   {state.result.role_source === "groups" && " (from their groups)"}
                   {state.result.role_source === "override" && " (set by an admin)"}
                   {state.result.new_member ? ", as a new member." : "."}
+                  {state.result.sets_roles === false &&
+                    " This provider doesn't set roles: signing in through it leaves theirs as it is."}
                   {state.result.groups && (
                     <span className="mt-1 block text-xs">
                       Groups found: {state.result.groups.length ? state.result.groups.join(", ") : "none"}
@@ -670,6 +751,7 @@ const OUTCOME: Record<SignInEvent["outcome"], { label: string; className: string
   refused: { label: "Turned away", className: "text-destructive" },
   failed: { label: "Failed", className: "text-destructive" },
   test: { label: "Test", className: "text-muted-foreground" },
+  warning: { label: "Warning", className: "text-amber-700 dark:text-amber-400" },
 }
 
 function Events({ events }: { events: SignInEvent[] }) {
@@ -786,6 +868,7 @@ function SignInSettingsView() {
   }
 
   const verified = settings?.domains.some((d) => d.verified) ?? false
+  const roleSource = settings?.connections.find((c) => c.id === settings.role_source) ?? null
 
   return (
     <div>
@@ -797,7 +880,14 @@ function SignInSettingsView() {
       ) : (
         <div className="grid grid-cols-1 gap-6">
           <Section title="Sign-in rules" description="How people in this workspace sign in.">
-            <SignInRules settings={settings} onChange={load} />
+            <div className="grid grid-cols-1 gap-5">
+              <SignInRules settings={settings} onChange={load} />
+              <GroupAdminExpiry
+                key={settings.group_admin_days}
+                settings={settings}
+                onChange={load}
+              />
+            </div>
           </Section>
 
           <Section
@@ -831,6 +921,7 @@ function SignInSettingsView() {
                 <ProviderRow
                   key={c.id}
                   conn={c}
+                  roleSource={roleSource}
                   onEdit={() => openDialog(c)}
                   onTest={() => openTest(c)}
                   onRoles={() => openRoles(c)}
@@ -863,6 +954,7 @@ function SignInSettingsView() {
       <GroupRulesDialog
         key={`roles-${opened}`}
         conn={roles}
+        roleSource={roleSource}
         onOpenChange={(open) => !open && setRoles(null)}
         onSaved={() => {
           setRoles(null)
