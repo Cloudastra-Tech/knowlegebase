@@ -15,14 +15,15 @@ interface ComposerProps {
   onChange: (value: string) => void
   onSend: () => void
   onStop: () => void
+  onEditLast?: () => void // ↑ in an empty box: edit the last question
   busy: boolean // an answer is being written: the send button becomes Stop
   inputRef: RefObject<HTMLTextAreaElement | null> // the chat focuses it (Rephrase, New chat)
 }
 
 // Where a question is typed. Enter sends, Shift+Enter starts a new line, Esc stops
-// an answer being written. Grows with its text up to max-h-48. Text is 16px on
+// an answer being written, ↑ in an empty box edits the last question. Grows with its text up to max-h-48. Text is 16px on
 // phones (smaller makes iOS zoom in on focus), 14px from md (the Textarea's own sizes).
-export function Composer({ value, onChange, onSend, onStop, busy, inputRef }: ComposerProps) {
+export function Composer({ value, onChange, onSend, onStop, onEditLast, busy, inputRef }: ComposerProps) {
   const counterId = useId()
   const over = value.length > QUESTION_LIMIT
   const canSend = !busy && !over && value.trim().length > 0
@@ -46,11 +47,18 @@ export function Composer({ value, onChange, onSend, onStop, busy, inputRef }: Co
     } else if (e.key === "Escape" && busy) {
       e.preventDefault()
       onStop()
+    } else if (e.key === "ArrowUp" && !value && onEditLast) {
+      e.preventDefault()
+      onEditLast()
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="pointer-events-auto mx-auto max-w-3xl px-4 pb-4">
+    // The bottom padding clears a phone's home indicator (safe area).
+    <form
+      onSubmit={onSubmit}
+      className="pointer-events-auto mx-auto max-w-3xl px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+    >
       <div
         onClick={() => inputRef.current?.focus()}
         className={cn(

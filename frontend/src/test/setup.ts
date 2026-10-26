@@ -33,6 +33,7 @@ window.matchMedia = (query: string) =>
   }) as MediaQueryList
 window.scrollTo = () => {}
 Element.prototype.scrollIntoView = () => {}
+Element.prototype.scrollTo = () => {}
 
 afterEach(() => {
   cleanup()

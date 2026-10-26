@@ -274,6 +274,34 @@ one to `eval_candidates`, a test-set candidate for `eval/golden`.
 
 ---
 
+## 💾 Chat history and sharing
+
+A chat is a tree of messages (`messages.parent_id`); the one shown is the path down
+to `conversations.active_leaf_id`. Editing a question or writing an answer again
+adds a **sibling** and moves the leaf there, so the old version stays one click
+away ("‹ 1 / 2 ›"). "Branch in new chat" copies the path into a new conversation.
+
+One rule covers every way an answer can be read again: `visible_to(role, message)`
+(`kb/services/conversations.py`) compares the reader's role **now** with the
+highest access level of everything the model read for that answer. It applies to
+the owner's own chat (after a demotion, or "view as public"), to search, to Copy,
+and to share links:
+
+- **Search** (`conversation_search`, SQLite FTS5) keeps each row's access level,
+  and the query only matches rows the searcher's role may read, so a withheld
+  answer's words can never find its chat.
+- **Share links** (`kb/services/shares.py`) store only the token's sha256, work
+  for the same workspace only, expire (never after retention) and can be revoked.
+  Each answer is checked against the **lowest** of the viewer's role, the sharer's
+  role now and the role it was shared as; one that fails is withheld whole, not
+  just its sources (chat.md D1), with "Ask it yourself".
+- **Retention**: `chat_settings.retention_days` per workspace (default a year,
+  D4); the nightly `chat_retention` job deletes older chats through the normal
+  delete, so feedback, links, search rows and the question log's text go too.
+  Answers promoted to `eval_candidates` are copies and stay (D2).
+
+---
+
 ## 🔌 Public API, API keys and the MCP server
 
 Every surface asks through one service, `kb/services/answering.ask()`: the web
