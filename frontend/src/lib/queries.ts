@@ -21,6 +21,15 @@ export const queries = {
       queryFn: () => api.conversation(id),
       retry: false,
     }),
+  // A cited passage for the source viewer. Who may read it depends on the role; a
+  // 404 (gone from the index, or not for this role) falls back to the saved snippet.
+  passage: (chunkId: string) =>
+    queryOptions({
+      queryKey: ["passage", session.role, chunkId],
+      queryFn: () => api.passage(chunkId),
+      retry: false,
+      meta: { silent: true },
+    }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),

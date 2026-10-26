@@ -176,3 +176,90 @@ describe("feedback", () => {
     expect(fetch.mock.calls[0][1]!.method).toBe("DELETE")
   })
 })
+
+describe("inline citations", () => {
+  const HANDBOOK = {
+    n: 1,
+    title: "handbook.txt",
+    provider: "Company documents",
+    url: null,
+    access: "public" as const,
+    chunk_id: "c1",
+    heading_path: "Refund policy",
+    snippet: "Customers can request a full refund within 30 days of purchase.",
+    modified: "2026-09-12T10:00:00+00:00",
+    why: { rank: 1, of: 4, meaning: true, terms: ["refund"] },
+  }
+  const DRIVE = {
+    n: 2,
+    title: "Support plan",
+    provider: "Google Drive",
+    url: "https://docs.google.com/document/d/abc",
+    access: "restricted" as const,
+    chunk_id: "c2",
+    page: 3,
+    snippet: "Support is open Monday to Friday.",
+    why: { rank: null, of: 4, meaning: false, terms: [] },
+  }
+  const ANSWER = "Refunds take 30 days [S1]. Support is open on weekdays [S2][S1]."
+
+  it("shows each marker as a numbered chip, and the sources in that order", () => {
+    show({ state: "answered", text: ANSWER, sources: [HANDBOOK, DRIVE] })
+    expect(screen.queryByText(/\[S1\]/)).not.toBeInTheDocument()
+    expect(
+      screen.getAllByRole("button", { name: "Source 1: handbook.txt, Refund policy" }),
+    ).toHaveLength(2)
+    expect(screen.getByRole("button", { name: "Source 2: Support plan, Page 3" })).toHaveTextContent(
+      "2",
+    )
+    const cards = screen.getAllByRole("button", { name: /^Open source/ })
+    expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
+      "Open source 1: handbook.txt, Refund policy",
+      "Open source 2: Support plan, Page 3",
+    ])
+  })
+
+  it("previews the passage on focus, with why it was found", async () => {
+    show({ state: "answered", text: ANSWER, sources: [HANDBOOK, DRIVE] })
+    await userEvent.setup().tab() // the first chip
+    expect(await screen.findByText(HANDBOOK.snippet)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Matched “refund”; ranked 1st of 4; close in meaning/),
+    ).toBeInTheDocument()
+  })
+
+  it("opens an upload's passage from the index, highlighted in its context", async () => {
+    mockApi({
+      "GET /api/passages/c1": {
+        ...HANDBOOK,
+        text: HANDBOOK.snippet,
+        before: "Refund policy:\n",
+        after: "\nAfter 30 days, refunds are account credit.",
+      },
+    })
+    show({ state: "answered", text: ANSWER, sources: [HANDBOOK, DRIVE] })
+    await userEvent.setup().click(screen.getAllByRole("button", { name: /^Source 1:/ })[0])
+    const dialog = await screen.findByRole("dialog")
+    await waitFor(() => expect(dialog).toHaveTextContent("refunds are account credit"))
+    expect(dialog.querySelector("mark")).toHaveTextContent(HANDBOOK.snippet)
+    expect(screen.queryByRole("link", { name: "Open original" })).not.toBeInTheDocument()
+  })
+
+  it("opens a synced file's passage from its source card, with the original's link", async () => {
+    mockApi({}) // gone from the index, or not for this role: the saved passage shows
+    show({ state: "answered", text: ANSWER, sources: [HANDBOOK, DRIVE] })
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Open source 2/ }))
+    const dialog = await screen.findByRole("dialog")
+    await waitFor(() => expect(dialog).toHaveTextContent("This is the passage as it was cited"))
+    expect(dialog.querySelector("mark")).toHaveTextContent(DRIVE.snippet)
+    expect(dialog).toHaveTextContent("Restricted")
+    expect(screen.getByRole("link", { name: "Open original" })).toHaveAttribute("href", DRIVE.url)
+  })
+
+  it("leaves markers in code alone, and numbers a chip whose source isn't known yet", () => {
+    show({ streaming: true, text: "Use `[S1]` literally. Then [S3]." })
+    expect(screen.getByText("[S1]")).toBeInTheDocument()
+    expect(screen.getByText("3")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Source/ })).not.toBeInTheDocument()
+  })
+})
