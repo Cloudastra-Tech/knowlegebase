@@ -23,7 +23,13 @@ can't create a workspace; nor can a domain that already has one.
 
 Whoever runs the server turns sign-up on with `WORKSPACE_SIGNUP=on` (it needs
 the server's Google client); it's off by default, so a server run for one
-company stays that company's.
+company stays that company's. With `WORKSPACE_SIGNUP_CODES` (comma-separated)
+it's invite-only: the founder also enters a code, and each code creates one
+workspace.
+
+Before you sign in, typing your email shows whether your domain has a workspace
+here, how it signs you in and where roles come from, but never the
+workspace's name.
 
 The order of work:
 
@@ -289,6 +295,7 @@ Each reason has a code (in `sso_errors.py`):
 | `account_exists` | Sign-up: the founder is already a member of a workspace | Sign in instead. |
 | `signup_domain` | Sign-up: the email isn't on the Google Workspace's primary domain | Use an account on the primary domain. |
 | `signup_off` | Sign-up is off on this server | Ask whoever runs it (`WORKSPACE_SIGNUP=on`). |
+| `invite` | Sign-up: the invite code isn't valid, or was already used | Ask whoever runs the server for a code (`WORKSPACE_SIGNUP_CODES`). |
 
 Roles don't follow groups? Test sign-in: is the group claim there, under the name
 in **Roles from groups**? Groups apply at the next sign-in, and only through

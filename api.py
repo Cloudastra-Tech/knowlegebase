@@ -260,7 +260,7 @@ def auth_providers():
         email_sso = False
     return {"providers": [{"id": p, "name": sso.label(p)} for p in sso.configured()],
             "password": auth.password_login_on(), "email_sso": email_sso,
-            "signup": signup_on()}
+            "signup": signup_on(), "signup_invite": bool(signup_codes())}
 
 
 def signup_on():
@@ -269,6 +269,12 @@ def signup_on():
     founder's company owns its domain."""
     return (os.getenv("WORKSPACE_SIGNUP", "off").strip().lower() in ("on", "true", "1", "yes")
             and "google" in sso.configured())
+
+
+def signup_codes():
+    """Invite codes (WORKSPACE_SIGNUP_CODES, comma-separated). When there are any,
+    sign-up needs one, and each makes one workspace."""
+    return {c.strip() for c in os.getenv("WORKSPACE_SIGNUP_CODES", "").split(",") if c.strip()}
 
 
 @app.post("/api/auth/login")
@@ -385,7 +391,7 @@ async def sso_callback(provider: str, request: Request):
         return RedirectResponse("/#login?error=sso_unavailable")
     signup = request.session.pop(SIGNUP_KEY, None)
     if provider == "google" and signup and time.time() - signup.get("at", 0) < SIGNUP_SECONDS:
-        return await _finish_signup(c, request, signup["name"])
+        return await _finish_signup(c, request, signup["name"], signup.get("code"))
     return await _finish_sso(provider, c, request, lambda claims: sso.user_for(provider, claims))
 
 
@@ -401,16 +407,20 @@ SIGNUP_SECONDS = 15 * 60
 
 
 @app.get("/api/auth/signup/google/start")
-async def signup_start(request: Request, name: str = ""):
+async def signup_start(request: Request, name: str = "", code: str = ""):
     rate_limit(request, "signup")
-    name = " ".join(name.split())
+    name, code = " ".join(name.split()), code.strip()
     if not signup_on():
         return _login_error("signup_off")
     if not 1 <= len(name) <= 60:
         return RedirectResponse("/#signup?error=name")
+    codes = signup_codes()
+    if codes and (code not in codes or members_store.signup_code_used(code)):
+        return RedirectResponse("/#signup?error=invite")
     c = sso.client("google")
     _mark_browser(request)
-    request.session[SIGNUP_KEY] = {"name": name, "at": time.time()}
+    request.session[SIGNUP_KEY] = {"name": name, "code": code if codes else None,
+                                   "at": time.time()}
     try:
         return await c.authorize_redirect(
             request, _public_url(request, "/api/auth/sso/google/callback"),
@@ -420,7 +430,7 @@ async def signup_start(request: Request, name: str = ""):
         return _login_error("sso_failed", tab="signup")
 
 
-async def _finish_signup(c, request, name):
+async def _finish_signup(c, request, name, code=None):
     """Google sent the founder back: create the workspace, or say why not."""
     try:
         claims, _ = await _provider_answer("google", c, request)
@@ -433,8 +443,12 @@ async def _finish_signup(c, request, name):
         return _login_error(e.reason, tab="signup")
     if email.rpartition("@")[2] != org:
         return _login_error("signup_domain", tab="signup")
+    codes = signup_codes()
+    if codes and code not in codes:          # removed from the list meanwhile
+        return _login_error("invite", tab="signup")
     try:
-        workspace = members_store.create_workspace(name, org, email, person)
+        workspace = members_store.create_workspace(name, org, email, person,
+                                                   code=code if codes else None)
     except members_store.WorkspaceTaken as e:
         return _login_error(e.reason, tab="signup")
     except Exception:
@@ -650,19 +664,16 @@ def _provider_kind(conn):
 
 
 def _route_for(email):
-    """For the sign-in page's route pass: which workspace this email's domain
-    belongs to, and where roles come from there. (The domain alone decides it,
-    and the lookup is rate-limited.)"""
+    """For the sign-in page's route pass: whether this email's domain has a
+    workspace, how it signs people in, and where roles come from there. Never
+    the workspace's name: anyone can ask about any domain (rate-limited), and a
+    domain that answers only says what Continue's redirect would show anyway."""
     workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
     if not workspace:
         return {"workspace": None, "signup": signup_on()}
     source = members_store.role_source(workspace)
     conn = members_store.get_connection(source) if source else None
-    name = members_store.workspace_name(workspace)
-    if name == workspace:          # never named (made before sign-up): name it from the domain
-        name = email.rpartition("@")[2].split(".")[0].replace("-", " ").title()
-    return {"workspace": {"name": name,
-                          "google": "google" in sso.configured(),
+    return {"workspace": {"google": "google" in sso.configured(),
                           "password": auth.password_login_on()
                           and not members_store.requires_sso(workspace),
                           "roles_from": conn["label"] if conn and conn["enabled"] else None}}

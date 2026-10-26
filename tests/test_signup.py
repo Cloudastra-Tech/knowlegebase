@@ -87,12 +87,11 @@ def test_a_founder_creates_a_workspace_with_google_workspace(google, signup_on):
                                              "X-Role": "hr"}).json()
     assert (me["username"], me["workspace"], me["role"]) == (
         "founder@signup-corp.example", "signup-corp", "admin")
-    # The domain is verified for the new workspace: colleagues are found by it,
-    # and the route pass names the workspace.
+    # The domain is verified for the new workspace: colleagues are found by it.
+    # The lookup never names the workspace (anyone can ask about any domain).
     found = client.post("/api/auth/sso/discover",
                         json={"email": "colleague@signup-corp.example"}).json()
-    assert found["workspace"]["name"] == "Signup Corp"
-    assert found["workspace"]["google"] is True
+    assert found["workspace"]["google"] is True and "name" not in found["workspace"]
     # A colleague signing in with Google joins it as a regular member.
     google.claims = founder("signup-corp.example", "colleague")
     colleague = client.get("/api/auth/sso/google/callback?code=x&state=y").headers["location"]
@@ -146,8 +145,7 @@ def test_the_route_lookup_says_how_a_workspace_signs_in(google, signup_on):
     members_store.create_workspace("Route Co", "route.example", "boss@route.example", "Boss")
     client = browser()
     found = client.post("/api/auth/sso/discover", json={"email": "pat@route.example"}).json()
-    assert found["workspace"] == {"name": "Route Co", "google": True, "password": True,
-                                  "roles_from": None}
+    assert found["workspace"] == {"google": True, "password": True, "roles_from": None}
     members_store.set_requires_sso("route-co", True)
     found = client.post("/api/auth/sso/discover", json={"email": "pat@route.example"}).json()
     assert found["workspace"]["password"] is False
@@ -167,3 +165,40 @@ def test_the_route_lookup_names_a_known_providers_kind(google, signup_on):
         {"client_secret": "s"}, {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
     found = browser().post("/api/auth/sso/discover", json={"email": f"pat@{domain}"}).json()
     assert [c["kind"] for c in found["connections"]] == ["google"]
+
+
+@pytest.fixture
+def invite_only(monkeypatch, signup_on):
+    monkeypatch.setenv("WORKSPACE_SIGNUP_CODES", "pilot-one, pilot-two")
+
+
+def test_with_invite_codes_sign_up_needs_one_and_each_makes_one_workspace(google, invite_only):
+    client = browser()
+    assert client.get("/api/auth/providers").json()["signup_invite"] is True
+    no_code = client.get("/api/auth/signup/google/start", params={"name": "Nope"})
+    assert no_code.headers["location"] == "/#signup?error=invite"
+    wrong = client.get("/api/auth/signup/google/start", params={"name": "Nope", "code": "guess"})
+    assert wrong.headers["location"] == "/#signup?error=invite"
+
+    def with_code(name, domain, code):
+        c = browser()
+        start = c.get("/api/auth/signup/google/start", params={"name": name, "code": code})
+        if not start.headers["location"].startswith("https://accounts.google.com"):
+            return start.headers["location"]
+        google.claims = founder(domain)
+        return c.get("/api/auth/sso/google/callback?code=x&state=y").headers["location"]
+
+    assert with_code("Pilot A", unique("pilot-a"), "pilot-one").startswith("/#sso?welcome=1&code=")
+    # Used up: the same code can't make a second workspace.
+    assert with_code("Pilot B", unique("pilot-b"), "pilot-one") == "/#signup?error=invite"
+    assert with_code("Pilot C", unique("pilot-c"), "pilot-two").startswith("/#sso?welcome=1&code=")
+
+
+def test_two_founders_racing_on_one_code_make_one_workspace(google, invite_only):
+    import members_store
+    members_store.create_workspace("Race A", unique("race-a"), "a@race-a.example", "A",
+                                   code="pilot-two-race")
+    with pytest.raises(members_store.WorkspaceTaken) as e:
+        members_store.create_workspace("Race B", unique("race-b"), "b@race-b.example", "B",
+                                       code="pilot-two-race")
+    assert e.value.reason == "invite"

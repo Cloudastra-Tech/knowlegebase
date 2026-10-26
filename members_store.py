@@ -60,6 +60,7 @@ is opened, whatever is in those files is copied in, once; after that the files
 are no longer read, and can be kept as a backup.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -226,6 +227,10 @@ def _create_tables(conn):
         slug        TEXT PRIMARY KEY,
         name        TEXT NOT NULL,
         created_at  REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS signup_codes_used (
+        code_hash  TEXT PRIMARY KEY,           -- sha256 of an invite code (WORKSPACE_SIGNUP_CODES)
+        workspace  TEXT NOT NULL,
+        used_at    REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS workspace_domains (
         workspace    TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
         domain       TEXT NOT NULL,
@@ -441,19 +446,30 @@ def add_verified_domain(workspace, domain):
 
 class WorkspaceTaken(ValueError):
     """Sign-up can't create this workspace. `reason`: "workspace_exists" (the
-    domain is already verified by a workspace) or "account_exists" (the founder
-    is already a member of one)."""
+    domain is already verified by a workspace), "account_exists" (the founder
+    is already a member of one) or "invite" (the invite code was used)."""
 
     def __init__(self, reason):
         super().__init__(reason)
         self.reason = reason
 
 
-def create_workspace(name, domain, email, person_name):
+def _code_hash(code):
+    return hashlib.sha256(code.strip().encode()).hexdigest()
+
+
+def signup_code_used(code):
+    with _db() as conn:
+        return bool(conn.execute("SELECT 1 FROM signup_codes_used WHERE code_hash = ?",
+                                 (_code_hash(code),)).fetchone())
+
+
+def create_workspace(name, domain, email, person_name, code=None):
     """Sign-up: a new workspace called `name`, with `domain` verified and `email`
     as its first admin, all or nothing. The caller has proved `email` controls
-    `domain` (a Google Workspace account whose primary domain it is). Returns the
-    new workspace's slug; raises WorkspaceTaken."""
+    `domain` (a Google Workspace account whose primary domain it is). An invite
+    `code`, when given, is used up by it. Returns the new workspace's slug;
+    raises WorkspaceTaken."""
     domain, email = domain.strip().lower(), email.strip().lower()
     with _lock, _db() as conn:
         if conn.execute("""SELECT 1 FROM workspace_domains
@@ -461,7 +477,13 @@ def create_workspace(name, domain, email, person_name):
             raise WorkspaceTaken("workspace_exists")
         if conn.execute("SELECT 1 FROM members WHERE username = ?", (email,)).fetchone():
             raise WorkspaceTaken("account_exists")
+        if code and conn.execute("SELECT 1 FROM signup_codes_used WHERE code_hash = ?",
+                                 (_code_hash(code),)).fetchone():
+            raise WorkspaceTaken("invite")
         slug, now = _free_slug(conn, name, domain), time.time()
+        if code:
+            conn.execute("INSERT INTO signup_codes_used (code_hash, workspace, used_at) "
+                         "VALUES (?, ?, ?)", (_code_hash(code), slug, now))
         conn.execute("INSERT INTO workspaces (slug, name, created_at) VALUES (?, ?, ?)",
                      (slug, name.strip(), now))
         conn.execute("""INSERT INTO workspace_domains (workspace, domain, verify_token, verified_at)
