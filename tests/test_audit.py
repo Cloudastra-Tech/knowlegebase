@@ -51,7 +51,7 @@ def events(ws):
 
 # ---- Every endpoint that changes something is audited --------------------------------
 # Endpoints that change nothing an admin answers for: signing in and out, a
-# sign-in's own steps, questions (the query log is PL-11's next part), and
+# sign-in's own steps, questions (the question log has those), and
 # looking up an invite.
 NOT_AUDITED = {"login", "logout", "sso_exchange", "sso_discover", "saml_acs", "chat",
                "chat_stream", "lookup_invite"}
@@ -136,6 +136,22 @@ def _answer(ws, rated=False):
     return mid
 
 
+def _rated(ws):
+    """A thumbs-down answer, with the snapshot feedback keeps of it."""
+    import conversations_store
+    mid = _answer(ws)
+    conversations_store.set_feedback(mid, f"admin@{ws}.example", ws, -1, snapshot={
+        "question": "How much leave?", "answer": "20 days.", "state": "answered",
+        "sources": [], "max_access": "public"})
+    return mid
+
+
+def _eval_case(client, h, ws):
+    r = client.post("/api/admin/eval-cases", headers=h, json={"message_id": _rated(ws)})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
 def _verify_setup(client, h, ws, txt):
     row = client.post("/api/admin/sign-in/domains", headers=h,
                       json={"domain": f"{ws}.example"}).json()
@@ -216,6 +232,16 @@ CASES = [
     ("session.sign_out_everywhere", None, lambda ws, _: ("POST", "/api/auth/logout-everywhere",
                                                          {})),
     ("audit.export", None, lambda ws, _: ("GET", "/api/admin/audit/export", {})),
+    ("question_log.settings", None,
+     lambda ws, _: ("PUT", "/api/admin/question-log/settings",
+                    {"json": {"mode": "metadata", "days": 30}})),
+    ("insights.export", None,
+     lambda ws, _: ("GET", "/api/admin/insights/export", {"params": {"table": "daily"}})),
+    ("eval_case.create", lambda c, h, ws, txt: _rated(ws),
+     lambda ws, mid: ("POST", "/api/admin/eval-cases",
+                      {"json": {"message_id": mid, "expected_answer": "Pay"}})),
+    ("eval_case.delete", lambda c, h, ws, txt: _eval_case(c, h, ws),
+     lambda ws, case_id: ("DELETE", f"/api/admin/eval-cases/{case_id}", {})),
 ]
 
 

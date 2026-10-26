@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { LoggingNotice } from "@/components/logging-notice"
 import {
   api,
   ApiError,
@@ -316,6 +317,7 @@ export function ChatView({ role }: { role: Role }) {
                 Searching as{" "}
                 <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
               </p>
+              <LoggingNotice />
               <div className="mt-8 grid w-full max-w-xl gap-2">
                 {starters.map((s) => (
                   <Button

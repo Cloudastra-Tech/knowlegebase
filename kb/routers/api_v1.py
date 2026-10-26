@@ -197,8 +197,6 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
             cid = conversations_store.create(p.workspace, p.username, p.role)["id"]
         turn = await run_in_threadpool(conversations.start_turn, p.workspace, p.username,
                                        p.role, cid, question)
-    history = turn["history"] if turn else None
-    history_access = turn["history_access"] if turn else "public"
     ids = ({"conversation_id": turn["conversation"]["id"], "message_id": turn["message_id"]}
            if turn else {"conversation_id": None, "message_id": None})
     started = time.monotonic()
@@ -222,9 +220,8 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
                   **({"conversation": ids["conversation_id"]} if turn else {})})
 
     def run(on_event=None, cancel=None, out=None):
-        return answering.ask(p.workspace, p.role, question, surface="api", history=history,
-                             history_access=history_access, on_event=on_event, cancel=cancel,
-                             out=out)
+        return answering.ask(p.workspace, p.user, p.role, question, surface="api", turn=turn,
+                             on_event=on_event, cancel=cancel, out=out)
 
     if body.stream:
         return _stream(run, finish, ids)

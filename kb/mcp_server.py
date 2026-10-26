@@ -101,7 +101,8 @@ def build():
         (refused by a guardrail)."""
         p = _caller(ctx, "ask")
         try:
-            done = answering.ask(p.workspace, p.role, question.strip(), surface="mcp")
+            done = answering.ask(p.workspace, p.user, p.role, question.strip(),
+                                 surface="mcp")
         except answering.Failed as e:
             _audit(ctx, p, "mcp.ask", "question", None,
                    {"chars": len(question), "state": "error"})

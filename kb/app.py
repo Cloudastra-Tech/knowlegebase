@@ -13,12 +13,12 @@ import observability
 import safety
 from kb import jobs, mcp_server, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, audit, auth, chat,
-                        conversations, docs, health, index, integrations, invites, knowledge,
-                        saml, scim, signup, sso)
+                        conversations, docs, health, index, insights, integrations, invites,
+                        knowledge, saml, scim, signup, sso)
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, index, docs,
-           integrations, knowledge, admin_members, invites, audit, health, scim, api_keys,
-           api_v1)
+           integrations, knowledge, admin_members, invites, audit, insights, health, scim,
+           api_keys, api_v1)
 
 
 @contextlib.asynccontextmanager

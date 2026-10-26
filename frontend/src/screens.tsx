@@ -10,6 +10,7 @@ import {
 } from "react-router"
 import { toast } from "sonner"
 
+import type { InsightsTab } from "@/components/insights-view"
 import { LazyPage } from "@/components/lazy-page"
 import type { AccessTab } from "@/components/sign-in-view"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -24,6 +25,9 @@ import { legacyRedirect, type SsoReturn } from "@/lib/legacy-hash"
 const DocsView = lazy(() => import("@/components/docs-view").then((m) => ({ default: m.DocsView })))
 const IntegrationsView = lazy(() =>
   import("@/components/integrations-view").then((m) => ({ default: m.IntegrationsView })),
+)
+const InsightsView = lazy(() =>
+  import("@/components/insights-view").then((m) => ({ default: m.InsightsView })),
 )
 const KnowledgeView = lazy(() =>
   import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
@@ -240,6 +244,22 @@ export function AccessScreen({ tab }: { tab: AccessTab }) {
           navigate(`/admin/${next}`)
         }}
         onOpenIntegrations={() => navigate("/integrations")}
+      />
+    </Screen>
+  )
+}
+
+export function InsightsScreen({ tab }: { tab: InsightsTab }) {
+  const user = useUser()
+  const navigate = useNavigate()
+  return (
+    <Screen>
+      <InsightsView
+        tab={tab}
+        canEdit={user.role === "admin"}
+        onTabChange={(next) =>
+          navigate(next === "overview" ? "/admin/insights" : "/admin/insights/feedback")
+        }
       />
     </Screen>
   )

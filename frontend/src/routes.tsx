@@ -8,6 +8,7 @@ import {
   DocsScreen,
   HrOnly,
   Home,
+  InsightsScreen,
   IntegrationsScreen,
   InvitePage,
   KnowledgeScreen,
@@ -26,6 +27,7 @@ import {
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
 //   /admin/sign-in, /admin/members, /admin/activity   admins (the Access screen's tabs)
+//   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
 //   /invite/:token     accept an invite (signed in or not)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
@@ -61,6 +63,14 @@ export const routes: RouteObject[] = [
                 children: [
                   { path: "documents", Component: DocsScreen },
                   { path: "integrations", Component: IntegrationsScreen },
+                ],
+              },
+              {
+                path: "admin/insights",
+                Component: HrOnly,
+                children: [
+                  { index: true, element: <InsightsScreen tab="overview" /> },
+                  { path: "feedback", element: <InsightsScreen tab="feedback" /> },
                 ],
               },
               {

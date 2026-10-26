@@ -41,7 +41,8 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
     try:
-        done = answering.ask(ws_of(user), role, question, surface="web")
+        # Logged as "api": this one-shot endpoint isn't what the site uses.
+        done = answering.ask(ws_of(user), user, role, question, surface="api")
     except answering.Failed as e:
         # OpenAI down, a bad key, ...: say so plainly instead of a bare 500.
         raise HTTPException(502, f"The assistant couldn't answer just now ({e.kind}). "
@@ -149,9 +150,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         def standalone():                          # only when it differs from the question
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
-            done = answering.ask(ws, role, question, surface="web", on_event=on_event,
-                                 cancel=stop, history=turn["history"] if turn else None,
-                                 history_access=history_access, out=out)
+            done = answering.ask(ws, user, role, question, surface="web", turn=turn,
+                                 on_event=on_event, cancel=stop, out=out)
             save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
                  max_access=done.max_access, standalone_question=done.standalone)
             put({"type": "done", "answer": done.answer, "sources": done.sources,
