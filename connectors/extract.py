@@ -297,7 +297,7 @@ class HtmlPage:
 
 _SKIP = {"script", "style", "noscript", "template", "svg", "nav", "footer", "header",
          "aside", "form", "iframe", "button", "select", "canvas", "head"}
-_BLOCK = {"p", "div", "section", "article", "main", "br", "li", "tr", "table", "ul", "ol",
+_BLOCK = {"p", "div", "section", "article", "main", "br", "li", "table", "ul", "ol",
           "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "dd", "dt", "hr",
           "figcaption"}
 _VOID = {"br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed",
@@ -343,6 +343,10 @@ class _Html(HTMLParser):
         if self.skip:
             return
         if tag in _BLOCK:
+            self._out("\n")
+        elif tag == "tr":
+            # One line per row and no blank line between rows: chunking.py reads
+            # consecutive "a | b" lines as a table (cut between rows, header repeated).
             self._out("\n")
         if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             self._out("#" * int(tag[1]) + " ")

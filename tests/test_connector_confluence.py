@@ -131,7 +131,7 @@ def test_cloud_full_sync_lists_pages_blogposts_attachments_and_restrictions(env,
     # Storage format through extract.py: headings, code, a Jira placeholder, tasks.
     deploys = item(env, "confluence", "page-2001")
     assert env.text("confluence", deploys["file_name"]) == (
-        "Deploys\n\n# How we deploy\n\nWe deploy on Tuesdays.\n\nmake deploy ENV=prod\n\n"
+        "Deploys\n\n# How we deploy\n\nWe deploy on Tuesdays.\n\n```\nmake deploy ENV=prod\n```\n\n"
         "[Jira issue OPS-12]")
     assert deploys["url"] == "https://acme.atlassian.net/wiki/spaces/ENG/pages/2001"
     retro = item(env, "confluence", "blogpost-3001")
@@ -353,3 +353,25 @@ def test_both_are_live_in_the_registry_not_coming_soon(env):
     by_id = {c["id"]: c["availability"] for c in r}
     assert by_id["confluence"] == by_id["confluence_dc"] == by_id["sharepoint"] == "live"
     assert [c["id"] for c in r].count("confluence") == 1
+
+
+def test_storage_format_reaches_the_chunker_with_its_structure():
+    """Headings as "#" lines, code fenced, table rows one per line: chunking.py then
+    starts chunks at headings and repeats a long table's header row."""
+    import chunking
+    from connectors import confluence, extract
+    rows = "".join(f"<tr><td>Plan {i} with a longer description of its features</td>"
+                   f"<td>{i * 100}</td></tr>" for i in range(60))
+    storage = ('<h1>Prices</h1><ac:structured-macro ac:name="code">'
+               '<ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body>'
+               '<![CDATA[make build\nmake deploy]]></ac:plain-text-body></ac:structured-macro>'
+               f'<table><tbody><tr><th>Plan</th><th>Price</th></tr>{rows}</tbody></table>'
+               '<p><ac:link><ri:page ri:content-title="X"/><ac:plain-text-link-body>'
+               '<![CDATA[see the FAQ]]></ac:plain-text-link-body></ac:link></p>')
+    text = extract.extract(confluence.storage_to_html(storage), "text/html")
+    assert text.startswith("# Prices\n\n```\nmake build\nmake deploy\n```\n\nPlan | Price\n"
+                           "Plan 0 with a longer description of its features | 0\n")
+    assert text.endswith("\n\nsee the FAQ")
+    pieces = chunking.split(text)
+    tables = [p for p in pieces if p.kind == "table"]
+    assert len(tables) > 1 and all(p.prefix == "Plan | Price" for p in tables[1:])

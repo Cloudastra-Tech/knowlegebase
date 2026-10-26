@@ -109,6 +109,7 @@ PLACEHOLDER_MACROS = ("jira", "include", "excerpt-include", "children", "pagetre
 
 # ---- storage format -> HTML extract.py reads ------------------------------------------
 _CDATA = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.S)
+_CODE_BODY = re.compile(r"<ac:plain-text-body>\s*<!\[CDATA\[(.*?)\]\]>\s*</ac:plain-text-body>", re.S)
 _MACRO = re.compile(r'<ac:structured-macro\b[^>]*\bac:name="([^"]+)"[^>]*?(?:/>|>(.*?)'
                     r"</ac:structured-macro>)", re.S)
 _PARAM = re.compile(r"<ac:(?:parameter|task-id)\b[^>]*>.*?</ac:(?:parameter|task-id)>", re.S)
@@ -117,7 +118,9 @@ _TASK_STATUS = re.compile(r"<ac:task-status>\s*(complete|incomplete)\s*</ac:task
 
 def storage_to_html(xhtml):
     """Confluence's storage format (XHTML with ac:/ri: tags) as plain HTML for
-    extract.extract: code blocks (CDATA) kept as text, macro parameters dropped,
+    extract.extract, shaped for chunking.py: headings become "# ..." lines and
+    table rows "a | b" (extract's HTML reader), code blocks fenced (```), macro
+    parameters dropped,
     macros that show other content (Jira issues, includes, page trees) replaced
     by a placeholder, task lists as [ ] / [x]."""
     text = xhtml or ""
@@ -131,7 +134,11 @@ def storage_to_html(xhtml):
         return m.group(0)
 
     text = _MACRO.sub(macro, text)
-    text = _CDATA.sub(lambda m: "<pre>" + html.escape(m.group(1)) + "</pre>", text)
+    # A code / noformat body as a fenced block (chunking.py keeps those whole);
+    # any other CDATA (a link's text) as plain text.
+    text = _CODE_BODY.sub(lambda m: "<pre>\n```\n" + html.escape(m.group(1).strip("\n"))
+                          + "\n```\n</pre>", text)
+    text = _CDATA.sub(lambda m: html.escape(m.group(1)), text)
     text = _PARAM.sub("", text)
     text = _TASK_STATUS.sub(lambda m: "[x] " if m.group(1) == "complete" else "[ ] ", text)
     text = text.replace("<ac:task>", "<p>").replace("</ac:task>", "</p>")
