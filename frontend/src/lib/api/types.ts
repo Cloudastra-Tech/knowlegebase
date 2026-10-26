@@ -344,6 +344,7 @@ export interface Integration {
   unit?: string // what it counts: "files", "pages", ...
   acl?: boolean
   setup_env?: string
+  note?: string | null // what to know before connecting (SharePoint: needs an admin)
   doc_count?: number
   skipped_count?: number
   account?: string | null
@@ -355,7 +356,7 @@ export interface Integration {
   held_deletes?: number
   last_run?: SyncRun | null
   limits?: { max_pages: number | null; max_depth: number | null }
-  base_url?: string | null // Outline
+  base_url?: string | null // Outline, Confluence Data Center
   live_search?: boolean // Outline: the server's wiki is searched live instead
 }
 

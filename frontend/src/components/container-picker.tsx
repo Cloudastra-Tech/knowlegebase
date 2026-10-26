@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import {
+  BookMarked,
   BookOpen,
+  Building2,
   ChevronRight,
+  Cloud,
   FileSpreadsheet,
   FileText,
   FileType,
@@ -37,6 +40,9 @@ export function ContainerIcon({ item, className = "size-4" }: { item: Container;
   if (item.kind === "drive") return <HardDrive className={cls} />
   if (item.kind === "folder") return <Folder className={cls} />
   if (item.kind === "collection") return <BookOpen className={cls} />
+  if (item.kind === "space") return <BookMarked className={cls} />
+  if (item.kind === "site") return <Building2 className={cls} />
+  if (item.kind === "onedrive") return <Cloud className={cls} />
   if (item.kind === "url") return <Globe className={cls} />
   if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
   if (item.mimeType === "application/pdf") return <FileType className={cls} />
@@ -58,6 +64,27 @@ const COPY: Record<string, { title: string; description: string; root: string; e
       "Tick the pages to sync; their sub-pages come with them. With none ticked, every page shared with the integration is synced.",
     root: "Shared pages",
     empty: "No pages are shared with the integration yet. Share some in Notion first.",
+  },
+  confluence: {
+    title: "Choose spaces to sync",
+    description:
+      "Tick the spaces to sync: their pages, blog posts and attachments. Nothing is synced until you pick one.",
+    root: "Spaces",
+    empty: "No spaces this account can read.",
+  },
+  confluence_dc: {
+    title: "Choose spaces to sync",
+    description:
+      "Tick the spaces to sync: their pages, blog posts and attachments. Nothing is synced until you pick one.",
+    root: "Spaces",
+    empty: "No spaces this token can read.",
+  },
+  sharepoint: {
+    title: "Choose sites and libraries",
+    description:
+      "Tick whole sites (every document library in them, new ones included) or open a site to tick single libraries. Only what you pick is synced.",
+    root: "Sites",
+    empty: "No sites or libraries here.",
   },
   outline: {
     title: "Choose collections to sync",

@@ -287,7 +287,7 @@ function ConnectorCard({
   }
 
   const connected = ["connected", "syncing", "error"].includes(item.status)
-  const reconnect = item.error?.code === "auth_expired"
+  const reconnect = item.error?.code === "auth_expired" || item.error?.code === "missing_scope"
   const fixSettings = item.error?.code === "config" || item.error?.code === "not_found"
   const limit = item.last_run?.limit_reached ?? 0
 
@@ -309,6 +309,7 @@ function ConnectorCard({
                 ? `Read-only. After connecting, you choose what to sync; nothing else is touched. Answers link back to ${item.name}.`
                 : `Read-only. Answers cite each page with a link back to ${item.name}.`}
           </p>
+          {item.note && <p className="mt-2 text-sm text-muted-foreground">{item.note}</p>}
           {item.live_search && (
             <p className="mt-2 text-sm text-muted-foreground">
               Until then, this workspace searches the server's own wiki live.
