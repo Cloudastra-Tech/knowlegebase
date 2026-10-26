@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { ArrowRight, ChevronDown, KeyRound, Loader2 } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { MotionConfig, motion, type Variants } from "motion/react"
+import { useLocation, useNavigate, useSearchParams } from "react-router"
 import { siAuth0, siAuthentik, siGoogle, siKeycloak, siOkta } from "simple-icons"
 
 import { Button } from "@/components/ui/button"
@@ -25,10 +27,12 @@ import {
   type SsoRoute,
   type User,
 } from "@/lib/api"
-import { cn, hashParams } from "@/lib/utils"
+import { queries } from "@/lib/queries"
+import { cn } from "@/lib/utils"
 
 // Why sign-in or sign-up sent someone back here: api.py redirects to
-// /#login?error=<code> (or /#signup?error=<code>).
+// /#login?error=<code> (or /#signup?error=<code>), which routes.tsx turns into
+// /login?error=<code> (/signup?error=<code>).
 const ERRORS: Record<string, string> = {
   not_allowed: "Your account isn't set up for this app. Ask your admin to add it.",
   not_workspace: "Use your company's Google Workspace account, not a personal or guest one.",
@@ -54,8 +58,7 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i
 
 type Mode = "sign-in" | "create"
 
-function errorFromUrl() {
-  const params = hashParams()
+function errorFromUrl(params: URLSearchParams) {
   const code = params.get("error")
   if (!code) return null
   const ref = params.get("ref") ?? ""
@@ -612,32 +615,20 @@ export function LoginForm({
   onLogin,
   ...props
 }: React.ComponentProps<"div"> & { onLogin: (user: User) => void }) {
-  const [options, setOptions] = useState<AuthOptions | null>(null)
-  const [optionsFailed, setOptionsFailed] = useState(false)
-  const [error] = useState(errorFromUrl)
-  const [mode, setMode] = useState<Mode>(() =>
-    window.location.hash.startsWith("#signup") ? "create" : "sign-in",
-  )
+  const optionsQuery = useQuery(queries.authOptions())
+  const options = optionsQuery.data ?? null
+  const optionsFailed = optionsQuery.isError
+  const [searchParams] = useSearchParams()
+  const [error] = useState(() => errorFromUrl(searchParams))
+  // Sign in at /login, create a workspace at /signup (routes.tsx).
+  const location = useLocation()
+  const navigate = useNavigate()
+  const mode: Mode = location.pathname === "/signup" ? "create" : "sign-in"
   const [workspaceName, setWorkspaceName] = useState("")
 
-  useEffect(() => {
-    api
-      .authOptions()
-      .then(setOptions)
-      .catch(() => setOptionsFailed(true))
-  }, [])
-
-  // The landing page's Sign in / Get started change the hash without reloading.
-  useEffect(() => {
-    const follow = () =>
-      setMode(window.location.hash.startsWith("#signup") ? "create" : "sign-in")
-    window.addEventListener("hashchange", follow)
-    return () => window.removeEventListener("hashchange", follow)
-  }, [])
-
   function changeMode(next: Mode) {
-    setMode(next)
-    history.replaceState(null, "", next === "create" ? "#signup" : "#login")
+    // Keeps where to go once signed in (location.state); drops a shown error.
+    navigate(next === "create" ? "/signup" : "/login", { replace: true, state: location.state })
   }
 
   const signup = options?.signup ?? false

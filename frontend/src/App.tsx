@@ -1,5 +1,6 @@
-import { lazy, useEffect, useState } from "react"
+import { lazy, useState } from "react"
 import { ChevronDown, LogOut, MonitorSmartphone } from "lucide-react"
+import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
 
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
@@ -26,217 +27,33 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Skeleton } from "@/components/ui/skeleton"
+import { api, type Role } from "@/lib/api"
+import { useAuth } from "@/lib/auth-context"
 import { IndexStatusProvider } from "@/lib/index-status"
-import { cn, hashParams } from "@/lib/utils"
-import {
-  api,
-  ApiError,
-  session,
-  setForbiddenHandler,
-  setUnauthorizedHandler,
-  type Role,
-  type User,
-} from "@/lib/api"
+import { cn } from "@/lib/utils"
 
-type Screen = "chat" | "knowledge" | "docs" | "integrations" | "sign-in"
-
-// Each page is its own download, so a visitor on the landing page doesn't load the
-// chat (markdown rendering) and a public user never loads the HR screens.
+// Each page is its own download (routes.tsx), so a visitor on the landing page doesn't
+// load the chat (markdown rendering) and a public user never loads the HR screens.
 const ChatView = lazy(() => import("@/components/chat-view").then((m) => ({ default: m.ChatView })))
-const DocsView = lazy(() => import("@/components/docs-view").then((m) => ({ default: m.DocsView })))
-const IntegrationsView = lazy(() =>
-  import("@/components/integrations-view").then((m) => ({ default: m.IntegrationsView })),
-)
-const KnowledgeView = lazy(() =>
-  import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
-)
-const LandingPage = lazy(() =>
-  import("@/components/landing-page").then((m) => ({ default: m.LandingPage })),
-)
-const SignInView = lazy(() =>
-  import("@/components/sign-in-view").then((m) => ({ default: m.SignInView })),
-)
-const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
 
-// How often to retry restoring a session while the server can't be reached (~1 min).
-const RESTORE_ATTEMPTS = 10
-
-// The screens a public user may see; anything else falls back to Chat.
-const publicScreen = (s: Screen): Screen => (s === "knowledge" ? s : "chat")
-
+// The signed-in app: the navbar, and the screen at the current URL below it (routes.tsx).
+// Signed out, it sends people to the sign-in page, and back here once they're in.
 export default function App() {
-  const [user, setUser] = useState<User | null>(null)
-  const [checking, setChecking] = useState(
-    () => !!session.token || window.location.hash.startsWith("#sso"),
-  )
-  const [role, setRole] = useState<Role>(session.role)
-  const [screen, setScreen] = useState<Screen>("chat")
-  const [openDrivePicker, setOpenDrivePicker] = useState(false)
+  const { user, role, setRole, signedOut, leftOnPurpose } = useAuth()
+  const location = useLocation()
   const [confirmSignOutAll, setConfirmSignOutAll] = useState(false)
-  // Signed out: the landing page, or the sign-in page at #login (or #login?error=...),
-  // opened on its Create a workspace tab at #signup.
-  const authHash = () => /^#(login|signup)/.test(window.location.hash)
-  const [wantsLogin, setWantsLogin] = useState(authHash)
 
-  useEffect(() => {
-    const onHash = () => setWantsLogin(authHash())
-    window.addEventListener("hashchange", onHash)
-    return () => window.removeEventListener("hashchange", onHash)
-  }, [])
-
-  function goTo(hash: string) {
-    if (hash) window.location.hash = hash
-    else history.replaceState(null, "", window.location.pathname)
-    setWantsLogin(/^(login|signup)/.test(hash))
-    window.scrollTo(0, 0)
-  }
-
-  function onLogin(u: User) {
-    goTo("")
-    setUser(u)
-  }
-
-  // Back from Google's consent screen: /#integrations?connected=... or ?error=...
-  // Handled once we know who's signed in (see signedIn below).
-  function showIntegrationResult() {
-    if (!window.location.hash.startsWith("#integrations")) return
-    const params = hashParams()
-    history.replaceState(null, "", window.location.pathname)
-    session.setRole("hr")
-    setRole("hr")
-    setScreen("integrations")
-    const connected = params.get("connected")
-    if (connected) {
-      const name = connected === "notion" ? "Notion" : "Google Drive"
-      const choose = params.get("choose") === "1"
-      setOpenDrivePicker(choose)
-      toast.success(
-        choose
-          ? `${name} connected. Now choose which folders or files to sync.`
-          : `${name} connected. Syncing…`,
-      )
-    }
-    const error = params.get("error")
-    if (error) {
-      const why: Record<string, string> = {
-        access_denied: "Access was not granted.",
-        expired: "The connection request expired. Please try again.",
-        connect_failed: "Couldn't finish connecting. Please try again.",
-      }
-      toast.error(why[error] ?? "The integration was not connected.")
-    }
-  }
-
-  function signedIn(u: User) {
-    setUser(u)
-    showIntegrationResult()
-  }
-
-  // An admin can change someone's role while they're signed in. Re-read the
-  // account when the server refuses something, and when the tab comes back.
-  useEffect(() => {
-    let inFlight = false
-    const recheck = () => {
-      const token = session.token
-      if (!token || inFlight) return               // one check at a time
-      inFlight = true
-      api
-        .me()
-        .then((u) => {
-          if (session.token !== token) return       // signed out meanwhile
-          setUser(u)
-          if (u.role === "public") setScreen(publicScreen)
-          else if (u.role !== "admin") setScreen((s) => (s === "sign-in" ? "chat" : s))
-        })
-        .catch((err) => {
-          // Access removed altogether. (/auth/* 401s skip the unauthorized handler.)
-          if (err instanceof ApiError && err.status === 401 && session.token === token) {
-            session.setToken(null)
-            setUser(null)
-            setScreen("chat")
-          }
-        })
-        .finally(() => {
-          inFlight = false
-        })
-    }
-    setForbiddenHandler(recheck)
-    const onVisible = () => document.visibilityState === "visible" && recheck()
-    document.addEventListener("visibilitychange", onVisible)
-    return () => document.removeEventListener("visibilitychange", onVisible)
-  }, [])
-
-  // Restore the session after a page refresh — or, back from Google / Microsoft
-  // at /#sso?code=..., swap the one-time code for a session.
-  useEffect(() => {
-    setUnauthorizedHandler(() => {
-      session.setToken(null)
-      setUser(null)
-    })
-    if (window.location.hash.startsWith("#sso")) {
-      const code = hashParams().get("code")
-      const welcome = hashParams().get("welcome") === "1"
-      history.replaceState(null, "", window.location.pathname)
-      api
-        .ssoExchange(code ?? "")
-        .then(({ token, user }) => {
-          session.setToken(token)
-          signedIn(user)
-          if (welcome && user.role === "admin") {
-            session.setRole("hr")
-            setRole("hr")
-            setScreen("sign-in")
-          }
-        })
-        .catch(() => {
-          window.location.hash = "login?error=expired"
-        })
-        .finally(() => setChecking(false))
-      return
-    }
-    if (!session.token) return
-    // Only the server saying "no" (401) ends the session. If it can't be reached
-    // (restarting, a deploy, a network blip), keep it and try again for a while.
-    let timer: number | undefined
-    const restore = (attempt: number) => {
-      api
-        .me()
-        .then((u) => {
-          signedIn(u)
-          setChecking(false)
-        })
-        .catch((err) => {
-          if (err instanceof ApiError && err.status === 401) {
-            session.setToken(null)
-            setChecking(false)
-          } else if (attempt < RESTORE_ATTEMPTS) {
-            timer = window.setTimeout(() => restore(attempt + 1), Math.min(500 * 2 ** attempt, 8000))
-          } else {
-            setChecking(false)      // still signed in; the next reload tries again
-          }
-        })
-    }
-    restore(0)
-    return () => window.clearTimeout(timer)
-  }, [])
-
-  function changeRole(next: Role) {
-    session.setRole(next)
-    setRole(next)
-    if (next !== "hr") setScreen(publicScreen)
-  }
-
-  function openScreen(next: Screen) {
-    setScreen(next)
-    setOpenDrivePicker(false)    // the picker opens by itself only on arrival from Google
+  if (!user) {
+    return leftOnPurpose ? (
+      <Navigate to="/" replace />
+    ) : (
+      <Navigate to="/login" replace state={{ from: location }} />
+    )
   }
 
   async function signOut() {
     const out = await api.logout().catch(() => null)
-    session.setToken(null)
-    setUser(null)
-    setScreen("chat")
+    signedOut(true)
     // The admin set this provider to sign people out there too.
     if (out?.logout_url) window.location.assign(out.logout_url)
   }
@@ -249,30 +66,8 @@ export default function App() {
       toast.error(err instanceof Error ? err.message : "Couldn't sign out everywhere.")
       return
     }
-    session.setToken(null)
-    setUser(null)
-    setScreen("chat")
+    signedOut(true)
     toast.success("Signed out on every device.")
-  }
-
-  if (checking) {
-    return (
-      <div className="flex min-h-svh items-center justify-center">
-        <Skeleton className="h-10 w-48" />
-      </div>
-    )
-  }
-
-  if (!user) {
-    return (
-      <LazyPage fullScreen>
-        {wantsLogin ? (
-          <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
-        ) : (
-          <LandingPage onSignIn={() => goTo("login")} onGetStarted={() => goTo("signup")} />
-        )}
-      </LazyPage>
-    )
   }
 
   // Only an HR or admin account gets HR; it can also "view as" public. Everyone else is public.
@@ -286,20 +81,23 @@ export default function App() {
     .slice(0, 2)
     .toUpperCase()
 
-  const navItems: { id: Screen; label: string }[] = [
-    { id: "chat", label: "Chat" },
-    { id: "knowledge", label: "Knowledge" },
+  // `section`: every URL under it is this screen (Access has a tab per URL).
+  const navItems: { to: string; section: string; label: string }[] = [
+    { to: "/chat", section: "/chat", label: "Chat" },
+    { to: "/knowledge", section: "/knowledge", label: "Knowledge" },
     ...(activeRole === "hr"
       ? [
-          { id: "docs" as Screen, label: "Documents" },
-          { id: "integrations" as Screen, label: "Integrations" },
+          { to: "/documents", section: "/documents", label: "Documents" },
+          { to: "/integrations", section: "/integrations", label: "Integrations" },
         ]
       : []),
     // Who may sign in: admins only (HR manages documents, not access).
     ...(activeRole === "hr" && user.role === "admin"
-      ? [{ id: "sign-in" as Screen, label: "Access" }]
+      ? [{ to: "/admin/sign-in", section: "/admin", label: "Access" }]
       : []),
   ]
+  const isOpen = (section: string) =>
+    location.pathname === section || location.pathname.startsWith(`${section}/`)
 
   return (
     <IndexStatusProvider>
@@ -314,21 +112,22 @@ export default function App() {
           {/* On a phone the tabs scroll sideways instead of widening the page. */}
           <nav className="flex h-full min-w-0 items-center gap-5 overflow-x-auto [scrollbar-width:none] sm:gap-6">
             {navItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => openScreen(item.id)}
+              <Link
+                key={item.to}
+                to={item.to}
+                aria-current={isOpen(item.section) ? "page" : undefined}
                 className={cn(
                   "relative flex h-full shrink-0 items-center whitespace-nowrap text-sm transition-colors",
-                  screen === item.id
+                  isOpen(item.section)
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {item.label}
-                {screen === item.id && (
+                {isOpen(item.section) && (
                   <span className="absolute inset-x-0 bottom-0 h-px bg-foreground" />
                 )}
-              </button>
+              </Link>
             ))}
           </nav>
 
@@ -352,7 +151,7 @@ export default function App() {
                   <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                     View as
                   </DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={role} onValueChange={(v) => changeRole(v as Role)}>
+                  <DropdownMenuRadioGroup value={role} onValueChange={(v) => setRole(v as Role)}>
                     <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
@@ -412,46 +211,13 @@ export default function App() {
 
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={screen === "chat" ? "h-full" : "hidden"}>
+        <div className={location.pathname === "/chat" ? "h-full" : "hidden"}>
           <LazyPage>
             <ChatView role={activeRole} />
           </LazyPage>
         </div>
-        {screen === "knowledge" && (
-          <div className="h-full overflow-y-auto">
-            <LazyPage>
-              <KnowledgeView key={activeRole} />
-            </LazyPage>
-          </div>
-        )}
-        {screen === "docs" && activeRole === "hr" && (
-          <div className="h-full overflow-y-auto">
-            <LazyPage>
-              <DocsView />
-            </LazyPage>
-          </div>
-        )}
-        {screen === "integrations" && activeRole === "hr" && (
-          <div className="h-full overflow-y-auto">
-            <LazyPage>
-              <IntegrationsView
-                onOpenDocuments={() => openScreen("docs")}
-                openDrivePicker={openDrivePicker}
-              />
-            </LazyPage>
-          </div>
-        )}
-        {screen === "sign-in" && activeRole === "hr" && user.role === "admin" && (
-          <div className="h-full overflow-y-auto">
-            <LazyPage>
-              <SignInView
-                workspace={user.workspace}
-                me={user.username}
-                onOpenIntegrations={() => openScreen("integrations")}
-              />
-            </LazyPage>
-          </div>
-        )}
+        {/* Every other screen (routes.tsx). */}
+        <Outlet />
       </main>
     </div>
     </IndexStatusProvider>
