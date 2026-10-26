@@ -31,6 +31,7 @@ GET    /api/integrations list_integrations current_user,current_role
 GET    /api/integrations/google_drive/folders drive_folders require_hr
 GET    /api/integrations/{provider}/callback integration_callback -
 GET    /api/knowledge knowledge current_user,current_role
+GET    /api/passages/{chunk_id} passage current_user,current_role
 PATCH  /api/admin/members/{username} edit_member require_admin
 PATCH  /api/admin/sign-in/connections/{cid} edit_connection require_admin
 PATCH  /api/admin/sign-in/saml-connections/{cid} edit_saml_connection require_admin

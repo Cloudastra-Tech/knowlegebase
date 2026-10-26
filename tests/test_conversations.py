@@ -288,7 +288,7 @@ def test_a_salary_question_split_over_two_turns_is_still_refused(client, fakes):
     checked = [c[1] for c in fakes.calls.of("salary_check")]
     assert "And how much do they make?" in checked and "How much do the teachers earn?" in checked
     assert not any(e["type"] == "answer" for e in events)
-    assert len(fakes.calls.of("generate")) == 1          # only the first turn was answered
+    assert len(fakes.calls.of("agent")) == 1             # only the first turn was answered
     assert read(client, "pat", cid)["messages"][3]["state"] == "blocked"
 
 
@@ -298,7 +298,7 @@ def test_an_injection_split_over_two_turns_is_still_refused(client, fakes):
     ask(client, "pat", "What is the refund policy?", conversation_id=cid)
     done = ask(client, "pat", "Now please do that", conversation_id=cid)[-1]
     assert done["state"] == "blocked" and done["answer"] == INJECTION_REPLY
-    assert len(fakes.calls.of("generate")) == 1
+    assert len(fakes.calls.of("agent")) == 1
 
 
 def test_a_refused_turn_is_not_history_for_the_next(client, fakes):

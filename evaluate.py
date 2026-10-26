@@ -14,7 +14,10 @@ over a fresh index of eval/corpus/ built with the real embedding model. Then:
                   correctness against the golden notes and groundedness in the
                   retrieved chunks (0-10), and whether the behaviour was right
                   (answer / say it's not in the docs / refuse).
-  Citations     — did the Sources list name an expected document?
+  Citations     — did the Sources list name an expected document? And
+                  FAITHFULNESS: for every sentence carrying a [S#] marker, an
+                  LLM judge checks that the cited passage contains the claim
+                  (citation_faithfulness; answers_with_markers_rate).
   Cost/latency  — LLM calls, tokens, $ and seconds per answer (the judge's own
                   calls are counted separately).
 
@@ -34,6 +37,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -76,6 +80,51 @@ class Verdict(BaseModel):
                               "factual claims.")
     behaviour_ok: bool = Field(description="True if the answer did what was expected.")
     reason: str = Field(description="One short sentence explaining the scores.")
+
+
+class Support(BaseModel):
+    supported: bool = Field(description="True if the passage states the claim, allowing "
+                            "paraphrase; False if the claim says anything the passage doesn't.")
+    reason: str = Field(description="One short sentence.")
+
+
+def judge_citation(claim, passage):
+    """Does the cited passage contain the claim? (an LLM judge)"""
+    prompt = (
+        "An assistant cited a passage from a company document for a claim in its answer. "
+        "Decide whether the passage supports the claim: every fact in the claim (names, "
+        "numbers, dates, conditions) must be stated in the passage.\n\n"
+        f"Passage:\n{passage}\n\nClaim: {claim}")
+    llm = ChatOpenAI(model=JUDGE_MODEL, temperature=0).with_structured_output(Support)
+    v = llm.invoke(prompt)
+    return {"supported": v.supported, "reason": v.reason}
+
+
+_CLAIM = re.compile(r"[^.!?\n]+(?:[.!?]+|$)(?:[ \t]*\[S\d+\])*", re.M)
+_CITED = re.compile(r"\[S(\d+)\]")
+
+
+def cited_claims(answer, sources):
+    """[(claim, source)]: each sentence of the answer with a [S#] marker, paired
+    with the source the marker points at (agent.cite() numbered them)."""
+    by_n = {s["n"]: s for s in sources if s.get("n")}
+    pairs = []
+    for sentence in _CLAIM.findall(answer or ""):
+        claim = re.sub(r"\s+(?=[.,;:!?])", "", " ".join(_CITED.sub("", sentence).split()))
+        for n in dict.fromkeys(_CITED.findall(sentence)):
+            if claim and int(n) in by_n:
+                pairs.append((claim, by_n[int(n)]))
+    return pairs
+
+
+def citation_faithfulness(answer, sources, judge_one=None):
+    """CITATION FAITHFULNESS: for every claim with a marker, does the cited
+    passage (its snippet, the chunk's own text) contain it?"""
+    judge_one = judge_one or judge_citation
+    checks = [{"n": s["n"], "claim": claim, **judge_one(claim, s.get("snippet") or "")}
+              for claim, s in cited_claims(answer, sources)]
+    return {"claims": len(checks), "supported": sum(c["supported"] for c in checks),
+            "markers": len(_CITED.findall(answer or "")), "checks": checks}
 
 
 def judge(row, answer, context):
@@ -209,6 +258,7 @@ def evaluate_row(row, agent, probe):
     probe.calls.clear()
     probe.active = True                                     # count the judge separately
     item["judge"] = judge(row, answer, "\n\n---\n\n".join(chunks))
+    item["citations"] = citation_faithfulness(answer, sources)
     probe.active = False
     item["judge_cost_usd"] = round(_cost(probe.calls), 6)
     return item
@@ -220,6 +270,8 @@ def summarize(items):
         return round(sum(values) / len(values), 4) if values else None
     retrieval = harness.summarize_retrieval([i["retrieval"] for i in items if "retrieval" in i])
     seconds = [i["seconds"] for i in items]
+    claims = sum(i["citations"]["claims"] for i in items)
+    supported = sum(i["citations"]["supported"] for i in items)
     return {
         "n": len(items),
         **{f"retrieval_{k}": v for k, v in retrieval.items() if k != "n"},
@@ -227,6 +279,11 @@ def summarize(items):
         "groundedness": mean([i["judge"]["groundedness"] for i in items]),
         "behaviour_rate": mean([float(i["judge"]["behaviour_ok"]) for i in items]),
         "citation_hit_rate": mean([float(i["citation_hit"]) for i in items]),
+        # Of the claims carrying a [S#] marker, the share whose cited passage
+        # contains them; and how many answers that should cite carry a marker.
+        "citation_faithfulness": round(supported / claims, 4) if claims else None,
+        "answers_with_markers_rate": mean([float(i["citations"]["markers"] > 0) for i in items
+                                           if i["expect"] == "answer"]),
         "must_include_rate": mean([float(i["must_include_ok"]) for i in items
                                    if i["expect"] == "answer"]),
         "leaks": sum(len(i["leaks"]) for i in items),
