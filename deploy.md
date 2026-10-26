@@ -100,9 +100,9 @@ There are two kinds of sign-in provider:
   - give the workspace an admin: `python auth.py add <name> --workspace <slug> --role admin`
     (or `python auth.py role <their email> admin --workspace <slug>` for someone who
     will sign in with single sign-on);
-  - back up `./config/` as a whole: `app.db` holds the providers' secrets
-    **encrypted** with `config/integrations.key` (or `INTEGRATIONS_KEY`), and one is
-    useless without the other.
+  - back up `config/app.db` **and** the key it is encrypted with
+    (`config/integrations.key`, or `INTEGRATIONS_KEY`): one is useless without the
+    other, so keep them in different places (see [Backups and restore](#backups-and-restore)).
   SAML needs the `xmlsec1` program, which the Docker image includes.
 - **Server-wide** providers, set in `.env` and offered to everyone: Google,
   Microsoft and any OpenID Connect provider listed in `OIDC_PROVIDERS`. The steps
@@ -198,6 +198,105 @@ cd genai && docker compose ps              # STATUS: Up
 | Rebuild vector DB from scratch | `docker compose down -v && docker compose up -d --build` |
 | Re-index after editing `docs/` by hand | `docker compose exec knowledgebase python ingest.py && docker compose restart` |
 | Shell into the container | `docker compose exec knowledgebase sh` |
+
+## Health checks and error tracking
+
+- `GET /api/health` — the process is up. Always 200 while it runs; the Docker
+  `HEALTHCHECK` uses it. Don't point anything that restarts the container at a
+  deeper check: a restart fixes none of what it finds.
+- `GET /api/health/ready` — the server can actually serve: `config/app.db` opens and
+  answers a query, the Chroma index opens, and the encryption key loads **and
+  decrypts a stored secret** (a changed `INTEGRATIONS_KEY` otherwise breaks every SSO
+  provider and integration silently). 503 with the failing check otherwise:
+
+  ```json
+  {"ok": false, "checks": {"database": "ok", "search_index": "ok",
+   "integrations_key": "the encryption key doesn't decrypt the stored secrets"}}
+  ```
+
+  Point an external uptime monitor (Better Stack, UptimeRobot, Uptime Kuma on
+  another host) at `https://<your domain>/api/health/ready`, and check it after
+  every deploy: `curl -fsS http://localhost:8501/api/health/ready`.
+- Errors: failed chat answers, re-indexes, connector syncs and agent tool calls
+  are logged (`docker compose logs`) with their workspace, never with the
+  question. Set `SENTRY_DSN` (Sentry, or a self-hosted GlitchTip) and `APP_ENV`
+  in `.env` to also send them to an error tracker; request bodies, query strings,
+  cookies and `Authorization` headers are scrubbed first (`observability.py`).
+
+## Backups and restore
+
+`scripts/backup.sh` makes one timestamped archive of everything the app keeps:
+a consistent online copy of `config/app.db` (SQLite's backup API, safe while the
+app runs), the rest of `config/`, `docs/`, `data/` and the Chroma volume
+(`<folder>_chroma_data`, e.g. `knowlegebase_chroma_data`), plus a `MANIFEST` of
+row counts. It needs only bash, tar and Docker on the host; the SQLite steps use
+the host's `python3`, or the app image's Python if there is none.
+
+**The encryption key is never in the archive.** `config/integrations.key` decrypts
+every workspace's OAuth tokens and SSO secrets in `app.db`; an archive holding both
+would hand all of them to whoever gets a copy. The script copies the key to
+`KEY_BACKUP_DIR` (default `~/kb-integrations-key`, outside `BACKUP_DIR`, never
+synced off-site by it) and prints where it went. Also store the key once in the
+team password manager. If the key comes from `INTEGRATIONS_KEY` in `.env`, keep
+that value there instead; `.env` is not in the archive either.
+
+Settings go in a file kept outside the repo, e.g. `/root/kb-backup.env`
+(`chmod 600`); every option is listed at the top of `scripts/backup.sh`:
+
+```bash
+BACKUP_DIR=/var/backups/knowlegebase
+KEY_BACKUP_DIR=/root/kb-integrations-key
+RETENTION_DAYS=14                        # local archives kept this many days
+# Encrypt to a PUBLIC key; its private half stays off this server (password manager),
+# so a stolen server can't read its own backups. age-keygen makes the pair.
+BACKUP_AGE_RECIPIENT=age1...
+# Off-site: an rclone remote (rclone config) ...
+BACKUP_RCLONE_REMOTE=b2:kb-backups/prod
+REMOTE_RETENTION_DAYS=90
+# ... or a restic repository (kept 7 daily / 4 weekly / 6 monthly)
+# BACKUP_RESTIC_REPO=s3:s3.eu-central-1.amazonaws.com/kb-backups
+# RESTIC_PASSWORD_FILE=/root/.restic-password
+# Dead-man alert: pinged after each good run, /fail after a bad one
+BACKUP_PING_URL=https://hc-ping.com/<uuid>
+```
+
+Run it once by hand, then nightly from root's crontab (`crontab -e`), and before
+each deploy:
+
+```bash
+BACKUP_ENV_FILE=/root/kb-backup.env /root/knowlegebase/scripts/backup.sh
+# crontab: every night at 02:30, logging to a file
+30 2 * * * BACKUP_ENV_FILE=/root/kb-backup.env /root/knowlegebase/scripts/backup.sh >> /var/log/kb-backup.log 2>&1
+```
+
+(Install `age` and `rclone` or `restic` first, from the distribution's packages.)
+
+**Restore** always goes into a new, empty folder, and checks what it unpacked:
+every table's row count and the document counts against the `MANIFEST`, the
+database's and the index's integrity, and that the key decrypts the stored secrets.
+
+```bash
+rclone copy b2:kb-backups/prod/kb-backup-20260101T023000Z.tar.gz.age /root/restore-in/
+scripts/restore.sh --identity /path/to/age-private-key.txt \
+    --key /root/kb-integrations-key/integrations-<fingerprint>.key.age \
+    /root/restore-in/kb-backup-20260101T023000Z.tar.gz.age /root/kb-restored
+```
+
+It exits non-zero on any mismatch. `/root/kb-restored` is then laid out like the
+app folder (`config/`, `docs/`, `data/`, `chroma_db/`). To put it in service:
+
+```bash
+cd /root/knowlegebase && docker compose down
+mv config config.old && mv docs docs.old && mv data data.old
+cp -a /root/kb-restored/config /root/kb-restored/docs /root/kb-restored/data .
+docker run --rm -v knowlegebase_chroma_data:/v -v /root/kb-restored/chroma_db:/src:ro \
+    --entrypoint sh cloudastra-knowledgebase -c 'rm -rf /v/* && cp -a /src/. /v/'
+docker compose up -d && curl -fsS http://localhost:8501/api/health/ready
+```
+
+**Drill**: once a month, restore the latest off-site archive on another machine
+(or a throwaway folder), run the app against it and check `/api/health/ready`
+and a sign-in. A backup that was never restored is a hope, not a backup.
 
 ## Managing documents from the UI
 

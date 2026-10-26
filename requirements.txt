@@ -25,3 +25,4 @@ httpx==0.28.1              # the HTTP client Authlib's Starlette integration use
 dnspython==2.8.0           # checks the DNS TXT record that proves a workspace owns its email domain
 pysaml2==7.5.5             # SAML sign-in (saml_sp.py); checks signatures with the xmlsec1 program
 itsdangerous==2.2.0        # signs the short-lived cookie that holds sign-in state (SessionMiddleware)
+sentry-sdk==2.72.0         # optional error tracking (observability.py), only with SENTRY_DSN; also GlitchTip
