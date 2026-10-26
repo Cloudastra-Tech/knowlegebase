@@ -389,6 +389,10 @@ commit them from the server or copy them back if you want them in the repo.
   https `Strict-Transport-Security` (`HSTS_MAX_AGE`, default 180 days; `0` turns it
   off). Behind a proxy that ends TLS, uvicorn learns it was https from
   `X-Forwarded-Proto`, so `FORWARDED_ALLOW_IPS` (below) must include the proxy.
+- **`/docs` doesn't show the API pages** — FastAPI's own pages (`/docs`, `/redoc`,
+  `/openapi.json`) list every endpoint, so they are off unless `APP_ENV` is `dev`
+  or `local` (a developer's machine) or `API_DOCS=on` is set. Leave both unset in
+  production.
 - **"Too many attempts. Wait N seconds"** — the sign-in endpoints are rate-limited
   per address (and overall), and the address comes from the reverse proxy's
   `X-Forwarded-For` header. uvicorn only believes that header from the addresses

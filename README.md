@@ -62,7 +62,7 @@ Your question → RETRIEVE matching chunks → AUGMENT the prompt with them
 | `rag.py` | The brain: retrieve → augment → generate → guard. |
 | `agent.py` | The agent: picks tools (docs search, calculator, currency, Wikipedia, wiki) and chains them. |
 | `safety.py` | The safety rules (input + output checks). |
-| `api.py` | The API behind the website: chat, documents, integrations, sign-in. |
+| `api.py` / `kb/` | The API behind the website: chat, documents, integrations, sign-in. `api.py` only builds the app (`uvicorn api:app`); the endpoints are in `kb/routers/`. |
 | `frontend/` | The website (React + shadcn/ui). |
 | `auth.py` / `sso.py` | Sign-in: username + password accounts, and single sign-on (Google, Microsoft, each workspace's own provider). |
 | `members_store.py` | Who may sign in where, and as what: workspaces, domains, members, roles, providers (SQLite). |

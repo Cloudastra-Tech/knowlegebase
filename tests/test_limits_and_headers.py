@@ -36,27 +36,28 @@ def login(client, username, role="hr"):
 @pytest.fixture
 def limits_on(monkeypatch):
     """Rate limits on (conftest turns them off), from a clean slate."""
-    import api
+    from kb import state
     monkeypatch.setenv("RATE_LIMITS", "on")
-    monkeypatch.setattr(api, "_hits", {})
+    monkeypatch.setattr(state, "hits", {})
     return monkeypatch
 
 
 @pytest.fixture
 def fake_agent(monkeypatch):
-    import api
+    from kb.services import agents
 
     def run(question, with_sources=False, on_event=None):
         return f"About {question}", [], []
-    monkeypatch.setattr(api, "get_agent", lambda ws, role: run)
+    monkeypatch.setattr(agents, "get_agent", lambda ws, role: run)
 
 
 @pytest.fixture
 def no_indexing(monkeypatch, tmp_path):
     """Uploads land in a temporary folder and nothing is re-indexed."""
-    import api
-    monkeypatch.setattr(api, "_schedule_index", lambda ws: None)
-    monkeypatch.setattr(api.workspaces, "docs_root", lambda ws: str(tmp_path / ws))
+    from kb.services import indexing
+    import workspaces
+    monkeypatch.setattr(indexing, "schedule_index", lambda ws: None)
+    monkeypatch.setattr(workspaces, "docs_root", lambda ws: str(tmp_path / ws))
     return tmp_path
 
 
@@ -220,9 +221,18 @@ def test_hsts_only_over_https(client, monkeypatch):
     assert "strict-transport-security" not in secure.get("/api/health").headers
 
 
-def test_the_api_docs_page_gets_the_cdn_it_needs(client):
-    csp = client.get("/docs").headers["content-security-policy"]
-    assert "https://cdn.jsdelivr.net" in csp and "frame-ancestors 'none'" in csp
+def test_the_api_docs_page_gets_the_cdn_it_needs(monkeypatch):
+    """When the API pages are on at all (test_routes.py)."""
+    from fastapi.testclient import TestClient
+    from kb.app import create_app
+    monkeypatch.setenv("API_DOCS", "on")
+    client = TestClient(create_app())
+    for path in ("/docs", "/redoc"):
+        csp = client.get(path).headers["content-security-policy"]
+        assert "https://cdn.jsdelivr.net" in csp and "frame-ancestors 'none'" in csp
+    csp = client.get("/api/health").headers["content-security-policy"]
+    assert "cdn.jsdelivr.net" not in csp
+    assert "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
 
 
 def test_sign_in_redirects_still_work_with_the_headers(client, monkeypatch):
