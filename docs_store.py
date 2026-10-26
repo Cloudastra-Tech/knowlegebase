@@ -1,8 +1,7 @@
 """
 docs_store.py  —  the files in docs/ that the assistant answers from.
 
-Plain file operations shared by both frontends (Streamlit's docs_admin.py and
-the React app via api.py):
+Plain file operations behind the Documents screen (the React app via api.py):
     docs/public/      -> everyone can search these
     docs/restricted/  -> only HR / Admin can search these
 """

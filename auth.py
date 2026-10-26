@@ -9,7 +9,7 @@ documents, the Documents and Integrations screens) or "admin" (hr, plus who may
 sign in).
 People who sign in with Google / Microsoft / Okta get an account the first time
 (sso.py), on a domain their workspace has verified.
-PASSWORD_LOGIN=off (in .env) turns password sign-in off in both the API and Streamlit.
+PASSWORD_LOGIN=off (in .env) turns password sign-in off.
 
 Manage accounts and domains from a terminal:
     python auth.py add <username> [--workspace <slug>] [--role hr]   # asks for the password
@@ -33,16 +33,11 @@ import hmac
 import os
 import secrets
 import sys
-import time
-
-import streamlit as st
 
 import members_store
 import workspaces
 
 ITERATIONS = 200_000
-MAX_FAILED_ATTEMPTS = 5          # per browser session, then a cool-down
-LOCKOUT_SECONDS = 60
 
 
 # ---- Password hashing --------------------------------------------------------
@@ -101,61 +96,6 @@ def authenticate(username, password):
     if access:
         return {"username": member["username"], "name": member["name"], **access}
     return None
-
-
-# ---- Streamlit login screen --------------------------------------------------
-def require_login():
-    """Show the login form until someone signs in. Returns the signed-in user."""
-    if st.session_state.get("user"):
-        # Checked on every run, like the API does on every request: someone turned
-        # off, demoted, or now required to use single sign-on loses it straight away.
-        access = access_for(st.session_state.user["username"])
-        if access:
-            st.session_state.user.update(access)
-            return st.session_state.user
-        st.session_state.pop("user", None)
-
-    st.title("🔐 Sign in")
-    if not password_login_on():
-        st.error("Password sign-in is turned off (PASSWORD_LOGIN=off). "
-                 "Use the main site to sign in with Google or Microsoft.")
-        st.stop()
-    if not members_store.has_password_accounts():
-        st.error("No user accounts exist yet. An admin must create one first:\n\n"
-                 "`python auth.py add <username>`")
-        st.stop()
-
-    locked_until = st.session_state.get("locked_until", 0)
-    if time.time() < locked_until:
-        st.error(f"Too many failed attempts. Try again in "
-                 f"{int(locked_until - time.time())} seconds.")
-        st.stop()
-
-    with st.form("login"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Sign in", type="primary")
-
-    if submitted:
-        user = authenticate(username, password)
-        if user:
-            st.session_state.user = user
-            st.session_state.failed_logins = 0
-            st.rerun()
-        time.sleep(1)                     # slow down password guessing
-        failed = st.session_state.get("failed_logins", 0) + 1
-        st.session_state.failed_logins = failed
-        if failed >= MAX_FAILED_ATTEMPTS:
-            st.session_state.locked_until = time.time() + LOCKOUT_SECONDS
-            st.session_state.failed_logins = 0
-        st.error("Wrong username or password.")
-    st.stop()
-
-
-def logout():
-    for key in ("user", "messages"):
-        st.session_state.pop(key, None)
-    st.rerun()
 
 
 # ---- Command line: manage users ----------------------------------------------

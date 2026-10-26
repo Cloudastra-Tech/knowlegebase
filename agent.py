@@ -718,7 +718,7 @@ def build_agent(role="public", collection=None, outline=True):
     graph = builder.compile()
 
     # ---- RUN: same signature as before -> (answer, trace) ------------------
-    # app.py doesn't change. We run the graph, then rebuild the tool-call
+    # Callers don't change. We run the graph, then rebuild the tool-call
     # "trace" from the final message list so the UI can show each step.
     # The graph and tools are shared; each call gets its own _Run, so questions
     # in the same workspace and role run side by side.
