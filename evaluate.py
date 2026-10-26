@@ -23,6 +23,7 @@ runs can be compared:
     python evaluate.py                                # needs OPENAI_API_KEY in .env
     python evaluate.py --compare eval/results/<earlier>.json
     python evaluate.py --ids refund-window,vpn --repeat 3
+    python evaluate.py --redteam                      # the prompt-injection red team instead
 
 It costs a few cents on gpt-4o-mini; run it by hand or nightly, not on every
 PR. The fast, keyless checks (retrieval + leak suite) run in CI: eval/harness.py.
@@ -256,11 +257,29 @@ def main(argv=None):
     parser.add_argument("--out", help="results file (default: eval/results/<time>.json)")
     parser.add_argument("--compare", help="an earlier results file to print the change against")
     parser.add_argument("--label", default="", help="a note stored in the results, e.g. 'before'")
+    parser.add_argument("--redteam", action="store_true",
+                        help="run the prompt-injection red team (eval/redteam.py) instead: "
+                             "exit 1 if anything is exfiltrated")
     args = parser.parse_args(argv)
 
     key = os.getenv("OPENAI_API_KEY") or ""
     if not key or key.startswith("sk-test"):
         sys.exit("evaluate.py calls OpenAI: set a real OPENAI_API_KEY (e.g. in .env).")
+
+    if args.redteam:
+        from eval import redteam
+        cases = redteam.load_cases()
+        if args.ids:
+            cases = [c for c in cases if c["id"] in set(args.ids.split(","))]
+        results = [r for _ in range(args.repeat) for r in redteam.run(cases)]
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+        if not redteam.report(results):
+            print("\n[FAILED] something left the server or reached the answer.")
+            sys.exit(1)
+        print("\n[PASSED] nothing was exfiltrated.")
+        return
 
     import rag
     from agent import build_agent

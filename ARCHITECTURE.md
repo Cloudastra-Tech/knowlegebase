@@ -124,6 +124,21 @@ LAYER 2 — GUARDRAILS          "the backup net"
    • If a leak slips through             → REASK rewrites it cleanly
 ```
 
+The question is screened for prompt injection, but documents can carry planted
+instructions too (anyone who can edit a synced doc or wiki page). `untrusted.py`
+handles that, for every role:
+- **Spotlighting.** Every chunk and tool result reaches a model inside an
+  `<untrusted_data source="...">` block, and the system prompts say text in a block
+  is data, never instructions. Text that imitates the delimiter is defused first.
+- **Egress.** Wikipedia and currency calls whose arguments quote 40+ letters/digits
+  of text retrieved for the same question are refused. `ALLOW_WIKIPEDIA` /
+  `ALLOW_CURRENCY` (on by default) remove those tools altogether.
+- **Links.** Links in an answer that appear in neither the sources read nor the
+  question become plain text (and are logged). The chat view never loads images.
+- **Red team.** `eval/redteam.py` plants such instructions (`eval/corpus_redteam/`);
+  `tests/test_injection.py` runs it with a model that obeys them, and
+  `python evaluate.py --redteam` with the real one.
+
 ---
 
 ## 🔑 Where your role comes from

@@ -29,6 +29,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.retrievers import BM25Retriever   # keyword search
 
 from safety import check_question, check_answer  # our Guardrails-AI safety layer
+from untrusted import RULE, spotlight
 
 load_dotenv()
 DB_FOLDER = "chroma_db"
@@ -56,6 +57,8 @@ RERANKER = None
 # This is the INSTRUCTION we give the AI. Notice the strict rules:
 # "use ONLY the context" and "say you don't know if it's not there".
 # That single instruction is what reduces hallucination (made-up answers).
+# Every piece of context is a spotlighted block (untrusted.py): a document
+# anyone can edit may hold planted instructions, and RULE says to ignore them.
 PROMPT = ChatPromptTemplate.from_template(
     """You are a helpful, friendly assistant answering questions about our documents.
 
@@ -72,6 +75,7 @@ How to respond:
 - Never invent facts that aren't supported by the context. Never guess: don't
   use words like "likely", "probably" or "might" to fill gaps — say only what
   the context states, and if it's partial, say what it does cover.
+- """ + RULE + """
 
 Context:
 {context}
@@ -239,6 +243,11 @@ def hyde_expand(question, llm):
     return llm.invoke(prompt).content
 
 
+def _document_name(doc):
+    """What a chunk's block names as its document: its title, or its file name."""
+    return doc.metadata.get("title") or os.path.basename(doc.metadata.get("source", ""))
+
+
 def answer_question(question, retriever, llm, role="public", guard=None):
     """Run the full Retrieve -> Augment -> Generate -> Guard flow.
     guard: optional function -> (ok, message) that replaces the input check
@@ -284,8 +293,11 @@ def answer_question(question, retriever, llm, role="public", guard=None):
     # ---- 2. AUGMENT ----------------------------------------------------
     # Glue the retrieved chunks together into one block of "context" text.
     # Each chunk already starts with "[Document title]" (see ingest.py), so the
-    # model knows which document every piece of context comes from.
-    context = "\n\n---\n\n".join(d.page_content for d in docs)
+    # model knows which document every piece of context comes from. Each one
+    # is its own delimited block too (untrusted.spotlight): documents are data,
+    # and nothing written in one can pass for the end of its block.
+    context = "\n\n".join(spotlight(d.page_content, "company_documents",
+                                      document=_document_name(d)) for d in docs)
 
     # ---- 3. GENERATE ---------------------------------------------------
     # Fill the prompt template, then ask the AI to write the answer.

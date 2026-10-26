@@ -132,7 +132,9 @@ class FakeAgentModel(BaseChatModel):
 
     def _reply(self, messages):
         question = next(m.content for m in messages if isinstance(m, HumanMessage))
-        found = [m.content for m in messages
+        # Tool results arrive spotlighted (untrusted.py): answer with the text
+        # inside the block, as a model would.
+        found = [re.sub(r"</?untrusted_data[^>]*>\n?", "", m.content).strip() for m in messages
                  if isinstance(m, ToolMessage) and m.name == "search_docs"]
         return question, (found[-1] if found else "Hello! Ask me about the documents.")
 
