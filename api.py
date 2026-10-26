@@ -99,6 +99,7 @@ import members_store                 # noqa: E402
 import saml_sp                       # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
+import sso_errors                    # noqa: E402
 import sso_setup                     # noqa: E402
 import url_guard                     # noqa: E402
 import workspaces                    # noqa: E402
@@ -309,9 +310,26 @@ def _sso_domain(username):
 
 
 # ---- Single sign-on (sso.py) ---------------------------------------------------
-# Errors go back to the login page as /#login?error=<code>; it explains each code.
+# Errors go back to the login page as /#login?error=<code>&ref=<reference>; it
+# explains each code in general terms. The reference is on the admin's log entry
+# (and in the server log), which says exactly why (sso_errors.py).
 class CodeIn(BaseModel):
     code: str
+
+
+def _login_error(error, ref=None, status_code=307):
+    query = {"error": error, **({"ref": ref} if ref else {})}
+    return RedirectResponse("/#login?" + urllib.parse.urlencode(query), status_code=status_code)
+
+
+class _ProviderFailed(Exception):
+    """The provider's answer can't be used. `error` is for the login page, `code`
+    (sso_errors.py) for the admin, and `detail` (partly the provider's own
+    words) only for the server log and the admin's Test sign-in."""
+
+    def __init__(self, error, code, detail):
+        super().__init__(detail)
+        self.error, self.code, self.detail = error, code, detail
 
 
 # The one-time code a sign-in ends with only works in the browser that started it:
@@ -355,49 +373,61 @@ async def sso_callback(provider: str, request: Request):
 
 
 async def _provider_answer(name, c, request):
-    """The provider sent the browser back. (claims, None, None, id token) if its
-    answer checks out, else (None, error code for the login page, detail, None)."""
+    """The provider sent the browser back: (claims, id token) if its answer checks
+    out, else _ProviderFailed."""
     error = request.query_params.get("error")
     if error:                      # the provider refused; log why (e.g. admin consent needed)
         detail = f"{error}: {request.query_params.get('error_description', '')}".rstrip(": ")
         log.warning("SSO %s: provider returned %s", name, detail)
-        return None, "cancelled" if error == "access_denied" else "sso_failed", detail, None
+        raise _ProviderFailed("cancelled" if error == "access_denied" else "sso_failed",
+                              sso_errors.from_provider_error(error), detail)
     try:
         token = await c.authorize_access_token(request)    # checks state + the ID token
     except Exception as e:
         log.exception("SSO %s: sign-in callback failed", name)
-        return None, "sso_failed", f"{type(e).__name__}: {e}", None
-    return token.get("userinfo") or {}, None, None, token.get("id_token")
+        raise _ProviderFailed("sso_failed", sso_errors.from_oidc_exception(e),
+                              f"{type(e).__name__}: {e}") from None
+    return token.get("userinfo") or {}, token.get("id_token")
 
 
 async def _finish_sso(name, c, request, user_for):
-    """Check the provider's answer, then hand the browser a one-time code for the session."""
-    claims, error, _, _ = await _provider_answer(name, c, request)
-    if error:
-        return RedirectResponse(f"/#login?error={error}")
+    """Check the provider's answer, then hand the browser a one-time code for the
+    session. No workspace's admin owns a server-wide provider, so its failures
+    are only in the server log (with the reference)."""
+    try:
+        claims, _ = await _provider_answer(name, c, request)
+    except _ProviderFailed as e:
+        ref = sso_errors.new_ref()
+        log.warning("SSO %s: sign-in failed (%s), reference %s", name, e.code, ref)
+        return _login_error(e.error, ref)
     try:
         user = user_for(claims)
     except sso.NotAllowed as e:
-        _log_refusal(name, claims, e.reason)
-        return RedirectResponse(f"/#login?error={e.reason}")
+        return _login_error(e.reason, _log_refusal(name, claims, e.reason))
     except Exception:              # e.g. the database can't be read
-        log.exception("SSO %s: couldn't decide who gets in", name)
-        return RedirectResponse("/#login?error=sso_failed")
+        ref = sso_errors.new_ref()
+        log.exception("SSO %s: couldn't decide who gets in, reference %s", name, ref)
+        return _login_error("sso_failed", ref)
     members_store.log_event(user["workspace"], name, user["username"], "signed_in")
     return RedirectResponse("/#sso?code=" + _code_for(request, user))
 
 
 def _log_refusal(method, claims, reason):
-    """Show a refusal by a server-wide provider to the workspace whose domain it was."""
+    """Show a refusal by a server-wide provider to the workspace whose domain it
+    was. Returns the reference logged with it, or None."""
     email = claims.get("email") or claims.get("preferred_username")
     if not isinstance(email, str) or "@" not in email:
-        return
+        return None
     try:
         workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
         if workspace:
-            members_store.log_event(workspace, method, email.strip().lower(), "refused", reason)
+            ref = sso_errors.new_ref()
+            members_store.log_event(workspace, method, email.strip().lower(), "refused", reason,
+                                    ref)
+            return ref
     except sqlite3.Error:
         log.exception("Couldn't log a sign-in refusal")
+    return None
 
 
 # ---- "Test sign-in": an admin tries a provider in a popup --------------------------
@@ -442,8 +472,15 @@ def _shown(values):
             for k, v in list((values or {}).items())[:60] if k not in skip}
 
 
+def _explained(code):
+    """The admin's reason and fix for a code (sso_errors.py), if it's a known one."""
+    found = sso_errors.describe(code) or {"reason": None, "fix": None}
+    return {"reason_text": found["reason"], "fix": found["fix"]}
+
+
 def _finish_sso_test(test, conn, result, sent=None):
-    result = {**result, "sent": _shown(sent)}
+    result = {**result, **({} if result["ok"] else _explained(result["reason"])),
+              "sent": _shown(sent)}
     with _sso_tests_lock:
         test["result"] = result
     members_store.log_event(conn["workspace"], conn["id"], result.get("email"), "test",
@@ -469,14 +506,22 @@ FAILURES_LOGGED_PER_MINUTE = 20
 _failures_logged = {}      # connection id -> recent times
 
 
-def _log_failure(conn, detail):
-    now = time.time()
+def _log_failure(conn, code):
+    """Log a failed sign-in (a code from sso_errors.py) for the admin. Returns the
+    reference to show the person; it's in the server log even when the admin's
+    log is full for the minute."""
+    ref, now = sso_errors.new_ref(), time.time()
+    log.warning("SSO connection %s: sign-in failed (%s), reference %s", conn["id"], code, ref)
     with _hits_lock:
         recent = [t for t in _failures_logged.get(conn["id"], []) if t > now - 60]
         if len(recent) >= FAILURES_LOGGED_PER_MINUTE:
-            return
+            return ref
         _failures_logged[conn["id"]] = recent + [now]
-    members_store.log_event(conn["workspace"], conn["id"], None, "failed", detail)
+    try:
+        members_store.log_event(conn["workspace"], conn["id"], None, "failed", code, ref)
+    except sqlite3.Error:
+        log.exception("Couldn't log a failed sign-in")
+    return ref
 
 
 # A workspace's own provider, found from the email someone types on the login page.
@@ -532,9 +577,9 @@ async def sso_connection_start(cid: str, request: Request, login_hint: str = "",
     try:
         return await sso.connection_client(conn).authorize_redirect(
             request, _public_url(request, f"/api/auth/sso/c/{cid}/callback"), **extra)
-    except Exception:
+    except Exception as e:
         log.exception("SSO connection %s: couldn't start sign-in", cid)
-        return RedirectResponse("/#login?error=sso_failed")
+        return _login_error("sso_failed", _log_failure(conn, sso_errors.from_oidc_exception(e)))
 
 
 @app.get("/api/auth/sso/c/{cid}/callback")
@@ -553,36 +598,36 @@ async def sso_connection_callback(cid: str, request: Request):
     # Did this browser start a sign-in here? (Authlib keeps its state in the cookie.)
     started_here = any(k.startswith(f"_state_conn_{cid}_") for k in request.session)
     try:
-        client = sso.connection_client(conn)
-    except Exception:              # e.g. its secret can't be decrypted any more
-        log.exception("SSO connection %s: can't use its settings", cid)
-        return RedirectResponse("/#login?error=sso_failed")
-    claims, error, detail, id_token = await _provider_answer(f"connection {cid}", client,
-                                                             request)
+        try:
+            client = sso.connection_client(conn)
+        except Exception as e:     # e.g. its secret can't be decrypted any more
+            log.exception("SSO connection %s: can't use its settings", cid)
+            raise _ProviderFailed("sso_failed", "settings_unreadable",
+                                  f"{type(e).__name__}: {e}") from None
+        claims, id_token = await _provider_answer(f"connection {cid}", client, request)
+    except _ProviderFailed as e:
+        if trial:
+            return _finish_sso_test(trial, conn, _test_failure(e.code, e.detail))
+        # Only for a browser that started a sign-in here: anyone can open this
+        # link with an error in it. The code only, never the provider's words.
+        return _login_error(e.error, _log_failure(conn, e.code) if started_here else None)
     if trial:
         try:
-            result = sso.try_connection(conn, claims) if claims is not None else \
-                _test_failure(error, detail)
+            result = sso.try_connection(conn, claims)
         except Exception as e:
             log.exception("SSO connection %s: test failed", cid)
             result = _test_failure("sso_failed", f"{type(e).__name__}: {e}")
         return _finish_sso_test(trial, conn, result, claims)
-    if error:
-        if started_here:
-            # The provider's error code only: its description is free text anyone
-            # could put in the link.
-            code = request.query_params.get("error", "")
-            _log_failure(conn, code if re.fullmatch(r"[a-z_]{1,40}", code) else
-                         "the provider's answer couldn't be checked")
-        return RedirectResponse(f"/#login?error={error}")
     try:
         user = sso.user_for_connection(conn, claims)
     except sso.NotAllowed as e:
-        members_store.log_event(conn["workspace"], cid, claims.get("email"), "refused", e.reason)
-        return RedirectResponse(f"/#login?error={e.reason}")
+        ref = sso_errors.new_ref()
+        members_store.log_event(conn["workspace"], cid, claims.get("email"), "refused", e.reason,
+                                ref)
+        return _login_error(e.reason, ref)
     except Exception:
         log.exception("SSO connection %s: couldn't decide who gets in", cid)
-        return RedirectResponse("/#login?error=sso_failed")
+        return _login_error("sso_failed", _log_failure(conn, "sso_failed"))
     if conn["metadata"].get("end_session_endpoint") and id_token:
         user["id_token"] = id_token           # for signing out there (POST /auth/logout)
     members_store.log_event(conn["workspace"], cid, user["username"], "signed_in")
@@ -650,7 +695,7 @@ def saml_start(cid: str, request: Request, test: str = ""):
                                         force_authn=bool(trial))
     except Exception:
         log.exception("SAML %s: couldn't start sign-in", cid)
-        return RedirectResponse("/#login?error=sso_failed")
+        return _login_error("sso_failed", _log_failure(conn, "saml_invalid"))
     members_store.remember_saml_request(cid, request_id, saml_sp.REQUEST_SECONDS)
     _mark_browser(request)
     # This browser started it. Keep the last few, in case of several tabs.
@@ -673,25 +718,24 @@ def saml_acs(cid: str, request: Request, SAMLResponse: str = Form(""),
     if not conn:
         return RedirectResponse("/#login?error=sso_unavailable", status_code=303)
 
-    def refuse(detail):
+    def refuse(code, detail):
         if trial:
-            return _finish_sso_test(trial, conn, _test_failure("sso_failed", detail))
-        _log_failure(conn, detail)
-        return RedirectResponse("/#login?error=sso_failed", status_code=303)
+            return _finish_sso_test(trial, conn, _test_failure(code, detail))
+        return _login_error("sso_failed", _log_failure(conn, code), status_code=303)
 
     try:
         answer = saml_sp.finish(conn, keys, _public_url(request, ""), SAMLResponse,
                                 members_store.open_saml_requests(cid))
     except saml_sp.SamlError as e:
         log.warning("SAML %s: refused an answer: %s", cid, e)
-        return refuse(f"SAML: {e}")
+        return refuse(e.code, f"SAML: {e}")
     expires = time.time() + saml_sp.REQUEST_SECONDS
     if answer["expires"]:
         expires = calendar.timegm(saml2_time.str_to_time(answer["expires"]))
     if not (members_store.close_saml_request(answer["request_id"]) and
             members_store.first_use_of_assertion(answer["assertion_id"], expires)):
         log.warning("SAML %s: refused a replayed answer", cid)
-        return refuse("SAML: this answer was already used")
+        return refuse("saml_replayed", "SAML: this answer was already used")
     key, now = secrets.token_urlsafe(24), time.time()
     with _saml_lock:
         for k in [k for k, v in _saml_parked.items() if v["expires"] < now]:
@@ -737,11 +781,13 @@ def saml_done(cid: str, request: Request, k: str = ""):
     try:
         user = sso.user_for_connection(conn, claims)
     except sso.NotAllowed as e:
-        members_store.log_event(conn["workspace"], cid, parked["email"], "refused", e.reason)
-        return RedirectResponse(f"/#login?error={e.reason}")
+        ref = sso_errors.new_ref()
+        members_store.log_event(conn["workspace"], cid, parked["email"], "refused", e.reason,
+                                ref)
+        return _login_error(e.reason, ref)
     except Exception:
         log.exception("SAML %s: couldn't decide who gets in", cid)
-        return RedirectResponse("/#login?error=sso_failed")
+        return _login_error("sso_failed", _log_failure(conn, "sso_failed"))
     members_store.log_event(conn["workspace"], cid, user["username"], "signed_in")
     return RedirectResponse("/#sso?code=" + _code_for(request, user))
 
@@ -841,7 +887,9 @@ def _connection_out(request, c):
            "created_at": c["created_at"], "last_login_at": c["last_login_at"],
            "group_claim": c.get("group_claim"),
            "group_rules": [{"group": r["group_name"], "role": r["role"]}
-                           for r in members_store.group_rules(c["id"])]}
+                           for r in members_store.group_rules(c["id"])],
+           # failing: its latest sign-ins all failed (sso_errors.health)
+           "health": sso_errors.health(members_store.connection_events(c["id"]))}
     if c["protocol"] == "saml":
         entity_id, acs, metadata_url = saml_sp.sp_urls(_public_url(request, ""), c["id"])
         settings = c["metadata"]
@@ -936,7 +984,8 @@ def sign_in_settings(request: Request, user=Depends(require_admin)):
             "connections": [_connection_out(request, c) for c in connections],
             "require_sso": members_store.requires_sso(ws),
             "password_login": auth.password_login_on(),
-            "events": [{**e, "connection": _event_method(labels, e["connection_id"])}
+            "events": [{**e, "connection": _event_method(labels, e["connection_id"]),
+                        **_explained(e["reason"])}
                        for e in members_store.recent_events(ws)]}
 
 

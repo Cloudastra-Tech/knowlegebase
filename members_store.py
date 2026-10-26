@@ -99,6 +99,7 @@ _NEW_COLUMNS = (
     ("sso_connections", "group_claim", "TEXT"),
     ("sso_connections", "logout_at_idp", "INTEGER NOT NULL DEFAULT 0"),
     ("workspaces", "require_sso", "INTEGER NOT NULL DEFAULT 0"),
+    ("sso_events", "ref", "TEXT"),                  # shown to the person it failed for
 )
 
 
@@ -170,9 +171,11 @@ def _create_tables(conn):
         email         TEXT,
         outcome       TEXT NOT NULL
                       CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test')),
-        reason        TEXT,                -- why it was refused or failed
+        reason        TEXT,                -- why it was refused or failed: a code
+                                           -- from sso_errors.py, never provider text
         at            REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id);
+    CREATE INDEX IF NOT EXISTS sso_events_by_connection ON sso_events(connection_id, id);
     CREATE TABLE IF NOT EXISTS group_role_rules (
         connection_id TEXT NOT NULL REFERENCES sso_connections(id) ON DELETE CASCADE,
         group_name    TEXT NOT NULL,       -- compared without regard to case
@@ -630,12 +633,15 @@ def first_use_of_assertion(assertion_id, expires):
 
 
 # ---- What happened at sign-in, for the workspace's admin ---------------------------
-def log_event(workspace, cid, email, outcome, reason=None):
+def log_event(workspace, cid, email, outcome, reason=None, ref=None):
+    """Note a sign-in for the workspace's admin. `reason` is a code from
+    sso_errors.py; `ref` the reference the person was shown, if any."""
     with _lock, _db() as conn:
         conn.execute("""INSERT INTO sso_events
-                        (workspace, connection_id, email, outcome, reason, at)
-                        VALUES (?, ?, ?, ?, ?, ?)""",
-                     (workspace, cid, email, outcome, (reason or "")[:300] or None, time.time()))
+                        (workspace, connection_id, email, outcome, reason, ref, at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     (workspace, cid, email, outcome, (reason or "")[:300] or None, ref,
+                      time.time()))
         conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND id NOT IN
                         (SELECT id FROM sso_events WHERE workspace = ?
                          ORDER BY id DESC LIMIT ?)""", (workspace, workspace, EVENTS_KEPT))
@@ -644,8 +650,16 @@ def log_event(workspace, cid, email, outcome, reason=None):
 def recent_events(workspace, limit=50):
     with _db() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT connection_id, email, outcome, reason, at FROM sso_events "
+            "SELECT connection_id, email, outcome, reason, ref, at FROM sso_events "
             "WHERE workspace = ? ORDER BY id DESC LIMIT ?", (workspace, limit))]
+
+
+def connection_events(cid, limit=100):
+    """A provider's latest events, newest first (for sso_errors.health)."""
+    with _db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT outcome, reason, at FROM sso_events WHERE connection_id = ? "
+            "ORDER BY id DESC LIMIT ?", (cid, limit))]
 
 
 # ---- Roles from a provider's groups ---------------------------------------------

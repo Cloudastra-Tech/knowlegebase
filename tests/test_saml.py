@@ -148,6 +148,14 @@ def sign_in(client, conn, idp, email="pat@samlco.example", **answer):
     return finish(client, post_answer(client, conn, idp.answer(request, email, **answer)))
 
 
+def failure(client, admin, location):
+    """(error the person sees, code the admin's log has under the same reference)."""
+    q = dict(urllib.parse.parse_qsl(location.split("?", 1)[1]))
+    events = client.get("/api/admin/sign-in", headers=admin).json()["events"]
+    return q["error"], next((e["reason"] for e in events
+                             if q.get("ref") and e["ref"] == q["ref"]), None)
+
+
 # ---- The happy paths --------------------------------------------------------------
 def test_a_signed_assertion_signs_in_to_the_workspace(client, conn, idp):
     headers = sign_in(client, conn, idp)
@@ -188,37 +196,43 @@ def test_the_email_can_come_from_the_name_id_alone(client, conn, idp):
 
 
 # ---- Answers that must not sign anyone in ----------------------------------------
-def test_an_unsigned_answer_is_refused(client, conn, idp):
-    assert sign_in(client, conn, idp, sign_assertion=False) == "/#login?error=sso_failed"
+def test_an_unsigned_answer_is_refused(client, admin, conn, idp):
+    assert failure(client, admin, sign_in(client, conn, idp, sign_assertion=False)) == (
+        "sso_failed", "saml_unsigned")
 
 
-def test_an_answer_signed_with_another_key_is_refused(client, conn, idp, tmp_path):
+def test_an_answer_signed_with_another_key_is_refused(client, admin, conn, idp, tmp_path):
     impostor = TestIdP(str(tmp_path / "impostor"))       # same entity ID, its own key
     impostor.trust(client.get(f"/api/auth/saml/{conn['id']}/metadata").text)
     request = start(client, conn, idp)
     forged = impostor.answer(request, "pat@samlco.example")
-    assert finish(client, post_answer(client, conn, forged)) == "/#login?error=sso_failed"
+    # (what a rotated certificate looks like until the metadata is refreshed)
+    assert failure(client, admin, finish(client, post_answer(client, conn, forged))) == (
+        "sso_failed", "saml_signature")
 
 
-def test_an_answer_can_be_used_only_once(client, conn, idp):
+def test_an_answer_can_be_used_only_once(client, admin, conn, idp):
     request = start(client, conn, idp)
     answer = idp.answer(request, "pat@samlco.example")
     assert isinstance(finish(client, post_answer(client, conn, answer)), dict)
-    assert finish(client, post_answer(client, conn, answer)) == "/#login?error=sso_failed"
+    assert failure(client, admin, finish(client, post_answer(client, conn, answer))) == (
+        "sso_failed", "saml_unknown_request")       # its request was already answered
 
 
-def test_an_answer_nobody_asked_for_is_refused(client, conn, idp):
+def test_an_answer_nobody_asked_for_is_refused(client, admin, conn, idp):
     request = start(client, conn, idp)
     unsolicited = idp.answer(request, "pat@samlco.example", in_response_to=None)
-    assert finish(client, post_answer(client, conn, unsolicited)) == "/#login?error=sso_failed"
+    assert failure(client, admin, finish(client, post_answer(client, conn, unsolicited))) == (
+        "sso_failed", "saml_unsolicited")
 
 
-def test_an_expired_answer_is_refused(client, conn, idp, tmp_path):
+def test_an_expired_answer_is_refused(client, admin, conn, idp, tmp_path):
     # The real IdP's key, but its assertions ran out 10 minutes ago (more than
     # the 2 minutes of clock difference allowed).
     stale = TestIdP(str(tmp_path / "stale"), key=idp.key, lifetime={"minutes": -10})
     stale.trust(client.get(f"/api/auth/saml/{conn['id']}/metadata").text)
-    assert sign_in(client, conn, stale) == "/#login?error=sso_failed"
+    assert failure(client, admin, sign_in(client, conn, stale)) == ("sso_failed",
+                                                                    "saml_expired")
 
 
 def test_an_answer_meant_for_another_connection_is_refused(client, admin, conn, idp):
@@ -228,7 +242,8 @@ def test_an_answer_meant_for_another_connection_is_refused(client, admin, conn, 
         request = start(client, conn, idp)                # asked for by `conn`...
         answer = idp.answer(request, "pat@samlco.example")
         location = post_answer(client, other, answer)     # ...posted to `other`
-        assert finish(client, location) == "/#login?error=sso_failed"
+        assert failure(client, admin, finish(client, location)) == (
+            "sso_failed", "saml_unknown_request")
     finally:
         client.delete(f"/api/admin/sign-in/connections/{other['id']}", headers=admin)
 
@@ -244,12 +259,13 @@ def test_an_answer_addressed_to_another_connection_is_refused(client, admin, con
                      for c in (conn, other)))
         request = start(client, other, both)
         answer = both.answer(request, "pat@samlco.example", audience=conn["sp_entity_id"])
-        assert finish(client, post_answer(client, other, answer)) == "/#login?error=sso_failed"
+        assert failure(client, admin, finish(client, post_answer(client, other, answer))) == (
+            "sso_failed", "saml_audience")
     finally:
         client.delete(f"/api/admin/sign-in/connections/{other['id']}", headers=admin)
 
 
-def test_a_wrapped_signature_doesnt_smuggle_in_another_user(client, conn, idp):
+def test_a_wrapped_signature_doesnt_smuggle_in_another_user(client, admin, conn, idp):
     """XML signature wrapping: keep the IdP's signed assertion, but put an
     unsigned one for someone else first and hope it's the one read."""
     request = start(client, conn, idp)
@@ -260,7 +276,7 @@ def test_a_wrapped_signature_doesnt_smuggle_in_another_user(client, conn, idp):
         'ID="', 'ID="evil-')
     wrapped = xml.replace(signed, evil + signed)
     location = post_answer(client, conn, base64.b64encode(wrapped.encode()).decode())
-    assert finish(client, location) == "/#login?error=sso_failed"
+    assert failure(client, admin, finish(client, location))[0] == "sso_failed"
 
 
 def test_an_answer_only_signs_in_the_browser_that_asked(client, conn, idp):
@@ -271,14 +287,14 @@ def test_an_answer_only_signs_in_the_browser_that_asked(client, conn, idp):
     request = start(client, conn, idp)                    # the attacker's browser
     location = post_answer(client, conn, idp.answer(request, "attacker@samlco.example"))
     victim = TestClient(api.app, follow_redirects=False)  # no cookie from /start
-    assert victim.get(location).headers["location"] == "/#login?error=sso_failed"
+    assert victim.get(location).headers["location"] == "/#login?error=sso_failed"   # no ref
 
 
-def test_an_idp_can_only_vouch_for_its_workspaces_domains(client, conn, idp):
+def test_an_idp_can_only_vouch_for_its_workspaces_domains(client, admin, conn, idp):
     import members_store
     members_store.add_verified_domain("elsewhere", "elsewhere.example")
-    assert sign_in(client, conn, idp, email="boss@elsewhere.example") == (
-        "/#login?error=not_allowed")
+    assert failure(client, admin, sign_in(client, conn, idp, email="boss@elsewhere.example")) == (
+        "not_allowed", "not_allowed")
 
 
 def test_turning_a_saml_provider_off_signs_its_people_out(client, admin, conn, idp):
@@ -380,6 +396,41 @@ def test_a_failed_saml_test_says_why(client, admin, conn, idp):
     result = client.get(f"/api/admin/sign-in/tests/{ticket_url['ticket']}",
                         headers=admin).json()["result"]
     assert not result["ok"] and "signed" in result["detail"]
+    assert (result["reason"], result["reason_text"]) == (
+        "saml_unsigned", "Neither the response nor the assertion is signed")
+
+
+def test_a_rotated_certificate_shows_until_the_metadata_is_refreshed(client, admin, idp,
+                                                                     monkeypatch, tmp_path):
+    import sso_setup
+    served = {"xml": idp.metadata()}             # what the IdP's metadata URL serves
+    monkeypatch.setattr(sso_setup, "_get", lambda url, accept, **kw: served["xml"].encode())
+    c = client.post("/api/admin/sign-in/saml-connections", headers=admin,
+                    json={"label": "Rotating", "metadata_url": "https://idp.samlco.example/md"}
+                    ).json()
+    try:
+        sp_metadata = client.get(f"/api/auth/saml/{c['id']}/metadata").text
+        rotated = TestIdP(str(tmp_path / "rotated"))     # same IdP, a new signing key
+        rotated.trust(sp_metadata)
+        for _ in range(2):
+            assert failure(client, admin, sign_in(client, c, rotated)) == (
+                "sso_failed", "saml_signature")
+        settings = client.get("/api/admin/sign-in", headers=admin).json()
+        health = next(x["health"] for x in settings["connections"] if x["id"] == c["id"])
+        assert (health["status"], health["code"], health["count"]) == (
+            "failing", "saml_signature", 2)
+        assert "refresh its metadata" in health["reason"]
+        # Refresh: the screen sends the saved metadata URL again.
+        served["xml"] = rotated.metadata()
+        r = client.patch(f"/api/admin/sign-in/saml-connections/{c['id']}", headers=admin,
+                         json={"metadata_url": c["metadata_url"]})
+        assert r.status_code == 200 and r.json()["health"]["status"] == "failing"
+        assert isinstance(sign_in(client, c, rotated), dict)       # signed in
+        settings = client.get("/api/admin/sign-in", headers=admin).json()
+        assert next(x["health"] for x in settings["connections"]
+                    if x["id"] == c["id"]) == {"status": "ok"}
+    finally:
+        client.delete(f"/api/admin/sign-in/connections/{c['id']}", headers=admin)
 
 
 def test_a_saml_attribute_can_carry_the_groups(client, admin, conn, idp):
