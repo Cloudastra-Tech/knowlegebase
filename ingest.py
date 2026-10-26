@@ -184,7 +184,7 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
 
     print(f"   -> Done! Your knowledge base is saved in the '{DB_FOLDER}' folder.")
     report(4, "Done")
-    print("\nNext step: run  ->  streamlit run app.py")
+    print("\nNext step: run  ->  uvicorn api:app --reload --port 8010")
     return {"documents": len(documents), "chunks": len(chunks),
             "restricted": n_restricted}
 

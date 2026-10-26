@@ -597,7 +597,7 @@ def build_agent(role="public", collection=None, outline=True):
     graph = builder.compile()
 
     # ---- RUN: same signature as before -> (answer, trace) ------------------
-    # app.py doesn't change. We run the graph, then rebuild the tool-call
+    # Callers don't change. We run the graph, then rebuild the tool-call
     # "trace" from the final message list so the UI can show each step.
     # One question at a time per agent: `cited` is shared, so two overlapping
     # questions would otherwise mix up each other's citations.

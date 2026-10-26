@@ -12,10 +12,9 @@ rank-bm25==0.2.2           # keyword search (BM25) for hybrid retrieval — Stag
 regex==2026.9.29           # Unicode-aware word splitting for BM25 (rag.tokenize); already a tiktoken dependency
 requests==2.34.2           # call free web APIs (Frankfurter, Wikipedia) — agent tools
 guardrails-ai==0.11.0      # the open-source safety library (validates input/output)
-streamlit==1.65.0          # the chat UI you type into (runs in your browser)
 python-dotenv==1.2.4       # loads your secret API key from a .env file
 pypdf==6.20.1              # reads text out of PDF files
-tiktoken==0.14.0           # lets us SEE how text is split into tokens (Phase 1 concept)
+tiktoken==0.14.0           # lets us SEE how text is split into tokens (inspect_tokens.py); langchain-openai needs it too
 fastapi==0.139.2           # JSON API for the React frontend (api.py); 0.140+ conflicts with chromadb's opentelemetry pin
 uvicorn[standard]==0.54.0  # runs the FastAPI app
 python-multipart==0.0.32   # file uploads in the API
