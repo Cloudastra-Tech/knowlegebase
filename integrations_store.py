@@ -3,6 +3,12 @@ integrations_store.py  —  which tools each workspace has connected.
 
 A tiny SQLite database (config/app.db, gitignored and mounted in Docker).
 OAuth tokens are ENCRYPTED (secret_box.py).
+
+Each connection also says WHO may ask about the files it syncs (settings["access"]):
+  restricted  HR and admins only, like docs/<workspace>/restricted/ (the default)
+  everyone    everyone in the workspace
+A connection without the key (new, or made before the setting existed) is
+restricted: an admin opens it up on purpose, never by accident.
 """
 
 import json
@@ -15,6 +21,9 @@ import secret_box
 
 DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
 _lock = threading.Lock()
+
+ACCESS_LEVELS = ("restricted", "everyone")
+DEFAULT_ACCESS = "restricted"
 
 
 def _db():
@@ -100,3 +109,20 @@ def remove(workspace, provider):
     with _lock, _db() as conn:
         conn.execute("DELETE FROM integrations WHERE workspace=? AND provider=?",
                      (workspace, provider))
+
+
+def access_of(row):
+    """Who may ask about a connection's files: "restricted" or "everyone"."""
+    level = ((row or {}).get("settings") or {}).get("access")
+    return level if level in ACCESS_LEVELS else DEFAULT_ACCESS
+
+
+def chunk_access(level):
+    """The access tag a connection's chunks get in the index (rag.ROLE_ACCESS)."""
+    return "public" if level == "everyone" else "restricted"
+
+
+def chunk_access_levels(workspace):
+    """{provider: chunk access tag} for every connection of a workspace. Synced
+    files of a provider missing here (e.g. left behind) count as restricted."""
+    return {r["provider"]: chunk_access(access_of(r)) for r in list_for(workspace)}
