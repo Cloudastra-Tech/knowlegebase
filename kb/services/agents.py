@@ -30,6 +30,13 @@ def outline_on(ws, role):
     return role in OUTLINE_ROLES[wanted]
 
 
+def outline_access():
+    """The access level of what the Outline wiki returns: restricted when only HR /
+    Admin may search it (OUTLINE_MIN_ROLE=hr), else public."""
+    wanted = os.getenv("OUTLINE_MIN_ROLE", "public").strip().lower() or "public"
+    return "public" if wanted == "public" else "restricted"
+
+
 def get_agent(ws, role):
     index = indexing.current(ws)          # (collection, version)
     with state.agents_lock:

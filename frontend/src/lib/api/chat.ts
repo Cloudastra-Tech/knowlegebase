@@ -1,15 +1,34 @@
-// Asking the assistant (/api/chat, /api/chat/stream).
+// Asking the assistant (/api/chat, /api/chat/stream) and the saved conversations
+// (/api/conversations, feedback on answers).
 
-import { ApiError, request, retryAfterOf, session, unauthorized } from "@/lib/api/client"
-import type { ChatReply, StreamEvent } from "@/lib/api/types"
+import { ApiError, json, request, retryAfterOf, seg, session, unauthorized } from "@/lib/api/client"
+import type {
+  ChatReply,
+  Conversation,
+  ConversationSummary,
+  Feedback,
+  FeedbackReason,
+  StreamEvent,
+} from "@/lib/api/types"
+
+export interface StreamOptions {
+  conversationId?: string // saved there, answered with the conversation so far
+  retryOf?: string // ask the question of this failed or stopped answer again
+  signal?: AbortSignal // aborting stops the answer (the server saves it as stopped)
+}
 
 export const chatApi = {
   chat: (question: string) =>
     request<ChatReply>("/chat", { method: "POST", body: JSON.stringify({ question }) }),
 
   // Live version of chat(): calls onEvent for each step / answer update as it
-  // happens (Server-Sent Events), and resolves with the final reply.
-  async chatStream(question: string, onEvent: (e: StreamEvent) => void): Promise<ChatReply> {
+  // happens (Server-Sent Events), and resolves with the final reply. Aborting
+  // `signal` rejects with an AbortError.
+  async chatStream(
+    question: string,
+    onEvent: (e: StreamEvent) => void,
+    { conversationId, retryOf, signal }: StreamOptions = {},
+  ): Promise<ChatReply> {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: {
@@ -17,7 +36,8 @@ export const chatApi = {
         Authorization: `Bearer ${session.token}`,
         "X-Role": session.role,
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, conversation_id: conversationId, retry_of: retryOf }),
+      signal,
     })
     if (!res.ok || !res.body) {
       let message = `Request failed (${res.status})`
@@ -50,4 +70,28 @@ export const chatApi = {
     }
     throw new ApiError(500, "The answer stream ended unexpectedly.")
   },
+
+  conversations: () =>
+    request<{ conversations: ConversationSummary[] }>("/conversations").then(
+      (r) => r.conversations,
+    ),
+  createConversation: () => request<ConversationSummary>("/conversations", json("POST", {})),
+  conversation: (id: string) => request<Conversation>(`/conversations/${seg(id)}`),
+  renameConversation: (id: string, title: string) =>
+    request<ConversationSummary>(`/conversations/${seg(id)}`, json("PATCH", { title })),
+  deleteConversation: (id: string) =>
+    request<{ ok: true }>(`/conversations/${seg(id)}`, json("DELETE")),
+
+  giveFeedback: (
+    messageId: string,
+    rating: 1 | -1,
+    reasons: FeedbackReason[] = [],
+    comment: string | null = null,
+  ) =>
+    request<Feedback>(
+      `/messages/${seg(messageId)}/feedback`,
+      json("PUT", { rating, reasons, comment }),
+    ),
+  removeFeedback: (messageId: string) =>
+    request<{ ok: true }>(`/messages/${seg(messageId)}/feedback`, json("DELETE")),
 }

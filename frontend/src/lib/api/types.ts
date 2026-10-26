@@ -231,28 +231,106 @@ export interface Source {
   title: string
   provider: string
   url: string | null
+  kind?: "general_knowledge" // Wikipedia: not from the company's documents
+  access?: Access
 }
 
+// A tool the assistant used. Its raw input and output come to admins only.
 export interface Step {
   tool: string
-  input: Record<string, unknown>
-  output: string
+  input?: Record<string, unknown>
+  output?: string
 }
+
+// How an answer ended (kb/services/conversations.py outcome()). "pending": still
+// being written; "stopped": the asker pressed Stop (what was written so far is kept).
+export type AnswerState =
+  | "answered"
+  | "partial"
+  | "not_found"
+  | "blocked"
+  | "general_knowledge"
+  | "error"
+  | "stopped"
+  | "pending"
 
 export interface ChatReply {
   answer: string
   sources: Source[]
   steps: Step[]
+  state: AnswerState
+  standalone_question?: string | null // a follow-up as it was searched
+  message_id?: string | null // saved in a conversation
 }
 
-// Events from POST /api/chat/stream (see api.py chat_stream).
+// Events from POST /api/chat/stream (kb/routers/chat.py chat_stream).
 export type StreamEvent =
+  | {
+      type: "conversation"
+      id: string
+      title: string | null
+      user_message_id: string
+      message_id: string
+      new_conversation: boolean // the role changed, so a new conversation was started
+    }
   | { type: "status"; text: string }
   | { type: "step_start"; id: string; tool: string; label: string }
   | { type: "step_end"; id: string; tool: string; result: string }
   | { type: "answer"; text: string }
   | ({ type: "done" } & ChatReply)
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; message_id?: string | null }
+
+// ---- Saved conversations (kb/routers/conversations.py) ----
+export interface ConversationSummary {
+  id: string
+  title: string
+  role_used: Role
+  role_changed: boolean // viewed as another role now: the next question starts a new chat
+  created_at: number
+  updated_at: number
+}
+
+// One line of the steps panel ("Searching company docs · found 2 relevant documents").
+export interface StepLine {
+  id: string
+  tool?: string
+  label: string
+  result?: string
+}
+
+export type FeedbackReason =
+  | "wrong"
+  | "wrong_source"
+  | "missing"
+  | "outdated"
+  | "refused"
+  | "unclear"
+
+export interface Feedback {
+  rating: 1 | -1
+  reasons: FeedbackReason[]
+  comment: string | null
+}
+
+export interface SavedMessage {
+  id: string
+  parent_id: string | null
+  author: "user" | "assistant"
+  content: string
+  state: AnswerState | null // null for questions
+  created_at: number
+  // The answer used documents the viewer's role can't see now: no content or sources.
+  withheld: boolean
+  sources?: Source[]
+  steps?: StepLine[]
+  trace?: Step[] // admins only
+  standalone_question?: string | null
+  feedback?: Feedback | null
+}
+
+export interface Conversation extends ConversationSummary {
+  messages: SavedMessage[]
+}
 
 export interface IndexStatus {
   status: "idle" | "indexing" | "error"
