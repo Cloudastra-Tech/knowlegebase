@@ -300,7 +300,7 @@ function CodeBlock({ label, code }: { label: string; code: string }) {
     }
   }
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <pre className="max-h-64 overflow-auto rounded-lg bg-muted p-3 pr-10 font-mono text-xs leading-relaxed whitespace-pre">
         {code}
       </pre>
@@ -308,7 +308,7 @@ function CodeBlock({ label, code }: { label: string; code: string }) {
         type="button"
         size="icon"
         variant="ghost"
-        className="absolute top-1.5 right-1.5 size-7"
+        className="absolute top-1.5 right-1.5 size-7 bg-muted"
         onClick={copy}
         aria-label={`Copy ${label}`}
       >
@@ -343,24 +343,24 @@ export function McpSnippets({ mcpUrl, apiKey }: { mcpUrl: string; apiKey?: strin
     2,
   )
   return (
-    <Tabs defaultValue="claude-code" className="min-w-0">
+    <Tabs defaultValue="claude-code" className="w-full min-w-0">
       <TabsList>
         <TabsTrigger value="claude-code">Claude Code</TabsTrigger>
         <TabsTrigger value="claude-desktop">Claude Desktop</TabsTrigger>
         <TabsTrigger value="cursor">Cursor</TabsTrigger>
       </TabsList>
-      <TabsContent value="claude-code" className="grid gap-2">
+      <TabsContent value="claude-code" className="grid min-w-0 grid-cols-1 gap-2">
         <p className="text-xs text-muted-foreground">Run in a terminal:</p>
         <CodeBlock label="the Claude Code command" code={claudeCode} />
       </TabsContent>
-      <TabsContent value="claude-desktop" className="grid gap-2">
+      <TabsContent value="claude-desktop" className="grid min-w-0 grid-cols-1 gap-2">
         <p className="text-xs text-muted-foreground">
           Add to <span className="font-mono">claude_desktop_config.json</span> (Settings →
           Developer → Edit config), then restart Claude Desktop. Needs Node.js.
         </p>
         <CodeBlock label="the Claude Desktop config" code={desktop} />
       </TabsContent>
-      <TabsContent value="cursor" className="grid gap-2">
+      <TabsContent value="cursor" className="grid min-w-0 grid-cols-1 gap-2">
         <p className="text-xs text-muted-foreground">
           Add to <span className="font-mono">~/.cursor/mcp.json</span> (or the project's{" "}
           <span className="font-mono">.cursor/mcp.json</span>):
@@ -384,7 +384,7 @@ export function KeyCreatedDialog({
   const forMcp = !!mcpUrl && made?.kind === "personal"
   return (
     <Dialog open={!!made} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Your new key</DialogTitle>
           <DialogDescription>
@@ -401,7 +401,7 @@ export function KeyCreatedDialog({
         </Alert>
         {made && <CopyField label={made.name} value={made.key} />}
         {made && forMcp && (
-          <div className="grid min-w-0 gap-2">
+          <div className="grid min-w-0 grid-cols-1 gap-2">
             <p className="text-sm font-medium">Connect an MCP client with it</p>
             <McpSnippets mcpUrl={mcpUrl} apiKey={made.key} />
           </div>
@@ -485,7 +485,7 @@ export function ApiKeysView() {
             )}
           </section>
 
-          <section className="grid min-w-0 gap-4 rounded-2xl border border-border/70 bg-background p-5">
+          <section className="grid min-w-0 grid-cols-1 gap-4 rounded-2xl border border-border/70 bg-background p-5">
             <div>
               <h3 className="font-medium">Connect an agent (MCP)</h3>
               <p className="text-sm text-muted-foreground">
@@ -502,7 +502,7 @@ export function ApiKeysView() {
             )}
           </section>
 
-          <section className="grid min-w-0 gap-3 rounded-2xl border border-border/70 bg-background p-5">
+          <section className="grid min-w-0 grid-cols-1 gap-3 rounded-2xl border border-border/70 bg-background p-5">
             <div>
               <h3 className="font-medium">REST API</h3>
               <p className="text-sm text-muted-foreground">
