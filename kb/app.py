@@ -13,10 +13,11 @@ import observability
 import safety
 from kb import jobs, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, audit, auth, chat, conversations, docs,
-                        health, index, integrations, invites, knowledge, saml, signup, sso)
+                        health, index, insights, integrations, invites, knowledge, saml,
+                        signup, sso)
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, index, docs,
-           integrations, knowledge, admin_members, invites, audit, health)
+           integrations, knowledge, admin_members, invites, audit, insights, health)
 
 
 @contextlib.asynccontextmanager

@@ -83,6 +83,15 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/audit           ?actor&action&from&to&cursor: the audit log, newest first (admin)
     GET    /admin/audit/export    ?format=csv|jsonl (+ the filters), streamed           (admin)
     GET    /admin/audit/verify    check the hash chain                                  (admin)
+  insights.py
+    GET    /question-log/settings  how questions are logged here: {mode, days, logged}
+    PUT    /admin/question-log/settings {mode: full|redacted|metadata, days}     (admin)
+    GET    /admin/insights        ?from&to (YYYY-MM-DD): usage, outcomes, latency, cost,
+                                  sources, content gaps, connector health      (HR / Admin)
+    GET    /admin/insights/export ?table&from&to: one of its tables as CSV    (HR / Admin)
+    GET    /admin/eval-cases      answers promoted to the test set            (HR / Admin)
+    POST   /admin/eval-cases      {message_id, expected_answer}: promote a rated answer (admin)
+    DELETE /admin/eval-cases/{id}                                              (admin)
   health.py
     GET    /health                the process is up (Docker's HEALTHCHECK)
     GET    /health/ready          can it serve: database, index, key, guards (503 if not)

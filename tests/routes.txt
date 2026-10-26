@@ -1,3 +1,4 @@
+DELETE /api/admin/eval-cases/{case_id} delete_eval_case require_admin,audited
 DELETE /api/admin/members/invites/{invite_id} revoke_invite require_admin,audited
 DELETE /api/admin/members/{username} delete_member require_admin,audited
 DELETE /api/admin/sign-in/connections/{cid} delete_connection require_admin,audited
@@ -9,7 +10,10 @@ DELETE /api/messages/{mid}/feedback remove_feedback current_user,current_role,au
 GET    /api/admin/audit list_audit Filters,require_admin
 GET    /api/admin/audit/export export_audit Filters,require_admin,audited
 GET    /api/admin/audit/verify verify_audit require_admin
+GET    /api/admin/eval-cases list_eval_cases require_hr,current_role
 GET    /api/admin/feedback list_feedback require_hr,current_role
+GET    /api/admin/insights get_insights require_hr,current_role
+GET    /api/admin/insights/export export_insights require_hr,current_role,audited
 GET    /api/admin/members list_members require_admin
 GET    /api/admin/members/invites list_invites require_admin
 GET    /api/admin/sign-in sign_in_settings require_admin
@@ -38,10 +42,12 @@ GET    /api/integrations/{provider}/callback integration_callback -
 GET    /api/integrations/{provider}/containers integration_containers require_hr
 GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role
+GET    /api/question-log/settings log_settings current_user
 PATCH  /api/admin/members/{username} edit_member require_admin,audited
 PATCH  /api/admin/sign-in/connections/{cid} edit_connection require_admin,audited
 PATCH  /api/admin/sign-in/saml-connections/{cid} edit_saml_connection require_admin,audited
 PATCH  /api/conversations/{cid} rename_conversation current_user,current_role,audited
+POST   /api/admin/eval-cases add_eval_case require_admin,current_role,audited
 POST   /api/admin/members/invite create_invite require_admin,audited
 POST   /api/admin/members/invites/{invite_id}/resend resend_invite require_admin,audited
 POST   /api/admin/members/{username}/sign-out sign_out_member require_admin,audited
@@ -67,6 +73,7 @@ POST   /api/integrations/{provider}/connect integration_connect require_hr,audit
 POST   /api/integrations/{provider}/setup integration_setup require_hr,audited
 POST   /api/integrations/{provider}/sync integration_sync require_hr,audited
 POST   /api/reindex reindex require_hr,audited
+PUT    /api/admin/question-log/settings set_log_settings require_admin,audited
 PUT    /api/admin/sign-in/connections/{cid}/roles set_group_roles require_admin,audited
 PUT    /api/admin/sign-in/group-admin-days set_group_admin_days require_admin,audited
 PUT    /api/admin/sign-in/policy set_policy require_admin,audited

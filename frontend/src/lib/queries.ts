@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query"
 
-import { api, session, signIn } from "@/lib/api"
+import { api, insights, session, signIn } from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
 // After a change, invalidate the key and the screens showing it load it again.
@@ -30,6 +30,18 @@ export const queries = {
     }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
+  // How questions are logged here (the chat's disclosure, the Insights settings).
+  logSettings: () =>
+    queryOptions({ queryKey: ["log-settings"], queryFn: insights.logSettings, meta: { silent: true } }),
+  // HR sees only what its role may: part of the key.
+  insights: (from?: string, to?: string) =>
+    queryOptions({
+      queryKey: ["insights", session.role, from ?? "", to ?? ""],
+      queryFn: () => insights.insights(from, to),
+    }),
+  ratedAnswers: () =>
+    queryOptions({ queryKey: ["rated-answers", session.role], queryFn: () => insights.ratedAnswers(-1) }),
+  evalCases: () => queryOptions({ queryKey: ["eval-cases"], queryFn: insights.evalCases }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>

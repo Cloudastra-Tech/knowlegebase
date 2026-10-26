@@ -434,7 +434,7 @@ def _wake_all():
 
 def load_handlers():
     """Import the modules that register handlers."""
-    from kb.services import indexing, saml_refresh, sync  # noqa: F401
+    from kb.services import indexing, insights, saml_refresh, sync  # noqa: F401
 
 
 def kinds_here():

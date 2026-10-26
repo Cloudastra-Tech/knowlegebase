@@ -76,6 +76,10 @@ const ACTION: Record<string, string> = {
   "workspace.create": "Created the workspace",
   "session.sign_out_everywhere": "Signed out everywhere",
   "audit.export": "Exported the audit log",
+  "question_log.settings": "Changed how questions are logged",
+  "insights.export": "Exported insights",
+  "eval_case.create": "Added an answer to the test set",
+  "eval_case.delete": "Removed an answer from the test set",
 }
 
 // The action filter: every action under a prefix.
@@ -92,6 +96,9 @@ const KINDS: [string, string][] = [
   ["conversation.", "Conversations"],
   ["feedback.", "Answer ratings"],
   ["audit.", "Audit log"],
+  ["question_log.", "Question logging"],
+  ["insights.", "Insights"],
+  ["eval_case.", "Test set"],
 ]
 
 function details(e: AuditEvent) {
