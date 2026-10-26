@@ -73,7 +73,6 @@ import contextlib
 import json
 import io
 import logging
-import queue
 import os
 import re
 import secrets
@@ -104,7 +103,7 @@ import sso_errors                    # noqa: E402
 import sso_setup                     # noqa: E402
 import url_guard                     # noqa: E402
 import workspaces                    # noqa: E402
-from agent import build_agent        # noqa: E402
+from agent import Cancelled, build_agent  # noqa: E402
 from connectors import google_drive, notion  # noqa: E402
 
 @contextlib.asynccontextmanager
@@ -1589,45 +1588,66 @@ def _steps(trace):
             for t in trace]
 
 
+def _enter_chat(ws):
+    """Count a question in, once its workspace's index isn't being swapped."""
+    with _gate:
+        if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
+            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
+        _gate_of(ws)["active"] += 1
+
+
 @app.post("/api/chat/stream")
-def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
+async def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     """Same as /api/chat, but streams what's happening as Server-Sent Events:
          status      {"text"}                       e.g. "Checking your question"
          step_start  {"id", "tool", "label"}        e.g. "Searching company docs"
          step_end    {"id", "tool", "result"}       e.g. "found 2 relevant documents"
          answer      {"text"}                       the answer so far (PII already masked)
          done        {"answer", "sources", "steps"} the final, checked answer
-         error       {"message"}"""
+         error       {"message"}
+    If the browser goes away mid-answer, the agent is told to stop."""
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
     ws = ws_of(user)
-    with _gate:
-        if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
-            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
-        _gate_of(ws)["active"] += 1
+    await run_in_threadpool(_enter_chat, ws)      # may wait: keep the event loop free
 
-    events = queue.Queue()
+    loop = asyncio.get_running_loop()
+    events = asyncio.Queue()
+    stop = threading.Event()                      # set when the client disconnects
+
+    def put(event):                               # called from the worker thread
+        try:
+            loop.call_soon_threadsafe(events.put_nowait, event)
+        except RuntimeError:                      # the event loop has shut down
+            pass
 
     def work():
         try:
             answer, trace, sources = get_agent(ws, role)(question, with_sources=True,
-                                                         on_event=events.put)
-            events.put({"type": "done", "answer": answer, "sources": sources,
-                        "steps": _steps(trace)})
+                                                         on_event=put, cancel=stop)
+            put({"type": "done", "answer": answer, "sources": sources,
+                 "steps": _steps(trace)})
+        except Cancelled:                          # nobody is listening any more
+            pass
         except Exception as e:                     # show it in the chat, keep serving
-            events.put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
+            put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
         finally:
             with _gate:
                 _gate_of(ws)["active"] -= 1
                 _gate.notify_all()
-            events.put(None)
+            put(None)
 
     threading.Thread(target=work, daemon=True).start()
 
-    def sse():
-        while (event := events.get()) is not None:
-            yield f"data: {json.dumps(event)}\n\n"
+    async def sse():
+        try:
+            while (event := await events.get()) is not None:
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            # Ends normally, or is cancelled here when the client disconnects:
+            # either way nobody needs the rest of the work.
+            stop.set()
 
     # X-Accel-Buffering: no -> nginx passes each event through immediately.
     return StreamingResponse(sse(), media_type="text/event-stream",

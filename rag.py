@@ -232,17 +232,21 @@ def rerank(question, docs, llm, top_n=4):
     return reranked[:top_n]
 
 
-def answer_question(question, retriever, llm, role="public"):
-    """Run the full Retrieve -> Augment -> Generate -> Guard flow."""
+def answer_question(question, retriever, llm, role="public", guard=None):
+    """Run the full Retrieve -> Augment -> Generate -> Guard flow.
+    guard: optional function -> (ok, message) that replaces the input check
+    below. The caller runs its guards WHILE this retrieves; guard() is waited
+    on just before generation, so a blocked question never reaches the model."""
 
     # Does this role get to see restricted info? (HR yes, public no.)
     allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
 
     # ---- GUARD (input) -------------------------------------------------
     # Check the question BEFORE doing any work (e.g. block empty/abusive input).
-    ok, reason = check_question(question, allow_restricted)
-    if not ok:
-        return reason, None          # None = blocked by a guard (not "no results")
+    if guard is None:
+        ok, reason = check_question(question, allow_restricted)
+        if not ok:
+            return reason, None      # None = blocked by a guard (not "no results")
 
     # ---- 0. HyDE (optional) — enrich the search query ------------------
     search_query = question
@@ -262,6 +266,13 @@ def answer_question(question, retriever, llm, role="public"):
     # from the matched chunks only (the intros are appended after them).
     if hasattr(retriever, "intros_for"):
         docs = docs + retriever.intros_for(docs)
+
+    # The caller's guards ran alongside the retrieval above: nothing retrieved
+    # goes into a prompt until they pass.
+    if guard is not None:
+        ok, reason = guard()
+        if not ok:
+            return reason, None
 
     # ---- 2. AUGMENT ----------------------------------------------------
     # Glue the retrieved chunks together into one block of "context" text.
