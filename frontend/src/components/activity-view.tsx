@@ -93,6 +93,12 @@ function details(e: AuditEvent) {
     .join(" · ")
 }
 
+// What was changed: "invite #3", or the member, document, domain... itself.
+function target(e: AuditEvent) {
+  if (!e.target_id) return ""
+  return e.target_type === "invite" ? `invite #${e.target_id}` : e.target_id
+}
+
 function when(epoch: number) {
   return new Date(epoch * 1000).toLocaleString(undefined, {
     dateStyle: "medium",
@@ -191,7 +197,7 @@ function AdminChanges() {
             ))}
           </SelectContent>
         </Select>
-        <DateRangePicker value={range} onChange={setRange} className="min-w-0 basis-56 grow sm:grow-0" />
+        <DateRangePicker value={range} onChange={setRange} className="min-w-0 basis-56 grow sm:w-64 sm:grow-0" />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="sm:ml-auto" disabled={exporting}>
@@ -221,7 +227,30 @@ function AdminChanges() {
             : "No changes yet. Changes to sign-in, members, documents and integrations show here."}
         </p>
       ) : (
-        <div className="rounded-xl border">
+        <>
+        {/* Phones: one entry per row, stacked. */}
+        <div className="divide-y rounded-xl border sm:hidden">
+          {events.map((e) => (
+            <div key={e.id} className="flex flex-col gap-0.5 px-4 py-3 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-medium">{ACTION[e.action] ?? e.action}</span>
+                <span className="shrink-0 text-xs text-muted-foreground" title={when(e.at)}>
+                  {timeAgo(e.at)}
+                </span>
+              </div>
+              <span className="truncate text-muted-foreground">
+                {e.actor ?? "unknown"}
+                {e.target_id && ` · ${target(e)}`}
+              </span>
+              {details(e) && (
+                <span className="line-clamp-2 text-xs break-words text-muted-foreground">
+                  {details(e)}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="hidden rounded-xl border sm:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -251,8 +280,8 @@ function AdminChanges() {
                   <TableCell className="align-top">
                     <span className="block font-medium">{ACTION[e.action] ?? e.action}</span>
                     {e.target_id && (
-                      <span className="block max-w-64 truncate text-xs text-muted-foreground" title={e.target_id}>
-                        {e.target_id}
+                      <span className="block max-w-64 truncate text-xs text-muted-foreground" title={target(e)}>
+                        {target(e)}
                       </span>
                     )}
                   </TableCell>
@@ -267,6 +296,7 @@ function AdminChanges() {
             </TableBody>
           </Table>
         </div>
+        </>
       )}
       {log.hasNextPage && (
         <Button
