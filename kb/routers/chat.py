@@ -14,10 +14,10 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import conversations_store
-from agent import Cancelled
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
-from kb.services import agents, conversations, indexing, passages
+from kb.services import answering, conversations, indexing, passages
+from kb.services.answering import Cancelled
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -40,21 +40,14 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     if not question:
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
-    ws = ws_of(user)
-    out = {}
-    # No waiting for re-indexing: it changes the index document by document, or
-    # builds a new one beside it (services/indexing.py).
     try:
-        answer, trace, sources = agents.get_agent(ws, role)(question, with_sources=True, out=out)
-    except Exception as e:
+        done = answering.ask(ws_of(user), role, question, surface="web")
+    except answering.Failed as e:
         # OpenAI down, a bad key, ...: say so plainly instead of a bare 500.
-        log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
-                      ws, role, len(question))
-        raise HTTPException(502, f"The assistant couldn't answer just now ({type(e).__name__}). "
+        raise HTTPException(502, f"The assistant couldn't answer just now ({e.kind}). "
                                  "Please try again in a moment.")
-    answer_state, sources, _ = conversations.outcome(answer, trace, sources, out)
-    return {"answer": answer, "sources": sources, "state": answer_state,
-            "steps": _steps(trace, user["role"] == "admin")}
+    return {"answer": done.answer, "sources": done.sources, "state": done.state,
+            "steps": _steps(done.trace, user["role"] == "admin")}
 
 
 @router.get("/api/passages/{chunk_id}")
@@ -156,26 +149,24 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         def standalone():                          # only when it differs from the question
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
-            answer, trace, sources = agents.get_agent(ws, role)(
-                question, with_sources=True, on_event=on_event, cancel=stop,
-                history=turn["history"] if turn else None, out=out)
-            answer_state, sources, access = conversations.outcome(answer, trace, sources, out,
-                                                                  history_access)
-            save(answer, answer_state, out, sources=sources, trace=_steps(trace),
-                 max_access=access, standalone_question=standalone())
-            put({"type": "done", "answer": answer, "sources": sources,
-                 "steps": _steps(trace, admin), "state": answer_state,
-                 "standalone_question": standalone(),
+            done = answering.ask(ws, role, question, surface="web", on_event=on_event,
+                                 cancel=stop, history=turn["history"] if turn else None,
+                                 history_access=history_access, out=out)
+            save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
+                 max_access=done.max_access, standalone_question=done.standalone)
+            put({"type": "done", "answer": done.answer, "sources": done.sources,
+                 "steps": _steps(done.trace, admin), "state": done.state,
+                 "standalone_question": done.standalone,
                  "message_id": turn["message_id"] if turn else None})
         except Cancelled:                          # nobody is listening any more
             # What was shown, with the passages its markers cite so far.
             save(seen["text"], "stopped", out, sources=out.get("sources") or [],
                  standalone_question=standalone())
         except Exception as e:                     # show it in the chat, keep serving
-            # Not the question itself: it's tenant data (its length helps spot limits).
-            log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
-                          ws, role, len(question))
-            message = f"Something went wrong: {type(e).__name__}"
+            if not isinstance(e, answering.Failed):  # ask() logs its own failures
+                log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
+                              ws, role, len(question))
+            message = f"Something went wrong: {getattr(e, 'kind', type(e).__name__)}"
             save(message, "error", out)
             put({"type": "error", "message": message,
                  "message_id": turn["message_id"] if turn else None})

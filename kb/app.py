@@ -11,12 +11,14 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import observability
 import safety
-from kb import jobs, middleware, settings, site
-from kb.routers import (admin_members, admin_sign_in, audit, auth, chat, conversations, docs,
-                        health, index, integrations, invites, knowledge, saml, scim, signup, sso)
+from kb import jobs, mcp_server, middleware, settings, site
+from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, audit, auth, chat,
+                        conversations, docs, health, index, integrations, invites, knowledge,
+                        saml, scim, signup, sso)
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, index, docs,
-           integrations, knowledge, admin_members, invites, audit, health, scim)
+           integrations, knowledge, admin_members, invites, audit, health, scim, api_keys,
+           api_v1)
 
 
 @contextlib.asynccontextmanager
@@ -29,7 +31,9 @@ async def _lifespan(app):
     # Re-indexing, connector syncs and the SAML metadata refresh run as jobs
     # (kb/jobs.py): here, unless JOBS_IN_PROCESS=off and `python -m kb.worker` does.
     jobs.start_in_process()
-    yield
+    # The MCP server's requests run in its session manager's task group.
+    async with app.state.mcp.running():
+        yield
     jobs.stop_in_process()
 
 
@@ -52,5 +56,6 @@ def create_app():
     app.add_middleware(middleware.SecurityHeaders, docs_paths=(app.docs_url, app.redoc_url))
     for r in ROUTERS:
         app.include_router(r.router)
+    mcp_server.mount(app)              # /mcp: other agents query the knowledge base
     site.mount(app)
     return app

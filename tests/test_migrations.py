@@ -20,11 +20,12 @@ from migrations import legacy
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
-HEAD = "0006"                                    # the newest migration
+HEAD = "0007"                                    # the newest migration
 # Made by migrations after the baseline.
 NEWER_TABLES = {"jobs", "search_indexes", "conversations", "messages", "message_feedback",
                 "audit_events", "invites", "sync_state", "source_items", "sync_runs",
-                "scim_tokens", "scim_groups", "scim_group_members", "scim_group_rules"}
+                "scim_tokens", "scim_groups", "scim_group_members", "scim_group_rules",
+                "api_keys", "api_settings"}
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
           ("workspaces", "role_source"), ("sessions", "username"), ("sessions", "workspace")}
