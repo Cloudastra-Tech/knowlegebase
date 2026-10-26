@@ -1,0 +1,55 @@
+{
+ "exchanges": [
+  {"request": {"method": "POST", "url": "https://api.notion.com/v1/search",
+               "json": {"filter": {"property": "object", "value": "page"},
+                        "sort": {"timestamp": "last_edited_time", "direction": "descending"}},
+               "headers": {"Notion-Version": "2025-09-03", "Authorization": "Bearer test-notion-access"}},
+   "response": {"status": 200, "json": {"object": "list", "has_more": false, "next_cursor": null,
+    "results": [
+     {"object": "page", "id": "page-a", "last_edited_time": "2026-10-20T10:00:00.000Z",
+      "url": "https://www.notion.so/Handbook-pagea", "archived": false, "in_trash": false,
+      "parent": {"type": "workspace", "workspace": true},
+      "properties": {"title": {"id": "title", "type": "title",
+                               "title": [{"type": "text", "plain_text": "Handbook"}]}}},
+     {"object": "page", "id": "row-1", "last_edited_time": "2026-10-19T09:00:00.000Z",
+      "url": "https://www.notion.so/Laptop-request-row1", "archived": false, "in_trash": false,
+      "parent": {"type": "data_source_id", "data_source_id": "ds-1", "database_id": "db-1"},
+      "properties": {
+       "Name": {"id": "title", "type": "title", "title": [{"plain_text": "Laptop request"}]},
+       "Status": {"id": "s", "type": "status", "status": {"name": "Approved"}},
+       "Owner": {"id": "o", "type": "people", "people": [{"name": "Ann"}]}}},
+     {"object": "page", "id": "page-b", "last_edited_time": "2026-10-10T08:00:00.000Z",
+      "url": "https://www.notion.so/Leave-policy-pageb", "archived": false, "in_trash": false,
+      "parent": {"type": "page_id", "page_id": "page-a"},
+      "properties": {"title": {"id": "title", "type": "title",
+                               "title": [{"plain_text": "Leave policy"}]}}}
+    ]}}},
+  {"request": {"method": "GET", "url": "https://api.notion.com/v1/blocks/page-a/children"},
+   "response": {"status": 200, "json": {"object": "list", "has_more": false, "results": [
+    {"object": "block", "id": "b1", "type": "heading_1", "has_children": false,
+     "heading_1": {"rich_text": [{"plain_text": "Welcome"}]}},
+    {"object": "block", "id": "b2", "type": "paragraph", "has_children": false,
+     "paragraph": {"rich_text": [{"plain_text": "Read this first."}]}},
+    {"object": "block", "id": "b3", "type": "child_page", "has_children": true,
+     "child_page": {"title": "Leave policy"}},
+    {"object": "block", "id": "blk-t", "type": "toggle", "has_children": true,
+     "toggle": {"rich_text": [{"plain_text": "Details"}]}},
+    {"object": "block", "id": "b5", "type": "synced_block", "has_children": true,
+     "synced_block": {"synced_from": {"block_id": "elsewhere"}}}
+   ]}}},
+  {"request": {"method": "GET", "url": "https://api.notion.com/v1/blocks/blk-t/children"},
+   "response": {"status": 200, "json": {"object": "list", "has_more": false, "results": [
+    {"object": "block", "id": "b6", "type": "paragraph", "has_children": false,
+     "paragraph": {"rich_text": [{"plain_text": "Hidden detail"}]}}
+   ]}}},
+  {"request": {"method": "GET", "url": "https://api.notion.com/v1/blocks/b5/children"},
+   "response": {"status": 404, "json": {"object": "error", "code": "object_not_found"}}},
+  {"request": {"method": "GET", "url": "https://api.notion.com/v1/blocks/row-1/children"},
+   "response": {"status": 200, "json": {"object": "list", "has_more": false, "results": []}}},
+  {"request": {"method": "GET", "url": "https://api.notion.com/v1/blocks/page-b/children"},
+   "response": {"status": 200, "json": {"object": "list", "has_more": false, "results": [
+    {"object": "block", "id": "b7", "type": "bulleted_list_item", "has_children": false,
+     "bulleted_list_item": {"rich_text": [{"plain_text": "20 days a year"}]}}
+   ]}}}
+ ]
+}

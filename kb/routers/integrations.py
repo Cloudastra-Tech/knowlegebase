@@ -1,17 +1,28 @@
 """
-Integrations: connect, sync and disconnect a workspace's connectors (connectors/).
+Integrations: connect, pick, sync and disconnect a workspace's connectors.
 
-Every connector module has the same shape (services/sync.py), so the endpoints
-below work for all of them:
-  POST   /api/integrations/{provider}/connect   -> {url} of the provider's consent screen
-  GET    /api/integrations/{provider}/callback  the provider redirects the browser back here
-  POST   /api/integrations/{provider}/sync      sync now
-  DELETE /api/integrations/{provider}           disconnect + delete the synced copies
+Every connector is listed in connectors/registry.py with the same shape
+(connectors/base.py), so the endpoints below work for all of them:
+  GET    /api/integrations                       every connector's card (+ uploads, soon)
+  GET    /api/integrations/catalog               the registry, for anyone (landing page)
+  POST   /api/integrations/{provider}/connect    oauth: {url} of the provider's consent screen
+  GET    /api/integrations/{provider}/callback   the provider redirects the browser back here
+  POST   /api/integrations/{provider}/setup      token / url: check the form, connect
+  GET    /api/integrations/{provider}/containers what can be picked (?parent= for a tree)
+  PUT    /api/integrations/{provider}/containers save the picks, then sync
+  POST   /api/integrations/{provider}/sync       sync now (full / confirm a mass delete)
+  GET    /api/integrations/{provider}/runs       sync history and skipped items
+  PUT    /api/integrations/{provider}/access     who may ask about its files
+  DELETE /api/integrations/{provider}            disconnect + delete the synced copies
+
+Errors reach the browser as plain-language messages for a code
+(connectors/base.py ERRORS), never as an exception's text.
 """
 
 import logging
 import secrets
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -19,70 +30,126 @@ from pydantic import BaseModel, Field
 
 import docs_store
 import integrations_store
+import sync_store
 import workspaces
 import kb.audit
 import kb.state  # as kb.state: the callback's `state` parameter would hide it
-from connectors import google_drive
+from connectors import base, registry
 from kb.audit import audited
 from kb.deps import current_role, current_user, public_url, require_hr, ws_of
 from kb.rate_limit import user_limit
-from kb.services import agents, indexing, sync
-from kb.services.sync import LABELS, SETUP_ENV
+from kb.services import agents, sync
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
 
 OAUTH_STATE_SECONDS = 10 * 60
+# Why connecting failed, for the redirect back to the Integrations screen.
+CALLBACK_ERRORS = {"access_denied": "consent_denied", "consent_required": "consent_denied"}
 
 
 def _connector(provider):
-    c = sync.CONNECTORS.get(provider)
+    c = registry.get(provider)
     if not c:
         raise HTTPException(404, "Unknown integration.")
     return c
+
+
+def _connected(ws, provider):
+    c = _connector(provider)
+    row = integrations_store.get(ws, provider)
+    if not row:
+        raise HTTPException(400, f"{c.LABEL} isn't connected.")
+    return c, row
 
 
 def _redirect_uri(request: Request, provider):
     return public_url(request, f"/api/integrations/{provider}/callback")
 
 
-def _integration_info(ws, provider):
+def _ctx(ws, provider, row):
+    return base.SyncContext(workspace=ws, provider=provider, settings=row.get("settings") or {},
+                            known={})
+
+
+def _error(code):
+    """{code, message} for a stored error code. A last_error from before codes
+    existed holds an exception's text: it's shown as "unknown", never as is."""
+    if not code:
+        return None
+    code = code if code in base.ERRORS else "unknown"
+    return {"code": code, "message": base.message(code)}
+
+
+def _run_summary(run):
+    if not run:
+        return None
+    return {k: run[k] for k in ("id", "kind", "status", "started_at", "finished_at", "upserted",
+                                "deleted", "skipped", "unchanged", "held_deletes",
+                                "limit_reached")} | {"error": _error(run["error_code"])}
+
+
+def _integration_info(ws, c, role):
+    provider = c.PROVIDER
     row = integrations_store.get(ws, provider)
     if row:
         status = row["status"]
     else:
-        status = "disconnected" if sync.CONNECTORS[provider].configured() else "not_configured"
-    info = {"id": provider, "name": LABELS[provider], "status": status,
+        status = "disconnected" if c.configured() else "not_configured"
+    settings = (row and row.get("settings")) or {}
+    state = sync_store.state(ws, provider) if row else {}
+    synced, skipped = sync_store.counts(ws, provider) if row else (0, 0)
+    last = sync_store.last_run(ws, provider) if row else None
+    error = row and row.get("last_error")
+    info = {**registry.manifest(c), "status": status,
             "account": row and row["account"], "connected_by": row and row["connected_by"],
             "last_sync_at": row and row["last_sync_at"],
-            "doc_count": (row and row["doc_count"]) or 0,
-            "last_error": row and row["last_error"],
-            "access": integrations_store.access_of(row)}
-    if provider == google_drive.PROVIDER:
-        info["folders"] = ((row and row.get("settings")) or {}).get("folders", [])
+            "doc_count": synced or (row and row["doc_count"]) or 0, "skipped_count": skipped,
+            "error": _error(error if status == "error" else None),
+            "access": integrations_store.access_of(row),
+            "containers": settings.get(c.SETTINGS_KEY) or [],
+            "held_deletes": state.get("pending_deletes") or 0,
+            "last_run": _run_summary(last)}
+    if provider == "website":
+        info["limits"] = {"max_pages": settings.get("max_pages"),
+                          "max_depth": settings.get("max_depth")}
+    if provider == "outline":
+        info["base_url"] = settings.get("base_url")
+        # The server-wide wiki (.env), searched live, when this workspace has no synced one.
+        info["live_search"] = agents.outline_on(ws, role)
+    if provider == "google_drive":
+        info["folders"] = info["containers"]           # the old name
     return info
 
 
 @router.get("/api/integrations")
 def list_integrations(user=Depends(current_user), role=Depends(current_role)):
     ws = ws_of(user)
-    return {"workspace": ws, "integrations": [
-        {"id": "uploads", "name": "Uploaded files", "status": "connected",
-         "doc_count": len(docs_store.list_docs(workspaces.docs_root(ws)))},
-        _integration_info(ws, "google_drive"),
-        _integration_info(ws, "notion"),
-        {"id": "outline", "name": "Outline wiki",
-         "status": "connected" if agents.outline_on(ws, role) else "unavailable"},
-    ]}
+    uploads = {"id": "uploads", "name": "Uploaded files", "status": "connected",
+               "availability": "live", "description": "Files you upload on the Documents page",
+               "doc_count": len(docs_store.list_docs(workspaces.docs_root(ws)))}
+    return {"workspace": ws, "integrations": [uploads] + [
+        _integration_info(ws, c, role) for c in registry.CONNECTORS.values()] + [
+        {**s, "availability": "soon", "status": "unavailable"} for s in registry.SOON]}
+
+
+@router.get("/api/integrations/catalog")
+def integrations_catalog():
+    """Every connector, live or coming soon: names and kinds only, no workspace data."""
+    return {"connectors": [{k: e.get(k) for k in ("id", "name", "description", "icon",
+                                                  "availability")}
+                           for e in registry.catalog()]}
 
 
 @router.post("/api/integrations/{provider}/connect")
 def integration_connect(provider: str, request: Request, user=Depends(require_hr),
                         audit=audited("integration.connect_start")):
     c = _connector(provider)
+    if c.AUTH != "oauth":
+        raise HTTPException(400, f"{c.LABEL} is connected with a form, not a sign-in.")
     if not c.configured():
-        raise HTTPException(400, f"{LABELS[provider]} isn't set up on this server yet "
-                                 f"({SETUP_ENV[provider]} missing).")
+        raise HTTPException(400, f"{c.LABEL} isn't set up on this server yet "
+                                 f"({c.SETUP_ENV} missing).")
     oauth_states = kb.state.oauth_states
     now = time.time()
     for s in [k for k, v in oauth_states.items() if v["expires"] < now]:
@@ -106,44 +173,146 @@ def integration_callback(provider: str, request: Request, state: str = "", code:
     if not pending or pending["expires"] < time.time() or pending.get("provider") != provider:
         return RedirectResponse("/#integrations?error=expired")
     if error or not code:
-        return RedirectResponse("/#integrations?error=" + (error or "cancelled"))
+        return RedirectResponse("/#integrations?error="
+                                + CALLBACK_ERRORS.get(error, "cancelled" if not error else
+                                                      "connect_failed"))
     ws = pending["workspace"]
     try:
         c.finish_connect(ws, code, pending["redirect_uri"], pending["user"])
-    except Exception:
-        log.exception("Integration %s: couldn't finish connecting workspace %s", provider, ws)
-        return RedirectResponse("/#integrations?error=connect_failed")
+    except Exception as e:
+        log.warning("Integration %s: couldn't finish connecting workspace %s (%s)", provider,
+                    ws, type(e).__name__, exc_info=not isinstance(e, base.ConnectorError))
+        reason = ("no_refresh_token" if "refresh token" in str(e) else "connect_failed")
+        return RedirectResponse(f"/#integrations?error={reason}")
     row = integrations_store.get(ws, provider) or {}
     kb.audit.record(request, ws, "integration.connect", pending["user"], "integration", provider,
                     {"account": row.get("account")})
     if sync.ready_to_sync(ws, provider):
         sync.start_sync(ws, provider)
         return RedirectResponse(f"/#integrations?connected={provider}")
-    # Drive, new connection: nothing is synced until the admin picks folders.
+    # Nothing is synced until the admin picks what to sync.
     return RedirectResponse(f"/#integrations?connected={provider}&choose=1")
 
 
+class SetupIn(BaseModel):
+    url: str = Field(default="", max_length=2000)
+    token: str = Field(default="", max_length=2000)
+    cf_client_id: str = Field(default="", max_length=500)
+    cf_client_secret: str = Field(default="", max_length=500)
+    max_pages: int | None = Field(default=None, ge=1, le=100_000)
+    max_depth: int | None = Field(default=None, ge=1, le=100)
+
+
+@router.post("/api/integrations/{provider}/setup")
+def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr),
+                      audit=audited("integration.connect")):
+    """Connect a token / address connector (Outline, a website) from its form."""
+    c = _connector(provider)
+    if c.AUTH == "oauth":
+        raise HTTPException(400, f"{c.LABEL} is connected by signing in to it.")
+    user_limit(user, "sync")
+    ws = ws_of(user)
+    try:
+        account = c.connect_form(ws, body.model_dump(), user["username"])
+    except base.FormError as e:
+        raise HTTPException(400, str(e))
+    # The address is recorded; the token never is.
+    audit.record("integration", provider, {"account": account,
+                                           "url": body.url.strip()[:300] or None}, user=user)
+    if sync.ready_to_sync(ws, provider):
+        sync.start_sync(ws, provider)
+    return {"ok": True, "account": account,
+            "choose": not sync.ready_to_sync(ws, provider)}
+
+
+@router.get("/api/integrations/{provider}/containers")
+def integration_containers(provider: str, parent: str = "", user=Depends(require_hr)):
+    """What can be picked to sync: folders, pages, collections, ... (`parent`: inside one)."""
+    ws = ws_of(user)
+    c, row = _connected(ws, provider)
+    try:
+        items = c.list_containers(_ctx(ws, provider, row), parent or None)
+    except base.ConnectorError as e:
+        log.warning("Integration %s: couldn't list what can be picked in %s (%s)", provider,
+                    ws, e)
+        raise HTTPException(502, base.message(base.error_code(e)))
+    except Exception:
+        log.exception("Integration %s: couldn't list what can be picked in %s", provider, ws)
+        raise HTTPException(502, base.message("unknown"))
+    return {"items": items, "picked": (row.get("settings") or {}).get(c.SETTINGS_KEY) or []}
+
+
+class ContainersIn(BaseModel):
+    containers: list[dict[str, Any]] = Field(max_length=500)
+    max_pages: int | None = Field(default=None, ge=1, le=100_000)
+    max_depth: int | None = Field(default=None, ge=1, le=100)
+
+
+@router.put("/api/integrations/{provider}/containers")
+def integration_set_containers(provider: str, body: ContainersIn, user=Depends(require_hr),
+                               audit=audited("integration.folders")):
+    """Save what to sync, then sync: everything again if the picks changed, and
+    what's no longer picked is removed (the admin's choice, so the mass-delete
+    guard doesn't hold it back)."""
+    ws = ws_of(user)
+    c, row = _connected(ws, provider)
+    try:
+        picked = c.check_containers(body.containers)
+    except base.FormError as e:
+        raise HTTPException(400, str(e))
+    settings = dict(row.get("settings") or {})
+    changed = settings.get(c.SETTINGS_KEY) != picked
+    settings[c.SETTINGS_KEY] = picked
+    for key in ("max_pages", "max_depth"):
+        if getattr(body, key) is not None and provider == "website":
+            changed |= settings.get(key) != getattr(body, key)
+            settings[key] = getattr(body, key)
+    integrations_store.update(ws, provider, settings=settings)
+    audit.record("integration", provider,
+                 {"containers": [p["id"] for p in picked][:50],
+                  **{k: settings.get(k) for k in ("max_pages", "max_depth") if k in settings}},
+                 user=user)
+    if changed:
+        sync.start_sync(ws, provider, full=True, confirm_deletes=True)
+    return {"containers": picked}
+
+
+class SyncIn(BaseModel):
+    full: bool = False
+    confirm_deletes: bool = False
+
+
 @router.post("/api/integrations/{provider}/sync")
-def integration_sync(provider: str, user=Depends(require_hr),
+def integration_sync(provider: str, body: SyncIn | None = None, user=Depends(require_hr),
                      audit=audited("integration.sync")):
+    """Sync now. full: list everything again. confirm_deletes: apply deletes the
+    mass-delete guard held back."""
     _connector(provider)
     user_limit(user, "sync")
     ws = ws_of(user)
-    if not integrations_store.get(ws, provider):
-        raise HTTPException(400, f"{LABELS[provider]} isn't connected.")
-    sync.start_sync(ws, provider)
-    audit.record("integration", provider, user=user)
+    _connected(ws, provider)
+    body = body or SyncIn()
+    sync.start_sync(ws, provider, full=body.full, confirm_deletes=body.confirm_deletes)
+    audit.record("integration", provider, {k: True for k in ("full", "confirm_deletes")
+                                           if getattr(body, k)} or None, user=user)
     return {"ok": True}
+
+
+@router.get("/api/integrations/{provider}/runs")
+def integration_runs(provider: str, user=Depends(require_hr)):
+    """The connection's sync history (newest first) and what it skipped, and why."""
+    ws = ws_of(user)
+    _connected(ws, provider)
+    return {"runs": [_run_summary(r) for r in sync_store.runs(ws, provider)],
+            "skipped": sync_store.skipped(ws, provider)}
 
 
 @router.delete("/api/integrations/{provider}")
 def integration_disconnect(provider: str, user=Depends(require_hr),
                            audit=audited("integration.disconnect")):
-    c = _connector(provider)
-    ws = ws_of(user)
-    c.disconnect(ws)
+    _connector(provider)
+    sync.disconnect(ws_of(user), provider)
     audit.record("integration", provider, user=user)
-    indexing.schedule_index(ws)            # drop its files from the search index
     return {"ok": True}
 
 
@@ -157,11 +326,9 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
     """Who may ask about this connection's files: HR and admins only
     ("restricted", the default) or everyone in the workspace. Their chunks are
     re-tagged with the new level (nothing is embedded again)."""
-    _connector(provider)
+    from kb.services import indexing
     ws = ws_of(user)
-    row = integrations_store.get(ws, provider)
-    if not row:
-        raise HTTPException(400, f"{LABELS[provider]} isn't connected.")
+    c, row = _connected(ws, provider)
     if integrations_store.access_of(row) != body.access:
         integrations_store.update(ws, provider,
                                   settings=dict(row.get("settings") or {}, access=body.access))
@@ -169,43 +336,3 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
         indexing.schedule_retag(ws, provider)
     return {"access": body.access}
 
-
-class FoldersIn(BaseModel):
-    folders: list[dict]
-
-
-@router.get("/api/integrations/google_drive/folders")
-def drive_folders(parent: str = "", user=Depends(require_hr)):
-    """Browse what can be picked: top level (Shared Drives + My Drive root) or a
-    folder — its sub-folders and its files."""
-    ws = ws_of(user)
-    if not integrations_store.get(ws, google_drive.PROVIDER):
-        raise HTTPException(400, "Google Drive isn't connected.")
-    try:
-        return google_drive.list_folders(ws, parent or None)
-    except Exception as e:
-        log.exception("Google Drive: couldn't list folders for workspace %s", ws)
-        raise HTTPException(502, f"Couldn't list Google Drive folders: {e}")
-
-
-@router.put("/api/integrations/google_drive/folders")
-def drive_set_folders(body: FoldersIn, user=Depends(require_hr),
-                      audit=audited("integration.folders")):
-    """Save which folders / Shared Drives / single files to sync, then sync
-    (anything no longer picked is dropped from the index)."""
-    ws = ws_of(user)
-    drive = integrations_store.get(ws, google_drive.PROVIDER)
-    if not drive:
-        raise HTTPException(400, "Google Drive isn't connected.")
-    kinds = ("drive", "folder", "file")
-    folders = [{"id": str(f["id"]), "name": str(f.get("name", ""))[:200],
-                "kind": f.get("kind") if f.get("kind") in kinds else "folder",
-                **({"mimeType": str(f["mimeType"])[:100]} if f.get("mimeType") else {})}
-               for f in body.folders if f.get("id")][:200]
-    settings = dict(drive.get("settings") or {}, folders=folders)
-    integrations_store.update(ws, google_drive.PROVIDER, settings=settings)
-    audit.record("integration", google_drive.PROVIDER,
-                 {"folders": [{"id": f["id"], "name": f["name"], "kind": f["kind"]}
-                              for f in folders]}, user=user)
-    sync.start_sync(ws, google_drive.PROVIDER)
-    return {"folders": folders}

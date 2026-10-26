@@ -48,11 +48,19 @@ def _upload_limits():
             "request_mb": env_int("UPLOAD_MAX_REQUEST_MB", UPLOAD_MAX_REQUEST_MB)}
 
 
+# Files that are sent as they are (downloaded), not as editable text.
+_FILE_TYPES = {".pdf": "application/pdf", ".md": "text/markdown", ".html": "text/plain",
+               ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+               ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+               ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+
+
 @router.get("/api/docs/{access}/{name}")
 def read_doc(access: str, name: str, user=Depends(require_hr)):
     path = _existing_path(ws_of(user), access, name)
-    if name.lower().endswith(".pdf"):
-        return FileResponse(path, media_type="application/pdf", filename=name)
+    ext = os.path.splitext(name.lower())[1]
+    if ext in _FILE_TYPES:            # an uploaded page is never served as HTML here
+        return FileResponse(path, media_type=_FILE_TYPES[ext], filename=name)
     with open(path, encoding="utf-8", errors="replace") as f:
         return {"access": access, "name": name, "content": f.read()}
 
@@ -125,12 +133,15 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
         head = f.file.read(8192)
         f.file.seek(0)
         if not docs_store.content_matches(name, head):
-            kind = "PDF" if name.endswith(".pdf") else "plain text"
-            raise HTTPException(415, f"{f.filename} isn't a {kind} file, though its name says "
+            ext = os.path.splitext(name)[1]
+            kind = {".pdf": "a PDF", ".docx": "a Word", ".pptx": "a PowerPoint",
+                    ".xlsx": "an Excel"}.get(ext, "a plain text")
+            raise HTTPException(415, f"{f.filename} isn't {kind} file, though its name says "
                                      "so. Nothing was uploaded.")
         picked.append((name, f))
     if not picked:
-        raise HTTPException(400, "Please choose at least one .txt or .pdf file.")
+        raise HTTPException(400, "Please choose at least one text, PDF, Word, PowerPoint, "
+                                 "Excel, Markdown or HTML file.")
     for name, f in picked:
         docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
     audit.record("doc", access, {"files": [name for name, _ in picked]}, user=user)

@@ -285,6 +285,41 @@ and so is the first one after the chunking or embedding settings change. If you
 roll back to a version from before it, press **Re-index** once: the old version
 reads the old collection, which this one drops 10 minutes after its rebuild.
 
+## Connectors
+
+Google Drive, Notion, Outline and websites are **connectors**
+(`connectors/registry.py`), all synced the same way (`kb/services/sync.py`): each
+run asks the source only for what changed since its last cursor (Drive's change
+feed, Notion's and Outline's newest edits; a website is crawled again with
+conditional requests), writes changed documents to
+`<docs>/connectors/<provider>/`, records them in `source_items` (which replaced
+each folder's `manifest.json`: an existing manifest is imported the first time
+it's met and left in place) and re-indexes exactly those documents. A full
+listing still runs on the first sync, when the picks change, and every 6 hours
+for Notion and Outline, to find deletions.
+
+- **Errors** show on the Integrations page in plain words, with the sync history
+  (the last 50 runs) and skipped items. "Access expired" and "settings need
+  attention" wait for an admin; the rest are retried.
+- **Mass deletes.** A sync that would remove more than
+  `CONNECTOR_MASS_DELETE_PERCENT` (default 30) % of a connection's items, and at
+  least `CONNECTOR_MASS_DELETE_MIN` (default 10), removes nothing and asks an
+  admin to confirm on the card. Changing what a connection syncs is that
+  confirmation.
+- **Limit.** One connection syncs at most `CONNECTOR_MAX_ITEMS` (default 10000;
+  0 = no limit) items; a sync that stops there says so on the card and deletes
+  nothing.
+- **Outline.** Each workspace can connect its own wiki (address + API token,
+  stored encrypted, collections picked on the card). The `.env` wiki
+  (`OUTLINE_URL` / `OUTLINE_API_TOKEN`, default workspace only) is still searched
+  live as before, unless the workspace has an Outline connection: then only the
+  synced copy is searched, under that connection's access level.
+- **Websites** must be https on a public address (checked again before every
+  request, redirects included). To crawl a test site on this machine, list it
+  in `.env` as `CONNECTOR_ALLOW_PRIVATE_HOSTS=localhost:8000` (it may then use
+  http); this list is separate from `SSO_ALLOW_PRIVATE_HOSTS`. Never set it in
+  production.
+
 By default the jobs run inside the web process. To move the connector syncs and
 the SAML refresh to a process of their own (the same image, `.env` and volumes),
 give the web service `JOB_KINDS=index,retag,drop_collection` and start a worker

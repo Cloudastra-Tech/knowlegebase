@@ -22,6 +22,12 @@ export const queries = {
       retry: false,
     }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
+  // One connection's sync history and skipped items (the history sheet).
+  integrationRuns: (provider: string) =>
+    queryOptions({
+      queryKey: ["integrations", provider, "runs"],
+      queryFn: () => api.integrationRuns(provider),
+    }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),

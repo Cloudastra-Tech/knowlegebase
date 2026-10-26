@@ -8,6 +8,7 @@ import os
 
 import workspaces
 from agent import build_agent
+from connectors import outline as outline_connector
 from kb import state
 from kb.services import indexing
 
@@ -17,11 +18,16 @@ OUTLINE_ROLES = {"public": ("public", "hr"), "hr": ("hr",)}   # OUTLINE_MIN_ROLE
 
 
 def outline_on(ws, role):
-    """The Outline wiki is configured server-wide (.env) for the default workspace.
-    It is searched with ONE server-wide token, so the wiki has no per-user
-    permissions: OUTLINE_MIN_ROLE says which roles get it at all (public, the
-    default, = everyone; hr = HR / Admin only). An unknown value turns it off."""
+    """The LIVE Outline tool: a wiki configured server-wide (.env) for the default
+    workspace. It is searched with ONE server-wide token, so the wiki has no
+    per-user permissions: OUTLINE_MIN_ROLE says which roles get it at all
+    (public, the default, = everyone; hr = HR / Admin only). An unknown value
+    turns it off. A workspace that SYNCS an Outline wiki (connectors/outline.py)
+    searches its synced copy instead, under that connection's access level, so
+    the live tool is off there."""
     if ws != workspaces.DEFAULT or not os.getenv("OUTLINE_API_TOKEN"):
+        return False
+    if outline_connector.has_sync(ws):
         return False
     wanted = os.getenv("OUTLINE_MIN_ROLE", "public").strip().lower() or "public"
     if wanted not in OUTLINE_ROLES:
