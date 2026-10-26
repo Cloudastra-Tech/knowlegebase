@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   ArrowRight,
@@ -65,6 +66,7 @@ import {
   type SignInSettings,
   type SsoTestResult,
 } from "@/lib/api"
+import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -886,16 +888,21 @@ function Events({ events }: { events: SignInEvent[] }) {
 }
 
 // ---- The screen ----------------------------------------------------------------------
+export type AccessTab = "sign-in" | "members"
+
 export function SignInView({
   workspace,
   me,
+  tab,
+  onTabChange,
   onOpenIntegrations,
 }: {
   workspace: string
   me: string
+  tab: AccessTab // each tab has its own URL (routes.tsx)
+  onTabChange: (tab: AccessTab) => void
   onOpenIntegrations?: () => void
 }) {
-  const [tab, setTab] = useState<"sign-in" | "members">("sign-in")
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -909,7 +916,7 @@ export function SignInView({
             workspace, and as what.
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+        <Tabs value={tab} onValueChange={(v) => onTabChange(v as AccessTab)}>
           <TabsList>
             <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
@@ -1028,7 +1035,8 @@ function SignInSettingsView({
   workspace: string
   onOpenIntegrations?: () => void
 }) {
-  const [settings, setSettings] = useState<SignInSettings | null>(null)
+  const queryClient = useQueryClient()
+  const settings = useQuery(queries.signInSettings()).data ?? null
   const [editing, setEditing] = useState<SignInConnection | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [testing, setTesting] = useState<SignInConnection | null>(null)
@@ -1037,13 +1045,8 @@ function SignInSettingsView({
   const [opened, setOpened] = useState(0)     // remounts the dialogs, fresh, on each open
 
   const load = useCallback(() => {
-    signIn
-      .get()
-      .then(setSettings)
-      .catch((err) => toast.error(errorText(err)))
-  }, [])
-
-  useEffect(load, [load])
+    void queryClient.invalidateQueries({ queryKey: queries.signInSettings().queryKey })
+  }, [queryClient])
 
   function openDialog(conn: SignInConnection | null) {
     setEditing(conn)

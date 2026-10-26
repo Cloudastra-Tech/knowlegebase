@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   BookOpen,
@@ -41,6 +42,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, type ConnectorAccess, type Integration, type IntegrationStatus } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
+import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
@@ -533,36 +535,25 @@ export function IntegrationsView({
   onOpenDocuments: () => void
   openDrivePicker?: boolean
 }) {
-  const [items, setItems] = useState<Integration[] | null>(null)
-  const [workspace, setWorkspace] = useState("")
+  const queryClient = useQueryClient()
+  // While Drive syncs, refresh every few seconds (and nudge the index bar).
+  const { data, dataUpdatedAt } = useQuery({
+    ...queries.integrations(),
+    refetchInterval: (query) =>
+      query.state.data?.integrations.some((i) => i.status === "syncing") ? 3000 : false,
+  })
+  const items = data?.integrations ?? null
+  const workspace = data?.workspace ?? ""
   const { refresh: refreshIndex } = useIndexStatus()
 
-  const load = useCallback(
-    () =>
-      api
-        .integrations()
-        .then((data) => {
-          setItems(data.integrations)
-          setWorkspace(data.workspace)
-        })
-        .catch((err) => toast.error(errorText(err))),
-    [],
-  )
+  const load = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queries.integrations().queryKey })
+  }, [queryClient])
 
-  useEffect(() => {
-    load()
-  }, [load])
-
-  // While Drive syncs, refresh every few seconds (and nudge the index bar).
   const syncing = items?.some((i) => i.status === "syncing")
   useEffect(() => {
-    if (!syncing) return
-    const t = window.setInterval(() => {
-      load()
-      refreshIndex()
-    }, 3000)
-    return () => window.clearInterval(t)
-  }, [syncing, load, refreshIndex])
+    if (syncing) refreshIndex()
+  }, [syncing, dataUpdatedAt, refreshIndex])
 
   const byId = Object.fromEntries((items ?? []).map((i) => [i.id, i])) as Record<
     Integration["id"],

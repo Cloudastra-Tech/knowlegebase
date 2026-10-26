@@ -27,18 +27,23 @@ won't match.
 
 ```bash
 npm run lint           # oxlint
+npm test               # Vitest + Testing Library (jsdom, a faked API)
 npm run build          # type-check + production build into dist/
 ```
 
 In Docker, the build in `dist/` is served by `api.py` itself, so one container
-serves both the site and the API. CI runs lint and build on every PR.
+serves both the site and the API; every screen's URL gets `index.html`, so deep
+links and reloads work. CI runs lint, tests and build on every PR.
 
 ## Where things are
 
 | Path | What |
 |---|---|
-| `src/App.tsx` | The shell: session restore, sign-in return (`#sso?code=`), navbar, screens |
-| `src/lib/api.ts` | The only place that calls the API; holds the session token |
+| `src/routes.tsx` | Every URL (React Router) and what it shows (`src/screens.tsx`) |
+| `src/App.tsx` | The signed-in shell: navbar, the chat (kept mounted), the screen below |
+| `src/components/auth-root.tsx` | Who is signed in: session restore, 401 / role changes |
+| `src/lib/api/` | The only place that calls the API, one file per domain; holds the session token |
+| `src/lib/queries.ts` | Server data the screens share, cached by TanStack Query |
 | `src/components/` | One file per screen (`chat-view`, `docs-view`, `integrations-view`, …) |
 | `src/components/ui/` | shadcn/ui components — add more with `npx shadcn add <name>` |
 
@@ -49,5 +54,9 @@ serves both the site and the API. CI runs lint and build on every PR.
 - The UI hides what a role can't use, but never enforces it: the API checks the
   account's role on every request. An HR account's **View as** menu only lowers
   what's shown.
-- The site routes by hash (`#login`, `#integrations?connected=…`); read
-  parameters with `hashParams()` from `src/lib/utils.ts`.
+- Every screen has a URL (`/chat`, `/documents`, `/admin/members`, …; list in
+  `src/routes.tsx`). The server still sends people back to the old hash
+  addresses (`/#login?error=…`, `/#sso?code=…`, `/#integrations?connected=…`);
+  `src/lib/legacy-hash.ts` redirects them.
+- Read server data with `useQuery(queries.…())`; after a change, invalidate its
+  key instead of keeping a copy in state.

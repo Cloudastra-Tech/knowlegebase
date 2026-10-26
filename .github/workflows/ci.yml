@@ -52,6 +52,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       - run: npm run build
 
   # The production image, built as the server builds it but without the
@@ -82,9 +83,10 @@ jobs:
           docker logs kb
           exit 1
 
-  # Known-vulnerable dependencies, and secrets committed in the PR. The two audits
-  # report findings that predate them, so they don't fail the run yet
-  # (continue-on-error: read their output); gitleaks does.
+  # Known-vulnerable dependencies, and secrets committed in the PR. pip-audit fails
+  # the run on any advisory not explained in scripts/pip_audit.sh; npm audit reports
+  # findings that predate it, so it doesn't fail the run yet (continue-on-error:
+  # read its output); gitleaks does.
   scan:
     runs-on: ubuntu-latest
     steps:
@@ -97,8 +99,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements*.txt
       - name: pip-audit
-        continue-on-error: true
-        run: pip install pip-audit==2.10.1 && pip-audit -r requirements.txt
+        run: pip install pip-audit==2.10.1 && scripts/pip_audit.sh
       - name: npm audit
         continue-on-error: true
         working-directory: frontend

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { KeyRound, MoreHorizontal, Search } from "lucide-react"
 import { toast } from "sonner"
 
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { signIn, type AccountRole, type Member } from "@/lib/api"
+import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -228,17 +230,13 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
 
 // Everyone in the workspace, with their role and where it comes from (admin).
 export function MembersView({ me }: { me: string }) {
-  const [members, setMembers] = useState<Member[] | null>(null)
+  const queryClient = useQueryClient()
+  const members = useQuery(queries.members()).data?.members ?? null
   const [query, setQuery] = useState("")
 
   const load = useCallback(() => {
-    signIn
-      .members()
-      .then(({ members }) => setMembers(members))
-      .catch((err) => toast.error(errorText(err)))
-  }, [])
-
-  useEffect(load, [load])
+    void queryClient.invalidateQueries({ queryKey: queries.members().queryKey })
+  }, [queryClient])
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
