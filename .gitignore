@@ -21,3 +21,6 @@ docs/connectors/
 .impeccable/questions/
 .impeccable/mocks/
 .impeccable/config.local.json
+
+# Answer-evaluation runs (python evaluate.py) - local comparisons, not committed
+eval/results/
