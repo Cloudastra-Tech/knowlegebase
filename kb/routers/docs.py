@@ -1,5 +1,5 @@
 """Documents (HR / Admin): the workspace's uploaded files (docs_store.py). Every
-change re-indexes the workspace."""
+change queues a re-index of the documents it touched."""
 
 import os
 
@@ -71,7 +71,7 @@ def create_doc(body: NewDocIn, user=Depends(require_hr), audit=audited("doc.crea
     docs_store.save(body.access, name, body.content.encode("utf-8"), root)
     audit.record("doc", f"{body.access}/{name}", {"size": len(body.content.encode("utf-8"))},
                  user=user)
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{body.access}/{name}"])
     return {"access": body.access, "name": name}
 
 
@@ -85,7 +85,7 @@ def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr),
     docs_store.save(access, name, body.content.encode("utf-8"), workspaces.docs_root(ws))
     audit.record("doc", f"{access}/{name}", {"size": len(body.content.encode("utf-8"))},
                  user=user)
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
 
@@ -94,7 +94,7 @@ def delete_doc(access: str, name: str, user=Depends(require_hr), audit=audited("
     ws = ws_of(user)
     os.remove(_existing_path(ws, access, name))
     audit.record("doc", f"{access}/{name}", user=user)
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
 
@@ -134,5 +134,5 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
     for name, f in picked:
         docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
     audit.record("doc", access, {"files": [name for name, _ in picked]}, user=user)
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{access}/{name}" for name, _ in picked])
     return {"saved": [name for name, _ in picked]}

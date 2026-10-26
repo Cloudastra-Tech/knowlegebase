@@ -11,7 +11,7 @@ import ingest
 import integrations_store
 import workspaces
 from kb.deps import current_role, current_user, ws_of
-from kb.services import agents
+from kb.services import agents, indexing
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -30,7 +30,7 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
     try:
         import chromadb
         col = chromadb.PersistentClient(path=ingest.DB_FOLDER).get_collection(
-            workspaces.collection(ws))
+            indexing.current(ws)[0])
         for meta in col.get(include=["metadatas"])["metadatas"]:
             key = os.path.normcase(os.path.abspath(meta.get("source", "")))
             chunks[key] = chunks.get(key, 0) + 1

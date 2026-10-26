@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Depends
 
-from kb import state
 from kb.audit import audited
 from kb.deps import current_user, require_hr, ws_of
 from kb.rate_limit import user_limit
@@ -12,17 +11,17 @@ router = APIRouter()
 
 
 @router.post("/api/reindex")
-def reindex(user=Depends(require_hr), audit=audited("index.reindex")):
-    """Manual re-index (changes already re-index automatically)."""
+def reindex(full: bool = False, user=Depends(require_hr), audit=audited("index.reindex")):
+    """Manual re-index (changes already re-index automatically): every document
+    is checked and only what changed is embedded again. full=true rebuilds the
+    whole index instead, beside the current one, which keeps answering until
+    the new one is done."""
     user_limit(user, "reindex")
-    indexing.schedule_index(ws_of(user))
-    audit.record("index", ws_of(user), user=user)
+    indexing.schedule_index(ws_of(user), full=full)
+    audit.record("index", ws_of(user), {"full": full}, user=user)
     return index_status(user)
 
 
 @router.get("/api/index/status")
 def index_status(user=Depends(current_user)):
-    with state.index_lock:
-        status = state.indexes.get(ws_of(user)) or state.new_index_state()
-        return {k: status[k] for k in ("status", "step", "total", "message", "pending",
-                                       "summary", "error", "finished_at")}
+    return indexing.index_status(ws_of(user))

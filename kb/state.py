@@ -19,25 +19,13 @@ failed_logins = {}        # username -> (count, locked_until)   (kb/routers/auth
 failures_logged = {}      # connection id -> recent times
 
 # ---- Agents (kb/services/agents.py) -----------------------------------------------
-agents = {}               # (workspace, role) -> agent run() function
+agents = {}               # (workspace, role) -> (index it was built on, agent run() function)
 agents_lock = threading.Lock()
 
-# ---- Background re-indexing, per workspace (kb/services/indexing.py) ----------------
-# Every document change schedules a re-index of THAT workspace in a background
-# thread; the UI polls GET /api/index/status. Changes made while an index runs
-# set `pending`, so one more pass runs right after (they are coalesced).
-indexes = {}              # workspace -> status dict
-index_lock = threading.Lock()
-ingest_lock = threading.Lock()   # one rebuild at a time (shared Chroma store)
-# Chat questions wait while their workspace's index is swapped, and the swap
-# waits for questions already running — so nobody searches a half-built index.
-gate = threading.Condition()
-gate_state = {}           # workspace -> {"indexing": bool, "active": int}
+# Re-indexing and connector syncs are jobs in the database (kb/jobs.py), not here.
 
-# ---- Connectors (kb/routers/integrations.py, kb/services/sync.py) --------------------
+# ---- Connectors (kb/routers/integrations.py) ----------------------------------------
 oauth_states = {}         # state -> {"workspace", "user", "expires", "redirect_uri"}
-syncing = set()           # (workspace, provider) syncs that are running
-sync_lock = threading.Lock()
 
 # ---- Sign-in (kb/services/sign_in.py, kb/routers/saml.py) ---------------------------
 sso_tests = {}            # "Test sign-in" ticket -> {"workspace", "cid", "expires", "result"}
@@ -46,11 +34,3 @@ saml_parked = {}          # key -> {"cid", "request_id", "email", "name", "sent"
 saml_lock = threading.Lock()
 sp_metadata_cache = {}    # (connection id, updated_at, base URL) -> XML
 
-
-def new_index_state():
-    return {"status": "idle", "step": 0, "total": 4, "message": "", "pending": False,
-            "summary": None, "error": None, "finished_at": None}
-
-
-def gate_of(ws):
-    return gate_state.setdefault(ws, {"indexing": False, "active": 0})

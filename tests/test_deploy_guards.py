@@ -20,10 +20,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @pytest.fixture
 def api(monkeypatch):
     import api
-    from kb.services import saml_refresh, sync
-    # The lifespan starts these background loops; the tests only need startup.
-    monkeypatch.setattr(sync, "sync_scheduler", lambda: None)
-    monkeypatch.setattr(saml_refresh, "saml_refresh_scheduler", lambda: None)
+    from kb import jobs
+    # The lifespan starts the job runner; the tests only need startup.
+    monkeypatch.setattr(jobs, "start_in_process", lambda: None)
+    monkeypatch.setattr(jobs, "stop_in_process", lambda: None)
     monkeypatch.delenv("REQUIRE_TOXICITY_GUARD", raising=False)
     return api
 

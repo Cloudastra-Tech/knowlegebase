@@ -13,6 +13,8 @@ integrations_store.py, agent.py, ingest.py, connectors/, ...).
     rate_limit.py  per-address and per-person limits
     middleware.py  security headers, request body limit
     site.py        the built React app (frontend/dist)
+    jobs.py        the background job queue (a table in config/app.db) and its workers
+    worker.py      `python -m kb.worker`: the jobs in a process of their own
     routers/       the endpoints, one module per area (table in routers/__init__.py)
     services/      the work behind them: agents, re-indexing, connector sync,
                    SAML metadata refresh, shared sign-in steps, sign-up

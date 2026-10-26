@@ -243,7 +243,8 @@ cd genai && docker compose ps              # STATUS: Up
 | Restart | `docker compose restart` |
 | Deploy new code | `git pull && docker compose up -d --build` (no local patch to re-apply; the Guardrails token comes from step 4's `COMPOSE_FILE`) |
 | Rebuild vector DB from scratch | `docker compose down -v && docker compose up -d --build` |
-| Re-index after editing `docs/` by hand | `docker compose exec knowledgebase python ingest.py && docker compose restart` |
+| Re-index after editing `docs/` by hand | **Re-index** on the Documents screen (only changed files are embedded again), or a full rebuild: `docker compose exec knowledgebase python ingest.py` |
+| See the background jobs | `docker compose exec knowledgebase python -c "import db; [print(tuple(r)) for r in db.connect().execute('SELECT id, kind, workspace, status, attempts, error FROM jobs ORDER BY id DESC LIMIT 20')]"` |
 | Shell into the container | `docker compose exec knowledgebase sh` |
 | Which database migration `config/app.db` is at | `docker compose exec knowledgebase alembic current` |
 
@@ -254,6 +255,51 @@ too). The log says `Database upgraded from 0001 to 0002` (and, once, `Bringing a
 database from before migrations to the baseline`) when it does. Take a backup (`scripts/backup.sh`) before deploying
 a release that adds a migration: there is no automatic way back down. How
 migrations work and how to add one: [ARCHITECTURE.md](ARCHITECTURE.md), "Database migrations".
+
+## Background jobs
+
+Re-indexing, connector syncs (every 30 minutes, and on **Sync now**) and the SAML
+metadata refresh are **jobs** in the `jobs` table of `config/app.db`
+(`kb/jobs.py`). They survive a restart: a job that was running when the server
+stopped is picked up again about a minute later (when its lease runs out). A
+failed job is tried again after 30 s, 1 min, ... (3 tries for an index or a sync),
+then shows as failed: an index error in the top bar, a sync error on the
+Integrations page. Two jobs run at once (`JOB_WORKERS`), never two index runs of
+one workspace, and workspaces take turns.
+
+Re-indexing is **incremental**: an upload, edit or delete embeds only that
+document's changed chunks, and changing who may ask about a connection's files
+only re-tags them. Questions are answered throughout. **Rebuild everything**
+(`POST /api/reindex?full=true`, or `python ingest.py`) builds a new index beside
+the current one, which keeps answering until the new one is ready; a failed
+rebuild leaves the old one in place. The first re-index of a workspace after
+upgrading to this version is such a rebuild (it gives every chunk a stable id),
+and so is the first one after the chunking or embedding settings change. If you
+roll back to a version from before it, press **Re-index** once: the old version
+reads the old collection, which this one drops 10 minutes after its rebuild.
+
+By default the jobs run inside the web process. To move the connector syncs and
+the SAML refresh to a process of their own (the same image, `.env` and volumes),
+give the web service `JOB_KINDS=index,retag,drop_collection` and start a worker
+beside it that runs the rest:
+
+```yaml
+  worker:            # in docker-compose.yml, next to the knowledgebase service
+    build: .
+    env_file: .env
+    environment:
+      - JOB_KINDS=sync,sync_all,saml_refresh,jobs_prune
+    volumes: [the same as the knowledgebase service]
+    command: python -m kb.worker
+```
+
+The index jobs stay in the web process for now: the search index is an
+embedded Chroma folder, which the process that answers questions should also be
+the one writing. Once Chroma runs as a server (engineering plan P2-1), set
+`JOBS_IN_PROCESS=off` on the web service (it then only queues jobs) and drop
+`JOB_KINDS` from the worker so it runs them all. `JOB_WORKERS` is the number of
+jobs a process runs at once (default 2); several workers may run, since a job is
+claimed in the database first.
 
 ## Health checks and error tracking
 
@@ -363,7 +409,7 @@ and a sign-in. A backup that was never restored is a hope, not a backup.
 
 Sign in with an HR / Admin account and open **Documents** in the top bar to view,
 edit, add, upload (TXT/PDF) or delete documents; every change is re-indexed
-automatically (progress shows in the top bar). `docs/` is mounted
+automatically, a document at a time (progress shows in the top bar). `docs/` is mounted
 from the host (`./docs:/app/docs`), so UI changes survive rebuilds — but they are
 **not committed to git**. A `git pull` that touches the same files may conflict;
 commit them from the server or copy them back if you want them in the repo.

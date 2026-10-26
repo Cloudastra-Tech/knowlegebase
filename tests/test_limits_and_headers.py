@@ -56,7 +56,7 @@ def no_indexing(monkeypatch, tmp_path):
     """Uploads land in a temporary folder and nothing is re-indexed."""
     from kb.services import indexing
     import workspaces
-    monkeypatch.setattr(indexing, "schedule_index", lambda ws: None)
+    monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kwargs: None)
     monkeypatch.setattr(workspaces, "docs_root", lambda ws: str(tmp_path / ws))
     return tmp_path
 

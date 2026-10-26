@@ -20,24 +20,12 @@ from migrations import legacy
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
+HEAD = "0003"                                    # the newest migration
+NEWER_TABLES = {"jobs", "search_indexes",        # made by migrations after the baseline
+                "audit_events", "invites"}
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
           ("workspaces", "role_source"), ("sessions", "username"), ("sessions", "workspace")}
-# Tables migrations after the baseline add.
-NEWER_TABLES = {"audit_events", "invites"}
-
-
-def _head():
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-    config = Config()
-    config.set_main_option("script_location", db.MIGRATIONS)
-    heads = ScriptDirectory.from_config(config).get_heads()
-    assert len(heads) == 1, f"migrations must have one head, not {heads}"
-    return heads[0]
-
-
-HEAD = _head()
 
 
 def _load(path, sql):

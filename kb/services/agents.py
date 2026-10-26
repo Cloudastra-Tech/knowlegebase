@@ -1,5 +1,7 @@
 """One agent (agent.py) per workspace and role, built on first use and kept in
-state.agents until that workspace is re-indexed (services/indexing.py)."""
+state.agents until that workspace's index changes (services/indexing.py bumps
+its version, and may point it at another collection): the agent's keyword
+index (BM25) is a copy of the collection, made when it's built."""
 
 import logging
 import os
@@ -7,6 +9,7 @@ import os
 import workspaces
 from agent import build_agent
 from kb import state
+from kb.services import indexing
 
 log = logging.getLogger("uvicorn.error")
 
@@ -28,8 +31,10 @@ def outline_on(ws, role):
 
 
 def get_agent(ws, role):
+    index = indexing.current(ws)          # (collection, version)
     with state.agents_lock:
-        if (ws, role) not in state.agents:
-            state.agents[(ws, role)] = build_agent(role, workspaces.collection(ws),
-                                                   outline_on(ws, role))
-        return state.agents[(ws, role)]
+        built = state.agents.get((ws, role))
+        if not built or built[0] != index:
+            built = (index, build_agent(role, index[0], outline_on(ws, role)))
+            state.agents[(ws, role)] = built
+        return built[1]

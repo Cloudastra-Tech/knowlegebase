@@ -83,8 +83,8 @@ def reindex(client, headers):
 def found(ws, role):
     """Does `role`'s permission-filtered search reach the synced page?"""
     import rag
-    import workspaces
-    retriever, _ = rag.load_chain(role, workspaces.collection(ws))
+    from kb.services import indexing
+    retriever, _ = rag.load_chain(role, indexing.current(ws)[0])
     return any("BLUEFALCON" in d.page_content for d in retriever.invoke(QUESTION))
 
 

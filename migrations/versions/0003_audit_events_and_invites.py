@@ -1,7 +1,7 @@
 """audit events and invites
 
-Revision ID: 0002
-Revises: 0001
+Revision ID: 0003
+Revises: 0002
 Create Date: 2026-10-27
 
 Two new tables, nothing existing changes:
@@ -14,8 +14,8 @@ Two new tables, nothing existing changes:
 
 from alembic import op
 
-revision = "0002"
-down_revision = "0001"
+revision = "0003"
+down_revision = "0002"
 branch_labels = None
 depends_on = None
 
