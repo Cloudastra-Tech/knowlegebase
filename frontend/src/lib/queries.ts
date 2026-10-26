@@ -25,6 +25,7 @@ export const queries = {
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
+  scimSettings: () => queryOptions({ queryKey: ["scim-settings"], queryFn: signIn.scim }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

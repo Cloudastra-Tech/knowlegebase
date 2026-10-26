@@ -83,6 +83,13 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/audit           ?actor&action&from&to&cursor: the audit log, newest first (admin)
     GET    /admin/audit/export    ?format=csv|jsonl (+ the filters), streamed           (admin)
     GET    /admin/audit/verify    check the hash chain                                  (admin)
+  scim.py      (SCIM 2.0: "Authorization: Bearer <the workspace's SCIM token>", not a session)
+    /scim/v2/ServiceProviderConfig | Schemas | ResourceTypes | Users | Groups
+                                  an identity provider provisions members and groups
+    GET    /admin/sign-in/scim    base URL, tokens, last sync, rules, SCIM events     (admin)
+    POST   /admin/sign-in/scim/tokens       a new token, shown once                  (admin)
+    DELETE /admin/sign-in/scim/tokens/{id}  revoke it                               (admin)
+    PUT    /admin/sign-in/scim/roles {rules, make_role_source}: roles from SCIM's groups (admin)
   health.py
     GET    /health                the process is up (Docker's HEALTHCHECK)
     GET    /health/ready          can it serve: database, index, key, guards (503 if not)

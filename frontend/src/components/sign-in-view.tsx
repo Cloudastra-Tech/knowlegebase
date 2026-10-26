@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Circle,
+  ExternalLink,
   Globe,
   KeyRound,
   Loader2,
@@ -20,7 +21,7 @@ import { toast } from "sonner"
 
 import { ActivityView } from "@/components/activity-view"
 import { MembersView } from "@/components/members-view"
-import { GroupRulesDialog } from "@/components/sign-in-group-rules"
+import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -61,6 +62,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   signIn,
   type ProviderHealth,
+  type ScimSettings,
+  type ScimToken,
   type SignInConnection,
   type SignInDomain,
   type SignInEvent,
@@ -87,6 +90,9 @@ function clockTime(epoch: number) {
 }
 
 const PROTOCOL = { oidc: "OpenID Connect", saml: "SAML" } as const
+// Where roles come from: one provider, or SCIM provisioning (SignInSettings.role_source).
+type RoleSourceRef = { id: string; label: string }
+const SCIM_SOURCE: RoleSourceRef = { id: "scim", label: "SCIM provisioning" }
 
 function Section({
   title,
@@ -224,7 +230,8 @@ function GroupAdminExpiry({
         <p className="text-sm text-muted-foreground">
           Their groups are only checked when they sign in, so admin from groups that haven't been
           sent in a while drops to what the rest of their groups give. Roles you set on the
-          Members tab don't expire, and the last admin always keeps it.
+          Members tab don't expire, nor does admin from groups SCIM pushes, and the last admin
+          always keeps it.
         </p>
         {on && (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
@@ -427,7 +434,7 @@ function ProviderRow({
   onChange,
 }: {
   conn: SignInConnection
-  roleSource: SignInConnection | null
+  roleSource: RoleSourceRef | null
   onEdit: () => void
   onTest: () => void
   onRoles: () => void
@@ -845,46 +852,330 @@ const OUTCOME: Record<SignInEvent["outcome"], { label: string; className: string
   warning: { label: "Warning", className: "text-amber-700 dark:text-amber-400" },
   updated: { label: "Updated", className: "text-muted-foreground" },
   attention: { label: "Needs a look", className: "text-amber-700 dark:text-amber-400" },
+  scim: { label: "SCIM", className: "text-sky-700 dark:text-sky-400" },
 }
+// A SCIM request that was turned away (it has a fix: sso_errors.py).
+const SCIM_REFUSED = { label: "Refused", className: "text-destructive" }
 // A provider's own metadata changed (or couldn't be fetched): nobody signed in.
 const ABOUT_PROVIDER: SignInEvent["outcome"][] = ["updated", "attention"]
 
-function Events({ events }: { events: SignInEvent[] }) {
-  if (!events.length)
-    return (
-      <p className="text-sm text-muted-foreground">
-        Nobody has signed in through your providers yet.
-      </p>
-    )
+function Events({
+  events,
+  empty = "Nobody has signed in through your providers yet.",
+}: {
+  events: SignInEvent[]
+  empty?: string
+}) {
+  if (!events.length) return <p className="text-sm text-muted-foreground">{empty}</p>
   return (
     <div className="divide-y rounded-xl border">
-      {events.map((e, i) => (
-        <div key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2.5 text-sm">
-          <span className={cn("w-24 shrink-0 font-medium", OUTCOME[e.outcome].className)}>
-            {OUTCOME[e.outcome].label}
-          </span>
-          {!ABOUT_PROVIDER.includes(e.outcome) && (
-            <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
-          )}
-          <span className="text-muted-foreground">
-            {ABOUT_PROVIDER.includes(e.outcome) ? "" : "via "}
-            {e.connection ?? "a deleted provider"}
-          </span>
-          <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
-          {(e.reason || e.ref) && (
-            <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
-              <p>
-                {explain(e)}
-                {e.ref && (
-                  <span className="ml-2 font-mono whitespace-nowrap select-all">Ref {e.ref}</span>
+      {events.map((e, i) => {
+        const look = e.outcome === "scim" && e.fix ? SCIM_REFUSED : OUTCOME[e.outcome]
+        return (
+          <div key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2.5 text-sm">
+            <span className={cn("w-24 shrink-0 font-medium", look.className)}>{look.label}</span>
+            {!ABOUT_PROVIDER.includes(e.outcome) && (
+              <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
+            )}
+            <span className="text-muted-foreground">
+              {ABOUT_PROVIDER.includes(e.outcome) ? "" : "via "}
+              {e.connection ?? "a deleted provider"}
+            </span>
+            <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
+            {(e.reason || e.ref) && (
+              <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
+                <p>
+                  {explain(e)}
+                  {e.ref && (
+                    <span className="ml-2 font-mono whitespace-nowrap select-all">Ref {e.ref}</span>
+                  )}
+                </p>
+                {e.fix && (e.outcome === "failed" || e.outcome === "scim") && (
+                  <p className="mt-0.5">{e.fix}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---- Provisioning (SCIM) ---------------------------------------------------------------
+const OKTA_DOCS = "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_scim.htm"
+const OKTA_GUIDE = "https://developer.okta.com/docs/guides/scim-provisioning-integration-connect/main/"
+const ENTRA_DOCS =
+  "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/configure-automatic-user-provisioning-portal"
+const ENTRA_SCIM =
+  "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups"
+
+function DocLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+    >
+      {children} <ExternalLink className="size-3" />
+    </a>
+  )
+}
+
+function SetupNotes({ baseUrl }: { baseUrl: string }) {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+        Setup notes for Okta and Microsoft Entra ID
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-3 grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
+        <div className="grid gap-2 rounded-lg bg-muted/40 p-3">
+          <p className="font-medium">Okta</p>
+          <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              In your app integration's General tab, set Provisioning to SCIM, then open the
+              Provisioning tab.
+            </li>
+            <li>
+              SCIM connector base URL: <span className="break-all font-mono text-xs">{baseUrl}</span>.
+              Unique identifier field: <span className="font-mono text-xs">userName</span>.
+            </li>
+            <li>
+              Actions: Push New Users, Push Profile Updates and Push Groups. Authentication mode:
+              HTTP Header, with a token from here as the Bearer token. Test the connection.
+            </li>
+            <li>
+              Under To App, turn on Create Users, Update User Attributes and Deactivate Users.
+              Assign people, then push the groups that should set roles.
+            </li>
+          </ol>
+          <p className="flex flex-wrap gap-x-3">
+            <DocLink href={OKTA_DOCS}>Okta: add SCIM provisioning</DocLink>
+            <DocLink href={OKTA_GUIDE}>Okta SCIM guide</DocLink>
+          </p>
+        </div>
+        <div className="grid gap-2 rounded-lg bg-muted/40 p-3">
+          <p className="font-medium">Microsoft Entra ID</p>
+          <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              Enterprise applications: open your app (or add a non-gallery one), then
+              Provisioning, and set the mode to Automatic.
+            </li>
+            <li>
+              Tenant URL: <span className="break-all font-mono text-xs">{baseUrl}</span>. Secret
+              token: a token from here. Test Connection.
+            </li>
+            <li>
+              Mappings: keep userName and emails[type eq "work"].value; the work email is what
+              people sign in with, so it must be on a verified domain.
+            </li>
+            <li>
+              Assign users and groups to the app, then start provisioning. Entra syncs about every
+              40 minutes.
+            </li>
+          </ol>
+          <p className="flex flex-wrap gap-x-3">
+            <DocLink href={ENTRA_DOCS}>Entra: automatic provisioning</DocLink>
+            <DocLink href={ENTRA_SCIM}>Entra SCIM reference</DocLink>
+          </p>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function TokenRow({ token, onRevoke }: { token: ScimToken; onRevoke: () => void }) {
+  const [confirm, setConfirm] = useState(false)
+  const revoked = token.revoked_at !== null
+  return (
+    <div className={cn("flex flex-wrap items-center gap-3 rounded-xl border p-3", revoked && "opacity-60")}>
+      <KeyRound className="size-4 text-muted-foreground" />
+      <div className="min-w-0 flex-1 basis-48">
+        <p className="text-sm">
+          <span className="font-mono">kbscim_…{token.hint}</span>{" "}
+          <OnBadge on={!revoked} onLabel="Active" offLabel="Revoked" />
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          Made by {token.created_by} {timeAgo(token.created_at)} ·{" "}
+          {token.last_used_at ? `last used ${timeAgo(token.last_used_at)}` : "never used"}
+        </p>
+      </div>
+      {!revoked && (
+        <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
+          Revoke
+        </Button>
+      )}
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this token?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your identity provider can't provision with it any more, from its next request.
+              Members it added stay as they are.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={onRevoke}>Revoke</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+// The token is only ever shown here, once: the server keeps a hash of it.
+function NewTokenDialog({ token, onClose }: { token: string | null; onClose: () => void }) {
+  return (
+    <Dialog open={!!token} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Your new SCIM token</DialogTitle>
+          <DialogDescription>
+            Paste it into your identity provider as the bearer token (Okta) or secret token
+            (Entra ID).
+          </DialogDescription>
+        </DialogHeader>
+        <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+          <TriangleAlert />
+          <AlertTitle>Copy it now</AlertTitle>
+          <AlertDescription className="text-amber-900/90 dark:text-amber-200/90">
+            It won't be shown again. If it's lost, make a new one and revoke this one.
+          </AlertDescription>
+        </Alert>
+        {token && <CopyField label="Token" value={token} />}
+        <DialogFooter>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Provisioning({
+  roleSource,
+  onRoles,
+}: {
+  roleSource: RoleSourceRef | null
+  onRoles: (rules: ScimSettings["group_rules"]) => void
+}) {
+  const queryClient = useQueryClient()
+  const scim = useQuery(queries.scimSettings()).data ?? null
+  const [creating, setCreating] = useState(false)
+  const [shown, setShown] = useState<string | null>(null)
+
+  const load = () => {
+    void queryClient.invalidateQueries({ queryKey: queries.scimSettings().queryKey })
+  }
+
+  async function create() {
+    setCreating(true)
+    try {
+      const made = await signIn.createScimToken()
+      setShown(made.token)
+      load()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function revoke(token: ScimToken) {
+    try {
+      await signIn.revokeScimToken(token.id)
+      toast.success(`Revoked the token ending ${token.hint}.`)
+      load()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  const active = scim?.tokens.filter((t) => t.revoked_at === null) ?? []
+  const isSource = roleSource?.id === SCIM_SOURCE.id
+  const rules = scim?.group_rules.map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`).join(", ")
+
+  return (
+    <Section
+      title="Provisioning (SCIM)"
+      description="Your identity provider adds people, updates them, and turns them off here as soon as it does there."
+      action={
+        <Button size="sm" onClick={create} disabled={creating || !scim || active.length >= scim.max_tokens}>
+          {creating ? <Loader2 className="animate-spin" /> : <Plus />}
+          New token
+        </Button>
+      }
+    >
+      {!scim ? (
+        <Skeleton className="h-32 rounded-xl" />
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          <CopyField label="SCIM base URL (Okta) / Tenant URL (Entra ID)" value={scim.base_url} />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <RefreshCw className="size-3.5" />
+              {scim.last_sync_at ? `Last sync ${timeAgo(scim.last_sync_at)}` : "No sync yet"}
+            </span>
+            <span>
+              {scim.users} {scim.users === 1 ? "person" : "people"} and {scim.groups}{" "}
+              {scim.groups === 1 ? "group" : "groups"} provisioned
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2">
+            {scim.tokens.map((t) => (
+              <TokenRow key={t.id} token={t} onRevoke={() => revoke(t)} />
+            ))}
+            {!scim.tokens.length && (
+              <p className="text-sm text-muted-foreground">
+                No token yet. Make one, then give it and the URL above to your identity provider.
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-start gap-3 rounded-xl border p-3">
+            <div className="min-w-0 flex-1 basis-56">
+              <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                Roles from SCIM groups
+                {isSource && (
+                  <Badge variant="secondary" className="font-normal">
+                    Role source
+                  </Badge>
                 )}
               </p>
-              {e.fix && e.outcome === "failed" && <p className="mt-0.5">{e.fix}</p>}
+              <p className="text-xs text-muted-foreground">
+                {isSource
+                  ? `Groups your provider pushes set roles, as they change: ${rules}`
+                  : rules
+                    ? `Not used: roles come from ${roleSource?.label ?? "nowhere"} (${rules})`
+                    : roleSource
+                      ? `Roles come from ${roleSource.label}. Give SCIM's groups rules to switch to them.`
+                      : "Groups don't set roles yet. Give them rules to make SCIM the role source."}
+              </p>
             </div>
-          )}
+            <Button size="sm" variant="outline" onClick={() => onRoles(scim.group_rules)}>
+              Roles from groups
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Only emails on your verified domains, or ones you've invited, can be provisioned.
+            Turning someone off signs them out everywhere at once; deleting them also anonymises
+            their name and email after {scim.retention_days} days. The last admin can't be
+            removed.
+          </p>
+          <SetupNotes baseUrl={scim.base_url} />
+
+          <div className="grid grid-cols-1 gap-2">
+            <p className="text-sm font-medium">Recent SCIM events</p>
+            <Events events={scim.events} empty="Your identity provider hasn't changed anything yet." />
+          </div>
         </div>
-      ))}
-    </div>
+      )}
+      <NewTokenDialog token={shown} onClose={() => setShown(null)} />
+    </Section>
   )
 }
 
@@ -1052,7 +1343,7 @@ function SignInSettingsView({
   const [dialogOpen, setDialogOpen] = useState(false)
   const [testing, setTesting] = useState<SignInConnection | null>(null)
   const [testWindow, setTestWindow] = useState<Window | null>(null)
-  const [roles, setRoles] = useState<SignInConnection | null>(null)
+  const [roles, setRoles] = useState<RulesTarget | null>(null)
   const [opened, setOpened] = useState(0)     // remounts the dialogs, fresh, on each open
 
   const load = useCallback(() => {
@@ -1065,7 +1356,7 @@ function SignInSettingsView({
     setDialogOpen(true)
   }
 
-  function openRoles(conn: SignInConnection) {
+  function openRoles(conn: RulesTarget) {
     setOpened((n) => n + 1)
     setRoles(conn)
   }
@@ -1093,7 +1384,10 @@ function SignInSettingsView({
   }
 
   const verified = settings?.domains.some((d) => d.verified) ?? false
-  const roleSource = settings?.connections.find((c) => c.id === settings.role_source) ?? null
+  const roleSource: RoleSourceRef | null =
+    settings?.role_source === SCIM_SOURCE.id
+      ? SCIM_SOURCE
+      : (settings?.connections.find((c) => c.id === settings.role_source) ?? null)
 
   return (
     <div>
@@ -1168,6 +1462,13 @@ function SignInSettingsView({
             </div>
           </Section>
 
+          <Provisioning
+            roleSource={roleSource}
+            onRoles={(rules) =>
+              openRoles({ ...SCIM_SOURCE, protocol: "scim", group_claim: null, group_rules: rules })
+            }
+          />
+
           <Section
             title="Recent sign-ins"
             description="Through your providers, and changes they made by themselves, newest first."
@@ -1193,6 +1494,7 @@ function SignInSettingsView({
         onSaved={() => {
           setRoles(null)
           load()
+          void queryClient.invalidateQueries({ queryKey: queries.scimSettings().queryKey })
         }}
       />
     </div>

@@ -180,7 +180,16 @@ export interface SignInEvent {
   connection_id: string | null
   connection: string | null
   email: string | null
-  outcome: "signed_in" | "refused" | "failed" | "test" | "warning" | "updated" | "attention"
+  // scim: what the identity provider did through SCIM (Provisioning)
+  outcome:
+    | "signed_in"
+    | "refused"
+    | "failed"
+    | "test"
+    | "warning"
+    | "updated"
+    | "attention"
+    | "scim"
   reason: string | null // a code (sso_errors.py)
   reason_text: string | null // what it means, for the admin
   fix: string | null
@@ -196,6 +205,29 @@ export interface SignInSettings {
   password_login: boolean // the server allows passwords at all
   role_source: string | null // the one provider whose groups set roles
   group_admin_days: number // admin from groups lasts this long without a sign-in (0: forever)
+}
+
+// ---- Provisioning (SCIM): an identity provider adds and removes members ----
+export interface ScimToken {
+  id: number
+  hint: string // its last 4 characters; the token itself is only shown when made
+  created_by: string
+  created_at: number
+  last_used_at: number | null
+  revoked_at: number | null
+}
+
+export interface ScimSettings {
+  base_url: string // what the identity provider calls (Okta's base URL, Entra's tenant URL)
+  tokens: ScimToken[]
+  max_tokens: number
+  last_sync_at: number | null // the provider's last request
+  role_source: string | null // "scim" when SCIM's groups set roles
+  group_rules: GroupRule[]
+  retention_days: number // a deleted user is anonymised after this
+  users: number
+  groups: number
+  events: SignInEvent[]
 }
 
 export interface OidcConnectionInput {

@@ -7,6 +7,8 @@ import type {
   NewProvider,
   OidcConnectionInput,
   SamlConnectionInput,
+  ScimSettings,
+  ScimToken,
   SignInConnection,
   SignInDomain,
   SignInSettings,
@@ -55,6 +57,15 @@ export const signInSettingsApi = {
       "/admin/sign-in/group-admin-days",
       json("PUT", { days }),
     ),
+  // Provisioning (SCIM)
+  scim: () => request<ScimSettings>("/admin/sign-in/scim"),
+  createScimToken: () =>
+    request<ScimToken & { token: string }>("/admin/sign-in/scim/tokens", json("POST")),
+  revokeScimToken: (id: number) =>
+    request<ScimToken>(`/admin/sign-in/scim/tokens/${id}`, json("DELETE")),
+  // make_role_source: take over setting roles from a provider (else a 409)
+  setScimRules: (rules: GroupRule[], make_role_source = false) =>
+    request<ScimSettings>("/admin/sign-in/scim/roles", json("PUT", { rules, make_role_source })),
   testResult: (ticket: string) =>
     request<{ done: boolean; result: SsoTestResult | null }>(
       `/admin/sign-in/tests/${seg(ticket)}`,

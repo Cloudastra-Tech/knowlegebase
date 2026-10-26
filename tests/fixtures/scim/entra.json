@@ -1,0 +1,175 @@
+{
+  "source": [
+    "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups",
+    "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/application-provisioning-config-problem-scim-compatibility"
+  ],
+  "note": "Request bodies copied from Microsoft's 'Tutorial: Develop and plan provisioning for a SCIM endpoint' (its User and Group operation examples) and 'Known issues and resolutions with SCIM 2.0 protocol compliance' (fetched 2026-10-27). Entra's example emails are on testuser.com, microsoft.com and test.microsoft.com; the test replaces those domains with its own verified one and Microsoft's example ids with the ones this server gave.",
+  "requests": {
+    "find_user": {
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName%20eq%20%22Test_User_00aa00aa-bb11-cc22-dd33-44ee44ee44ee%22"
+    },
+    "find_user_by_external_id": {
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=externalId%20eq%20%220a21f0f2-8d2a-4f8e-bf98-7363c4aed4ef%22"
+    },
+    "create_user": {
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User",
+                    "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+        "externalId": "0a21f0f2-8d2a-4f8e-bf98-7363c4aed4ef",
+        "userName": "Test_User_00aa00aa-bb11-cc22-dd33-44ee44ee44ee",
+        "active": true,
+        "emails": [{"primary": true, "type": "work",
+                    "value": "Test_User_11bb11bb-cc22-dd33-ee44-55ff55ff55ff@testuser.com"}],
+        "meta": {"resourceType": "User"},
+        "name": {"formatted": "givenName familyName", "familyName": "familyName",
+                 "givenName": "givenName"},
+        "roles": []
+      }
+    },
+    "update_user": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/6764549bef60420686bc",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [
+          {"op": "Replace", "path": "emails[type eq \"work\"].value",
+           "value": "updatedEmail@microsoft.com"},
+          {"op": "Replace", "path": "name.familyName", "value": "updatedFamilyName"}
+        ]
+      }
+    },
+    "update_user_name": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "userName",
+                        "value": "5b50642d-79fc-4410-9e90-4c077cdd1a59@testuser.com"}]
+      }
+    },
+    "update_many": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2",
+      "note": "Entra's multi-attribute update, before its SCIM-compliance fix (capitalised ops).",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [
+          {"op": "Replace", "path": "displayName", "value": "Pvlo"},
+          {"op": "Replace", "path": "emails[type eq \"work\"].value",
+           "value": "TestBcwqnm@test.microsoft.com"},
+          {"op": "Replace", "path": "name.givenName", "value": "Gtfd"},
+          {"op": "Replace", "path": "name.familyName", "value": "Pkqf"},
+          {"op": "Replace", "path": "externalId", "value": "Eqpj"},
+          {"op": "Replace",
+           "path": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber",
+           "value": "Eqpj"}
+        ]
+      }
+    },
+    "update_many_pathless": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2",
+      "note": "The same after the fix: a path-less op whose value object has dotted keys.",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [
+          {"op": "replace", "path": "emails[type eq \"work\"].value",
+           "value": "TestMhvaes@test.microsoft.com"},
+          {"op": "replace",
+           "value": {"displayName": "Bjfe", "name.givenName": "Kkom", "name.familyName": "Unua",
+                     "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber": "Aklq"}}
+        ]
+      }
+    },
+    "disable_user_string": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2",
+      "note": "Entra before its fix sends the boolean as a string.",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "active", "value": "False"}]
+      }
+    },
+    "disable_user": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2",
+      "body": {
+        "Operations": [{"op": "Replace", "path": "active", "value": false}],
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+      }
+    },
+    "enable_user_string": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2",
+      "note": "The reverse of disable_user_string.",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "active", "value": "True"}]
+      }
+    },
+    "delete_user": {
+      "method": "DELETE",
+      "path": "/scim/v2/Users/5171a35d82074e068ce2"
+    },
+    "create_group": {
+      "method": "POST",
+      "path": "/scim/v2/Groups",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group",
+                    "http://schemas.microsoft.com/2006/11/ResourceManagement/ADSCIM/2.0/Group"],
+        "externalId": "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159",
+        "displayName": "displayName",
+        "meta": {"resourceType": "Group"}
+      }
+    },
+    "find_group": {
+      "method": "GET",
+      "path": "/scim/v2/Groups?excludedAttributes=members&filter=displayName%20eq%20%22displayName%22"
+    },
+    "rename_group": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/927fa2c08dcb4a7fae9e",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "displayName",
+                        "value": "1879db59-3bdf-4490-ad68-ab880a269474updatedDisplayName"}]
+      }
+    },
+    "add_member": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/927fa2c08dcb4a7fae9e",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Add", "path": "members",
+                        "value": [{"$ref": null, "value": "f648f8d5ea4e4cd38e9c"}]}]
+      }
+    },
+    "remove_member": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/927fa2c08dcb4a7fae9e",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Remove", "path": "members",
+                        "value": [{"$ref": null, "value": "f648f8d5ea4e4cd38e9c"}]}]
+      }
+    },
+    "remove_member_filter": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/927fa2c08dcb4a7fae9e",
+      "note": "The SCIM-compliant form Entra sends after its fix.",
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "remove",
+                        "path": "members[value eq \"7f4bc1a3-285e-48ae-8202-5accb43efb0e\"]"}]
+      }
+    },
+    "delete_group": {
+      "method": "DELETE",
+      "path": "/scim/v2/Groups/927fa2c08dcb4a7fae9e"
+    }
+  }
+}
