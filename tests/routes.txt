@@ -38,6 +38,7 @@ GET    /api/integrations/{provider}/callback integration_callback -
 GET    /api/integrations/{provider}/containers integration_containers require_hr
 GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role
+GET    /api/passages/{chunk_id} passage current_user,current_role
 PATCH  /api/admin/members/{username} edit_member require_admin,audited
 PATCH  /api/admin/sign-in/connections/{cid} edit_connection require_admin,audited
 PATCH  /api/admin/sign-in/saml-connections/{cid} edit_saml_connection require_admin,audited

@@ -26,6 +26,7 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
   chat.py
     POST   /chat                  {question, role} -> {answer, sources, steps}
     POST   /chat/stream           same, streamed live (steps + answer tokens) as SSE
+    GET    /passages/{chunk_id}   a cited passage and the text around it (role-checked)
   docs.py
     GET    /docs                  list documents                       (HR / Admin)
     GET    /docs/{access}/{name}  text of a .txt, or the file itself    (HR / Admin)

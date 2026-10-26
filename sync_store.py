@@ -125,18 +125,19 @@ def forget(workspace, provider):
 
 
 def doc_info(workspace):
-    """{doc key: {"title", "url", "provider"}} for every synced file of a workspace,
-    keyed as ingest.doc_files keys them (connectors/<provider>/<file>); ingest
-    puts these on the file's chunks so answers cite the source by name."""
+    """{doc key: {"title", "url", "provider", "modified"}} for every synced file of
+    a workspace, keyed as ingest.doc_files keys them (connectors/<provider>/<file>);
+    ingest puts these on the file's chunks so answers cite the source by name."""
     import connectors.registry as registry
     import_manifests(workspace)
     conn = _conn()
     try:
-        rows = conn.execute("SELECT provider, file_name, title, url FROM source_items "
+        rows = conn.execute("SELECT provider, file_name, title, url, modified FROM source_items "
                             "WHERE workspace = ? AND file_name IS NOT NULL", (workspace,))
         return {f"connectors/{r['provider']}/{r['file_name']}":
                 {"title": r["title"] or "", "url": r["url"] or "",
-                 "provider": registry.label(r["provider"])} for r in rows}
+                 "provider": registry.label(r["provider"]), "modified": r["modified"] or ""}
+                for r in rows}
     finally:
         conn.close()
 

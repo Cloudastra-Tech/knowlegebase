@@ -75,23 +75,21 @@ class FakeRetriever:
 
 
 class FakeRagModel:
-    """rag.py's model: HyDE and the inner answer (written from the context)."""
+    """rag.py's model, now only the helper calls (HyDE). The answer is written
+    once, by the agent's model, from the passages search_docs returned."""
 
     def __init__(self, fakes):
         self.fakes = fakes
 
     def invoke(self, prompt):
-        start = time.monotonic()
-        if isinstance(prompt, str):              # HyDE
-            time.sleep(self.fakes.delays["helper"])
-            return AIMessage(content="a guess")
-        text = prompt[0].content
-        time.sleep(self.fakes.delays["generate"])
-        question = text.rsplit("Question:", 1)[1].split("Answer:")[0].strip()
-        self.fakes.calls.add("generate", question, start)
-        context = text.split("Context:", 1)[1].rsplit("Question:", 1)[0]
-        found = re.findall(r"\[[^\]]+\] ([^\n]+)", context)
-        return AIMessage(content=found[0] if found else "I don't know based on the documents.")
+        assert isinstance(prompt, str), "the RAG model no longer writes answers"
+        time.sleep(self.fakes.delays["helper"])
+        return AIMessage(content="a guess")
+
+
+# A passage as search_docs gives it to the model: its own block, ref = its marker.
+PASSAGE = re.compile(r'^<untrusted_data source="company_documents" ref="S(\d+)"[^>\n]*>\n'
+                     r'(.*?)\n</untrusted_data>$', re.S | re.M)
 
 
 class FakeClassifier:
@@ -118,8 +116,8 @@ class FakeClassifier:
 
 
 class FakeAgentModel(BaseChatModel):
-    """The agent's model: answers with what search_docs returned, streamed in
-    pieces over delays['agent'] seconds."""
+    """The agent's model: answers with the first passage search_docs returned,
+    citing it as [S#], streamed in pieces over delays['agent'] seconds."""
 
     fakes: object = None
 
@@ -132,11 +130,17 @@ class FakeAgentModel(BaseChatModel):
 
     def _reply(self, messages):
         question = next(m.content for m in messages if isinstance(m, HumanMessage))
-        # Tool results arrive spotlighted (untrusted.py): answer with the text
-        # inside the block, as a model would.
-        found = [re.sub(r"</?untrusted_data[^>]*>\n?", "", m.content).strip() for m in messages
-                 if isinstance(m, ToolMessage) and m.name == "search_docs"]
-        return question, (found[-1] if found else "Hello! Ask me about the documents.")
+        # Passages arrive spotlighted (untrusted.py), one block each: answer with
+        # the text inside the first one, and cite it, as a model would.
+        searches = [m.content for m in messages
+                    if isinstance(m, ToolMessage) and m.name == "search_docs"]
+        if not searches:
+            return question, "Hello! Ask me about the documents."
+        found = PASSAGE.findall(searches[-1])
+        if not found:
+            return question, "I don't know based on the documents."
+        n, text = found[0]
+        return question, re.sub(r"^\[[^\]]+\]\s*", "", text) + f" [S{n}]"
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         chunks = list(self._stream(messages, stop, run_manager, **kwargs))
@@ -164,8 +168,7 @@ class Fakes:
     def __init__(self):
         self.calls = Calls()
         self.streamed = []            # (question, pieces sent, pieces in the answer)
-        self.delays = {"guard": 0.2, "retrieve": 0.1, "helper": 0.05, "generate": 0.2,
-                       "agent": 0.4}
+        self.delays = {"guard": 0.2, "retrieve": 0.1, "helper": 0.05, "agent": 0.4}
 
 
 @pytest.fixture
@@ -220,10 +223,10 @@ def test_one_agent_answers_two_questions_at_once(fakes):
     first, second = [c for c in fakes.calls.of("agent")][-2:]
     assert overlap(first, second)
     # ...and each keeps its own citations and answer.
-    assert refund["sources"] == [{"title": "refund.md", "provider": "Company documents",
-                                  "url": None}]
-    assert leave["sources"] == [{"title": "leave.md", "provider": "Company documents",
-                                 "url": None}]
+    for reply, title in ((refund, "refund.md"), (leave, "leave.md")):
+        assert [(s["n"], s["title"], s["provider"], s["url"]) for s in reply["sources"]] == [
+            (1, title, "Company documents", None)]
+        assert reply["answer"].endswith(" [S1]")
     assert "thirty days" in refund["answer"] and "leave" not in refund["answer"]
     assert "twenty paid leave days" in leave["answer"]
     for reply in (refund, leave):
@@ -249,8 +252,8 @@ def test_guards_run_while_the_docs_are_searched(fakes):
                                           ("injection_check", "salary_check", "retrieve"))
     assert overlap(injection, search) and overlap(salary, search) and overlap(injection, salary)
     # The answer is only written after both guards passed.
-    (generate,) = fakes.calls.of("generate")
-    assert generate[2] >= max(injection[3], salary[3])
+    (answering,) = fakes.calls.of("agent")
+    assert answering[2] >= max(injection[3], salary[3])
     assert "thirty days" in reply["answer"]
 
 
@@ -263,8 +266,7 @@ def test_a_prompt_injection_is_refused_before_any_model_or_result_is_used(fakes)
     assert reply["sources"] == [] and reply["trace"] == []
     assert [e["type"] for e in reply["events"]] == ["status"]   # no steps, nothing found
     assert fakes.calls.of("retrieve")                           # it did search meanwhile...
-    assert not fakes.calls.of("generate")                       # ...but nothing was answered
-    assert not fakes.calls.of("agent")
+    assert not fakes.calls.of("agent")                          # ...but nothing was answered
 
 
 def test_a_public_salary_question_is_refused_like_before(fakes):
@@ -279,13 +281,13 @@ def test_a_public_salary_question_is_refused_like_before(fakes):
     assert [(e["type"], e.get("result")) for e in reply["events"]] == [
         ("status", None), ("step_start", None), ("step_end", "blocked by access rules")]
     assert "Teachers plan lessons" not in json.dumps(reply)
-    assert not fakes.calls.of("generate") and not fakes.calls.of("agent")
+    assert not fakes.calls.of("agent")
 
 
 def test_hr_may_still_ask_about_salary(fakes):
     run = build_agent("hr", outline=False)
     reply = ask(run, SALARY)
-    assert reply["answer"] == "Teachers plan lessons each week."
+    assert reply["answer"] == "Teachers plan lessons each week. [S1]"
     assert not fakes.calls.of("salary_check")
 
 

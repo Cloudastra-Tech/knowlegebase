@@ -212,7 +212,9 @@ export function ChatView({ role }: { role: Role }) {
             st.id === e.id ? { ...st, done: true, result: e.result } : st,
           ),
         }))
-      else if (e.type === "answer") update((m) => ({ ...m, text: e.text }))
+      else if (e.type === "answer")
+        // The passages its [S#] chips cite come along whenever they change.
+        update((m) => ({ ...m, text: e.text, ...(e.sources ? { sources: e.sources } : {}) }))
     }
 
     const controller = new AbortController()
