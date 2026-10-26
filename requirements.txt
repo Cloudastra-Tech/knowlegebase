@@ -15,7 +15,11 @@ guardrails-ai==0.11.0      # the open-source safety library (validates input/out
 python-dotenv==1.2.4       # loads your secret API key from a .env file
 pypdf==6.21.2              # reads text out of PDF files
 defusedxml==0.7.1          # reads the XML inside Word, PowerPoint and Excel files safely (connectors/extract.py); pure Python
-tiktoken==0.14.0           # lets us SEE how text is split into tokens (inspect_tokens.py); langchain-openai needs it too
+onnxruntime==1.31.0        # RERANKER=local runs a small cross-encoder on the CPU (rerankers.py), no torch; already pulled in by chromadb
+tokenizers==0.23.3         # ...its tokenizer; already pulled in by chromadb
+huggingface_hub==1.33.0    # ...downloads that model once, at a pinned revision; already pulled in by tokenizers
+numpy==2.5.4               # ...its inputs and scores; already pulled in by chromadb
+tiktoken==0.14.0          # lets us SEE how text is split into tokens (inspect_tokens.py); langchain-openai needs it too
 fastapi==0.139.2           # JSON API for the React frontend (api.py); 0.140+ conflicts with chromadb's opentelemetry pin
 uvicorn[standard]==0.54.0  # runs the FastAPI app
 python-multipart==0.0.32   # file uploads in the API

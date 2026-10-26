@@ -30,6 +30,7 @@ import numpy as np
 import docs_store
 import ingest
 import insights_store
+import models
 import integrations_store
 import question_log_store as log_store
 import sync_store
@@ -48,7 +49,8 @@ LATENCY_BUCKETS = (250, 500, 750, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000
                    10000, 15000, 20000, 30000, 45000, 60000, 120000)
 # USD per million tokens (in, out). An unknown model is priced as gpt-4o-mini.
 PRICES = {"gpt-4o-mini": (0.15, 0.60), "gpt-4o": (2.50, 10.00),
-          "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1": (2.00, 8.00)}
+          "gpt-4.1-nano": (0.10, 0.40), "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1": (2.00, 8.00),
+          "gpt-5-nano": (0.05, 0.40), "gpt-5-mini": (0.25, 2.00)}   # models.py can pick these
 DEFAULT_PRICE = PRICES["gpt-4o-mini"]
 UPLOADED = "Company documents"          # how agent.py cites an uploaded file
 
@@ -313,7 +315,7 @@ LABEL_PROMPT = (
 def label(questions):
     """One cheap model call naming a cluster."""
     from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_tokens=30)
+    llm = ChatOpenAI(model=models.fast_model(), temperature=0, max_tokens=30)
     reply = llm.invoke(LABEL_PROMPT.format(questions="\n".join(f"- {q}" for q in questions)))
     return reply.content
 

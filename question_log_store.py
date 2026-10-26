@@ -71,8 +71,9 @@ def set_settings(workspace, mode, days):
 def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=None,
         message_id=None, role="public", block_reason=None, sources=(), tools=(),
         max_access="restricted", latency_ms=None, tokens_in=None, tokens_out=None,
-        model=None, at=None):
-    """Log one question. Text is stored as given: the caller has applied the mode."""
+        model=None, at=None, tokens_cached=None):
+    """Log one question. Text is stored as given: the caller has applied the mode.
+    tokens_cached: how many of tokens_in OpenAI's prompt cache served (migration 0008)."""
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}")
     at = time.time() if at is None else at
@@ -80,11 +81,11 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
         return conn.execute(
             """INSERT INTO question_log (workspace, at, day, user, surface, message_id, role,
                    text_mode, question, answer, outcome, block_reason, sources, tools,
-                   max_access, latency_ms, tokens_in, tokens_out, model)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   max_access, latency_ms, tokens_in, tokens_out, model, tokens_cached)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (workspace, at, day_of(at), user, surface, message_id, role, text_mode, question,
              answer, outcome, block_reason, json.dumps(list(sources)), json.dumps(list(tools)),
-             max_access, latency_ms, tokens_in, tokens_out, model)).lastrowid
+             max_access, latency_ms, tokens_in, tokens_out, model, tokens_cached)).lastrowid
 
 
 def _row(r):

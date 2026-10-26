@@ -325,6 +325,37 @@ def test_new_chunking_settings_rebuild_the_index(env, monkeypatch):
     assert indexing.current(w)[0] == f"ws_{w}__g2"
 
 
+def test_a_release_with_new_chunking_rebuilds_old_indexes_when_the_app_starts(env, monkeypatch):
+    """The app starts with chunking settings an index wasn't built with: the
+    index is rebuilt with the structure-aware chunker into a new collection
+    while questions keep using the old one, then the workspace switches."""
+    import db
+    import ingest
+    from kb.services import indexing
+    w = env.workspace(("public", "a.txt", "Leave policy\n\nAnnual leave:\n" + LONG))
+    indexing.schedule_index(w)
+    env.wait(w)
+    old = indexing.current(w)[0]
+    conn = db.connect()
+    with conn:                        # as an index built by the last release looks
+        conn.execute("UPDATE search_indexes SET fingerprint = 'chars-500' WHERE workspace = ?",
+                     (w,))
+    conn.close()
+    seen = []                         # what questions are answered from while it rebuilds
+    env.before_embed.append(lambda texts: seen.append(indexing.current(w)[0]))
+
+    monkeypatch.setenv("REINDEX_ON_SETTINGS_CHANGE", "off")
+    assert w not in indexing.schedule_stale()
+    monkeypatch.setenv("REINDEX_ON_SETTINGS_CHANGE", "on")
+    assert w in indexing.schedule_stale()
+    env.wait(w)
+    new = indexing.current(w)[0]
+    assert new != old and seen and set(seen) == {old}
+    got = ingest._store(new)._collection.get(include=["metadatas"])["metadatas"]
+    assert got and all(m["chunk_meta"] == ingest.CHUNK_META and m["block"] for m in got)
+    assert w not in indexing.schedule_stale()               # up to date: nothing to do
+
+
 def test_an_access_change_re_tags_without_embedding(env):
     """Opening a connection to everyone (or closing it again) only re-tags its
     chunks; uploads keep theirs."""

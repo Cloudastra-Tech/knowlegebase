@@ -20,6 +20,7 @@ import {
   citationLabel,
   placeOf,
   previewOf,
+  updatedAgo,
   updatedOn,
   whyOf,
 } from "@/lib/citations"
@@ -70,7 +71,7 @@ function RestrictedBadge() {
 function SourcePreview({ source }: { source: Source }) {
   const place = placeOf(source)
   const why = whyOf(source)
-  const meta = [source.provider, updatedOn(source.modified)].filter(Boolean).join(" · ")
+  const meta = [source.provider, updatedAgo(source.modified)].filter(Boolean).join(" · ")
   return (
     <div className="space-y-2">
       <div className="flex items-start gap-2">

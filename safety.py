@@ -24,6 +24,7 @@ THE 3 PIECES OF GUARDRAILS:
 
 import logging
 import os
+import contextvars
 import re
 
 from dotenv import load_dotenv
@@ -36,6 +37,8 @@ from guardrails.validator_base import (
 )
 from langchain_openai import ChatOpenAI
 
+import models
+
 # Load OPENAI_API_KEY from .env NOW, before we ever build an OpenAI client.
 load_dotenv()
 
@@ -43,7 +46,8 @@ log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 
 
 # ----------------------------------------------------------------------------
-# A small, cheap model used ONLY to classify INTENT (not to answer questions).
+# A small, cheap model used ONLY to classify INTENT (not to answer questions):
+# models.FAST_MODEL (gpt-4o-mini unless set).
 # We build it LAZILY (on first use) so importing this file never needs the key.
 # ----------------------------------------------------------------------------
 _intent_llm = None
@@ -52,7 +56,7 @@ _intent_llm = None
 def _get_intent_llm():
     global _intent_llm
     if _intent_llm is None:
-        _intent_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        _intent_llm = ChatOpenAI(model=models.fast_model(), temperature=0)
     return _intent_llm
 
 
@@ -82,6 +86,19 @@ Examples:
     return decision.startswith("BLOCK")
 
 
+def _caller():
+    """guard.validate metadata carrying the caller's context. Guardrails runs the
+    validators in its own event-loop thread, which doesn't see the caller's
+    context variables, so their model calls missed the question's token count
+    (kb/services/question_log.counting)."""
+    return {"context": contextvars.copy_context()}
+
+
+def _in_caller_context(metadata, fn, value):
+    context = (metadata or {}).get("context")
+    return context.run(fn, value) if context is not None else fn(value)
+
+
 # ----------------------------------------------------------------------------
 # OUR CUSTOM VALIDATOR  —  this is the "proper Guardrails way" to add a rule.
 # @register_validator makes it usable inside a Guard like the built-in ones.
@@ -90,7 +107,7 @@ Examples:
 class BlockStaffSalary(Validator):
     def validate(self, value, metadata):
         # value = the user's question. We return Pass or Fail.
-        if _is_staff_salary_intent(value):
+        if _in_caller_context(metadata, _is_staff_salary_intent, value):
             return FailResult(
                 error_message="Teacher/staff salary information is restricted."
             )
@@ -131,7 +148,7 @@ Reply BLOCK or ALLOW:"""
 class BlockSalaryLeak(Validator):
     def validate(self, value, metadata):
         # value = the AI's answer. Block if it leaks staff pay.
-        if _reveals_salary(value):
+        if _in_caller_context(metadata, _reveals_salary, value):
             return FailResult(
                 error_message="Answer reveals confidential staff salary."
             )
@@ -315,7 +332,7 @@ def check_question(question, allow_restricted=False):
     # Salary confidentiality check — only for users NOT allowed to see it.
     if not allow_restricted:
         try:
-            salary_input_guard.validate(question)
+            salary_input_guard.validate(question, metadata=_caller())
         except Exception:
             return False, ("Staff salary information is restricted to HR / Admin. "
                            "Switch the role to HR / Admin to see it.")
@@ -340,7 +357,7 @@ def check_answer(answer, llm=None, allow_restricted=False):
 
     # First pass: does the answer leak staff pay?
     try:
-        output_guard.validate(answer)
+        output_guard.validate(answer, metadata=_caller())
         return answer.strip()          # clean -> return as-is
     except Exception:
         pass                           # leak detected -> try to fix it below
@@ -358,7 +375,7 @@ Rewritten answer:"""
 
         # Check the rewrite. If it's now clean, use it; if it STILL leaks, refuse.
         try:
-            output_guard.validate(rewritten)
+            output_guard.validate(rewritten, metadata=_caller())
             return rewritten
         except Exception:
             pass

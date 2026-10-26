@@ -140,6 +140,64 @@ def test_tokens_and_the_model_come_from_the_model_calls(client, fakes, fresh_def
     assert (row["tokens_in"], row["tokens_out"], row["model"]) == (120, 30, "gpt-4o-mini")
 
 
+def test_the_guards_count_toward_the_question_whatever_thread_they_run_in(fakes, monkeypatch):
+    """The token counter is a context variable. agent.py runs the input guards
+    (and the search) in a plain thread pool, and Guardrails runs the salary
+    classifiers in its own thread: neither carries the context, so their model
+    calls went uncounted. Jobs are now submitted in a copy of the caller's
+    context (agent._submit), and the context rides in the guards' metadata."""
+    import safety
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    seen = []                              # (which check, did it see the counter?)
+
+    class Classifier(FakeListChatModel):
+        def _call(self, messages, *args, **kwargs):
+            text = messages[0].content
+            check = ("injection" if "prompt-injection" in text else
+                     "question" if "intent classifier" in text else "answer")
+            seen.append((check, question_log._counter.get() is not None))
+            return "ALLOW"
+
+    monkeypatch.setattr(safety, "_get_intent_llm", lambda: Classifier(responses=["ALLOW"]))
+
+    def ask():
+        seen.clear()
+        with question_log.counting() as counter:
+            agent.build_agent("public", None, outline=False)("What is the refund policy?")
+        return counter
+
+    counter = ask()
+    assert sorted(seen) == [("answer", True), ("injection", True), ("question", True)]
+    assert counter.calls == len(seen) + 1                  # + the agent's own model
+    monkeypatch.setattr(agent, "_submit", lambda pool, fn, *args: pool.submit(fn, *args))
+    ask()                                                  # a plain submit, as before the fix
+    assert ("injection", False) in seen and ("question", False) in seen
+
+
+def test_cached_prompt_tokens_are_counted_and_logged(fresh_default):
+    from langchain_core.outputs import ChatGeneration, LLMResult
+    from langchain_core.messages import AIMessage
+
+    def result(cached):
+        usage = {"input_tokens": 1500, "output_tokens": 20, "total_tokens": 1520}
+        if cached is not None:
+            usage["input_token_details"] = {"cache_read": cached}
+        return LLMResult(generations=[[ChatGeneration(message=AIMessage(
+            content="x", usage_metadata=usage, response_metadata={"model_name": "m"}))]])
+
+    with question_log.counting() as counter:
+        counter.on_llm_end(result(None))
+        assert counter.tokens_cached is None             # not reported: unknown, not 0
+        counter.on_llm_end(result(1024))
+        counter.on_llm_end(result(0))
+    assert (counter.tokens_in, counter.tokens_cached) == (4500, 1024)
+    question_log.record("default", "pat", "public", "web", "q?", "answered", answer="a",
+                        usage=counter)
+    (row,) = logged()
+    assert (row["tokens_in"], row["tokens_cached"]) == (4500, 1024)
+
+
 def test_counting_only_counts_inside_its_context():
     from langchain_core.outputs import ChatGeneration, LLMResult
     from langchain_core.messages import AIMessage
