@@ -16,6 +16,16 @@ answers a request we made. This file holds the settings and the rules:
   * the email comes from an attribute (or an email-shaped NameID); sso.py then
     applies the same workspace and domain rules as OpenID Connect
 
+The IdP's metadata (its entity ID, sign-in URL and signing certificates) is
+stored with the connection. EVERY signing certificate it lists is trusted, so
+an IdP that publishes its next key beside the current one (a rollover: Entra,
+Okta, ADFS and Keycloak all do) keeps working when it switches. Metadata added
+by URL is fetched again daily, or sooner if its validUntil / cacheDuration say
+so, and once more (at most every few minutes) when an answer's signature fails,
+before that answer is checked again; api.py does that. Metadata pasted or typed
+by hand can't be refreshed: the admin screen warns before its certificate
+expires.
+
 The IdP posts its answer from ITS site, so the browser doesn't send our
 SameSite=Lax cookie with it. To tie the answer to the browser that started
 the sign-in, the request ID is remembered in that cookie at /start, and the
@@ -26,6 +36,7 @@ XMLSEC_BINARY in .env points at it if it isn't on the PATH.
 """
 
 import base64
+import calendar
 import contextlib
 import datetime
 import html
@@ -33,6 +44,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -45,6 +57,8 @@ from saml2.config import SPConfig
 from saml2.mdstore import InMemoryMetaData
 from saml2.metadata import entity_descriptor
 from saml2.saml import NAMEID_FORMAT_EMAILADDRESS, NAMEID_FORMAT_UNSPECIFIED
+from saml2.sigver import SignatureError
+from saml2.time_util import str_to_time
 from saml2.xmldsig import DIGEST_SHA256, SIG_RSA_SHA256
 
 import sso_errors
@@ -63,11 +77,13 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,63}$", re.I)
 
 class SamlError(ValueError):
     """The IdP's answer can't be used. The message is for the server log; `code`
-    (sso_errors.py) says why, for the admin."""
+    (sso_errors.py) says why, for the admin. bad_signature: it was signed, but
+    not by a key in the IdP's metadata (maybe the IdP has a new one)."""
 
-    def __init__(self, message, code="saml_invalid"):
+    def __init__(self, message, code="saml_invalid", bad_signature=False):
         super().__init__(message)
         self.code = code
+        self.bad_signature = bad_signature
 
 
 # ---- The xmlsec1 program ---------------------------------------------------------
@@ -166,8 +182,13 @@ def finish(conn, keys, base, saml_response, request_ids):
             response = client.parse_authn_request_response(
                 saml_response, BINDING_HTTP_POST, outstanding={r: "/" for r in request_ids})
         except Exception as e:             # pysaml2 has many error types; all mean "no"
+            # Only this one means "signed, by a key we don't know" (not unsigned,
+            # tampered with or malformed).
+            bad_signature = (isinstance(e, SignatureError) and
+                             "Failed to verify signature" in str(e))
             raise SamlError(f"{type(e).__name__}: {e}",
-                            sso_errors.from_saml_exception(e, saml_response)) from None
+                            sso_errors.from_saml_exception(e, saml_response),
+                            bad_signature) from None
     if response is None or response.assertion is None:
         # pysaml2 gives no answer when it was sent to another address (Destination)
         raise SamlError("No assertion in the response", "saml_audience")
@@ -212,8 +233,10 @@ def _email(identity, name_id, attribute=None):
 # ---- The IdP's side: its metadata ------------------------------------------------
 def read_idp_metadata(xml):
     """What we need from an IdP's metadata XML: {"entity_id", "sso_url",
-    "want_authn_requests_signed", "certificates"}. Raises SamlError saying what's
-    missing."""
+    "want_authn_requests_signed", "certificates" (how many), "fingerprints"
+    (SHA-256 of each signing certificate, sorted), "cert_expires_at",
+    "refresh_within" (seconds its validUntil / cacheDuration allow before it
+    should be fetched again, or None)}. Raises SamlError saying what's missing."""
     store = InMemoryMetaData(ac_factory(), metadata=xml)
     try:
         store.load()
@@ -230,14 +253,62 @@ def read_idp_metadata(xml):
     if not sso_url:
         raise SamlError("The identity provider has no single sign-on address for the "
                         "HTTP-Redirect binding.")
-    certificates = [kd for kd in descriptor.get("key_descriptor", [])
-                    if kd.get("use") in (None, "signing")]
+    # The certificates pysaml2 checks signatures with: any one of them will do.
+    try:
+        found = [_certificate(text) for _, text in store.certs(entity_id, "idpsso")]
+    except (KeyError, TypeError):          # a KeyDescriptor without a certificate
+        found = []
+    certificates = [c for c in found if c]
     if not certificates:
         raise SamlError("The metadata has no signing certificate.")
     return {"entity_id": entity_id, "sso_url": sso_url,
             "want_authn_requests_signed":
                 str(descriptor.get("want_authn_requests_signed", "")).lower() in ("true", "1"),
-            "certificates": len(certificates)}
+            "certificates": len(certificates),
+            "fingerprints": sorted({c.fingerprint(hashes.SHA256()).hex() for c in certificates}),
+            "cert_expires_at": _expires_at(certificates),
+            "refresh_within": _refresh_within(
+                [p for p in (store.entities_descr, store.entity_descr, entity, descriptor)
+                 if p is not None])}
+
+
+def _certificate(text):
+    try:
+        return x509.load_der_x509_certificate(base64.b64decode(re.sub(r"\s", "", text)))
+    except ValueError:
+        return None
+
+
+def _expires_at(certificates):
+    """When the earliest-expiring certificate that's still valid runs out (or,
+    if all have, the last one that did), as a Unix time."""
+    ends = sorted(c.not_valid_after_utc.timestamp() for c in certificates)
+    active = [t for t in ends if t > time.time()]
+    return active[0] if active else ends[-1]
+
+
+_DURATION = re.compile(r"^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?"
+                       r"(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$")
+_DURATION_SECONDS = (365 * 86400, 30 * 86400, 7 * 86400, 86400, 3600, 60, 1)
+
+
+def _refresh_within(parts):
+    """Seconds until the metadata should be fetched again by its own say: the
+    shortest cacheDuration, or half the time left before its validUntil."""
+    found = []
+    for part in parts:
+        attr = part.get if isinstance(part, dict) else lambda k, p=part: getattr(p, k, None)
+        match = _DURATION.match((attr("cache_duration") or "").strip())
+        if match and any(match.groups()):
+            found.append(sum(float(n or 0) * s for n, s in zip(match.groups(),
+                                                                _DURATION_SECONDS)))
+        if attr("valid_until"):
+            try:
+                ends = calendar.timegm(str_to_time(attr("valid_until")))
+            except (ValueError, TypeError):
+                continue
+            found.append(max(0.0, (ends - time.time()) / 2))
+    return min(found) if found else None
 
 
 def manual_idp_metadata(entity_id, sso_url, certificate):

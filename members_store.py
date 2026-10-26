@@ -15,6 +15,7 @@ It lives in the same small SQLite file as the sessions and integrations
     saml_requests      SAML sign-ins in progress: an IdP's answer must match one, once
     saml_assertions    SAML assertions already used, so none can be replayed
     sso_events         recent sign-ins and refusals through a workspace's providers,
+                       and changes made by themselves to a SAML provider's metadata,
                        for its admin (the newest EVENTS_KEPT per workspace)
     group_role_rules   per provider: people in this group get this role
 
@@ -81,7 +82,9 @@ STAFF_ROLES = ("hr", "admin")      # see HR documents and the HR / Admin screens
 #     _knowledge-assistant.<domain>   TXT   "kb-verify=<token>"
 TXT_PREFIX = "_knowledge-assistant"
 EVENTS_KEPT = 500
-EVENT_OUTCOMES = ('signed_in', 'refused', 'failed', 'test', 'warning')
+# 'warning': role-source admin kept; 'updated' / 'attention': a SAML provider's
+# metadata changed by itself, or needs a look.
+EVENT_OUTCOMES = ('signed_in', 'refused', 'failed', 'test', 'warning', 'updated', 'attention')
 GROUP_ADMIN_DAYS = 30              # group-given admin lasts this long without a sign-in
 
 log = logging.getLogger(__name__)
@@ -139,6 +142,14 @@ _NEW_COLUMNS = (
     ("members", "groups_updated_at", "REAL"),       # when the role source last sent them
     ("sso_connections", "group_claim", "TEXT"),
     ("sso_connections", "logout_at_idp", "INTEGER NOT NULL DEFAULT 0"),
+    # SAML metadata fetched again from its URL (api.py): the last success, the
+    # last try, when it's next due, why a fetched change wasn't applied, and
+    # what went wrong last time.
+    ("sso_connections", "metadata_refreshed_at", "REAL"),
+    ("sso_connections", "metadata_fetched_at", "REAL"),
+    ("sso_connections", "metadata_due_at", "REAL"),
+    ("sso_connections", "needs_review", "TEXT"),
+    ("sso_connections", "metadata_error", "TEXT"),
     ("workspaces", "require_sso", "INTEGER NOT NULL DEFAULT 0"),
     ("sso_events", "ref", "TEXT"),                  # shown to the person it failed for
     ("workspaces", "role_source", "TEXT"),          # the provider whose groups set roles
@@ -191,6 +202,9 @@ def _allow_new_event_outcomes(conn):
         raise RuntimeError("sso_events isn't the table this code knows; not changing it")
     if all(f"'{o}'" in check.group(1) for o in EVENT_OUTCOMES):
         return
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")    # another worker may be starting up too
+        return _allow_new_event_outcomes(conn)
     allowed = ", ".join(f"'{o}'" for o in EVENT_OUTCOMES)
     new = sql.replace("CREATE TABLE sso_events", "CREATE TABLE sso_events_new", 1)
     new = new.replace(check.group(0), f"CHECK (outcome IN ({allowed}))", 1)
@@ -258,10 +272,11 @@ def _create_tables(conn):
         connection_id TEXT,
         email         TEXT,
         outcome       TEXT NOT NULL
-                      CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test', 'warning')),
+                      CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test',
+                                         'warning', 'updated', 'attention')),
         reason        TEXT,                -- why it was refused or failed (a code
                                            -- from sso_errors.py, never provider
-                                           -- text), or the warning
+                                           -- text), or the warning / metadata change
         at            REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id);
     CREATE INDEX IF NOT EXISTS sso_events_by_connection ON sso_events(connection_id, id);
@@ -659,10 +674,13 @@ def new_connection_id():
     return secrets.token_hex(6)
 
 
+METADATA_STATUS = ("metadata_refreshed_at", "metadata_due_at", "needs_review", "metadata_error")
+
+
 def update_connection(workspace, cid, **fields):
     """Change a connection's label, issuer, client_id, keys (merged into the
-    stored ones), metadata or enabled. Returns the connection, or None if the
-    workspace has no such one."""
+    stored ones), metadata, enabled or METADATA_STATUS. Returns the connection,
+    or None if the workspace has no such one."""
     if "keys" in fields:
         fields["secret"] = secret_box.seal({**(connection_keys(cid) or {}),
                                             **fields.pop("keys")})
@@ -671,7 +689,8 @@ def update_connection(workspace, cid, **fields):
     for flag in ("enabled", "logout_at_idp"):
         if flag in fields:
             fields[flag] = int(bool(fields[flag]))
-    allowed = {"label", "issuer", "client_id", "secret", "metadata", "enabled", "logout_at_idp"}
+    allowed = {"label", "issuer", "client_id", "secret", "metadata", "enabled", "logout_at_idp",
+               *METADATA_STATUS}
     if set(fields) - allowed:
         raise ValueError(f"Can't change {', '.join(sorted(set(fields) - allowed))}.")
     cols = "".join(f"{k} = ?, " for k in fields)
@@ -724,6 +743,54 @@ def delete_connection(workspace, cid):
             _regroup(conn, cid, [])
             _keep_an_admin(conn, workspace, before)
     return n > 0
+
+
+# ---- SAML: metadata fetched again from its URL (api.py) ----------------------------
+def saml_connections_from_urls():
+    """Every SAML provider, in every workspace, whose metadata came from a URL."""
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM sso_connections WHERE protocol = 'saml'").fetchall()
+    return [c for c in map(_connection, rows) if c["metadata"].get("metadata_url")]
+
+
+def claim_metadata_fetch(cid, gap, due_by=None):
+    """True if this process may fetch the connection's metadata now: nobody has
+    in the last `gap` seconds (and, given `due_by`, it's due by then). It's
+    marked as fetched in the same statement, so another worker won't as well."""
+    now = time.time()
+    sql = ("UPDATE sso_connections SET metadata_fetched_at = ? "
+           "WHERE id = ? AND COALESCE(metadata_fetched_at, 0) <= ?")
+    args = [now, cid, now - gap]
+    if due_by is not None:
+        sql, args = sql + " AND COALESCE(metadata_due_at, 0) <= ?", args + [due_by]
+    with _lock, _db() as conn:
+        return conn.execute(sql, args).rowcount == 1
+
+
+def _status_columns(fields):
+    if set(fields) - set(METADATA_STATUS):
+        raise ValueError(f"Can't change {', '.join(sorted(set(fields) - set(METADATA_STATUS)))}.")
+    return "".join(f"{k} = ?, " for k in fields)
+
+
+def set_metadata_status(cid, **fields):
+    """Change only a connection's METADATA_STATUS. Not an admin's change, so
+    updated_at stays as it was."""
+    cols = _status_columns(fields).rstrip(", ")
+    with _lock, _db() as conn:
+        conn.execute(f"UPDATE sso_connections SET {cols} WHERE id = ?", (*fields.values(), cid))
+
+
+def replace_metadata(cid, seen_updated_at, metadata, **status):
+    """Store newly fetched metadata (and METADATA_STATUS), unless the connection
+    has changed since it was read at `seen_updated_at`: an admin's edit wins.
+    True if it was stored."""
+    cols = _status_columns(status)
+    with _lock, _db() as conn:
+        return conn.execute(f"UPDATE sso_connections SET {cols}metadata = ?, updated_at = ? "
+                            "WHERE id = ? AND updated_at = ?",
+                            (*status.values(), json.dumps(metadata), time.time(), cid,
+                             seen_updated_at)).rowcount == 1
 
 
 def record_connection_login(cid):

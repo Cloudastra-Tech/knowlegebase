@@ -8,6 +8,7 @@ faked. Needs the xmlsec1 program (CI installs it; locally set XMLSEC_BINARY).
 import base64
 import os
 import re
+import time
 import urllib.parse
 
 import pytest
@@ -25,7 +26,8 @@ PASSWORD_CLASS = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
 class TestIdP:
     """A real SAML identity provider (pysaml2's), with its own signing key."""
 
-    def __init__(self, folder, want_signed_requests=True, key=None, lifetime=None):
+    def __init__(self, folder, want_signed_requests=True, key=None, lifetime=None,
+                 entity=IDP_ENTITY):
         from saml2.config import IdPConfig
         from saml2 import BINDING_HTTP_REDIRECT
         os.makedirs(folder, exist_ok=True)
@@ -37,7 +39,7 @@ class TestIdP:
             with open(paths[name], "w") as f:
                 f.write(text)
         self.settings = {
-            "entityid": IDP_ENTITY, "xmlsec_binary": saml_sp.xmlsec_binary(),
+            "entityid": entity, "xmlsec_binary": saml_sp.xmlsec_binary(),
             "key_file": paths["idp.key"], "cert_file": paths["idp.crt"],
             "service": {"idp": {
                 "endpoints": {"single_sign_on_service": [(IDP_SSO, BINDING_HTTP_REDIRECT)]},
@@ -467,3 +469,162 @@ def test_the_sp_metadata_is_built_once_per_version(client, conn, monkeypatch):
     first = client.get(f"/api/auth/saml/{conn['id']}/metadata").text
     assert client.get(f"/api/auth/saml/{conn['id']}/metadata").text == first
     assert len(calls) <= 1
+
+
+# ---- Metadata from a URL, fetched again: the IdP rolls over to a new key ------------
+class MetadataURL:
+    """The IdP's metadata URL: answers with `xml`, and counts the fetches."""
+
+    def __init__(self, xml):
+        self.xml, self.fetches = xml, 0
+
+    def get(self, url, accept, **kwargs):
+        self.fetches += 1
+        return self.xml.encode()
+
+
+@pytest.fixture
+def from_url(client, admin, monkeypatch, tmp_path):
+    """A SAML provider set up from its IdP's ("idp") metadata URL ("url")."""
+    import sso_setup
+    idp = TestIdP(str(tmp_path / "current"))
+    url = MetadataURL(idp.metadata())
+    monkeypatch.setattr(sso_setup, "_get", url.get)
+    r = client.post("/api/admin/sign-in/saml-connections", headers=admin,
+                    json={"label": "Rolls over",
+                          "metadata_url": "https://idp.samlco.example/metadata"})
+    assert r.status_code == 200, r.text
+    c = {**r.json(), "url": url, "idp": idp}
+    idp.trust(client.get(f"/api/auth/saml/{c['id']}/metadata").text)
+    yield c
+    client.delete(f"/api/admin/sign-in/connections/{c['id']}", headers=admin)
+
+
+def new_key(tmp_path, client, conn, name="next", **kwargs):
+    """The IdP with a new signing key (or another IdP), trusting `conn`."""
+    other = TestIdP(str(tmp_path / name), **kwargs)
+    other.trust(client.get(f"/api/auth/saml/{conn['id']}/metadata").text)
+    return other
+
+
+def provider(client, admin, cid):
+    return next(c for c in client.get("/api/admin/sign-in", headers=admin).json()["connections"]
+                if c["id"] == cid)
+
+
+def events(client, admin, cid):
+    return [(e["outcome"], e["reason"])
+            for e in client.get("/api/admin/sign-in", headers=admin).json()["events"]
+            if e["connection_id"] == cid]
+
+
+def a_day_later():
+    import api
+    return time.time() + api.SAML_REFRESH_EVERY + 60
+
+
+def test_a_new_key_is_fetched_when_a_signature_fails_and_the_sign_in_succeeds(
+        client, admin, from_url, tmp_path):
+    rotated = new_key(tmp_path, client, from_url)
+    from_url["url"].xml = rotated.metadata()             # the IdP publishes its new key
+    headers = sign_in(client, from_url, rotated)
+    assert client.get("/api/auth/me", headers=headers).json()["connection"] == from_url["id"]
+    assert from_url["url"].fetches == 2                  # when it was added, and now
+    assert ("updated", "Certificate updated automatically") in events(client, admin,
+                                                                      from_url["id"])
+
+
+def test_an_answer_is_still_used_only_once_after_a_refresh(client, from_url, tmp_path):
+    rotated = new_key(tmp_path, client, from_url)
+    from_url["url"].xml = rotated.metadata()
+    answer = rotated.answer(start(client, from_url, rotated), "pat@samlco.example")
+    assert isinstance(finish(client, post_answer(client, from_url, answer)), dict)
+    assert finish(client, post_answer(client, from_url, answer)).startswith("/#login?error=sso_failed&ref=")
+
+
+def test_a_failing_signature_fetches_the_metadata_at_most_every_few_minutes(
+        client, from_url, tmp_path):
+    impostor = new_key(tmp_path, client, from_url, "impostor")   # a key it never lists
+    for _ in range(3):
+        assert sign_in(client, from_url, impostor).startswith("/#login?error=sso_failed&ref=")
+    assert from_url["url"].fetches == 2                  # when it was added, then once
+
+
+def test_the_schedule_fetches_metadata_once_its_due(client, admin, from_url, tmp_path):
+    import api
+    rotated = new_key(tmp_path, client, from_url)
+    from_url["url"].xml = rotated.metadata()
+    api._refresh_due_saml_metadata()                     # just added: not due yet
+    assert from_url["url"].fetches == 1
+    api._refresh_due_saml_metadata(now=a_day_later())
+    assert from_url["url"].fetches == 2
+    assert ("updated", "Certificate updated automatically") in events(client, admin,
+                                                                      from_url["id"])
+    assert isinstance(sign_in(client, from_url, rotated), dict)
+    assert from_url["url"].fetches == 2                  # it already had the new key
+
+
+def test_a_new_entity_id_is_held_back_for_review(client, admin, from_url, tmp_path):
+    import api
+    other = TestIdP(str(tmp_path / "other"), entity="https://elsewhere.example/saml")
+    from_url["url"].xml = other.metadata()
+    api._refresh_due_saml_metadata(now=a_day_later())
+    p = provider(client, admin, from_url["id"])
+    assert p["needs_review"] and p["issuer"] == IDP_ENTITY       # nothing applied
+    [(_, reason)] = [e for e in events(client, admin, from_url["id"]) if e[0] == "attention"]
+    assert "entity ID changed" in reason and "elsewhere" not in reason
+    assert isinstance(sign_in(client, from_url, from_url["idp"]), dict)
+    # The admin loads it again: their decision, so it applies.
+    r = client.patch(f"/api/admin/sign-in/saml-connections/{from_url['id']}", headers=admin,
+                     json={"metadata_url": "https://idp.samlco.example/metadata"})
+    assert (r.json()["issuer"], r.json()["needs_review"]) == ("https://elsewhere.example/saml",
+                                                              False)
+
+
+def test_a_failed_refresh_is_logged_once_never_verbatim_and_keeps_the_metadata(
+        client, admin, from_url, monkeypatch):
+    import api
+    monkeypatch.setattr(api, "SAML_REFRESH_GAP", 0)
+    from_url["url"].xml = "<html>Down for maintenance: call the helpdesk at 555</html>"
+    api._refresh_due_saml_metadata(now=a_day_later())
+    api._refresh_due_saml_metadata(now=a_day_later() + api.SAML_REFRESH_RETRY)
+    assert from_url["url"].fetches == 3
+    [(_, reason)] = [e for e in events(client, admin, from_url["id"]) if e[0] == "attention"]
+    assert reason.startswith("Metadata refresh failed") and "helpdesk" not in reason
+    assert isinstance(sign_in(client, from_url, from_url["idp"]), dict)
+
+
+def test_every_signing_certificate_in_the_metadata_verifies(client, admin, idp, tmp_path):
+    following = TestIdP(str(tmp_path / "following"))     # the key it will roll over to
+    second = re.search(r"<ns0:KeyDescriptor.*?</ns0:KeyDescriptor>", following.metadata(),
+                       re.S).group(0)
+    xml = idp.metadata().replace("</ns0:KeyDescriptor>", "</ns0:KeyDescriptor>" + second, 1)
+    assert saml_sp.read_idp_metadata(xml)["certificates"] == 2
+    c = client.post("/api/admin/sign-in/saml-connections", headers=admin,
+                    json={"label": "Two keys", "metadata_xml": xml}).json()
+    try:
+        current = TestIdP(str(tmp_path / "current"), key=idp.key)
+        for signer in (current, following):
+            signer.trust(client.get(f"/api/auth/saml/{c['id']}/metadata").text)
+            assert isinstance(sign_in(client, c, signer), dict)
+    finally:
+        client.delete(f"/api/admin/sign-in/connections/{c['id']}", headers=admin)
+
+
+def test_a_pasted_providers_certificate_expiry_is_shown(client, admin, conn, idp):
+    from cryptography import x509
+    p = provider(client, admin, conn["id"])
+    cert = x509.load_pem_x509_certificate(idp.key[1].encode())
+    assert p["cert_expires_at"] == cert.not_valid_after_utc.timestamp()
+    assert (p["metadata_refreshed_at"], p["needs_review"]) == (None, False)
+
+
+def test_the_metadata_can_ask_to_be_fetched_sooner_but_not_constantly(idp):
+    import api
+
+    def with_cache(duration):
+        return idp.metadata().replace(" entityID=", f' cacheDuration="{duration}" entityID=', 1)
+    assert saml_sp.read_idp_metadata(with_cache("PT2H"))["refresh_within"] == 2 * 60 * 60
+    assert saml_sp.read_idp_metadata(idp.metadata())["refresh_within"] is None
+    wait = api._next_refresh(saml_sp.read_idp_metadata(with_cache("PT1S"))) - time.time()
+    assert wait >= api.SAML_REFRESH_CHECK_EVERY - 1

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   Globe,
@@ -52,6 +53,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   signIn,
   type ProviderHealth,
@@ -364,6 +366,52 @@ function AddDomain({ onAdded }: { onAdded: () => void }) {
 // "kb-admins → Admin, …"
 const ruleText = (conn: SignInConnection) =>
   conn.group_rules.map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`).join(", ")
+const AMBER = "bg-amber-500/10 text-amber-800 dark:text-amber-300"
+const CERT_WARN_DAYS = 30 // red from 7
+const daysUntil = (epoch: number) => Math.floor((epoch - Date.now() / 1000) / 86400)
+
+// A badge with a tooltip; focusable, so the tooltip opens from the keyboard too.
+function HintBadge({
+  className,
+  hint,
+  children,
+}: {
+  className: string
+  hint: string
+  children: React.ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge tabIndex={0} className={cn("gap-1 font-normal", className)}>
+          {children}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+// SAML: the IdP's certificate runs out within CERT_WARN_DAYS.
+function CertificateBadge({ conn }: { conn: SignInConnection }) {
+  if (!conn.cert_expires_at) return null
+  const days = daysUntil(conn.cert_expires_at)
+  if (days >= CERT_WARN_DAYS) return null
+  const label =
+    days < 0
+      ? "Certificate expired"
+      : days === 0
+        ? "Certificate expires today"
+        : `Certificate expires in ${days} d`
+  const hint = conn.metadata_url
+    ? "Its metadata URL is checked daily, so the new certificate is picked up as soon as your provider publishes it."
+    : "Its metadata was pasted or typed in, so it can't update by itself: once your provider has the new certificate, give it here (Edit)."
+  return (
+    <HintBadge className={days < 7 ? "bg-destructive/10 text-destructive" : AMBER} hint={hint}>
+      <AlertTriangle /> {label}
+    </HintBadge>
+  )
+}
 
 function ProviderRow({
   conn,
@@ -442,6 +490,15 @@ function ProviderRow({
                 Role source
               </Badge>
             )}
+            {conn.needs_review && (
+              <HintBadge
+                className={AMBER}
+                hint={`New metadata from your provider wasn't applied: ${conn.review_reason}. If that's right, load it again (Edit → Metadata URL).`}
+              >
+                <AlertTriangle /> Needs review
+              </HintBadge>
+            )}
+            <CertificateBadge conn={conn} />
           </div>
           <p className="truncate text-sm text-muted-foreground">
             {conn.issuer} · last sign-in {timeAgo(conn.last_login_at)}
@@ -521,6 +578,15 @@ function ProviderRow({
                   : "Sign-in requests aren't signed: your provider doesn't ask for it."}
                 {conn.email_attribute ? ` Email comes from "${conn.email_attribute}".` : ""}
               </p>
+              {conn.metadata_url && (
+                <p className="text-xs break-all text-muted-foreground">
+                  {conn.metadata_refreshed_at
+                    ? `Metadata refreshed ${timeAgo(conn.metadata_refreshed_at)}`
+                    : "Metadata not refreshed yet"}{" "}
+                  from {conn.metadata_url}. It's checked daily, and again if a signature doesn't
+                  match, so a new certificate is picked up by itself.
+                </p>
+              )}
             </>
           )}
         </CollapsibleContent>
@@ -772,7 +838,11 @@ const OUTCOME: Record<SignInEvent["outcome"], { label: string; className: string
   failed: { label: "Failed", className: "text-destructive" },
   test: { label: "Test", className: "text-muted-foreground" },
   warning: { label: "Warning", className: "text-amber-700 dark:text-amber-400" },
+  updated: { label: "Updated", className: "text-muted-foreground" },
+  attention: { label: "Needs a look", className: "text-amber-700 dark:text-amber-400" },
 }
+// A provider's own metadata changed (or couldn't be fetched): nobody signed in.
+const ABOUT_PROVIDER: SignInEvent["outcome"][] = ["updated", "attention"]
 
 function Events({ events }: { events: SignInEvent[] }) {
   if (!events.length)
@@ -788,8 +858,13 @@ function Events({ events }: { events: SignInEvent[] }) {
           <span className={cn("w-24 shrink-0 font-medium", OUTCOME[e.outcome].className)}>
             {OUTCOME[e.outcome].label}
           </span>
-          <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
-          <span className="text-muted-foreground">via {e.connection ?? "a deleted provider"}</span>
+          {!ABOUT_PROVIDER.includes(e.outcome) && (
+            <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
+          )}
+          <span className="text-muted-foreground">
+            {ABOUT_PROVIDER.includes(e.outcome) ? "" : "via "}
+            {e.connection ?? "a deleted provider"}
+          </span>
           <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
           {(e.reason || e.ref) && (
             <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
@@ -957,7 +1032,10 @@ function SignInSettingsView() {
             </div>
           </Section>
 
-          <Section title="Recent sign-ins" description="Through your providers, newest first.">
+          <Section
+            title="Recent sign-ins"
+            description="Through your providers, and changes they made by themselves, newest first."
+          >
             <Events events={settings.events} />
           </Section>
         </div>
