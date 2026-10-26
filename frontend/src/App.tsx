@@ -211,7 +211,7 @@ export default function App() {
 
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={location.pathname === "/chat" ? "h-full" : "hidden"}>
+        <div className={isOpen("/chat") ? "h-full" : "hidden"}>
           <LazyPage>
             <ChatView role={activeRole} />
           </LazyPage>

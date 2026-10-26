@@ -21,6 +21,7 @@ import {
 //   /sso               back from a sign-in provider (see lib/legacy-hash.ts)
 //   /sso-test          the window of an admin's "Test sign-in"
 //   /chat, /knowledge  everyone signed in
+//   /chat/:id          one of their saved conversations
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
 //   /admin/sign-in, /admin/members   admins (the Access screen's two tabs)
@@ -48,7 +49,9 @@ export const routes: RouteObject[] = [
           {
             Component: App,
             children: [
-              { path: "chat", element: null }, // the chat stays mounted in App, so it isn't lost
+              // The chat stays mounted in App, so it isn't lost on another screen.
+              { path: "chat", element: null },
+              { path: "chat/:conversationId", element: null }, // a saved conversation
               { path: "knowledge", Component: KnowledgeScreen },
               {
                 Component: HrOnly,
