@@ -19,8 +19,8 @@ One run (sync()):
      that changed are re-indexed (indexing.schedule_index(ws, docs=...)).
 A run that fails part-way keeps what it wrote (and re-indexes it), deletes
 nothing and keeps the old cursor. Its error is a code (connectors/base.py
-ERRORS), shown in plain words; auth_expired and config wait for an admin
-instead of being retried.
+ERRORS), shown in plain words; auth_expired, config and missing_scope wait for
+an admin instead of being retried.
 """
 
 import hashlib
@@ -330,7 +330,8 @@ def sync_all(job=None):
         for row in integrations_store.all_connected(provider):
             if row["status"] not in ("connected", "error"):
                 continue
-            if row["status"] == "error" and row.get("last_error") in ("auth_expired", "config"):
+            if row["status"] == "error" and row.get("last_error") in ("auth_expired", "config",
+                                                                       "missing_scope"):
                 continue
             if c.PICKER_REQUIRED and not picks(row, provider):
                 continue

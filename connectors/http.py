@@ -24,6 +24,7 @@ Error messages carry the method and the URL without its query string (which
 can hold tokens), never a response body.
 """
 
+import datetime
 import email.utils
 import hashlib
 import logging
@@ -114,9 +115,18 @@ def safe_url(url):
 
 
 def retry_after(response):
-    """Retry-After in seconds (it may be a number or an HTTP date), or None."""
+    """Retry-After in seconds (it may be a number or an HTTP date), or None.
+    Without one, Atlassian's X-RateLimit-Reset (an ISO 8601 time,
+    https://developer.atlassian.com/cloud/confluence/rate-limiting/) on a 429."""
     value = (response.headers.get("Retry-After") or "").strip()
     if not value:
+        reset = (response.headers.get("X-RateLimit-Reset") or "").strip()
+        if reset and response.status_code == 429:
+            try:
+                when = datetime.datetime.fromisoformat(reset.replace("Z", "+00:00"))
+                return max(0.0, when.timestamp() - time.time())
+            except ValueError:
+                return None
         return None
     try:
         return max(0.0, float(value))

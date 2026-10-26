@@ -1,0 +1,138 @@
+{
+ "_source": [
+  "https://learn.microsoft.com/en-us/graph/api/drive-list (GET /sites/{id}/drives)",
+  "https://learn.microsoft.com/en-us/graph/api/driveitem-delta (value, deleted facet, @odata.nextLink, @odata.deltaLink)",
+  "https://learn.microsoft.com/en-us/graph/api/driveitem-list-permissions (roles, grantedToV2 user / siteUser / group / siteGroup, link.scope)",
+  "https://learn.microsoft.com/en-us/graph/api/driveitem-get-content"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/sites/acme.sharepoint.com,site-guid,web-guid/drives"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "drv-1",
+       "name": "Documents",
+       "driveType": "documentLibrary"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/root/delta",
+    "params": {
+     "token": "d1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "f-docx",
+       "deleted": {
+        "state": "deleted"
+       },
+       "parentReference": {
+        "driveId": "drv-1",
+        "id": "fold-1"
+       }
+      },
+      {
+       "id": "f-txt",
+       "name": "Notes.txt",
+       "size": 1000,
+       "lastModifiedDateTime": "2026-10-02T10:00:00Z",
+       "eTag": "\"{f-txt},1\"",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents/Notes.txt",
+       "parentReference": {
+        "driveId": "drv-1",
+        "driveType": "documentLibrary",
+        "id": "fold-1"
+       },
+       "file": {
+        "mimeType": "text/plain"
+       },
+       "shared": {
+        "scope": "users"
+       }
+      },
+      {
+       "id": "f-new",
+       "name": "Onboarding.md",
+       "size": 1000,
+       "lastModifiedDateTime": "2026-10-21T10:00:00Z",
+       "eTag": "\"{f-new},1\"",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents/Onboarding.md",
+       "parentReference": {
+        "driveId": "drv-1",
+        "driveType": "documentLibrary",
+        "id": "fold-1"
+       },
+       "file": {
+        "mimeType": "text/markdown"
+       }
+      }
+     ],
+     "@odata.deltaLink": "https://graph.microsoft.com/v1.0/drives/drv-1/root/delta?token=d2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/items/f-txt/permissions"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "p6",
+       "roles": [
+        "read"
+       ],
+       "grantedToV2": {
+        "user": {
+         "id": "u-bob",
+         "displayName": "Bob",
+         "email": "bob@acme.com"
+        }
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/items/f-new/permissions"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": []
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/items/f-new/content"
+   },
+   "response": {
+    "status": 200,
+    "text": "# Day one\n\nMeet your buddy."
+   }
+  }
+ ]
+}
