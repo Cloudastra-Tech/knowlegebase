@@ -12,6 +12,7 @@ the admin screen can say so on the provider before anyone reports it.
 """
 
 import base64
+import re
 import secrets
 
 import httpx
@@ -189,6 +190,11 @@ def from_oidc_exception(e):
     """The code for what went wrong exchanging the provider's answer for a
     verified ID token (Authlib, httpx and url_guard errors)."""
     if isinstance(e, OAuthError):           # the token endpoint said no, or the state
+        # Keycloak answers a wrong client secret with unauthorized_client ("Invalid
+        # client or Invalid client credentials") where the RFC says invalid_client.
+        if e.error == "unauthorized_client" and re.search(
+                r"invalid client|credential", e.description or "", re.I):
+            return "invalid_client"
         return _TOKEN_ERRORS.get(e.error, "provider_error")
     if isinstance(e, JoseError):            # the ID token's signature, issuer, audience, ...
         return "token_invalid"

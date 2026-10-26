@@ -878,6 +878,24 @@ def test_a_wrong_client_secret_is_named_and_the_provider_shows_as_failing(
         client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme)
 
 
+def test_keycloaks_answer_to_a_wrong_secret_is_named_too(client, acme, token_endpoint):
+    """Keycloak says unauthorized_client ("Invalid client credentials") where the
+    RFC says invalid_client: it's still the secret, not the flow."""
+    import members_store
+    import sso_setup
+    conn = members_store.create_connection(
+        "acme", "oidc", "Keycloak", ISSUER, "kb", {"client_secret": "wrong"},
+        {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
+    try:
+        token_endpoint.update(status=401, json={
+            "error": "unauthorized_client",
+            "error_description": "Invalid client or Invalid client credentials"})
+        sign_in_attempt(conn)
+        assert health_of(client, acme, conn)["code"] == "invalid_client"
+    finally:
+        client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme)
+
+
 def test_a_refusal_carries_a_reference_too(client, acme, acme_sso, idp):
     location = callback(client, idp, acme_sso, {"email": "x@acme.example",
                                                 "email_verified": False})
