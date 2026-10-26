@@ -105,21 +105,25 @@ def test_a_failed_chat_answer_is_logged_without_the_question(signed_in, monkeypa
     assert QUESTION not in record.getMessage()
 
 
-def test_a_failed_reindex_is_logged(monkeypatch, caplog):
-    from kb import state
+def test_a_failed_reindex_is_logged(monkeypatch, caplog, jobs_paused):
+    import uuid
+    from kb import jobs
     from kb.services import indexing
     import ingest
 
-    def broken_ingest(**kwargs):
+    def broken_ingest(*args, **kwargs):
         raise OSError("disk full")
 
     monkeypatch.setattr(ingest, "main", broken_ingest)
-    state.indexes["acme"] = state.new_index_state()
+    ws = f"acme-{uuid.uuid4().hex[:8]}"
+    job_id = jobs.enqueue("index", ws, {}, lane=indexing.lane(ws), max_attempts=1)
+    runner = jobs.Runner(handlers={"index": jobs.HANDLERS["index"]}, threads=0)
     with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
-        indexing.run_index("acme")
-    assert state.indexes["acme"]["error"] == "OSError: disk full"      # the UI still sees it
+        while jobs.get(job_id)["status"] == "queued" and runner.run_once():
+            pass
+    assert indexing.index_status(ws)["error"] == "OSError: disk full"    # the UI still sees it
     [record] = [r for r in caplog.records if r.message.startswith("Index:")]
-    assert "acme" in record.message and record.exc_info
+    assert ws in record.message and record.exc_info
 
 
 def test_a_failed_connector_sync_is_logged(monkeypatch, caplog):

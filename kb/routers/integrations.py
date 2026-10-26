@@ -142,8 +142,8 @@ class AccessIn(BaseModel):
 @router.put("/api/integrations/{provider}/access")
 def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
     """Who may ask about this connection's files: HR and admins only
-    ("restricted", the default) or everyone in the workspace. The files are
-    re-indexed so their chunks carry the new level."""
+    ("restricted", the default) or everyone in the workspace. Their chunks are
+    re-tagged with the new level (nothing is embedded again)."""
     _connector(provider)
     ws = ws_of(user)
     row = integrations_store.get(ws, provider)
@@ -154,7 +154,7 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
                                   settings=dict(row.get("settings") or {}, access=body.access))
         log.warning("%s set who can ask about %s files in %s to %s", user["username"],
                     LABELS[provider], ws, body.access)
-        indexing.schedule_index(ws)
+        indexing.schedule_retag(ws, provider)
     return {"access": body.access}
 
 

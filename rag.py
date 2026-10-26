@@ -28,6 +28,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.retrievers import BM25Retriever   # keyword search
 
+from ingest import CHROMA_LOCK
 from safety import check_question, check_answer  # our Guardrails-AI safety layer
 
 load_dotenv()
@@ -101,8 +102,9 @@ def load_chain(role="public", collection=None):
 
     # Re-open the vector database we built in ingest.py.
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    vectorstore = Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings,
-                         collection_name=collection or "langchain")
+    with CHROMA_LOCK:
+        vectorstore = Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings,
+                             collection_name=collection or "langchain")
 
     # ---- SEARCH 1: semantic (dense) — matches by MEANING ----
     # The 'filter' makes Chroma only search chunks whose access is allowed.

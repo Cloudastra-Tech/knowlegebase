@@ -189,6 +189,39 @@ public"), but it can never *raise* it — the server decides.
 
 ---
 
+## 🔁 Re-indexing and background jobs
+
+Work that shouldn't hold up a request runs as a **job**: a row in the `jobs`
+table that a pool of worker threads claims, runs and marks done (`kb/jobs.py`).
+Re-indexing a workspace, syncing a connector, and the periodic connector sync,
+SAML metadata refresh and clean-up are all jobs. A claim is a lease in the
+database, so a job survives a restart (another worker takes it over when the
+lease runs out), a failed job is retried with a growing wait, and each lane runs
+one job at a time: one index run per workspace, while workspaces take turns
+and never wait on each other. The workers run inside the API, or as
+`python -m kb.worker` (deploy.md, "Background jobs").
+
+```
+  upload / edit / delete ──► index job (that document)     ┐
+  connector sync changed ──► index job (check every file)  ├─► ingest.update: only what changed
+  "Re-index"             ──► index job                     ┘     is embedded; deleted files'
+  access level changed   ──► retag job ─► chunks' access tag      chunks are removed
+                                          updated, no embedding
+  "Rebuild everything",  ──► index job ─► ingest.main into a NEW collection, then the
+  new chunking settings                   workspace switches to it (search_indexes)
+```
+
+Every chunk has a **stable id** from (workspace, document, chunk number, chunk
+text), and carries its document's key, a hash of its content and its access
+level, so a run can tell what's new, changed or gone without embedding anything
+it already has. Questions are answered throughout: an update changes the index
+a document at a time, and a full rebuild builds beside the collection in use,
+which answers until the switch (a failed rebuild leaves it in place). Each
+workspace's row in `search_indexes` names its collection and a version that
+changes with every update; agents reload when it does (`kb/services/agents.py`).
+
+---
+
 ## 🗄️ Database migrations
 
 Accounts, sign-in providers, sessions and integrations live in one SQLite file,

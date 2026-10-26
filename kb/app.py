@@ -4,7 +4,6 @@ the site. api.py builds the one `uvicorn api:app` serves."""
 import contextlib
 import os
 import secrets
-import threading
 
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -12,10 +11,9 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import observability
 import safety
-from kb import middleware, settings, site
+from kb import jobs, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, auth, chat, docs, health, index,
                         integrations, knowledge, saml, signup, sso)
-from kb.services import saml_refresh, sync
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, index, docs, integrations, knowledge,
            admin_members, health)
@@ -28,9 +26,11 @@ async def _lifespan(app):
     # Bring the database up to date now (db.py migrates on its first connection),
     # so a failing migration stops the start instead of the first request.
     db.connect().close()
-    threading.Thread(target=sync.sync_scheduler, daemon=True).start()
-    threading.Thread(target=saml_refresh.saml_refresh_scheduler, daemon=True).start()
+    # Re-indexing, connector syncs and the SAML metadata refresh run as jobs
+    # (kb/jobs.py): here, unless JOBS_IN_PROCESS=off and `python -m kb.worker` does.
+    jobs.start_in_process()
     yield
+    jobs.stop_in_process()
 
 
 def create_app():
