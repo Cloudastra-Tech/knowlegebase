@@ -1,5 +1,5 @@
 """
-The built React site (frontend/dist) as api.py serves it: every screen's URL
+The built React site (frontend/dist) as kb/site.py serves it: every screen's URL
 (/chat, /admin/sign-in, ...) gets index.html, so a deep link or a reload works,
 while missing assets, files and API routes stay 404s.
 """
@@ -11,7 +11,7 @@ import pytest
 def site(tmp_path):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import api
+    from kb import site as kb_site
 
     (tmp_path / "index.html").write_text("<!doctype html><title>app</title>")
     (tmp_path / "assets").mkdir()
@@ -22,7 +22,7 @@ def site(tmp_path):
     def health():
         return {"ok": True}
 
-    app.mount("/", api._Site(directory=str(tmp_path), html=True), name="site")
+    app.mount("/", kb_site._Site(directory=str(tmp_path), html=True), name="site")
     return TestClient(app)
 
 

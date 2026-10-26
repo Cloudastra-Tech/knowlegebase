@@ -202,11 +202,12 @@ def test_files_left_by_a_removed_connection_stay_restricted(env):
 @pytest.fixture
 def outline(monkeypatch):
     """The wiki configured on the server; records whether each agent gets it."""
-    import api
+    from kb import state
+    from kb.services import agents
     built = {}
     monkeypatch.setenv("OUTLINE_API_TOKEN", "ol_api_test")
-    monkeypatch.setattr(api, "_agents", {})
-    monkeypatch.setattr(api, "build_agent",
+    monkeypatch.setattr(state, "agents", {})
+    monkeypatch.setattr(agents, "build_agent",
                         lambda role, collection, outline: built.setdefault(role, outline))
     return built
 
@@ -221,13 +222,13 @@ def outline(monkeypatch):
 def test_outline_is_only_given_to_roles_from_outline_min_role(outline, monkeypatch,
                                                               min_role, public_gets_it,
                                                               hr_gets_it):
-    import api
+    from kb.services import agents
     if min_role is None:
         monkeypatch.delenv("OUTLINE_MIN_ROLE", raising=False)
     else:
         monkeypatch.setenv("OUTLINE_MIN_ROLE", min_role)
-    api.get_agent("default", "public")
-    api.get_agent("default", "hr")
+    agents.get_agent("default", "public")
+    agents.get_agent("default", "hr")
     assert outline == {"public": public_gets_it, "hr": hr_gets_it}
 
 

@@ -669,11 +669,11 @@ def test_signing_out_can_sign_out_at_the_provider_too(client, acme, monkeypatch)
 
 
 def test_the_public_sign_in_endpoints_are_rate_limited(client, monkeypatch):
-    import api
+    from kb import rate_limit, state
     monkeypatch.setenv("RATE_LIMITS", "on")
-    monkeypatch.setattr(api, "_hits", {})
+    monkeypatch.setattr(state, "hits", {})
     codes = [client.post("/api/auth/sso/discover", json={"email": "x@acme.example"}).status_code
-             for _ in range(api.LIMITS["discover"] + 1)]
+             for _ in range(rate_limit.LIMITS["discover"] + 1)]
     assert codes[-2] == 200 and codes[-1] == 429
 
 
@@ -705,10 +705,10 @@ def test_a_sign_in_code_only_works_in_the_browser_that_started_it(client, acme_s
 
 
 def test_an_expired_test_never_turns_into_a_real_sign_in(client, acme, acme_sso, monkeypatch):
-    import api
+    from kb import state
     import members_store
     ticket, location = start_test(client, acme, acme_sso)
-    api._sso_tests[ticket]["expires"] = 0               # e.g. a slow MFA prompt
+    state.sso_tests[ticket]["expires"] = 0               # e.g. a slow MFA prompt
     fake_answer(monkeypatch, {"email": "slow@acme.example", "email_verified": True})
     r = client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state={state_of(location)}")
     assert r.headers["location"] == "/#sso-test"

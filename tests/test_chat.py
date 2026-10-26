@@ -318,18 +318,19 @@ def test_a_cancelled_run_stops_streaming_the_answer(fakes):
 def client(fakes):
     from fastapi.testclient import TestClient
     import api
+    from kb import state
     import auth
     import members_store
 
     for name in ("asker-one", "asker-two"):
         members_store.set_password(name, name, auth.hash_password("correct-horse"),
                                    "default", "public")
-    api._agents.clear()
+    state.agents.clear()
     c = TestClient(api.app)
     c.tokens = [c.post("/api/auth/login", json={"username": name, "password": "correct-horse"})
                 .json()["token"] for name in ("asker-one", "asker-two")]
     yield c
-    api._agents.clear()
+    state.agents.clear()
 
 
 def stream(client, token, question):
@@ -370,6 +371,7 @@ def test_a_dropped_stream_stops_the_work(client, fakes):
     """The browser goes away after the first words: the agent stops, and the
     workspace isn't left counted as busy (which would hold up re-indexing)."""
     import api
+    from kb import state
 
     fakes.delays["agent"] = 3.0
     received = []
@@ -404,9 +406,9 @@ def test_a_dropped_stream_stops_the_work(client, fakes):
     asyncio.run(drive())
     assert received[0]["status"] == 200
     deadline = time.monotonic() + 5
-    while (not fakes.streamed or api._gate_of("default")["active"]) and time.monotonic() < deadline:
+    while (not fakes.streamed or state.gate_of("default")["active"]) and time.monotonic() < deadline:
         time.sleep(0.02)
     assert time.monotonic() - start < 2.5           # well before the 3 s answer would end
     ((_, sent, total),) = fakes.streamed
     assert sent < total
-    assert api._gate_of("default")["active"] == 0
+    assert state.gate_of("default")["active"] == 0
