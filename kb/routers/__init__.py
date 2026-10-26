@@ -72,6 +72,17 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PATCH  /admin/members/{username} {role: public|hr|admin|null, disabled}       (admin)
     DELETE /admin/members/{username}                                               (admin)
     POST   /admin/members/{username}/sign-out   end all their sessions                (admin)
+  invites.py
+    GET    /admin/members/invites invites not yet accepted or revoked              (admin)
+    POST   /admin/members/invite  {email, role}: email someone a link to join      (admin)
+    POST   /admin/members/invites/{id}/resend   a new link, emailed again          (admin)
+    DELETE /admin/members/invites/{id}          withdraw it                        (admin)
+    POST   /auth/invite/lookup    {token} -> whose invite, to which workspace, how they'll sign in
+    POST   /auth/invite/accept    {token, name, password} -> {token, user} | {sso, email}
+  audit.py
+    GET    /admin/audit           ?actor&action&from&to&cursor: the audit log, newest first (admin)
+    GET    /admin/audit/export    ?format=csv|jsonl (+ the filters), streamed           (admin)
+    GET    /admin/audit/verify    check the hash chain                                  (admin)
   health.py
     GET    /health                the process is up (Docker's HEALTHCHECK)
     GET    /health/ready          can it serve: database, index, key, guards (503 if not)

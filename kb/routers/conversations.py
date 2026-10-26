@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 import conversations_store as store
+from kb.audit import audited
 from kb.deps import current_role, current_user, require_hr, ws_of
 from kb.services import conversations
 
@@ -52,10 +53,12 @@ def list_conversations(limit: int = Query(50, ge=1, le=200), before: float | Non
 
 @router.post("/api/conversations")
 def create_conversation(body: NewConversationIn, user=Depends(current_user),
-                        role=Depends(current_role)):
+                        role=Depends(current_role), audit=audited("conversation.create")):
     """A new, empty conversation under the role the app is viewed as now."""
     title = " ".join((body.title or "").split())[:store.TITLE_CHARS] or None
-    return _summary(store.create(ws_of(user), user["username"], role, title), role)
+    conv = store.create(ws_of(user), user["username"], role, title)
+    audit.record("conversation", conv["id"], {"role": role}, user=user)
+    return _summary(conv, role)
 
 
 @router.get("/api/conversations/{cid}")
@@ -73,20 +76,23 @@ def get_conversation(cid: str, user=Depends(current_user), role=Depends(current_
 
 @router.patch("/api/conversations/{cid}")
 def rename_conversation(cid: str, body: ConversationEdit, user=Depends(current_user),
-                        role=Depends(current_role)):
+                        role=Depends(current_role), audit=audited("conversation.rename")):
     title = " ".join(body.title.split())[:store.TITLE_CHARS]
     if not title:
         raise HTTPException(400, "Please give the conversation a name.")
     _own(user, cid)
     store.rename(ws_of(user), user["username"], cid, title)
+    audit.record("conversation", cid, user=user)          # not the title: the asker's words
     return _summary(_own(user, cid), role)
 
 
 @router.delete("/api/conversations/{cid}")
-def delete_conversation(cid: str, user=Depends(current_user)):
+def delete_conversation(cid: str, user=Depends(current_user),
+                        audit=audited("conversation.delete")):
     """Deletes it for good, with its messages and the feedback on them."""
     if not store.delete(ws_of(user), user["username"], cid):
         raise HTTPException(404, "That conversation doesn't exist.")
+    audit.record("conversation", cid, user=user)
     return {"ok": True}
 
 
@@ -102,7 +108,7 @@ def _answer(user, role, mid):
 
 @router.put("/api/messages/{mid}/feedback")
 def give_feedback(mid: str, body: FeedbackIn, user=Depends(current_user),
-                  role=Depends(current_role)):
+                  role=Depends(current_role), audit=audited("feedback.set")):
     """Thumbs up or down on an answer, with reasons and a note for thumbs down. HR and
     admins see it with the question and answer (GET /api/admin/feedback)."""
     m = _answer(user, role, mid)
@@ -118,13 +124,16 @@ def give_feedback(mid: str, body: FeedbackIn, user=Depends(current_user),
                 "state": m["state"], "sources": m["sources"], "max_access": m["max_access"]}
     store.set_feedback(mid, user["username"], ws_of(user), body.rating, reasons, comment,
                        snapshot)
+    audit.record("message", mid, {"rating": body.rating, "reasons": reasons}, user=user)
     return {"rating": body.rating, "reasons": reasons, "comment": comment}
 
 
 @router.delete("/api/messages/{mid}/feedback")
-def remove_feedback(mid: str, user=Depends(current_user), role=Depends(current_role)):
+def remove_feedback(mid: str, user=Depends(current_user), role=Depends(current_role),
+                    audit=audited("feedback.delete")):
     _answer(user, role, mid)
     store.delete_feedback(mid, user["username"])
+    audit.record("message", mid, user=user)
     return {"ok": True}
 
 

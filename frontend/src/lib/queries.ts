@@ -23,6 +23,7 @@ export const queries = {
     }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
+  invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>

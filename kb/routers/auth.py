@@ -16,6 +16,7 @@ import members_store
 import sessions_store
 import sso
 from kb import state
+from kb.audit import audited
 from kb.deps import current_user, public_url, public_user
 from kb.rate_limit import rate_limit
 from kb.services.sign_in import BROWSER_KEY
@@ -142,10 +143,10 @@ def _provider_logout_url(request, user):
 
 
 @router.post("/api/auth/logout-everywhere")
-def logout_everywhere(user=Depends(current_user)):
+def logout_everywhere(user=Depends(current_user), audit=audited("session.sign_out_everywhere")):
     """Ends every session this person has, on every device, this one included."""
     ended = sessions_store.delete_user(user["username"])
-    log.warning("%s signed out everywhere (%d sessions)", user["username"], ended)
+    audit.record("member", user["username"], {"sessions_ended": ended}, user=user)
     return {"ok": True, "ended": ended}
 
 

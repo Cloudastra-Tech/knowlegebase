@@ -20,8 +20,10 @@ from pydantic import BaseModel, Field
 import docs_store
 import integrations_store
 import workspaces
+import kb.audit
 import kb.state  # as kb.state: the callback's `state` parameter would hide it
 from connectors import google_drive
+from kb.audit import audited
 from kb.deps import current_role, current_user, public_url, require_hr, ws_of
 from kb.rate_limit import user_limit
 from kb.services import agents, indexing, sync
@@ -75,7 +77,8 @@ def list_integrations(user=Depends(current_user), role=Depends(current_role)):
 
 
 @router.post("/api/integrations/{provider}/connect")
-def integration_connect(provider: str, request: Request, user=Depends(require_hr)):
+def integration_connect(provider: str, request: Request, user=Depends(require_hr),
+                        audit=audited("integration.connect_start")):
     c = _connector(provider)
     if not c.configured():
         raise HTTPException(400, f"{LABELS[provider]} isn't set up on this server yet "
@@ -89,11 +92,13 @@ def integration_connect(provider: str, request: Request, user=Depends(require_hr
     oauth_states[state] = {"workspace": ws_of(user), "user": user["username"],
                            "provider": provider, "expires": now + OAUTH_STATE_SECONDS,
                            "redirect_uri": redirect_uri}
+    audit.record("integration", provider, user=user)
     return {"url": c.auth_url(redirect_uri, state)}
 
 
 @router.get("/api/integrations/{provider}/callback")
-def integration_callback(provider: str, state: str = "", code: str = "", error: str = ""):
+def integration_callback(provider: str, request: Request, state: str = "", code: str = "",
+                         error: str = ""):
     """The provider sends the browser back here. The one-time `state` ties it to the
     workspace and user who clicked Connect (a redirect carries no session header)."""
     c = _connector(provider)
@@ -108,6 +113,9 @@ def integration_callback(provider: str, state: str = "", code: str = "", error: 
     except Exception:
         log.exception("Integration %s: couldn't finish connecting workspace %s", provider, ws)
         return RedirectResponse("/#integrations?error=connect_failed")
+    row = integrations_store.get(ws, provider) or {}
+    kb.audit.record(request, ws, "integration.connect", pending["user"], "integration", provider,
+                    {"account": row.get("account")})
     if sync.ready_to_sync(ws, provider):
         sync.start_sync(ws, provider)
         return RedirectResponse(f"/#integrations?connected={provider}")
@@ -116,21 +124,25 @@ def integration_callback(provider: str, state: str = "", code: str = "", error: 
 
 
 @router.post("/api/integrations/{provider}/sync")
-def integration_sync(provider: str, user=Depends(require_hr)):
+def integration_sync(provider: str, user=Depends(require_hr),
+                     audit=audited("integration.sync")):
     _connector(provider)
     user_limit(user, "sync")
     ws = ws_of(user)
     if not integrations_store.get(ws, provider):
         raise HTTPException(400, f"{LABELS[provider]} isn't connected.")
     sync.start_sync(ws, provider)
+    audit.record("integration", provider, user=user)
     return {"ok": True}
 
 
 @router.delete("/api/integrations/{provider}")
-def integration_disconnect(provider: str, user=Depends(require_hr)):
+def integration_disconnect(provider: str, user=Depends(require_hr),
+                           audit=audited("integration.disconnect")):
     c = _connector(provider)
     ws = ws_of(user)
     c.disconnect(ws)
+    audit.record("integration", provider, user=user)
     indexing.schedule_index(ws)            # drop its files from the search index
     return {"ok": True}
 
@@ -140,7 +152,8 @@ class AccessIn(BaseModel):
 
 
 @router.put("/api/integrations/{provider}/access")
-def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
+def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
+                       audit=audited("integration.access")):
     """Who may ask about this connection's files: HR and admins only
     ("restricted", the default) or everyone in the workspace. Their chunks are
     re-tagged with the new level (nothing is embedded again)."""
@@ -152,8 +165,7 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
     if integrations_store.access_of(row) != body.access:
         integrations_store.update(ws, provider,
                                   settings=dict(row.get("settings") or {}, access=body.access))
-        log.warning("%s set who can ask about %s files in %s to %s", user["username"],
-                    LABELS[provider], ws, body.access)
+        audit.record("integration", provider, {"access": body.access}, user=user)
         indexing.schedule_retag(ws, provider)
     return {"access": body.access}
 
@@ -177,7 +189,8 @@ def drive_folders(parent: str = "", user=Depends(require_hr)):
 
 
 @router.put("/api/integrations/google_drive/folders")
-def drive_set_folders(body: FoldersIn, user=Depends(require_hr)):
+def drive_set_folders(body: FoldersIn, user=Depends(require_hr),
+                      audit=audited("integration.folders")):
     """Save which folders / Shared Drives / single files to sync, then sync
     (anything no longer picked is dropped from the index)."""
     ws = ws_of(user)
@@ -191,5 +204,8 @@ def drive_set_folders(body: FoldersIn, user=Depends(require_hr)):
                for f in body.folders if f.get("id")][:200]
     settings = dict(drive.get("settings") or {}, folders=folders)
     integrations_store.update(ws, google_drive.PROVIDER, settings=settings)
+    audit.record("integration", google_drive.PROVIDER,
+                 {"folders": [{"id": f["id"], "name": f["name"], "kind": f["kind"]}
+                              for f in folders]}, user=user)
     sync.start_sync(ws, google_drive.PROVIDER)
     return {"folders": folders}

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 import docs_store
 import workspaces
+from kb.audit import audited
 from kb.deps import require_hr, ws_of
 from kb.rate_limit import user_limit
 from kb.services import indexing
@@ -57,7 +58,7 @@ def read_doc(access: str, name: str, user=Depends(require_hr)):
 
 
 @router.post("/api/docs")
-def create_doc(body: NewDocIn, user=Depends(require_hr)):
+def create_doc(body: NewDocIn, user=Depends(require_hr), audit=audited("doc.create")):
     ws = ws_of(user)
     root = workspaces.docs_root(ws)
     name = docs_store.safe_name(body.name)
@@ -68,32 +69,38 @@ def create_doc(body: NewDocIn, user=Depends(require_hr)):
     if os.path.exists(docs_store.doc_path(body.access, name, root)):
         raise HTTPException(409, f"{name} already exists. Edit it instead.")
     docs_store.save(body.access, name, body.content.encode("utf-8"), root)
+    audit.record("doc", f"{body.access}/{name}", {"size": len(body.content.encode("utf-8"))},
+                 user=user)
     indexing.schedule_index(ws, docs=[f"{body.access}/{name}"])
     return {"access": body.access, "name": name}
 
 
 @router.put("/api/docs/{access}/{name}")
-def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr)):
+def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr),
+             audit=audited("doc.update")):
     ws = ws_of(user)
     _existing_path(ws, access, name)
     if not name.lower().endswith(".txt"):
         raise HTTPException(400, "Only .txt documents can be edited here.")
     docs_store.save(access, name, body.content.encode("utf-8"), workspaces.docs_root(ws))
+    audit.record("doc", f"{access}/{name}", {"size": len(body.content.encode("utf-8"))},
+                 user=user)
     indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
 
 @router.delete("/api/docs/{access}/{name}")
-def delete_doc(access: str, name: str, user=Depends(require_hr)):
+def delete_doc(access: str, name: str, user=Depends(require_hr), audit=audited("doc.delete")):
     ws = ws_of(user)
     os.remove(_existing_path(ws, access, name))
+    audit.record("doc", f"{access}/{name}", user=user)
     indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
 
 @router.post("/api/docs/upload")
 def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"),
-                user=Depends(require_hr)):
+                user=Depends(require_hr), audit=audited("doc.upload")):
     """The files arrive already on disk (Starlette spools big ones to temporary
     files), with the whole request capped by middleware.BodyLimit. Each is checked
     (size, and that it is what its name says) before any is saved."""
@@ -126,5 +133,6 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
         raise HTTPException(400, "Please choose at least one .txt or .pdf file.")
     for name, f in picked:
         docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
+    audit.record("doc", access, {"files": [name for name, _ in picked]}, user=user)
     indexing.schedule_index(ws, docs=[f"{access}/{name}" for name, _ in picked])
     return {"saved": [name for name, _ in picked]}
