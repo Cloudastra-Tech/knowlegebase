@@ -14,6 +14,7 @@ import os
 
 from fastapi.responses import RedirectResponse
 
+import kb.audit
 import members_store
 import sso
 import sso_errors
@@ -65,6 +66,8 @@ async def finish_signup(c, request, name, code=None):
         log.exception("Sign-up: couldn't create the workspace, reference %s", ref)
         return login_error("sso_failed", ref, tab="signup")
     log.warning("Sign-up: %s created the workspace %s for %s", email, workspace, org)
+    kb.audit.record(request, workspace, "workspace.create", email, "workspace", workspace,
+                    {"name": name, "domain": org, "invite_code": bool(code and codes)})
     members_store.log_event(workspace, "google", email, "signed_in")
     user = {"username": email, "name": person, "provider": "google", "org": org,
             "workspace": workspace, "role": "admin"}

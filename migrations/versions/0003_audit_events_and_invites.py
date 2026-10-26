@@ -20,7 +20,7 @@ branch_labels = None
 depends_on = None
 
 SCHEMA = (
-    """CREATE TABLE audit_events (
+    """CREATE TABLE IF NOT EXISTS audit_events (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         workspace   TEXT NOT NULL,
         at          REAL NOT NULL,
@@ -35,8 +35,8 @@ SCHEMA = (
         details     TEXT NOT NULL DEFAULT '{}',   -- JSON, canonical (sorted keys)
         prev_hash   TEXT NOT NULL,         -- the workspace's previous row's hash
         hash        TEXT NOT NULL)         -- sha256(prev_hash + this row, canonical)""",
-    "CREATE INDEX audit_events_by_workspace ON audit_events(workspace, id)",
-    """CREATE TABLE invites (
+    "CREATE INDEX IF NOT EXISTS audit_events_by_workspace ON audit_events(workspace, id)",
+    """CREATE TABLE IF NOT EXISTS invites (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         token_hash   TEXT NOT NULL UNIQUE, -- sha256 of the link's token
         workspace    TEXT NOT NULL REFERENCES workspaces(slug) ON DELETE CASCADE,
@@ -48,7 +48,7 @@ SCHEMA = (
         expires_at   REAL NOT NULL,
         accepted_at  REAL,
         revoked_at   REAL)""",
-    "CREATE INDEX invites_by_workspace ON invites(workspace, email)",
+    "CREATE INDEX IF NOT EXISTS invites_by_workspace ON invites(workspace, email)",
 )
 
 

@@ -247,6 +247,13 @@ cd genai && docker compose ps              # STATUS: Up
 | See the background jobs | `docker compose exec knowledgebase python -c "import db; [print(tuple(r)) for r in db.connect().execute('SELECT id, kind, workspace, status, attempts, error FROM jobs ORDER BY id DESC LIMIT 20')]"` |
 | Shell into the container | `docker compose exec knowledgebase sh` |
 | Which database migration `config/app.db` is at | `docker compose exec knowledgebase alembic current` |
+| Who changed what (the admin audit log) | **Access > Activity** (filter, export as CSV or JSON lines), or `GET /api/admin/audit/verify` to check its hash chain. Kept for good; `python auth.py` changes show as the operator (`cli`) |
+
+**Email** (invites from Access > Members) goes through `MAIL_BACKEND` in `.env`:
+`smtp` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`; STARTTLS),
+`resend` (`RESEND_API_KEY`) or `postmark` (`POSTMARK_TOKEN`), from `MAIL_FROM`.
+The default, `console`, sends nothing and writes each email to the log, invite
+link included: set a real backend before admins start inviting people.
 
 **Database upgrades** happen by themselves: a new version upgrades
 `config/app.db` in place on its first request, in one transaction, keeping every
