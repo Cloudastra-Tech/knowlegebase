@@ -119,6 +119,23 @@ def _invite(client, h, ws):
     return r.json()["id"]
 
 
+def _conversation(ws):
+    import conversations_store
+    return conversations_store.create(ws, f"admin@{ws}.example", "hr", "Leave")["id"]
+
+
+def _answer(ws, rated=False):
+    """An answer in the admin's conversation (rated already, if asked)."""
+    import conversations_store
+    cid = _conversation(ws)
+    q = conversations_store.add_message(cid, "user", "How much leave?")
+    mid = conversations_store.add_message(cid, "assistant", "", parent_id=q)
+    conversations_store.finish_message(mid, "20 days.", "answered")
+    if rated:
+        conversations_store.set_feedback(mid, f"admin@{ws}.example", ws, 1)
+    return mid
+
+
 def _verify_setup(client, h, ws, txt):
     row = client.post("/api/admin/sign-in/domains", headers=h,
                       json={"domain": f"{ws}.example"}).json()
@@ -186,6 +203,16 @@ CASES = [
     ("integration.folders", lambda c, h, ws, txt: _drive(ws),
      lambda ws, _: ("PUT", "/api/integrations/google_drive/folders",
                     {"json": {"folders": [{"id": "f1", "name": "HR", "kind": "folder"}]}})),
+    ("conversation.create", None, lambda ws, _: ("POST", "/api/conversations", {"json": {}})),
+    ("conversation.rename", lambda c, h, ws, txt: _conversation(ws),
+     lambda ws, cid: ("PATCH", f"/api/conversations/{cid}", {"json": {"title": "Pay"}})),
+    ("conversation.delete", lambda c, h, ws, txt: _conversation(ws),
+     lambda ws, cid: ("DELETE", f"/api/conversations/{cid}", {})),
+    ("feedback.set", lambda c, h, ws, txt: _answer(ws),
+     lambda ws, mid: ("PUT", f"/api/messages/{mid}/feedback",
+                      {"json": {"rating": -1, "reasons": [], "comment": "private note"}})),
+    ("feedback.delete", lambda c, h, ws, txt: _answer(ws, rated=True),
+     lambda ws, mid: ("DELETE", f"/api/messages/{mid}/feedback", {})),
     ("session.sign_out_everywhere", None, lambda ws, _: ("POST", "/api/auth/logout-everywhere",
                                                          {})),
     ("audit.export", None, lambda ws, _: ("GET", "/api/admin/audit/export", {})),
@@ -207,7 +234,8 @@ def test_each_change_writes_one_event(client, fakes, monkeypatch, action, setup,
     (e,) = new
     assert (e["actor"], e["actor_type"], e["workspace"]) == (f"admin@{ws}.example", "user", ws)
     assert e["ip"] == "testclient" and e["user_agent"]
-    assert "s3cret" not in json.dumps(e) and "n3w" not in json.dumps(e)   # never a secret
+    for private in ("s3cret", "n3w", "private note", "Pay"):    # no secret, nor anyone's words
+        assert private not in json.dumps(e)
     assert audit_store.verify(ws)["ok"]
 
 

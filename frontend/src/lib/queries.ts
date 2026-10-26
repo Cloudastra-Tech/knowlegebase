@@ -11,6 +11,16 @@ export const queries = {
   // What's searchable depends on the role the app is viewed as (the X-Role header).
   knowledge: () => queryOptions({ queryKey: ["knowledge", session.role], queryFn: api.knowledge }),
   docs: () => queryOptions({ queryKey: ["docs"], queryFn: api.listDocs }),
+  // The signed-in person's saved chats. An answer's visibility depends on the role
+  // the app is viewed as, so it's part of the key.
+  conversations: () =>
+    queryOptions({ queryKey: ["conversations", session.role], queryFn: api.conversations }),
+  conversation: (id: string) =>
+    queryOptions({
+      queryKey: ["conversations", session.role, id],
+      queryFn: () => api.conversation(id),
+      retry: false,
+    }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),

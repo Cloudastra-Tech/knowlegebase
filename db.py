@@ -26,6 +26,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 
 DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
 BUSY_TIMEOUT = 5                   # seconds
@@ -74,10 +75,23 @@ def migrate(path=None):
 
 
 def use_wal(path=None):
-    """Put the database file in WAL mode (it stays so). Not inside a transaction."""
+    """Put the database file in WAL mode (it stays so). Not inside a transaction.
+    Switching needs the file to itself, and SQLite doesn't wait for that (no busy
+    timeout): when another process is switching or migrating it right then, try
+    again for up to BUSY_TIMEOUT seconds."""
     conn = _open(path or DB_PATH)
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.close()
+    try:
+        deadline = time.monotonic() + BUSY_TIMEOUT
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.05)
+    finally:
+        conn.close()
 
 
 def engine(path=None):

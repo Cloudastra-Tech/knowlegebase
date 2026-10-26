@@ -68,6 +68,11 @@ const ACTION: Record<string, string> = {
   "integration.access": "Changed who can ask about synced files",
   "integration.sync": "Synced an integration",
   "integration.disconnect": "Disconnected an integration",
+  "conversation.create": "Started a conversation",
+  "conversation.rename": "Renamed a conversation",
+  "conversation.delete": "Deleted a conversation",
+  "feedback.set": "Rated an answer",
+  "feedback.delete": "Took back a rating",
   "workspace.create": "Created the workspace",
   "session.sign_out_everywhere": "Signed out everywhere",
   "audit.export": "Exported the audit log",
@@ -84,6 +89,8 @@ const KINDS: [string, string][] = [
   ["doc.", "Documents"],
   ["integration.", "Integrations"],
   ["index.", "Re-indexing"],
+  ["conversation.", "Conversations"],
+  ["feedback.", "Answer ratings"],
   ["audit.", "Audit log"],
 ]
 
