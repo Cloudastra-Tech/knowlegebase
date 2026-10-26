@@ -27,10 +27,30 @@ Where a member's role comes from (the `role` column holds the result):
     1. disabled          no access at all (a separate flag)
     2. override_role     set by an admin (or `python auth.py role`)
     3. group_role        from their groups at the provider, by the provider's
-                         rules (group_role_rules); set at each sign-in through a
-                         workspace provider, and recomputed (from the groups last
-                         sent) when that provider's rules change or it's deleted
+                         rules (group_role_rules)
     4. otherwise         public
+
+Group roles come from ONE provider per workspace, its ROLE SOURCE
+(workspaces.role_source), however many providers it has. Only a sign-in through
+the role source sets someone's groups and group role (and groups_updated_at);
+a sign-in through any other provider records the sign-in and leaves the role
+alone, so it doesn't change with the button someone clicks.
+    * Saving rules on a provider when there's no role source makes it the role
+      source. Saving them on another one switches the source, but only when
+      asked to (set_group_rules raises RoleSourceTaken otherwise).
+    * When the source's rules change, everyone's group role is recomputed from
+      the groups it last sent. Switching the source, clearing its rules or
+      deleting it: the group roles it gave are gone, and the new source's apply
+      at each person's next sign-in through it (or straight away, from the
+      groups it last sent, for people it already sent groups for).
+    * None of these may leave a workspace with no admin (NoAdminLeft).
+    * Group-given admin expires: after workspaces.group_admin_days (default 30;
+      0 = never) without a sign-in through the role source, it's dropped to what
+      their groups give otherwise, unless they're the workspace's last admin
+      (they keep it, and the admin is warned in the sign-in events). Checked on
+      each of their requests, and for everyone when the members are listed.
+    * Databases from before role sources: the provider with rules that signed
+      someone in last became the role source (see _add_columns).
 
 Until there's a screen for it, manage it with `python auth.py` (see its help).
 
@@ -42,6 +62,7 @@ are no longer read, and can be kept as a backup.
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -60,10 +81,29 @@ STAFF_ROLES = ("hr", "admin")      # see HR documents and the HR / Admin screens
 #     _knowledge-assistant.<domain>   TXT   "kb-verify=<token>"
 TXT_PREFIX = "_knowledge-assistant"
 EVENTS_KEPT = 500
+EVENT_OUTCOMES = ('signed_in', 'refused', 'failed', 'test', 'warning')
+GROUP_ADMIN_DAYS = 30              # group-given admin lasts this long without a sign-in
 
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
 _ready = False                     # tables made and the old files imported, this process
+_warned = {}                       # username -> when they were last kept as the only admin
+
+
+class RoleSourceTaken(Exception):
+    """Another provider already sets the workspace's roles (`source`: its id)."""
+
+    def __init__(self, source):
+        super().__init__(source)
+        self.source = source
+
+
+class NoAdminLeft(Exception):
+    """The change would leave the workspace without an admin. `admins`: who'd lose it."""
+
+    def __init__(self, admins):
+        super().__init__(", ".join(admins))
+        self.admins = admins
 
 
 def _connect():
@@ -96,10 +136,13 @@ _NEW_COLUMNS = (
     ("members", "groups", "TEXT"),                  # JSON list, as last sent
     ("members", "disabled", "INTEGER NOT NULL DEFAULT 0"),
     ("members", "group_source", "TEXT"),            # the provider that set group_role
+    ("members", "groups_updated_at", "REAL"),       # when the role source last sent them
     ("sso_connections", "group_claim", "TEXT"),
     ("sso_connections", "logout_at_idp", "INTEGER NOT NULL DEFAULT 0"),
     ("workspaces", "require_sso", "INTEGER NOT NULL DEFAULT 0"),
     ("sso_events", "ref", "TEXT"),                  # shown to the person it failed for
+    ("workspaces", "role_source", "TEXT"),          # the provider whose groups set roles
+    ("workspaces", "group_admin_days", f"INTEGER NOT NULL DEFAULT {GROUP_ADMIN_DAYS}"),
 )
 
 
@@ -116,6 +159,51 @@ def _add_columns(conn):
                      "WHERE role != 'public' AND override_role IS NULL AND group_role IS NULL")
         conn.execute("INSERT INTO imports (source, imported_at) VALUES ('roles-as-overrides', ?)",
                      (time.time(),))
+    # Before role sources, any provider with rules set roles. Make the one with
+    # rules that signed someone in last each workspace's role source, and count
+    # the groups already known as sent at their last sign-in, so expiry starts
+    # from there. Group roles already given are left as they are.
+    if not conn.execute("SELECT 1 FROM imports WHERE source = 'role-source'").fetchone():
+        for row in conn.execute("""SELECT slug FROM workspaces
+                                   WHERE role_source IS NULL""").fetchall():
+            pick = conn.execute("""SELECT id FROM sso_connections c WHERE workspace = ?
+                                   AND EXISTS (SELECT 1 FROM group_role_rules
+                                               WHERE connection_id = c.id)
+                                   ORDER BY last_login_at IS NULL, last_login_at DESC,
+                                            created_at LIMIT 1""", (row["slug"],)).fetchone()
+            if pick:
+                conn.execute("UPDATE workspaces SET role_source = ? WHERE slug = ?",
+                             (pick["id"], row["slug"]))
+        conn.execute("UPDATE members SET groups_updated_at = COALESCE(last_login_at, ?) "
+                     "WHERE groups IS NOT NULL AND groups_updated_at IS NULL", (time.time(),))
+        conn.execute("INSERT INTO imports (source, imported_at) VALUES ('role-source', ?)",
+                     (time.time(),))
+    _allow_new_event_outcomes(conn)
+
+
+def _allow_new_event_outcomes(conn):
+    """sso_events from before some outcome in EVENT_OUTCOMES: SQLite can't change
+    a CHECK in place, so copy the table into one that allows them all, keeping
+    every row and column (all or nothing)."""
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'sso_events'").fetchone()["sql"]
+    check = re.search(r"CHECK \(outcome IN \(([^)]*)\)\)", sql)
+    if not check:
+        raise RuntimeError("sso_events isn't the table this code knows; not changing it")
+    if all(f"'{o}'" in check.group(1) for o in EVENT_OUTCOMES):
+        return
+    allowed = ", ".join(f"'{o}'" for o in EVENT_OUTCOMES)
+    new = sql.replace("CREATE TABLE sso_events", "CREATE TABLE sso_events_new", 1)
+    new = new.replace(check.group(0), f"CHECK (outcome IN ({allowed}))", 1)
+    columns = ", ".join(r["name"] for r in conn.execute("PRAGMA table_info(sso_events)"))
+    conn.execute("SAVEPOINT event_outcomes")
+    conn.execute(new)
+    conn.execute(f"INSERT INTO sso_events_new ({columns}) SELECT {columns} FROM sso_events")
+    conn.execute("DROP TABLE sso_events")
+    conn.execute("ALTER TABLE sso_events_new RENAME TO sso_events")
+    conn.execute("CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS sso_events_by_connection "
+                 "ON sso_events(connection_id, id)")
+    conn.execute("RELEASE event_outcomes")
 
 
 def _create_tables(conn):
@@ -170,9 +258,10 @@ def _create_tables(conn):
         connection_id TEXT,
         email         TEXT,
         outcome       TEXT NOT NULL
-                      CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test')),
-        reason        TEXT,                -- why it was refused or failed: a code
-                                           -- from sso_errors.py, never provider text
+                      CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test', 'warning')),
+        reason        TEXT,                -- why it was refused or failed (a code
+                                           -- from sso_errors.py, never provider
+                                           -- text), or the warning
         at            REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS sso_events_by_workspace ON sso_events(workspace, id);
     CREATE INDEX IF NOT EXISTS sso_events_by_connection ON sso_events(connection_id, id);
@@ -273,6 +362,30 @@ def set_requires_sso(workspace, on):
         _ensure_workspace(conn, workspace)
         conn.execute("UPDATE workspaces SET require_sso = ? WHERE slug = ?",
                      (int(bool(on)), workspace))
+
+
+def role_source(workspace):
+    """The provider whose groups set the workspace's roles, or None."""
+    with _db() as conn:
+        row = conn.execute("SELECT role_source FROM workspaces WHERE slug = ?",
+                           (workspace,)).fetchone()
+    return row["role_source"] if row else None
+
+
+def group_admin_days(workspace):
+    """Days group-given admin lasts without a sign-in through the role source (0: forever)."""
+    with _db() as conn:
+        row = conn.execute("SELECT group_admin_days FROM workspaces WHERE slug = ?",
+                           (workspace,)).fetchone()
+    return row["group_admin_days"] if row else GROUP_ADMIN_DAYS
+
+
+def set_group_admin_days(workspace, days):
+    with _lock, _db() as conn:
+        _ensure_workspace(conn, workspace)
+        conn.execute("UPDATE workspaces SET group_admin_days = ? WHERE slug = ?",
+                     (max(0, int(days)), workspace))
+        _expire_group_admins(conn, workspace)
 
 
 # ---- Domains -------------------------------------------------------------------
@@ -453,9 +566,20 @@ def set_disabled(username, disabled):
 
 def enabled_admins(workspace):
     with _db() as conn:
-        return [r["username"] for r in conn.execute(
-            "SELECT username FROM members WHERE workspace = ? AND role = 'admin' "
-            "AND disabled = 0", (workspace,))]
+        return _admins(conn, workspace)
+
+
+def _admins(conn, workspace):
+    return [r["username"] for r in conn.execute(
+        "SELECT username FROM members WHERE workspace = ? AND role = 'admin' "
+        "AND disabled = 0", (workspace,))]
+
+
+def _keep_an_admin(conn, workspace, before):
+    """After a change to group roles, in its transaction: raise NoAdminLeft (which
+    undoes it) if the workspace had admins (`before`) and now has none."""
+    if before and not _admins(conn, workspace):
+        raise NoAdminLeft(before)
 
 
 def remove(username):
@@ -469,23 +593,27 @@ def remove(username):
 def record_sso_login(username, name, workspace, groups=None, source=None):
     """Someone just signed in with single sign-on: add them if they're new.
     `groups` = (their groups, the role those give) from workspace provider
-    `source`; it replaces what their groups gave them last time (a provider
-    without rules gives no role). Returns their member row, or None if they
-    already belong to another workspace."""
+    `source`. If that's the workspace's role source, it replaces what their
+    groups gave them last time; through any other provider their role stays as
+    it is. Returns their member row, or None if they already belong to another
+    workspace."""
     username = username.strip().lower()
+    now = time.time()
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
         conn.execute("""INSERT OR IGNORE INTO members (username, workspace, name, created_at)
-                        VALUES (?, ?, ?, ?)""", (username, workspace, name, time.time()))
+                        VALUES (?, ?, ?, ?)""", (username, workspace, name, now))
         # The provider's name for them is the current one.
         conn.execute("UPDATE members SET last_login_at = ?, name = COALESCE(?, name) "
                      "WHERE username = ? AND workspace = ?",
-                     (time.time(), name or None, username, workspace))
-        if groups is not None:
+                     (now, name or None, username, workspace))
+        sets_roles = conn.execute("SELECT 1 FROM workspaces WHERE slug = ? AND role_source = ?",
+                                  (workspace, source)).fetchone()
+        if groups is not None and sets_roles:
             names, role = groups
-            conn.execute("UPDATE members SET groups = ?, group_role = ?, group_source = ? "
-                         "WHERE username = ? AND workspace = ?",
-                         (json.dumps(names[:100]), role, source, username, workspace))
+            conn.execute("UPDATE members SET groups = ?, group_role = ?, group_source = ?, "
+                         "groups_updated_at = ? WHERE username = ? AND workspace = ?",
+                         (json.dumps(names[:100]), role, source, now, username, workspace))
         _settle_role(conn, username)
         row = conn.execute("SELECT * FROM members WHERE username = ?", (username,)).fetchone()
     return _member(row) if row and row["workspace"] == workspace else None
@@ -584,11 +712,17 @@ def any_connections():
 
 
 def delete_connection(workspace, cid):
+    """False if the workspace has no such provider. Raises NoAdminLeft (deleting
+    nothing) if the roles its groups gave were the workspace's only admins."""
     with _lock, _db() as conn:
+        before = _admins(conn, workspace)
         n = conn.execute("DELETE FROM sso_connections WHERE id = ? AND workspace = ?",
                          (cid, workspace)).rowcount
         if n:                              # roles its groups gave go with it
+            conn.execute("UPDATE workspaces SET role_source = NULL "
+                         "WHERE slug = ? AND role_source = ?", (workspace, cid))
             _regroup(conn, cid, [])
+            _keep_an_admin(conn, workspace, before)
     return n > 0
 
 
@@ -637,14 +771,18 @@ def log_event(workspace, cid, email, outcome, reason=None, ref=None):
     """Note a sign-in for the workspace's admin. `reason` is a code from
     sso_errors.py; `ref` the reference the person was shown, if any."""
     with _lock, _db() as conn:
-        conn.execute("""INSERT INTO sso_events
-                        (workspace, connection_id, email, outcome, reason, ref, at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                     (workspace, cid, email, outcome, (reason or "")[:300] or None, ref,
-                      time.time()))
-        conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND id NOT IN
-                        (SELECT id FROM sso_events WHERE workspace = ?
-                         ORDER BY id DESC LIMIT ?)""", (workspace, workspace, EVENTS_KEPT))
+        _log_event(conn, workspace, cid, email, outcome, reason, ref)
+
+
+def _log_event(conn, workspace, cid, email, outcome, reason=None, ref=None):
+    conn.execute("""INSERT INTO sso_events
+                    (workspace, connection_id, email, outcome, reason, ref, at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                 (workspace, cid, email, outcome, (reason or "")[:300] or None, ref,
+                  time.time()))
+    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND id NOT IN
+                    (SELECT id FROM sso_events WHERE workspace = ?
+                     ORDER BY id DESC LIMIT ?)""", (workspace, workspace, EVENTS_KEPT))
 
 
 def recent_events(workspace, limit=50):
@@ -670,27 +808,52 @@ def group_rules(cid):
             "ORDER BY group_name COLLATE NOCASE", (cid,))]
 
 
-def set_group_rules(workspace, cid, group_claim, rules):
+def set_group_rules(workspace, cid, group_claim, rules, make_role_source=False):
     """Replace a provider's group claim and rules ([(group, role)]). False if the
-    workspace has no such provider."""
+    workspace has no such provider. Rules make it the workspace's role source
+    (see the top of this file); if another provider is, that raises
+    RoleSourceTaken unless `make_role_source`. No rules on the role source: the
+    workspace has none. Raises NoAdminLeft (changing nothing) if the group roles
+    that go were its only admins."""
     for _, role in rules:
         if role not in ROLES:
             raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
+    kept, seen = [], set()
+    for group, role in rules:
+        if group.strip().lower() not in seen:
+            seen.add(group.strip().lower())
+            kept.append({"group_name": group.strip(), "role": role})
     with _lock, _db() as conn:
         n = conn.execute("UPDATE sso_connections SET group_claim = ?, updated_at = ? "
                          "WHERE id = ? AND workspace = ?",
                          (group_claim, time.time(), cid, workspace)).rowcount
         if not n:
             return False
+        source = conn.execute("SELECT role_source FROM workspaces WHERE slug = ?",
+                              (workspace,)).fetchone()["role_source"]
+        if kept and source not in (None, cid) and not make_role_source:
+            raise RoleSourceTaken(source)
+        before = _admins(conn, workspace)
         conn.execute("DELETE FROM group_role_rules WHERE connection_id = ?", (cid,))
-        seen = set()
-        for group, role in rules:
-            if group.strip().lower() not in seen:
-                seen.add(group.strip().lower())
-                conn.execute("INSERT INTO group_role_rules (connection_id, group_name, role) "
-                             "VALUES (?, ?, ?)",
-                             (cid, group.strip(), role))
-        _regroup(conn, cid, [{"group_name": g, "role": r} for g, r in rules])
+        for r in kept:
+            conn.execute("INSERT INTO group_role_rules (connection_id, group_name, role) "
+                         "VALUES (?, ?, ?)", (cid, r["group_name"], r["role"]))
+        if kept and source != cid:
+            # A new role source: group roles other providers gave no longer count.
+            # Its own come from the groups it sent last (if it was the source
+            # before), else at each person's next sign-in through it.
+            conn.execute("UPDATE workspaces SET role_source = ? WHERE slug = ?",
+                         (cid, workspace))
+            for row in conn.execute("SELECT DISTINCT group_source FROM members "
+                                    "WHERE workspace = ? AND group_source != ?",
+                                    (workspace, cid)).fetchall():
+                _regroup(conn, row["group_source"], [])
+        elif source == cid and not kept:
+            conn.execute("UPDATE workspaces SET role_source = NULL WHERE slug = ?",
+                         (workspace,))
+        _regroup(conn, cid, kept)
+        _keep_an_admin(conn, workspace, before)
+        _expire_group_admins(conn, workspace)
     return True
 
 
@@ -704,3 +867,66 @@ def _regroup(conn, cid, rules):
         conn.execute("UPDATE members SET group_role = ? WHERE username = ?",
                      (role, row["username"]))
         _settle_role(conn, row["username"])
+
+
+# ---- Group-given admin expires --------------------------------------------------
+def expire_group_admins(workspace):
+    """Drop group-given admin the role source hasn't confirmed for a while (see
+    the top of this file), across the workspace."""
+    with _lock, _db() as conn:
+        _expire_group_admins(conn, workspace)
+
+
+def group_admin_stale(member, days):
+    """Is their admin from groups the role source last sent over `days` ago?"""
+    return bool(days and member["role"] == "admin" and not member["override_role"]
+                and member["group_role"] == "admin" and member["groups_updated_at"]
+                and member["groups_updated_at"] < time.time() - days * 86400)
+
+
+def check_group_admin(member):
+    """The same for one member, on each request: cheap unless their admin comes
+    from groups at least a day old. Returns their row as it is now."""
+    if (not member or member["group_role"] != "admin"
+            or (member["groups_updated_at"] or time.time()) > time.time() - 86400):
+        return member
+    with _lock, _db() as conn:
+        if not _expire_group_admins(conn, member["workspace"], member["username"]):
+            return member
+        return _member(conn.execute("SELECT * FROM members WHERE username = ?",
+                                    (member["username"],)).fetchone())
+
+
+def _expire_group_admins(conn, workspace, username=None):
+    """True if someone's admin expired. Someone who is the workspace's last admin
+    keeps it, and its admins are warned (at most once a day per person)."""
+    days = conn.execute("SELECT group_admin_days FROM workspaces WHERE slug = ?",
+                        (workspace,)).fetchone()
+    days = days["group_admin_days"] if days else GROUP_ADMIN_DAYS
+    if not days:
+        return False
+    sql = ("SELECT username, groups, group_source, override_role FROM members "
+           "WHERE workspace = ? AND group_role = 'admin' AND groups_updated_at < ?")
+    args = [workspace, time.time() - days * 86400]
+    if username:
+        sql, args = sql + " AND username = ?", args + [username]
+    expired = False
+    for row in conn.execute(sql, args).fetchall():
+        if row["override_role"] is None and _admins(conn, workspace) == [row["username"]]:
+            if _warned.get(row["username"], 0) < time.time() - 86400:
+                _warned[row["username"]] = time.time()
+                log.warning("%s is the only admin of %s, so keeps admin from groups not "
+                            "updated in %s days", row["username"], workspace, days)
+                _log_event(conn, workspace, row["group_source"], row["username"], "warning",
+                           "last_admin_kept")
+            continue
+        # What their groups give without the rules that make them admin.
+        rules = conn.execute("SELECT group_name, role FROM group_role_rules "
+                             "WHERE connection_id = ? AND role != 'admin'",
+                             (row["group_source"],)).fetchall()
+        conn.execute("UPDATE members SET group_role = ? WHERE username = ?",
+                     (role_for_groups(rules, json.loads(row["groups"] or "[]")),
+                      row["username"]))
+        _settle_role(conn, row["username"])
+        expired = True
+    return expired

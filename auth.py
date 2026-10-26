@@ -77,7 +77,7 @@ def access_for(username):
     """{"workspace", "role"} for a password account, or None if it's gone, turned
     off, or may no longer use a password. Checked on every request, not only at
     sign-in."""
-    member = members_store.get(username)
+    member = members_store.check_group_admin(members_store.get(username))
     if (not member or not member["password_hash"] or member["disabled"]
             or not password_login_on() or sso_required(member)):
         return None

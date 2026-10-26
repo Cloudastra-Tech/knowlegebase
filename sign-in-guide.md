@@ -159,6 +159,25 @@ Groups are read **each time someone signs in**: someone you add to or remove
 from a group gets the new role at their next sign-in. To change it straight
 away, use the Members tab.
 
+**One provider sets roles.** The provider you give rules to becomes the
+workspace's **role source**; its card says *Sets roles (role source)*, the
+others *Doesn't set roles*. Signing in through another provider still works,
+but leaves the person's role as it is, so it never depends on which button they
+click. To take roles from a different provider, give that one rules: the dialog
+asks *Roles currently come from X. Switch to Y?* When you switch, clear the
+source's rules or delete it, the roles its groups gave are gone straight away,
+and the new source's apply at each person's next sign-in through it. Roles set
+on the Members tab stay. None of this is allowed if it would leave the
+workspace with no admin: make someone admin on the Members tab first.
+
+**Admin from groups expires.** Groups only refresh at a sign-in through the role
+source, so someone removed from the admin group at your provider keeps admin
+here until then. **Sign-in rules → Expire admin from groups** (30 days by
+default; 0 = never) drops admin from groups that old to what the rest of their
+groups give. Roles set on the Members tab don't expire, and the last admin
+keeps it: they're marked on the Members tab, and *Recent sign-ins* shows a
+warning.
+
 Your provider has to be set to send groups: in Okta, a groups claim (or a SAML
 group attribute statement); in Entra, Token configuration → *Add groups claim*
 (people in more than 200 groups get no groups claim from Entra, so use app
@@ -171,7 +190,9 @@ in the SAML app's attribute mapping.
 
 - **Role**: *From groups* follows your provider's groups (the default). Picking
   Public, HR or Admin **overrides** the groups for that person until you set it
-  back to *From groups*. The text under the picker says where the role comes from.
+  back to *From groups*. The text under the picker says where the role comes from,
+  and for a role from groups, when the role source last sent them (*Groups
+  updated 12 d ago*).
 - **Turn access off**: they can't sign in, and they're signed out on their next
   click. Use this to keep someone out. **Remove** only deletes their record:
   if your provider still lets them sign in, they come back as a new member.
@@ -249,4 +270,9 @@ Each reason has a code (in `sso_errors.py`):
 | `sso_failed` | Something went wrong on this server | Find the reference in the server log. |
 
 Roles don't follow groups? Test sign-in: is the group claim there, under the name
-in **Roles from groups**? Groups apply at the next sign-in.
+in **Roles from groups**? Groups apply at the next sign-in, and only through
+the role source.
+
+Warning "they're the only admin, so they keep it": their admin comes from groups
+the role source hasn't sent in a while. Make someone else admin (Members), or
+have them sign in through the role source.

@@ -30,8 +30,9 @@ A workspace's OWN provider ("connection", set up by its admin, stored in
 members_store.py) only signs people in to that workspace, and only with an
 email on a domain that workspace has verified. The login page finds it from
 the email someone types (connections_for_email). If the admin gave it group
-rules, the groups it sends at sign-in set the person's role (see the top of
-members_store.py for how that combines with a role set by hand).
+rules, it's the workspace's role source: the groups it sends at sign-in set the
+person's role. Other providers sign people in without changing their role (see
+the top of members_store.py, also for how that combines with a role set by hand).
 
 Authlib does the OpenID Connect work: the redirect, state + PKCE, and checking
 the ID token's signature, audience, issuer and expiry.
@@ -212,6 +213,7 @@ def access_for(email, org=None, connection=None):
     member = members_store.get(email) if workspace else None
     if not member or member["workspace"] != workspace or member["disabled"]:
         return None
+    member = members_store.check_group_admin(member)
     return {"workspace": workspace, "role": member["role"]}
 
 
@@ -275,8 +277,8 @@ def claim_values(claims, name):
 
 
 def groups_from(conn, claims):
-    """(groups, role they give) under the provider's rules. A provider without
-    rules gives no role, so a role its old rules gave doesn't linger."""
+    """(groups, role they give) under the provider's rules (None: no rules).
+    Only kept if the provider is the workspace's role source."""
     groups = claim_values(claims, conn.get("group_claim") or DEFAULT_GROUP_CLAIM)
     rules = members_store.group_rules(conn["id"])
     return groups, members_store.role_for_groups(rules, groups) if rules else None
@@ -298,13 +300,16 @@ def try_connection(conn, claims):
                       else "This account belongs to another workspace.")
         return {"ok": False, "reason": e.reason, "detail": detail, "email": email or None}
     member = members_store.get(email)
-    found = groups_from(conn, claims) if members_store.group_rules(conn["id"]) else None
+    sets_roles = members_store.role_source(conn["workspace"]) == conn["id"]
+    found = groups_from(conn, claims) if sets_roles else None
     override = member["override_role"] if member else None
-    group_role = found[1] if found else None
+    # Through another provider, the role their groups gave stays as it is.
+    group_role = found[1] if found else member["group_role"] if member else None
     return {"ok": True, "email": email, "name": name,
             "role": override or group_role or "public",
             "role_source": "override" if override else "groups" if group_role else "default",
-            "groups": found[0] if found else None, "new_member": member is None}
+            "groups": found[0] if found else None, "new_member": member is None,
+            "sets_roles": sets_roles}
 
 
 def user_for_connection(conn, claims):

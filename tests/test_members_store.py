@@ -131,18 +131,26 @@ def test_a_role_comes_from_the_override_then_the_groups_then_public(store):
     groups = members_store.role_for_groups(rules, ["engineering", "it", "sales"])
     assert groups == "admin"                                  # the highest one
     assert members_store.role_for_groups(rules, ["sales"]) is None
-    members_store.record_sso_login("pat@acme.com", "Pat", "acme", groups=(["eng"], "hr"))
+    src = members_store.create_connection("acme", "oidc", "Acme", "https://idp", "kb", {}, {},
+                                          "test")["id"]
+    members_store.set_group_rules("acme", src, None, [("eng", "hr")])
+
+    def sign_in(groups, role, name="Pat"):
+        members_store.record_sso_login("pat@acme.com", name, "acme", groups=(groups, role),
+                                       source=src)
+    sign_in(["eng"], "hr")
     assert members_store.get("pat@acme.com")["role"] == "hr"
     members_store.set_role("pat@acme.com", "public")          # an admin overrides it
-    members_store.record_sso_login("pat@acme.com", "Pat", "acme", groups=(["eng"], "hr"))
+    sign_in(["eng"], "hr")
     assert members_store.get("pat@acme.com")["role"] == "public"
     members_store.set_role("pat@acme.com", None)              # back to the groups
     assert members_store.get("pat@acme.com")["role"] == "hr"
-    members_store.record_sso_login("pat@acme.com", "Pat", "acme", groups=([], None))
+    sign_in([], None)
     assert members_store.get("pat@acme.com")["role"] == "public"   # left the group
-    members_store.record_sso_login("pat@acme.com", "Pat Lee", "acme")  # a provider without rules
+    sign_in(["eng"], "hr", name="Pat Lee")
+    members_store.record_sso_login("pat@acme.com", "Pat", "acme")  # a built-in provider
     pat = members_store.get("pat@acme.com")
-    assert (pat["groups"], pat["name"]) == ([], "Pat Lee")       # the provider's name wins
+    assert (pat["role"], pat["groups"], pat["name"]) == ("hr", ["eng"], "Pat")  # its name wins
 
 
 def test_an_interrupted_role_migration_is_finished_next_time(store, tmp_path):
@@ -155,6 +163,41 @@ def test_an_interrupted_role_migration_is_finished_next_time(store, tmp_path):
         db.execute("DELETE FROM imports WHERE source = 'roles-as-overrides'")
     store.restart()
     assert members_store.get("boss")["override_role"] == "hr"
+
+
+def test_a_database_from_before_role_sources_gets_one(store, tmp_path):
+    """Then any provider with rules set roles: the one with rules that signed
+    someone in last becomes the role source, and group roles already given stay."""
+    import sqlite3
+    old, used, unruled = (members_store.create_connection("acme", "oidc", label, "https://idp",
+                                                          "kb", {}, {}, "test")["id"]
+                          for label in ("Old", "Used", "No rules"))
+    for cid in (old, used):
+        members_store.set_group_rules("acme", cid, None, [("eng", "hr")],
+                                      make_role_source=True)
+    members_store.record_sso_login("pat@acme.com", "Pat", "acme", groups=(["eng"], "hr"),
+                                   source=used)
+    for cid in (used, unruled):
+        members_store.record_connection_login(cid)
+    with sqlite3.connect(tmp_path / "app.db") as db:
+        db.executescript("""
+            UPDATE workspaces SET role_source = NULL;
+            UPDATE members SET groups_updated_at = NULL, last_login_at = 1000;
+            DELETE FROM imports WHERE source = 'role-source';
+            DROP TABLE sso_events;
+            CREATE TABLE sso_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL,
+                connection_id TEXT, email TEXT,
+                outcome TEXT NOT NULL CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test')),
+                reason TEXT, at REAL NOT NULL);
+            INSERT INTO sso_events (workspace, outcome, at) VALUES ('acme', 'test', 1);
+        """)
+    store.restart()
+    assert members_store.role_source("acme") == used
+    pat = members_store.get("pat@acme.com")
+    assert (pat["role"], pat["groups_updated_at"]) == ("hr", 1000)
+    members_store.log_event("acme", used, "pat@acme.com", "warning", "last_admin_kept")
+    assert [e["outcome"] for e in members_store.recent_events("acme")] == ["warning", "test"]
 
 
 def test_a_users_file_of_the_wrong_shape_is_skipped(store):
