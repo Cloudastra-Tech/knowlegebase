@@ -1,7 +1,7 @@
 """conversations: saved chats, their messages, and feedback on answers
 
-Revision ID: 0002
-Revises: 0001
+Revision ID: 0003
+Revises: 0002
 Create Date: 2026-10-27
 
 New tables only; nothing existing changes. A conversation belongs to one person
@@ -17,8 +17,8 @@ whose role can't see that level gets the answer withheld (visible_to()).
 
 from alembic import op
 
-revision = "0002"
-down_revision = "0001"
+revision = "0003"
+down_revision = "0002"
 branch_labels = None
 depends_on = None
 

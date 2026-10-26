@@ -124,6 +124,21 @@ LAYER 2 — GUARDRAILS          "the backup net"
    • If a leak slips through             → REASK rewrites it cleanly
 ```
 
+The question is screened for prompt injection, but documents can carry planted
+instructions too (anyone who can edit a synced doc or wiki page). `untrusted.py`
+handles that, for every role:
+- **Spotlighting.** Every chunk and tool result reaches a model inside an
+  `<untrusted_data source="...">` block, and the system prompts say text in a block
+  is data, never instructions. Text that imitates the delimiter is defused first.
+- **Egress.** Wikipedia and currency calls whose arguments quote 40+ letters/digits
+  of text retrieved for the same question are refused. `ALLOW_WIKIPEDIA` /
+  `ALLOW_CURRENCY` (on by default) remove those tools altogether.
+- **Links.** Links in an answer that appear in neither the sources read nor the
+  question become plain text (and are logged). The chat view never loads images.
+- **Red team.** `eval/redteam.py` plants such instructions (`eval/corpus_redteam/`);
+  `tests/test_injection.py` runs it with a model that obeys them, and
+  `python evaluate.py --redteam` with the real one.
+
 ---
 
 ## 🔑 Where your role comes from
@@ -186,6 +201,39 @@ public"), but it can never *raise* it — the server decides.
 > allowed to see** — using both keyword and meaning search, merged with RRF. The
 > best chunks go to gpt-4o-mini, which writes the answer. A final guard checks the
 > answer for leaks and rewrites it if needed. That whole pattern is **secure RAG**."
+
+---
+
+## 🔁 Re-indexing and background jobs
+
+Work that shouldn't hold up a request runs as a **job**: a row in the `jobs`
+table that a pool of worker threads claims, runs and marks done (`kb/jobs.py`).
+Re-indexing a workspace, syncing a connector, and the periodic connector sync,
+SAML metadata refresh and clean-up are all jobs. A claim is a lease in the
+database, so a job survives a restart (another worker takes it over when the
+lease runs out), a failed job is retried with a growing wait, and each lane runs
+one job at a time: one index run per workspace, while workspaces take turns
+and never wait on each other. The workers run inside the API, or as
+`python -m kb.worker` (deploy.md, "Background jobs").
+
+```
+  upload / edit / delete ──► index job (that document)     ┐
+  connector sync changed ──► index job (check every file)  ├─► ingest.update: only what changed
+  "Re-index"             ──► index job                     ┘     is embedded; deleted files'
+  access level changed   ──► retag job ─► chunks' access tag      chunks are removed
+                                          updated, no embedding
+  "Rebuild everything",  ──► index job ─► ingest.main into a NEW collection, then the
+  new chunking settings                   workspace switches to it (search_indexes)
+```
+
+Every chunk has a **stable id** from (workspace, document, chunk number, chunk
+text), and carries its document's key, a hash of its content and its access
+level, so a run can tell what's new, changed or gone without embedding anything
+it already has. Questions are answered throughout: an update changes the index
+a document at a time, and a full rebuild builds beside the collection in use,
+which answers until the switch (a failed rebuild leaves it in place). Each
+workspace's row in `search_indexes` names its collection and a version that
+changes with every update; agents reload when it does (`kb/services/agents.py`).
 
 ---
 

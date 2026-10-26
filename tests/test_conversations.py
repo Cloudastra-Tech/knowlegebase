@@ -439,8 +439,6 @@ def test_the_one_shot_chat_endpoint_says_plainly_when_answering_fails(client, mo
                     headers=headers(client, "pat"))
     assert r.status_code == 502
     assert r.json()["detail"].startswith("The assistant couldn't answer just now")
-    from kb import state
-    assert state.gate_of("default")["active"] == 0
 
 
 def test_an_answer_cut_off_by_a_restart_reads_as_interrupted():

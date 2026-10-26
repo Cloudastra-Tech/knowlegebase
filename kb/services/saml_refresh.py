@@ -7,8 +7,9 @@ fetches it again: on a schedule (daily, or sooner if the metadata says), and
 when an answer's signature fails (at most every SAML_REFRESH_GAP). Only changes
 from the SAME IdP are applied: a new entity ID, or a sign-in URL on another
 host, is held back for the admin to look at ("needs review").
-Every worker runs the schedule; each fetch is claimed in the database first
-(members_store.claim_metadata_fetch), so a provider is fetched by one of them.
+The schedule is a periodic job (kb/jobs.py); each fetch is also claimed in the
+database first (members_store.claim_metadata_fetch), so a provider is fetched by
+one worker even when an answer's failed signature asks for it at the same time.
 """
 
 import logging
@@ -20,6 +21,7 @@ import members_store
 import saml_sp
 import sso_setup
 import url_guard
+from kb import jobs
 from kb.services.sign_in import saml_conn
 
 log = logging.getLogger("uvicorn.error")
@@ -143,7 +145,7 @@ def refresh_due_saml_metadata(now=None):
                 log.exception("SAML %s: couldn't refresh its metadata", c["id"])
 
 
-def saml_refresh_scheduler():
-    while True:
-        time.sleep(SAML_REFRESH_CHECK_EVERY)
-        refresh_due_saml_metadata()
+@jobs.periodic("saml_refresh", lambda: SAML_REFRESH_CHECK_EVERY)
+def run_refresh(job=None):
+    """The schedule: a job every SAML_REFRESH_CHECK_EVERY seconds (kb/jobs.py)."""
+    refresh_due_saml_metadata()

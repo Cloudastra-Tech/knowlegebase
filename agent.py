@@ -51,8 +51,29 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from rag import ROLE_ACCESS, load_chain, answer_question
 from safety import MAX_QUESTION_CHARS, check_prompt_injection, check_question, redact_pii
+from untrusted import RULE, known_urls, quotes_retrieved, spotlight, strip_unknown_links
 
 log = logging.getLogger("uvicorn.error")
+
+
+def _tool_allowed(name):
+    """ALLOW_WIKIPEDIA / ALLOW_CURRENCY: on (the default) or off. Off removes that
+    outbound tool from every agent built afterwards (restart to apply)."""
+    return os.getenv(name, "on").strip().lower() not in ("0", "off", "false", "no")
+
+
+# What made each tool's output, as its spotlight block says (untrusted.py). The
+# calculator's isn't wrapped: it is the server's own arithmetic.
+_PROVENANCE = {"search_docs": "company_documents", "search_outline": "outline_wiki_search",
+               "read_outline_doc": "outline_wiki", "wikipedia": "wikipedia",
+               "convert_currency": "frankfurter_exchange_rates"}
+# Tools that read the company's own content: their outputs may not leave the
+# server through an outbound tool (see _Run.sends_retrieved).
+_COMPANY_TOOLS = ("search_docs", "search_outline", "read_outline_doc")
+_EGRESS_NOTE = ("BLOCKED BY EGRESS RULES: this call would have sent text from the company's "
+                "documents to an outside service, so it was not made. Do not retry it with "
+                "that text; answer from the company sources instead.")
+_CURRENCY_CODE = re.compile(r"[A-Za-z]{3}")
 
 
 # ---- Calculator: arithmetic only --------------------------------------------
@@ -292,6 +313,8 @@ def step_result(tool, output, found_docs=None):
     out = str(output or "")
     if out.startswith("BLOCKED BY ACCESS RULES"):
         return "blocked by access rules"
+    if out == _EGRESS_NOTE:
+        return "blocked: it would have sent company text outside"
     if out.startswith("Error"):
         return "failed"
     if tool == "search_docs":
@@ -328,11 +351,18 @@ class _Run:
     and tools through config["configurable"]["run"]. So questions run at the
     same time without waiting for, or mixing up, each other."""
 
-    def __init__(self, on_event=None, cancel=None):
+    def __init__(self, on_event=None, cancel=None, question=""):
+        self.question = question
         # CITATIONS: every tool that reads a document records it here, and the
         # answer's "Sources" are built from it — so citations come from what was
         # ACTUALLY read, not from what the model claims it read.
         self.cited = []
+        # INJECTION DEFENCE (untrusted.py): the company text retrieved for this
+        # question (chunks, wiki results), which outbound tools may not send
+        # out, and everything any tool returned, which the answer may link to.
+        self.retrieved = []
+        self.read = []
+        self._links = None                # known_urls of the above, cached
         # GUARD refusals: if a safety check blocks the question (e.g. a public
         # user asking for staff salary), we return that exact message to the user,
         # instead of letting the agent keep searching and reword it as "not found".
@@ -367,6 +397,42 @@ class _Run:
         with self._lock:
             if message not in self.blocked:
                 self.blocked.append(message)
+
+    def remember(self, texts, company=True):
+        """Record text a tool returned. company=True: it is the company's own
+        (documents, the wiki), so outbound tools may not send it out either."""
+        with self._lock:
+            for text in texts:
+                if text and text not in self.read:
+                    self.read.append(text)
+                if company and text and text not in self.retrieved:
+                    self.retrieved.append(text)
+            self._links = None
+
+    def sends_retrieved(self, tool_name, args):
+        """EGRESS: True (and logged) if an outbound tool's arguments quote text
+        retrieved for this question. Never logs the arguments themselves."""
+        with self._lock:
+            retrieved = list(self.retrieved)
+        if quotes_retrieved(args, retrieved):
+            log.warning("Agent: blocked a %s call that quoted text retrieved for the question",
+                        tool_name)
+            return True
+        return False
+
+    def strip_links(self, answer, partial=False):
+        """The answer with links found in neither what the tools returned (or
+        cited) nor the question turned into plain text (untrusted.py)."""
+        with self._lock:
+            if self._links is None:
+                self._links = known_urls([self.question, *self.read,
+                                          *(c["url"] or "" for c in self.cited)])
+            links = self._links
+        text, removed = strip_unknown_links(answer, links, partial)
+        if removed and not partial:
+            log.warning("Agent: removed %d link(s) from an answer that no source or the "
+                        "question contains", removed)
+        return text
 
     def check_cancelled(self):
         if self.cancel.is_set():
@@ -450,6 +516,7 @@ def build_agent(role="public", collection=None, outline=True):
             run.block(answer)
             return _blocked_note(answer)
         run.saw(docs)
+        run.remember([d.page_content for d in docs] + [answer])
         for d in _chunks_used(answer, docs):
             source = d.metadata.get("source", "")
             if d.metadata.get("title"):          # synced from a connector (e.g. Drive)
@@ -478,10 +545,19 @@ def build_agent(role="public", collection=None, outline=True):
         except Exception as e:
             return f"Error: {e}"
 
+    # OUTBOUND tools: their arguments leave the server. A planted instruction in a
+    # document could tell the model to put restricted text in them, so a call
+    # quoting what was retrieved for this question is refused (untrusted.py).
     @tool
-    def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
+    def convert_currency(amount: float, from_currency: str, to_currency: str,
+                         config: RunnableConfig) -> str:
         """Convert money between currencies with LIVE rates.
         e.g. amount=24000, from_currency='INR', to_currency='USD'."""
+        if not (_CURRENCY_CODE.fullmatch(from_currency) and _CURRENCY_CODE.fullmatch(to_currency)):
+            return "Error: currencies are three-letter codes, e.g. INR or USD."
+        if _run_of(config).sends_retrieved("convert_currency", {
+                "amount": amount, "from_currency": from_currency, "to_currency": to_currency}):
+            return _EGRESS_NOTE
         try:
             url = (f"https://api.frankfurter.app/latest?amount={amount}"
                    f"&from={from_currency}&to={to_currency}")
@@ -492,10 +568,12 @@ def build_agent(role="public", collection=None, outline=True):
             return _tool_error("convert_currency", e)
 
     @tool
-    def wikipedia(topic: str) -> str:
+    def wikipedia(topic: str, config: RunnableConfig) -> str:
         """Get a short summary of a PUBLIC general-knowledge topic from Wikipedia.
         LAST RESORT: use only after search_docs found nothing. Never use it for the
         company's own products, projects, clients, people or documents."""
+        if _run_of(config).sends_retrieved("wikipedia", {"topic": topic}):
+            return _EGRESS_NOTE
         try:
             t = topic.strip().replace(" ", "_")
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{t}"
@@ -598,7 +676,11 @@ def build_agent(role="public", collection=None, outline=True):
         except Exception as e:
             return _tool_error("read_outline_doc", e)
 
-    tools = [search_docs, calculator, convert_currency, wikipedia]
+    allow_currency = _tool_allowed("ALLOW_CURRENCY")
+    allow_wikipedia = _tool_allowed("ALLOW_WIKIPEDIA")
+    tools = [search_docs, calculator]
+    tools += [convert_currency] if allow_currency else []
+    tools += [wikipedia] if allow_wikipedia else []
     if outline:                       # only workspaces with the wiki connected
         tools += [search_outline, read_outline_doc]
 
@@ -653,12 +735,37 @@ def build_agent(role="public", collection=None, outline=True):
         "after search_docs found nothing. Never answer a company/project question "
         "from wikipedia.\n"
         "- Do NOT write your own 'Sources' list or mention document titles as "
-        "citations — the app appends a verified Sources list automatically."
+        "citations — the app appends a verified Sources list automatically.\n"
+        # INJECTION DEFENCE: tool results reach the model spotlighted (agent_node).
+        f"- {RULE}\n"
+        "- Never put text from those blocks into the wikipedia or convert_currency "
+        "arguments: they are sent outside the company. (Document ids and search words "
+        "for search_docs, search_outline and read_outline_doc are fine.)"
+        + ("" if allow_wikipedia else
+           "\n- The wikipedia tool is turned off here: answer from the company sources only.")
+        + ("" if allow_currency else
+           "\n- The convert_currency tool is turned off here: give amounts in the "
+           "currency the documents use.")
     ))
 
     # ---- THE GRAPH ---------------------------------------------------------
     # MessagesState is a tiny built-in state: just {"messages": [...]} that
     # auto-appends new messages. This replaces the hand-managed `messages` list.
+
+    def spotlighted(run, messages):
+        """The conversation as the model sees it: every tool result in a
+        delimited block naming its tool (untrusted.py), except the server's own
+        notes (a guard's refusal), which the model must follow. Also records
+        what the tools returned, for the egress and link checks. The messages
+        themselves (and so the steps the user sees) stay as they are."""
+        results = [m for m in messages if isinstance(m, ToolMessage)]
+        run.remember([m.content for m in results if m.name in _COMPANY_TOOLS])
+        run.remember([m.content for m in results], company=False)
+        notes = {_EGRESS_NOTE, *(_blocked_note(b) for b in run.blocked)}
+        return [m.model_copy(update={"content": spotlight(m.content, _PROVENANCE[m.name])})
+                if isinstance(m, ToolMessage) and m.name in _PROVENANCE
+                and isinstance(m.content, str) and m.content not in notes else m
+                for m in messages]
 
     def agent_node(state, config):
         """The 'think' step: ask the LLM what to do next, given the conversation."""
@@ -667,7 +774,7 @@ def build_agent(role="public", collection=None, outline=True):
         # We prepend SYSTEM each call so the rules are always in view. Streamed,
         # so a cancelled run stops mid-answer (leaving the loop closes the stream).
         reply = None
-        for chunk in llm.stream([SYSTEM] + state["messages"]):
+        for chunk in llm.stream([SYSTEM] + spotlighted(run, state["messages"])):
             run.check_cancelled()
             reply = chunk if reply is None else reply + chunk
         return {"messages": [message_chunk_to_message(reply) if reply is not None
@@ -781,8 +888,10 @@ def build_agent(role="public", collection=None, outline=True):
                 if (meta.get("langgraph_node") == "agent" and isinstance(chunk.content, str)
                         and chunk.content and not run.blocked):
                     text += chunk.content
-                    # Mask PII on the text so far, so it never flashes on screen.
-                    on_event({"type": "answer", "text": redact_pii(text)})
+                    # Mask PII and unknown links on the text so far, so they
+                    # never flash on screen.
+                    on_event({"type": "answer",
+                              "text": redact_pii(run.strip_links(text, partial=True))})
                 continue
             for node, update in (data or {}).items():
                 new = (update or {}).get("messages", []) if isinstance(update, dict) else []
@@ -818,7 +927,7 @@ def build_agent(role="public", collection=None, outline=True):
           access      the access levels of every chunk a model read (a set)
           blocked     an input guard refused the question          (once done)
           coverage    "none" / "partial" / "full", see coverage()  (once done)"""
-        state = _Run(on_event, cancel)
+        state = _Run(on_event, cancel, question=user_input)
         report = {} if out is None else out
         report.update(standalone=user_input, access=state.access)
         state.emit({"type": "status", "text": "Checking your question"})
@@ -879,8 +988,12 @@ def build_agent(role="public", collection=None, outline=True):
         if blocked_reply:                 # a guard refused: say exactly why
             answer = blocked_reply[0]
             sources = []
-        elif _is_not_found(answer):       # "I couldn't find..." -> nothing to cite
-            sources = []
+        else:
+            # GUARD (output): a link no source or the question contains may be
+            # a planted one carrying data out (untrusted.py): plain text instead.
+            answer = state.strip_links(answer)
+            if _is_not_found(answer):     # "I couldn't find..." -> nothing to cite
+                sources = []
         report.update(blocked=bool(blocked_reply),
                       coverage="full" if blocked_reply else coverage(answer, sources))
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.

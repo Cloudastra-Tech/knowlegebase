@@ -1,5 +1,5 @@
 """Documents (HR / Admin): the workspace's uploaded files (docs_store.py). Every
-change re-indexes the workspace."""
+change queues a re-index of the documents it touched."""
 
 import os
 
@@ -68,7 +68,7 @@ def create_doc(body: NewDocIn, user=Depends(require_hr)):
     if os.path.exists(docs_store.doc_path(body.access, name, root)):
         raise HTTPException(409, f"{name} already exists. Edit it instead.")
     docs_store.save(body.access, name, body.content.encode("utf-8"), root)
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{body.access}/{name}"])
     return {"access": body.access, "name": name}
 
 
@@ -79,7 +79,7 @@ def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr)):
     if not name.lower().endswith(".txt"):
         raise HTTPException(400, "Only .txt documents can be edited here.")
     docs_store.save(access, name, body.content.encode("utf-8"), workspaces.docs_root(ws))
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
 
@@ -87,7 +87,7 @@ def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr)):
 def delete_doc(access: str, name: str, user=Depends(require_hr)):
     ws = ws_of(user)
     os.remove(_existing_path(ws, access, name))
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
 
@@ -126,5 +126,5 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
         raise HTTPException(400, "Please choose at least one .txt or .pdf file.")
     for name, f in picked:
         docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
-    indexing.schedule_index(ws)
+    indexing.schedule_index(ws, docs=[f"{access}/{name}" for name, _ in picked])
     return {"saved": [name for name, _ in picked]}

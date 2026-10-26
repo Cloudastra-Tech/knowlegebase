@@ -14,7 +14,6 @@ from starlette.concurrency import run_in_threadpool
 
 import conversations_store
 from agent import Cancelled
-from kb import state
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
 from kb.services import agents, conversations
@@ -41,8 +40,9 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
     ws = ws_of(user)
-    _enter_chat(ws)
     out = {}
+    # No waiting for re-indexing: it changes the index document by document, or
+    # builds a new one beside it (services/indexing.py).
     try:
         answer, trace, sources = agents.get_agent(ws, role)(question, with_sources=True, out=out)
     except Exception as e:
@@ -51,8 +51,6 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
                       ws, role, len(question))
         raise HTTPException(502, f"The assistant couldn't answer just now ({type(e).__name__}). "
                                  "Please try again in a moment.")
-    finally:
-        _leave_chat(ws)
     answer_state, sources, _ = conversations.outcome(answer, trace, sources, out)
     return {"answer": answer, "sources": sources, "state": answer_state,
             "steps": _steps(trace, user["role"] == "admin")}
@@ -67,20 +65,6 @@ def _steps(trace, details=True):
              "output": t["output"][:STEP_PREVIEW_CHARS]
              + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
             for t in trace]
-
-
-def _enter_chat(ws):
-    """Count a question in, once its workspace's index isn't being swapped."""
-    with state.gate:
-        if not state.gate.wait_for(lambda: not state.gate_of(ws)["indexing"], timeout=120):
-            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
-        state.gate_of(ws)["active"] += 1
-
-
-def _leave_chat(ws):
-    with state.gate:
-        state.gate_of(ws)["active"] -= 1
-        state.gate.notify_all()
 
 
 @router.post("/api/chat/stream")
@@ -105,16 +89,11 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
     user_limit(user, "chat")
     ws = ws_of(user)
     admin = user["role"] == "admin"
-    await run_in_threadpool(_enter_chat, ws)      # may wait: keep the event loop free
 
     turn = None
     if body.conversation_id:
-        try:
-            turn = await run_in_threadpool(conversations.start_turn, ws, user["username"], role,
-                                           body.conversation_id, question, body.retry_of)
-        except BaseException:
-            _leave_chat(ws)
-            raise
+        turn = await run_in_threadpool(conversations.start_turn, ws, user["username"], role,
+                                       body.conversation_id, question, body.retry_of)
         question = turn["question"]
     history_access = turn["history_access"] if turn else "public"
 
@@ -183,7 +162,6 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
             put({"type": "error", "message": message,
                  "message_id": turn["message_id"] if turn else None})
         finally:
-            _leave_chat(ws)
             put(None)
 
     if turn:
