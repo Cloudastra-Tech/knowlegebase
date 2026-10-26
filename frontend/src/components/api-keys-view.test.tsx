@@ -42,7 +42,7 @@ const MINE = {
 
 describe("ApiKeysView", () => {
   it("makes a key, shows it once with MCP snippets, and lists it without it", async () => {
-    const secret = "kb_live_abcdef123456_" + "s".repeat(43)
+    const secret = "kb_live_abcdef123456_" + "s".repeat(43) // gitleaks:allow (fake test key)
     let made = false
     const fetch = mockApi({
       "GET /api/me/api-keys": () => ({ ...MINE, keys: made ? [KEY] : [] }),
