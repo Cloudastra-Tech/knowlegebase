@@ -316,10 +316,24 @@ export const session = {
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // A 429's Retry-After: seconds until the rate limit lets this through.
+  retryAfter: number | null
+  constructor(status: number, message: string, retryAfter: number | null = null) {
     super(message)
     this.status = status
+    this.retryAfter = retryAfter
   }
+}
+
+function retryAfterOf(res: Response) {
+  const seconds = Number(res.headers.get("Retry-After"))
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null
+}
+
+// What the server takes per upload (UPLOAD_MAX_FILE_MB / UPLOAD_MAX_REQUEST_MB).
+export interface UploadLimits {
+  file_mb: number
+  request_mb: number
 }
 
 // Called when the server says the session is gone (expired / server restart).
@@ -354,7 +368,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     if (res.status === 401 && !path.startsWith("/auth/")) onUnauthorized()
     if (res.status === 403 && !path.startsWith("/auth/")) onForbidden()
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message, retryAfterOf(res))
   }
   return res.json() as Promise<T>
 }
@@ -423,6 +437,12 @@ export const signIn = {
     request<Member>(`/admin/members/${seg(username)}`, json("PATCH", body)),
   removeMember: (username: string) =>
     request<{ ok: boolean }>(`/admin/members/${seg(username)}`, json("DELETE")),
+  // End every session they have. They can sign in again unless their access is off.
+  signOutMember: (username: string) =>
+    request<{ ok: boolean; ended: number }>(
+      `/admin/members/${seg(username)}/sign-out`,
+      json("POST"),
+    ),
   testResult: (ticket: string) =>
     request<{ done: boolean; result: SsoTestResult | null }>(
       `/admin/sign-in/tests/${seg(ticket)}`,
@@ -450,6 +470,9 @@ export const api = {
   // logout_url: where to go next to also sign out at the provider (if it's set to)
   logout: () =>
     request<{ ok: boolean; logout_url: string | null }>("/auth/logout", { method: "POST" }),
+  // End every session of this account, on every device (this one too).
+  logoutEverywhere: () =>
+    request<{ ok: boolean; ended: number }>("/auth/logout-everywhere", { method: "POST" }),
   me: () => request<User>("/auth/me"),
 
   chat: (question: string) =>
@@ -476,7 +499,7 @@ export const api = {
         /* not JSON */
       }
       if (res.status === 401) onUnauthorized()
-      throw new ApiError(res.status, message)
+      throw new ApiError(res.status, message, retryAfterOf(res))
     }
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
@@ -499,7 +522,7 @@ export const api = {
     throw new ApiError(500, "The answer stream ended unexpectedly.")
   },
 
-  listDocs: () => request<{ docs: Doc[] }>("/docs"),
+  listDocs: () => request<{ docs: Doc[]; upload_limits?: UploadLimits }>("/docs"),
   readDoc: (d: { access: Access; name: string }) => request<{ content: string }>(docPath(d)),
   createDoc: (name: string, access: Access, content: string) =>
     request<{ access: Access; name: string }>("/docs", {

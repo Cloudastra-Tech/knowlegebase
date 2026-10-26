@@ -51,6 +51,7 @@ function roleNote(m: Member) {
 
 function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () => void }) {
   const [confirm, setConfirm] = useState(false)
+  const [confirmSignOut, setConfirmSignOut] = useState(false)
 
   async function save(body: { role?: AccountRole | null; disabled?: boolean }, done: string) {
     try {
@@ -67,6 +68,19 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
       await signIn.removeMember(m.username)
       toast.success(`Removed ${m.username}.`)
       onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function signOutEverywhere() {
+    try {
+      const { ended } = await signIn.signOutMember(m.username)
+      toast.success(
+        ended
+          ? `Signed ${m.username} out on every device.`
+          : `${m.username} wasn't signed in anywhere.`,
+      )
     } catch (err) {
       toast.error(errorText(err))
     }
@@ -151,16 +165,21 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuItem
               onSelect={() =>
                 save(
                   { disabled: !m.disabled },
-                  m.disabled ? `${m.username} can sign in again.` : `${m.username}'s access is off.`,
+                  m.disabled
+                    ? `${m.username} can sign in again.`
+                    : `${m.username}'s access is off, and they're signed out everywhere.`,
                 )
               }
             >
               {m.disabled ? "Turn access back on" : "Turn access off"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setConfirmSignOut(true)}>
+              Sign out everywhere
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive" onSelect={() => setConfirm(true)}>
@@ -174,7 +193,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {m.username}?</AlertDialogTitle>
             <AlertDialogDescription>
-              They're signed out on their next click
+              They're signed out on every device now
               {m.has_password ? ", and their password is deleted" : ""}. If they can still
               sign in with your provider, they come back as a new member: to keep someone out,
               turn their access off instead.
@@ -183,6 +202,23 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={remove}>Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmSignOut} onOpenChange={setConfirmSignOut}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign {m.username} out everywhere?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Every session they have ends now, on every device.{" "}
+              {m.disabled
+                ? "Their access is off, so they can't sign in again until it's back on."
+                : "They can sign in again: to keep them out, turn their access off instead."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={signOutEverywhere}>Sign out everywhere</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

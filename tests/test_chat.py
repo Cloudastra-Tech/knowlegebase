@@ -66,7 +66,7 @@ class FakeRetriever:
     def __init__(self, fakes):
         self.fakes = fakes
 
-    def invoke(self, query):
+    def invoke(self, query, dense_query=None):
         start = time.monotonic()
         time.sleep(self.fakes.delays["retrieve"])
         self.fakes.calls.add("retrieve", query, start)
@@ -75,16 +75,16 @@ class FakeRetriever:
 
 
 class FakeRagModel:
-    """rag.py's model: HyDE, rerank and the inner answer (written from the context)."""
+    """rag.py's model: HyDE and the inner answer (written from the context)."""
 
     def __init__(self, fakes):
         self.fakes = fakes
 
     def invoke(self, prompt):
         start = time.monotonic()
-        if isinstance(prompt, str):              # HyDE or rerank
+        if isinstance(prompt, str):              # HyDE
             time.sleep(self.fakes.delays["helper"])
-            return AIMessage(content="0" if prompt.startswith("Order") else "a guess")
+            return AIMessage(content="a guess")
         text = prompt[0].content
         time.sleep(self.fakes.delays["generate"])
         question = text.rsplit("Question:", 1)[1].split("Answer:")[0].strip()

@@ -1,0 +1,32 @@
+Cloudastra Academy — IT Security Policy (SEC-04)
+
+Accounts and passwords:
+Every staff account must use a password of at least 14 characters. Passwords are never
+shared, written down or reused across work and personal accounts.
+Multi-factor authentication (MFA) is mandatory for email, the Astra LMS admin panel and the
+Astra HR portal. Use the authenticator app; SMS codes are not allowed.
+
+Laptops and devices:
+Work laptops are issued with full-disk encryption turned on. Do not disable it.
+The screen must lock automatically after 5 minutes of inactivity.
+A lost or stolen laptop must be reported to the IT helpdesk within 2 hours, so the device can
+be wiped remotely.
+Personal phones may access work email only through the approved mail app with a device PIN.
+
+Network access:
+Use the company VPN (WireGuard) on any network outside the campus, including home Wi-Fi.
+Never connect a work laptop to public Wi-Fi without the VPN.
+
+Phishing:
+Report suspicious emails with the "Report phishing" button in the mail app. Do not forward
+them. The security team reviews every report within one working day.
+A phishing simulation is run every quarter; staff who click the simulated link repeat the
+security awareness training.
+
+Software:
+Only install software from the approved software catalogue. Requests for anything else go to
+the IT helpdesk and need security approval.
+
+Incidents:
+Any suspected security incident (a leaked password, malware, data sent to the wrong person)
+must be reported to the IT helpdesk immediately. Do not try to investigate it yourself.
