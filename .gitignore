@@ -21,3 +21,6 @@ docs/connectors/
 .impeccable/questions/
 .impeccable/mocks/
 .impeccable/config.local.json
+
+# Guardrails Hub token, a Docker build secret (docker-compose.guardrails.yml)
+guardrails_token.secret

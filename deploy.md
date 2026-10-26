@@ -53,8 +53,53 @@ nano .env    # paste the real OPENAI_API_KEY (and Outline values if used)
 
 ## 4. Build and start
 
+**Guardrails Hub token (production).** The toxicity check on chat questions needs
+the Guardrails Hub `toxic_language` validator, which the image installs only when
+the build is given a Hub token (free, from https://hub.guardrailsai.com/keys). The
+token is a BuildKit build secret: it is never a build argument or part of git.
+Without it the image still builds (CI and fresh clones do), the build log says
+`no gr_token build secret - skipping the toxicity validator`, and the app starts
+without the toxicity check (see `REQUIRE_TOXICITY_GUARD` below).
+
+```bash
+printf '%s\n' 'PASTE_THE_HUB_TOKEN' > guardrails_token.secret   # gitignored and not copied into the image
+chmod 600 guardrails_token.secret
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml' >> .env
+```
+
+`COMPOSE_FILE` makes every `docker compose` command in this folder add
+`docker-compose.guardrails.yml`, which hands the file to the build as the
+`gr_token` secret. It is a separate file because Compose refuses to build when a
+secret's file is missing. With it on, a missing `guardrails_token.secret` fails the
+build (`failed to stat …guardrails_token.secret`) instead of silently dropping the
+check. The build writes the token into the image (`/root/.guardrailsrc`, needed at
+run time to call the Hub's hosted model), so never push an image built this way to
+a public registry. BuildKit does not notice a changed secret: after adding or
+rotating the token, rebuild with `docker compose build --no-cache`.
+
 ```bash
 docker compose up -d --build
+```
+
+Check the guard is on: `curl -fsS http://localhost:8501/api/health` shows
+`"guards": {"toxicity": "active", …}`; `"missing"` means the image was built
+without the token (the app also logs `toxicity check is OFF` at ERROR level when it
+starts). To make a missing validator stop the app instead, add
+`REQUIRE_TOXICITY_GUARD=1` to `.env`: the server then refuses to start (and
+`restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the
+logs) until the image is rebuilt with the token. It is off by default so a build
+without the token still runs.
+
+**Upgrading a server that has the old hand-applied patch** (local changes to
+`Dockerfile`, `docker-compose.yml` and `.gitignore` for `gr_token`): the repo now
+carries this setup, so drop the patch once and keep the token file:
+
+```bash
+git diff > ~/guardrails-patch-backup.diff                  # a copy, just in case
+git checkout -- Dockerfile docker-compose.yml .gitignore
+git pull
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml' >> .env
+docker compose build --no-cache && docker compose up -d
 ```
 
 First boot runs `ingest.py` to build the Chroma vector DB from `docs/` (~1 min,
@@ -160,7 +205,7 @@ sudo ufw allow 8501/tcp     # skip if your cloud uses security-groups instead
 
 ```bash
 docker compose ps           # STATUS should show "Up"
-curl -fsS http://localhost:8501/api/health && echo OK
+curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "active" with the Hub token (step 4)
 ```
 
 Open **`http://<SERVER_IP>:8501`** in a browser.
@@ -191,10 +236,10 @@ cd genai && docker compose ps              # STATUS: Up
 
 | Task | Command (run inside the `genai` folder) |
 |---|---|
-| View logs | `docker compose logs -f` |
+| View logs | `docker compose logs -f` (Docker keeps the last 5 × 10 MB per container: `logging` in `docker-compose.yml`) |
 | Stop | `docker compose down` |
 | Restart | `docker compose restart` |
-| Deploy new code | `git pull && docker compose up -d --build` |
+| Deploy new code | `git pull && docker compose up -d --build` (no local patch to re-apply; the Guardrails token comes from step 4's `COMPOSE_FILE`) |
 | Rebuild vector DB from scratch | `docker compose down -v && docker compose up -d --build` |
 | Re-index after editing `docs/` by hand | `docker compose exec knowledgebase python ingest.py && docker compose restart` |
 | Shell into the container | `docker compose exec knowledgebase sh` |
@@ -225,10 +270,25 @@ commit them from the server or copy them back if you want them in the repo.
   only calls public addresses. For local testing, list it in `.env`:
   `SSO_ALLOW_PRIVATE_HOSTS=localhost:8180`.
 - **"Too many attempts. Wait a minute"** — the sign-in endpoints are rate-limited
-  per address (and overall). Set `FORWARDED_ALLOW_IPS` in `.env` to your reverse
-  proxy's address (e.g. `172.17.0.1` for nginx on the Docker host): uvicorn then
-  takes the client's address from the proxy only. The default, `*`, trusts the
-  `X-Forwarded-For` header from anyone, so a client can pose as many addresses.
+  per address (and overall), and the address comes from the reverse proxy's
+  `X-Forwarded-For` header. uvicorn only believes that header from the addresses
+  in `FORWARDED_ALLOW_IPS`. The image's default is
+  `127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16`: loopback plus the private ranges
+  Docker gives its bridge networks. nginx on the host, proxying to port 8501,
+  reaches the container from the bridge gateway (e.g. `172.18.0.1`), so it is
+  trusted, while a client connecting to 8501 directly keeps its public address and
+  cannot pose as anyone else. If everyone shows up as one address (all hitting one
+  limit), the proxy isn't in that list — e.g. a proxy on another host, or Docker
+  set up with custom `default-address-pools` such as `10.x`. Set
+  `FORWARDED_ALLOW_IPS` in `.env` to the proxy's address as the container sees it
+  (comma-separated, CIDR allowed); for nginx on the host that is the network's
+  gateway: `docker network inspect <folder>_default -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`.
+  Never `*`: it trusts the header from anyone. With nginx on the same host, also consider publishing the port on
+  loopback only (`"127.0.0.1:8501:8501"`) so nothing can bypass nginx.
+- **`/api/health` shows `"toxicity": "missing"`** — the image was built without
+  the Guardrails Hub token; see step 4. With `REQUIRE_TOXICITY_GUARD=1` the
+  container instead keeps restarting and its log ends with
+  `REQUIRE_TOXICITY_GUARD is set but the Guardrails Hub toxicity validator is not installed`.
 - **Someone is locked out after "Require single sign-on" was turned on** — only
   admins keep passwords. If the provider itself is broken, sign in as an admin
   with a password and turn it off under **Access → Sign-in**, or run
