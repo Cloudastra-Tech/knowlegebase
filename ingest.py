@@ -25,14 +25,23 @@ decides which collection a workspace's questions are answered from.
 Every chunk gets a STABLE id, from (workspace, document, chunk number, chunk
 text): the same chunk of the same file always has the same id, so a re-run
 knows what it already has.
+
+Every chunk also carries what a citation needs (PASSAGE METADATA, see
+load_and_split): chunk_id, doc_id, title, provider, url, access, modified,
+char_start / char_end in the document's extracted text, page (PDFs, 0-based) and
+heading_path (where the text has headings). None of it goes into the ids, so an
+index made before a field existed gets it on its next update() by a re-tag, not
+by embedding anything again (CHUNK_META).
 """
 
 import hashlib
 import json
 import logging
 import os
+import re
 import threading
 from collections import Counter
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -64,6 +73,12 @@ BATCH = 128               # chunks per embedding call
 FINGERPRINT = hashlib.sha256(json.dumps({
     "model": EMBED_MODEL, "chunk_size": CHUNK_SIZE, "overlap": CHUNK_OVERLAP,
     "header": "[title]", "ids": 1}, sort_keys=True).encode()).hexdigest()[:16]
+# The version of the per-chunk metadata load_and_split writes. It is not part of
+# FINGERPRINT: an index whose chunks carry an older one is brought up to date by
+# update(), document by document, re-splitting (the ids come out the same) and
+# re-tagging, with no embedding call.
+CHUNK_META = 2
+UPLOADS = "Company documents"     # the provider of files uploaded on the Documents screen
 
 
 def _embeddings():
@@ -113,7 +128,7 @@ def _source_info(key, doc_info):
     if not info:
         return {}
     return {"title": info.get("title") or "", "url": info.get("url") or "",
-            "provider": info.get("provider") or ""}
+            "provider": info.get("provider") or "", "modified": info.get("modified") or ""}
 
 
 def doc_meta(docs_folder, key, connector_access, doc_info=None):
@@ -132,6 +147,7 @@ def doc_meta(docs_folder, key, connector_access, doc_info=None):
         meta["access"] = (connector_access or {}).get(provider, "restricted")
     else:
         meta["access"] = "restricted" if "/restricted/" in "/" + key else "public"
+        meta.update(title=os.path.basename(key), provider=UPLOADS)
     return meta
 
 
@@ -139,17 +155,39 @@ def doc_meta(docs_folder, key, connector_access, doc_info=None):
 DOC_FIELDS = ("doc_key", "connector", "access", "title", "url", "provider")
 
 
+def doc_id(namespace, key):
+    """Stable id of a document in a workspace (what its chunks' citations point at)."""
+    return hashlib.sha256(f"{namespace or ''}\0{key}".encode()).hexdigest()[:24]
+
+
+def _header_title(meta, key):
+    """The title every chunk's text starts with (see load_and_split): a synced
+    file's real title, else the file name without its extension."""
+    return (meta.get("title") if meta.get("connector") else "") \
+        or os.path.splitext(os.path.basename(key))[0]
+
+
+def _modified(path, meta):
+    """When the document last changed: the connector's time, else the file's (ISO, UTC)."""
+    if meta.get("modified"):
+        return meta["modified"]
+    return datetime.fromtimestamp(os.stat(path).st_mtime, timezone.utc).isoformat(
+        timespec="seconds")
+
+
 def _file_stat(path):
     st = os.stat(path)
     return f"{st.st_size}:{st.st_mtime_ns}"
 
 
-def _doc_hash(path, title):
-    """The document's content as indexed: its bytes, and the title every chunk starts with."""
+def _doc_hash(path, meta):
+    """The document's content as indexed: its bytes, and a synced file's title,
+    which every chunk starts with."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
             h.update(block)
+    title = meta.get("title") if meta.get("connector") else ""
     h.update(b"\0" + (title or "").encode("utf-8"))
     return h.hexdigest()
 
@@ -163,6 +201,32 @@ def chunk_id(namespace, key, n, text):
 def _clean(meta):
     """Chroma takes only str / int / float / bool values."""
     return {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))}
+
+
+# A Markdown heading ("## Refunds", as the Notion sync writes them), or a short
+# line of its own ending in a colon ("Refund policy:") after a blank line.
+_MD_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$", re.M)
+_LABEL_HEADING = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*([^\n:.!?#]{2,60}):[ \t]*(?=\n)")
+HEADING_SEPARATOR = " › "
+
+
+def _headings(text):
+    """[(position, level, heading)] in a document's text, in order. A label line
+    ("Refund policy:") ranks below every Markdown level."""
+    found = [(m.start(), len(m.group(1)), m.group(2).strip()) for m in _MD_HEADING.finditer(text)]
+    found += [(m.start(1), 7, m.group(1).strip()) for m in _LABEL_HEADING.finditer(text)]
+    return sorted(found)
+
+
+def heading_path(headings, position):
+    """The headings a position in the text sits under, outermost first, joined
+    by HEADING_SEPARATOR ('' if none)."""
+    path = []
+    for start, level, title in headings:
+        if start > position:
+            break
+        path = [(lv, t) for lv, t in path if lv < level] + [(level, title)]
+    return HEADING_SEPARATOR.join(t for _, t in path)[:300]
 
 
 def load_and_split(docs_folder, key, meta, namespace):
@@ -193,20 +257,37 @@ def load_and_split(docs_folder, key, meta, namespace):
         chunk_overlap=CHUNK_OVERLAP,
         add_start_index=True,   # remember where each chunk sits in its document
     )
-    chunks = splitter.split_documents(documents)
+    # Split one loaded Document (a PDF page, or the whole text file) at a time:
+    # the same chunks as splitting them all at once, each next to its source.
+    chunks = [(d, chunk) for d in documents for chunk in splitter.split_documents([d])]
 
     # CONTEXTUAL CHUNK HEADER: start every chunk with its document's title.
     # A chunk in the middle of "Bible Navigator — Technical Audit" often never
     # says "Bible Navigator"; without the title, a search for it misses those
     # chunks and the model can't tell what they are about.
-    title = meta.get("title") or os.path.splitext(os.path.basename(key))[0]
+    title = _header_title(meta, key)
+    headings = {}
     out = []
-    for n, chunk in enumerate(chunks):
+    for n, (source, chunk) in enumerate(chunks):
         text = chunk.page_content
         if title and not text.startswith(title):
             text = f"[{title}]\n{text}"
-        out.append((chunk_id(namespace, key, n, text), text,
-                    _clean({**chunk.metadata, **meta})))
+        cid = chunk_id(namespace, key, n, text)
+        # PASSAGE METADATA: where the chunk sits, for citations and "open at passage".
+        passage = {"chunk_id": cid, "doc_id": doc_id(namespace, key), "chunk_meta": CHUNK_META}
+        start = chunk.metadata.get("start_index", -1)
+        if start >= 0:
+            end = start + len(chunk.page_content)
+            passage.update(char_start=start, char_end=end)
+            if id(source) not in headings:
+                headings[id(source)] = _headings(source.page_content)
+            found = headings[id(source)]
+            # The headings it starts under; before the first one, its own first.
+            path = heading_path(found, start) or heading_path(
+                found, next((at for at, _, _ in found if start <= at < end), -1))
+            if path:
+                passage["heading_path"] = path
+        out.append((cid, text, _clean({**chunk.metadata, **meta, **passage})))
     return out
 
 
@@ -272,7 +353,8 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
         path = os.path.join(docs_folder, *key.split("/"))
         try:
             meta = doc_meta(docs_folder, key, connector_access, doc_info)
-            meta.update(doc_stat=_file_stat(path), doc_hash=_doc_hash(path, meta.get("title")))
+            meta.update(doc_stat=_file_stat(path), doc_hash=_doc_hash(path, meta),
+                        modified=_modified(path, meta))
             items += load_and_split(docs_folder, key, meta, namespace)
         except Exception:
             log.exception("Index: couldn't read %s", key)
@@ -314,6 +396,8 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
       unchanged (same size, time and tags)       nothing to do
       same content, other tags (e.g. access)     its chunks' metadata is updated:
                                                  no embedding call
+      same content, older CHUNK_META             re-split: the same ids come out,
+                                                 so only their metadata is updated
       new or edited                              re-split; chunks whose id is new
                                                  are embedded, gone ones deleted
       deleted                                    its chunks are deleted
@@ -349,13 +433,15 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
             continue
         meta = doc_meta(docs_folder, key, connector_access, doc_info)
         stat = _file_stat(path)
-        if have and _same(have["metas"], "doc_stat") == stat and all(
+        current = bool(have) and _same(have["metas"], "chunk_meta") == CHUNK_META
+        if current and _same(have["metas"], "doc_stat") == stat and all(
                 _same(have["metas"], k) == meta.get(k) for k in DOC_FIELDS):
             continue                                        # unchanged
         try:
             meta["doc_stat"] = stat
-            meta["doc_hash"] = _doc_hash(path, meta.get("title"))
-            if have and _same(have["metas"], "doc_hash") == meta["doc_hash"]:
+            meta["doc_hash"] = _doc_hash(path, meta)
+            meta["modified"] = _modified(path, meta)
+            if current and _same(have["metas"], "doc_hash") == meta["doc_hash"]:
                 # Same text, other tags (access level, link, file time): no embedding.
                 retags += [(cid, meta) for cid in have["ids"]]
                 stats["retagged"] += 1

@@ -372,12 +372,47 @@ export interface IntegrationSetup {
   max_depth?: number
 }
 
-export interface Source {
+// Why a passage was found (agent.py _source): its rank among the search's matches
+// (null: the opening of a matched document, added for context), whether the
+// meaning search found it, and the searched words it contains.
+export interface SourceWhy {
+  rank: number | null
+  of: number
+  meaning: boolean
+  terms: string[]
+}
+
+// Where a passage sits in its document (rag.passage_of).
+export interface PassagePlace {
+  doc_id?: string | null
+  chunk_id?: string | null // opens the passage (GET /api/passages/{chunk_id})
+  page?: number | null // PDFs, 1-based
+  heading_path?: string | null // "Handbook › Refunds"
+  char_start?: number | null
+  char_end?: number | null
+  modified?: string | null // ISO time the document last changed
+}
+
+export interface Source extends PassagePlace {
+  n?: number // a cited passage: the answer's [S{n}] marker
   title: string
   provider: string
   url: string | null
   kind?: "general_knowledge" // Wikipedia: not from the company's documents
   access?: Access
+  snippet?: string // the passage, as it was when the answer was written
+  why?: SourceWhy
+}
+
+// GET /api/passages/{chunk_id}: a passage and its document's text around it.
+export interface Passage extends PassagePlace {
+  title: string
+  provider: string
+  url: string | null
+  access: Access
+  text: string
+  before: string
+  after: string
 }
 
 // A tool the assistant used. Its raw input and output come to admins only.
@@ -421,7 +456,7 @@ export type StreamEvent =
   | { type: "status"; text: string }
   | { type: "step_start"; id: string; tool: string; label: string }
   | { type: "step_end"; id: string; tool: string; result: string }
-  | { type: "answer"; text: string }
+  | { type: "answer"; text: string; sources?: Source[] } // sources: when the cited ones change
   | ({ type: "done" } & ChatReply)
   | { type: "error"; message: string; message_id?: string | null }
 

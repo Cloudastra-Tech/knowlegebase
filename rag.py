@@ -121,10 +121,12 @@ def load_chain(role="public", collection=None):
     # ones this role is allowed to see (so BM25 also respects permissions).
     stored = vectorstore.get()                         # all chunks + metadata
     texts, metas = [], []
-    for text, meta in zip(stored["documents"], stored["metadatas"]):
+    for cid, text, meta in zip(stored["ids"], stored["documents"], stored["metadatas"]):
         if meta.get("access", "public") in allowed:
             texts.append(text)
-            metas.append(meta)
+            # An index from before passage metadata (ingest.CHUNK_META): the
+            # chunk's id is its Chroma id, until the next update re-tags it.
+            metas.append(meta if meta.get("chunk_id") else {**meta, "chunk_id": cid})
 
     if texts:
         bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas,
@@ -210,7 +212,10 @@ class HybridRetriever:
         """query: what the user asked — the KEYWORD search uses exactly this.
         dense_query: an enriched version for the MEANING search only (e.g.
         the question + a HyDE guess); defaults to query. A guessed answer must
-        not feed keyword search: its invented words would match real chunks."""
+        not feed keyword search: its invented words would match real chunks.
+        Each chunk comes back as a copy whose metadata also says how it was
+        found ("why this source"): rank (1 = best, after fusion), dense_rank and
+        bm25_rank (None when that search didn't return it), and its chunk_id."""
         # Run both searches. Each returns an ORDERED list of chunks (best first).
         dense_hits = self.dense.invoke(dense_query or query)
         bm25_hits = self.bm25.invoke(query)
@@ -218,15 +223,22 @@ class HybridRetriever:
         # Score every chunk by its rank in each list (RRF).
         scores = {}        # chunk text -> fused score
         docs = {}          # chunk text -> the Document object
-        for hits in (dense_hits, bm25_hits):
+        ranks = {}         # chunk text -> {"dense_rank": n, "bm25_rank": n}
+        for name, hits in (("dense_rank", dense_hits), ("bm25_rank", bm25_hits)):
             for rank, doc in enumerate(hits):
                 key = doc.page_content
                 scores[key] = scores.get(key, 0) + 1 / (self.rrf_k + rank)
                 docs[key] = doc
+                ranks.setdefault(key, {}).setdefault(name, rank + 1)
 
         # Sort by fused score (highest first) and return the top chunks.
         best = sorted(scores, key=scores.get, reverse=True)[: self.top_k]
-        return [docs[k] for k in best]
+        return [Document(page_content=k, id=docs[k].id, metadata={
+                    **docs[k].metadata,
+                    "chunk_id": docs[k].metadata.get("chunk_id") or docs[k].id,
+                    "rank": n, "dense_rank": ranks[k].get("dense_rank"),
+                    "bm25_rank": ranks[k].get("bm25_rank")})
+                for n, k in enumerate(best, 1)]
 
 
 def hyde_expand(question, llm):
@@ -250,11 +262,44 @@ def _document_name(doc):
     return doc.metadata.get("title") or os.path.basename(doc.metadata.get("source", ""))
 
 
-def answer_question(question, retriever, llm, role="public", guard=None):
-    """Run the full Retrieve -> Augment -> Generate -> Guard flow.
+def passage_of(meta):
+    """What a citation shows of a chunk, from its metadata (ingest.py's PASSAGE
+    METADATA; an index from before it has fewer fields): its document's title,
+    provider and link, who may see it, and where in the document it sits. The
+    page is 1-based, as people count pages."""
+    page = meta.get("page")
+    is_pdf = str(meta.get("source") or meta.get("doc_key") or "").lower().endswith(".pdf")
+    return {
+        "doc_id": meta.get("doc_id") or meta.get("doc_key") or None,
+        "chunk_id": meta.get("chunk_id") or None,
+        "title": _document_name(Document(page_content="", metadata=meta)) or "Untitled",
+        "provider": meta.get("provider") or ("Connected source" if meta.get("connector")
+                                             else "Company documents"),
+        "url": meta.get("url") or None,
+        "access": meta.get("access", "public"),
+        "page": page + 1 if is_pdf and isinstance(page, int) else None,
+        "heading_path": meta.get("heading_path") or None,
+        "char_start": meta.get("char_start"),
+        "char_end": meta.get("char_end"),
+        "modified": meta.get("modified") or None,
+    }
+
+
+def passage_text(text, meta):
+    """A chunk's own text, without the "[title]" line ingest puts first."""
+    start, end = meta.get("char_start"), meta.get("char_end")
+    if isinstance(start, int) and isinstance(end, int) and 0 <= end - start <= len(text):
+        return text[len(text) - (end - start):]
+    return re.sub(r"\A\[[^\]\n]*\]\n", "", text)
+
+
+def retrieve(question, retriever, llm, role="public", guard=None):
+    """Retrieve: the chunks a question is answered from -> (docs, None), or
+    (None, reason) when an input guard refused it. Nothing is generated here:
+    the agent writes the one answer, citing these chunks (agent.py).
     guard: optional function -> (ok, message) that replaces the input check
     below. The caller runs its guards WHILE this retrieves; guard() is waited
-    on just before generation, so a blocked question never reaches the model."""
+    on before anything found is returned."""
 
     # Does this role get to see restricted info? (HR yes, public no.)
     allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
@@ -264,7 +309,7 @@ def answer_question(question, retriever, llm, role="public", guard=None):
     if guard is None:
         ok, reason = check_question(question, allow_restricted)
         if not ok:
-            return reason, None      # None = blocked by a guard (not "no results")
+            return None, reason      # None = blocked by a guard (not "no results")
 
     # ---- 0. HyDE (optional) — enrich the MEANING search only -----------
     dense_query = question
@@ -280,8 +325,8 @@ def answer_question(question, retriever, llm, role="public", guard=None):
         docs = RERANKER(question, docs)
 
     # ---- 1c. Add how the top documents BEGIN (title / summary), so a chunk
-    # from the middle of a document is read in context. Citations still come
-    # from the matched chunks only (the intros are appended after them).
+    # from the middle of a document is read in context. They come after the
+    # matched chunks and have no rank (they weren't matched, see HybridRetriever).
     if hasattr(retriever, "intros_for"):
         docs = docs + retriever.intros_for(docs)
 
@@ -290,7 +335,19 @@ def answer_question(question, retriever, llm, role="public", guard=None):
     if guard is not None:
         ok, reason = guard()
         if not ok:
-            return reason, None
+            return None, reason
+    return docs, None
+
+
+def answer_question(question, retriever, llm, role="public", guard=None):
+    """Run the full Retrieve -> Augment -> Generate -> Guard flow -> (answer,
+    docs), or (reason, None) when a guard refused the question. The chat agent
+    doesn't call this (it retrieves, then writes ONE cited answer itself); it
+    stays the plain RAG flow for scripts and the retrieval tests."""
+    allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
+    docs, refused = retrieve(question, retriever, llm, role, guard)
+    if docs is None:
+        return refused, None
 
     # ---- 2. AUGMENT ----------------------------------------------------
     # Glue the retrieved chunks together into one block of "context" text.

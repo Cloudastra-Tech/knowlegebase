@@ -8,6 +8,7 @@ import type {
   ConversationSummary,
   Feedback,
   FeedbackReason,
+  Passage,
   StreamEvent,
 } from "@/lib/api/types"
 
@@ -70,6 +71,10 @@ export const chatApi = {
     }
     throw new ApiError(500, "The answer stream ended unexpectedly.")
   },
+
+  // A cited passage with the text around it; 404 when it's gone from the index or
+  // the role the app is viewed as can't see it.
+  passage: (chunkId: string) => request<Passage>(`/passages/${seg(chunkId)}`),
 
   conversations: () =>
     request<{ conversations: ConversationSummary[] }>("/conversations").then(

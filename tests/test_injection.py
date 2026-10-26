@@ -278,6 +278,13 @@ def test_the_agent_model_reads_tool_results_as_blocks_and_the_steps_stay_plain(
     for m in results:
         if m.name == "wikipedia":         # the server's own note is not data: unwrapped
             assert m.content == agent._EGRESS_NOTE
+        elif m.name == "search_docs":     # one block per passage, each with its marker
+            blocks = BLOCK.findall(m.content)
+            assert blocks and {source for source, _ in blocks} == {"company_documents"}
+            refs = re.findall(r'^<untrusted_data source="company_documents" ref="S(\d+)"',
+                              m.content, re.M)
+            assert len(refs) == len(blocks)
+            assert BLOCK.sub("", m.content).strip() == ""      # nothing outside them
         else:
             assert BLOCK.fullmatch(m.content).group(1) == agent._PROVENANCE[m.name]
     # The steps panel shows what the tools returned, without the wrapping.

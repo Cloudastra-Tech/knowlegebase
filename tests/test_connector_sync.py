@@ -401,10 +401,12 @@ def test_existing_manifests_are_imported_into_source_items_once(fake):
     info = sync_store.doc_info(fake.ws)
     assert info == {
         **{f"connectors/google_drive/{name}": {"title": e["title"], "url": e["url"],
-                                               "provider": "Google Drive"}
+                                               "provider": "Google Drive",
+                                               "modified": e.get("modified") or ""}
            for name, e in drive.items()},
         **{f"connectors/notion/{name}": {"title": e["title"], "url": e["url"],
-                                         "provider": "Notion"}
+                                         "provider": "Notion",
+                                         "modified": e.get("modified") or ""}
            for name, e in notion.items()}}
     items = sync_store.items(fake.ws, "google_drive")
     for name, entry in drive.items():
