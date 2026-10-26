@@ -20,9 +20,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @pytest.fixture
 def api(monkeypatch):
     import api
+    from kb.services import saml_refresh, sync
     # The lifespan starts these background loops; the tests only need startup.
-    monkeypatch.setattr(api, "_sync_scheduler", lambda: None)
-    monkeypatch.setattr(api, "_saml_refresh_scheduler", lambda: None)
+    monkeypatch.setattr(sync, "sync_scheduler", lambda: None)
+    monkeypatch.setattr(saml_refresh, "saml_refresh_scheduler", lambda: None)
     monkeypatch.delenv("REQUIRE_TOXICITY_GUARD", raising=False)
     return api
 
@@ -34,20 +35,23 @@ def _client(api):
 
 @pytest.mark.parametrize("active, shown", [(False, "missing"), (True, "active")])
 def test_health_reports_the_toxicity_guard(api, monkeypatch, active, shown):
-    monkeypatch.setattr(api.safety, "toxicity_guard_active", active)
+    import safety
+    monkeypatch.setattr(safety, "toxicity_guard_active", active)
     r = _client(api).get("/api/health")
     assert r.status_code == 200
     assert r.json() == {"ok": True, "guards": {"toxicity": shown, "toxicity_required": False}}
 
 
 def test_missing_guard_still_starts_by_default(api, monkeypatch):
-    monkeypatch.setattr(api.safety, "toxicity_guard_active", False)
+    import safety
+    monkeypatch.setattr(safety, "toxicity_guard_active", False)
     with _client(api) as client:
         assert client.get("/api/health").json()["guards"]["toxicity"] == "missing"
 
 
 def test_required_guard_refuses_to_start_without_it(api, monkeypatch):
-    monkeypatch.setattr(api.safety, "toxicity_guard_active", False)
+    import safety
+    monkeypatch.setattr(safety, "toxicity_guard_active", False)
     monkeypatch.setenv("REQUIRE_TOXICITY_GUARD", "1")
     with pytest.raises(RuntimeError, match="REQUIRE_TOXICITY_GUARD"):
         with _client(api):
@@ -55,11 +59,24 @@ def test_required_guard_refuses_to_start_without_it(api, monkeypatch):
 
 
 def test_required_guard_starts_when_installed(api, monkeypatch):
-    monkeypatch.setattr(api.safety, "toxicity_guard_active", True)
+    import safety
+    monkeypatch.setattr(safety, "toxicity_guard_active", True)
     monkeypatch.setenv("REQUIRE_TOXICITY_GUARD", "1")
     with _client(api) as client:
         assert client.get("/api/health").json()["guards"] == {"toxicity": "active",
                                                               "toxicity_required": True}
+
+
+def test_startup_brings_the_database_up_to_date(api, monkeypatch, tmp_path):
+    """Migrations run when the server starts, not at its first request."""
+    import sqlite3
+    import db
+    path = str(tmp_path / "app.db")
+    monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", set())
+    with _client(api):
+        with sqlite3.connect(path) as conn:
+            assert conn.execute("SELECT version_num FROM alembic_version").fetchall()
 
 
 def _default_forwarded_allow_ips():

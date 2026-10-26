@@ -80,21 +80,22 @@ def signed_in():
     """The API with sign-in bypassed: an HR member of workspace acme."""
     from fastapi.testclient import TestClient
     import api
+    from kb import deps
 
-    api.app.dependency_overrides[api.current_user] = lambda: {
+    api.app.dependency_overrides[deps.current_user] = lambda: {
         "username": "hr@acme.test", "workspace": "acme", "role": "hr"}
-    api.app.dependency_overrides[api.current_role] = lambda: "hr"
+    api.app.dependency_overrides[deps.current_role] = lambda: "hr"
     yield TestClient(api.app)
     api.app.dependency_overrides.clear()
 
 
 def test_a_failed_chat_answer_is_logged_without_the_question(signed_in, monkeypatch, caplog):
-    import api
+    from kb.services import agents
 
     def broken_agent(question, **kwargs):
         raise RuntimeError("model unavailable")
 
-    monkeypatch.setattr(api, "get_agent", lambda ws, role: broken_agent)
+    monkeypatch.setattr(agents, "get_agent", lambda ws, role: broken_agent)
     with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
         r = signed_in.post("/api/chat/stream", json={"question": QUESTION})
     assert "Something went wrong: RuntimeError" in r.text
@@ -105,30 +106,31 @@ def test_a_failed_chat_answer_is_logged_without_the_question(signed_in, monkeypa
 
 
 def test_a_failed_reindex_is_logged(monkeypatch, caplog):
-    import api
+    from kb import state
+    from kb.services import indexing
     import ingest
 
     def broken_ingest(**kwargs):
         raise OSError("disk full")
 
     monkeypatch.setattr(ingest, "main", broken_ingest)
-    api._indexes["acme"] = api._new_index_state()
+    state.indexes["acme"] = state.new_index_state()
     with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
-        api._run_index("acme")
-    assert api._indexes["acme"]["error"] == "OSError: disk full"      # the UI still sees it
+        indexing.run_index("acme")
+    assert state.indexes["acme"]["error"] == "OSError: disk full"      # the UI still sees it
     [record] = [r for r in caplog.records if r.message.startswith("Index:")]
     assert "acme" in record.message and record.exc_info
 
 
 def test_a_failed_connector_sync_is_logged(monkeypatch, caplog):
-    import api
+    from kb.services import sync
 
     def broken_sync(ws):
         raise ConnectionError("notion down")
 
-    monkeypatch.setitem(api.CONNECTORS, "notion", types.SimpleNamespace(sync=broken_sync))
+    monkeypatch.setitem(sync.CONNECTORS, "notion", types.SimpleNamespace(sync=broken_sync))
     with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
-        api._sync("acme", "notion")
+        sync.sync("acme", "notion")
     [record] = [r for r in caplog.records if r.message.startswith("Sync:")]
     assert "notion" in record.message and "acme" in record.message and record.exc_info
 

@@ -450,12 +450,12 @@ def test_a_saml_attribute_can_carry_the_groups(client, admin, conn, idp):
 
 
 def test_an_expired_saml_test_never_turns_into_a_real_sign_in(client, admin, conn, idp):
-    import api
+    from kb import state
     import members_store
     started = client.post(f"/api/admin/sign-in/connections/{conn['id']}/test",
                           headers=admin).json()
     request = idp.read_request(client.get(started["url"]).headers["location"])
-    api._sso_tests[started["ticket"]]["expires"] = 0
+    state.sso_tests[started["ticket"]]["expires"] = 0
     location = post_answer(client, conn, idp.answer(request, "late@samlco.example"))
     assert finish(client, location) == "/#sso-test"
     assert members_store.get("late@samlco.example") is None
@@ -519,8 +519,8 @@ def events(client, admin, cid):
 
 
 def a_day_later():
-    import api
-    return time.time() + api.SAML_REFRESH_EVERY + 60
+    from kb.services import saml_refresh
+    return time.time() + saml_refresh.SAML_REFRESH_EVERY + 60
 
 
 def test_a_new_key_is_fetched_when_a_signature_fails_and_the_sign_in_succeeds(
@@ -551,12 +551,12 @@ def test_a_failing_signature_fetches_the_metadata_at_most_every_few_minutes(
 
 
 def test_the_schedule_fetches_metadata_once_its_due(client, admin, from_url, tmp_path):
-    import api
+    from kb.services import saml_refresh
     rotated = new_key(tmp_path, client, from_url)
     from_url["url"].xml = rotated.metadata()
-    api._refresh_due_saml_metadata()                     # just added: not due yet
+    saml_refresh.refresh_due_saml_metadata()       # just added: not due yet
     assert from_url["url"].fetches == 1
-    api._refresh_due_saml_metadata(now=a_day_later())
+    saml_refresh.refresh_due_saml_metadata(now=a_day_later())
     assert from_url["url"].fetches == 2
     assert ("updated", "Certificate updated automatically") in events(client, admin,
                                                                       from_url["id"])
@@ -565,10 +565,10 @@ def test_the_schedule_fetches_metadata_once_its_due(client, admin, from_url, tmp
 
 
 def test_a_new_entity_id_is_held_back_for_review(client, admin, from_url, tmp_path):
-    import api
+    from kb.services import saml_refresh
     other = TestIdP(str(tmp_path / "other"), entity="https://elsewhere.example/saml")
     from_url["url"].xml = other.metadata()
-    api._refresh_due_saml_metadata(now=a_day_later())
+    saml_refresh.refresh_due_saml_metadata(now=a_day_later())
     p = provider(client, admin, from_url["id"])
     assert p["needs_review"] and p["issuer"] == IDP_ENTITY       # nothing applied
     [(_, reason)] = [e for e in events(client, admin, from_url["id"]) if e[0] == "attention"]
@@ -583,11 +583,11 @@ def test_a_new_entity_id_is_held_back_for_review(client, admin, from_url, tmp_pa
 
 def test_a_failed_refresh_is_logged_once_never_verbatim_and_keeps_the_metadata(
         client, admin, from_url, monkeypatch):
-    import api
-    monkeypatch.setattr(api, "SAML_REFRESH_GAP", 0)
+    from kb.services import saml_refresh
+    monkeypatch.setattr(saml_refresh, "SAML_REFRESH_GAP", 0)
     from_url["url"].xml = "<html>Down for maintenance: call the helpdesk at 555</html>"
-    api._refresh_due_saml_metadata(now=a_day_later())
-    api._refresh_due_saml_metadata(now=a_day_later() + api.SAML_REFRESH_RETRY)
+    saml_refresh.refresh_due_saml_metadata(now=a_day_later())
+    saml_refresh.refresh_due_saml_metadata(now=a_day_later() + saml_refresh.SAML_REFRESH_RETRY)
     assert from_url["url"].fetches == 3
     [(_, reason)] = [e for e in events(client, admin, from_url["id"]) if e[0] == "attention"]
     assert reason.startswith("Metadata refresh failed") and "helpdesk" not in reason
@@ -620,11 +620,11 @@ def test_a_pasted_providers_certificate_expiry_is_shown(client, admin, conn, idp
 
 
 def test_the_metadata_can_ask_to_be_fetched_sooner_but_not_constantly(idp):
-    import api
+    from kb.services import saml_refresh
 
     def with_cache(duration):
         return idp.metadata().replace(" entityID=", f' cacheDuration="{duration}" entityID=', 1)
     assert saml_sp.read_idp_metadata(with_cache("PT2H"))["refresh_within"] == 2 * 60 * 60
     assert saml_sp.read_idp_metadata(idp.metadata())["refresh_within"] is None
-    wait = api._next_refresh(saml_sp.read_idp_metadata(with_cache("PT1S"))) - time.time()
-    assert wait >= api.SAML_REFRESH_CHECK_EVERY - 1
+    wait = saml_refresh.next_refresh(saml_sp.read_idp_metadata(with_cache("PT1S"))) - time.time()
+    assert wait >= saml_refresh.SAML_REFRESH_CHECK_EVERY - 1
