@@ -55,10 +55,20 @@ def _connector_metadata(documents):
                                 provider=info.get("provider") or "")
 
 
-def main(progress=None, docs_folder=DOCS_FOLDER, collection=None):
+def _connector_of(source, docs_folder):
+    """The provider whose sync wrote this file (docs/.../connectors/<provider>/...), or None."""
+    parts = os.path.relpath(source, docs_folder).replace("\\", "/").split("/")
+    return parts[1] if len(parts) > 2 and parts[0] == "connectors" else None
+
+
+def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None):
     """Rebuild a search index from a docs folder. Returns a summary dict.
     progress(step, total, message) — optional callback, e.g. for a UI progress bar.
-    docs_folder / collection — which workspace (defaults = the original setup)."""
+    docs_folder / collection — which workspace (defaults = the original setup).
+    connector_access — {provider: "public" | "restricted"} for synced files, from
+    each connection's setting (integrations_store.chunk_access_levels); a provider
+    missing from it is restricted."""
+    connector_access = connector_access or {}
     collection = collection or "langchain"
     def report(step, message):
         if progress:
@@ -137,12 +147,18 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None):
     # 2b. TAG  —  give every chunk an ACCESS LEVEL (permission control).
     # ----------------------------------------------------------------
     # This is how enterprises secure RAG: each chunk carries metadata saying
-    # WHO may see it. Chunks from docs/restricted/ are "restricted"; everything
-    # else is "public". At query time we only fetch chunks the user is allowed
-    # to see — so confidential text never reaches the model for the wrong user.
+    # WHO may see it. Chunks from docs/restricted/ are "restricted"; other
+    # uploads are "public". Files synced by a connector take the level its
+    # admin chose for that connection (restricted unless opened to everyone).
+    # At query time we only fetch chunks the user is allowed to see — so
+    # confidential text never reaches the model for the wrong user.
     for chunk in chunks:
         source = chunk.metadata.get("source", "").replace("\\", "/")
-        chunk.metadata["access"] = "restricted" if "/restricted/" in source else "public"
+        provider = _connector_of(source, docs_folder)
+        if provider:
+            chunk.metadata["access"] = connector_access.get(provider, "restricted")
+        else:
+            chunk.metadata["access"] = "restricted" if "/restricted/" in source else "public"
 
     n_restricted = sum(1 for c in chunks if c.metadata["access"] == "restricted")
     print(f"   -> Tagged access levels: {n_restricted} restricted, "
@@ -174,4 +190,6 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None):
 
 
 if __name__ == "__main__":
-    main()
+    import integrations_store
+    import workspaces
+    main(connector_access=integrations_store.chunk_access_levels(workspaces.DEFAULT))
