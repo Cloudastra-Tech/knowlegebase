@@ -16,12 +16,13 @@ from kb.deps import ws_of
 from kb.settings import env_int
 
 LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20,
-          "signup": 10}
+          "signup": 10, "invite": 30}
 ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 # Limits on what a signed-in person can make the server do (it costs OpenAI calls
 # or indexing time), per minute: (per person, per workspace). Each can be set in
 # the environment, e.g. RATE_LIMIT_CHAT_USER=40, RATE_LIMIT_CHAT_WORKSPACE=600.
-USER_LIMITS = {"chat": (20, 300), "upload": (30, 120), "reindex": (5, 20), "sync": (5, 20)}
+USER_LIMITS = {"chat": (20, 300), "upload": (30, 120), "reindex": (5, 20), "sync": (5, 20),
+               "invite": (10, 30)}
 
 
 def rate_limits_on():
@@ -68,7 +69,8 @@ def user_limit(user, bucket):
                                for who, default in zip(("USER", "WORKSPACE"),
                                                        USER_LIMITS[bucket]))
     verb, noun = {"chat": ("asked", "question"), "upload": ("uploaded files", "time"),
-                  "reindex": ("started", "re-index"), "sync": ("started", "sync")}[bucket]
+                  "reindex": ("started", "re-index"), "sync": ("started", "sync"),
+                  "invite": ("sent", "invite")}[bucket]
 
     def did(n):
         return f"{verb} {n} {noun}{'' if n == 1 else 'es' if noun.endswith('x') else 's'}"

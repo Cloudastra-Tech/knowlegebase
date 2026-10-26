@@ -1,7 +1,7 @@
 """
 sync_store.py  —  what each connection has synced, and how its syncs went.
 
-Three tables in config/app.db (migration 0003), keyed like `integrations` by
+Three tables in config/app.db (migration 0005), keyed like `integrations` by
 (workspace, provider):
 
     source_items   one row per document at the source: its id there, the file

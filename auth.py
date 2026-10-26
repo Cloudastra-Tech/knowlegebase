@@ -107,6 +107,25 @@ def _option(args, flag, default):
     return (args[i + 1:i + 2] or [""])[0].strip().lower(), args[:i] + args[i + 2:]
 
 
+def _their_workspace(member, workspace, workspace_given):
+    """The workspace a change to an existing account applies in: its own. A
+    --workspace naming another one is refused: an account is never moved, or
+    changed, from a workspace it isn't in."""
+    if not member:
+        return workspace
+    if workspace_given and workspace != member["workspace"]:
+        sys.exit(f"{member['username']} belongs to the workspace {member['workspace']}, "
+                 f"not {workspace}. Remove it there first to move it.")
+    return member["workspace"]
+
+
+def _audit(workspace, action, target, details=None, target_type="member"):
+    """Changes made here go in the workspace's audit log, as the operator's."""
+    import audit_store
+    audit_store.record(workspace, action, actor="cli", actor_type="operator",
+                       target_type=target_type, target_id=target, details=details)
+
+
 def _cli(args):
     workspace_given = "--workspace" in args
     workspace, args = _option(args, "--workspace", workspaces.DEFAULT)  # add bob --workspace acme
@@ -123,27 +142,35 @@ def _cli(args):
         if getpass.getpass("Repeat password: ") != password:
             sys.exit("Passwords don't match.")
         existed = members_store.get(username)
-        if existed and not workspace_given:
-            workspace = existed["workspace"]      # a password reset doesn't move anyone
+        workspace = _their_workspace(existed, workspace, workspace_given)
         members_store.set_password(username, args[1], hash_password(password), workspace, role)
+        _audit(workspace, "member.password_set" if existed else "member.add", username,
+               {"role": role} if role else None)
         print(f"{'Updated' if existed else 'Added'} {username} (workspace: {workspace}, "
               f"role: {members_store.get(username)['role']}).")
     elif len(args) == 3 and args[0] == "role":
         username, role = args[1].strip().lower(), args[2].strip().lower()
         if role not in (*members_store.ROLES, "groups"):
             sys.exit("Role must be public, hr, admin or groups.")
+        workspace = _their_workspace(members_store.get(username), workspace, workspace_given)
         members_store.set_role(username, None if role == "groups" else role, workspace)
+        _audit(workspace, "member.role", username, {"role": None if role == "groups" else role})
         member = members_store.get(username)
         print(f"{username} is now {member['role']}"
               f"{' (from their groups)' if role == 'groups' else ''} "
               f"(workspace: {member['workspace']}).")
     elif len(args) == 2 and args[0] in ("disable", "enable"):
-        if not members_store.set_disabled(args[1], args[0] == "disable"):
+        member = members_store.get(args[1])
+        if not member or not members_store.set_disabled(args[1], args[0] == "disable",
+                                                        member["workspace"]):
             sys.exit(f"No account named {args[1]}.")
+        _audit(member["workspace"], f"member.{args[0]}", member["username"])
         print(f"{args[1]} is {args[0]}d.")
     elif len(args) == 2 and args[0] == "remove":
-        if not members_store.remove(args[1]):
+        member = members_store.get(args[1])
+        if not member or not members_store.remove(args[1], member["workspace"]):
             sys.exit(f"No account named {args[1]}.")
+        _audit(member["workspace"], "member.remove", member["username"])
         print(f"Removed {args[1]}.")
     elif args == ["list"]:
         members = members_store.list_members()
@@ -160,11 +187,16 @@ def _cli(args):
             members_store.add_verified_domain(workspace, args[2])
         except ValueError as e:
             sys.exit(str(e))
+        _audit(workspace, "domain.verify", args[2].strip().lower(), target_type="domain")
         print(f"People with an @{args[2].strip().lower()} address can now sign in to "
               f"{workspace} with single sign-on.")
     elif len(args) == 3 and args[:2] == ["domain", "remove"]:
+        domain = args[2].strip().lower()
+        owners = {d["workspace"] for d in members_store.list_domains() if d["domain"] == domain}
         if not members_store.remove_domain(args[2]):
             sys.exit(f"No workspace has {args[2]}.")
+        for owner in sorted(owners):
+            _audit(owner, "domain.remove", domain, target_type="domain")
         print(f"Removed {args[2]}. People on it are signed out on their next request.")
     elif args == ["domains"]:
         domains = members_store.list_domains()

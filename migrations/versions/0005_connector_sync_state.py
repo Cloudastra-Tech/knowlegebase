@@ -1,7 +1,7 @@
 """connector sync state: sync_state, source_items and sync_runs
 
-Revision ID: 0003
-Revises: 0002
+Revision ID: 0005
+Revises: 0004
 Create Date: 2026-10-27
 
 Three new tables for the connector framework (sync_store.py), nothing else
@@ -15,8 +15,8 @@ again by migrations/legacy.py) may have them already.
 
 from alembic import op
 
-revision = "0003"
-down_revision = "0002"
+revision = "0005"
+down_revision = "0004"
 branch_labels = None
 depends_on = None
 

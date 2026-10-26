@@ -315,7 +315,6 @@ def disconnect(ws, provider):
              for r in sync_store.items(ws, provider).values() if r.get("file_name")}
     sync_store.forget(ws, provider)
     integrations_store.remove(ws, provider)
-    # TODO(audit): record "integration disconnected" once the audit helper is on dev.
     if keys:
         indexing.schedule_index(ws, docs=sorted(keys))
 

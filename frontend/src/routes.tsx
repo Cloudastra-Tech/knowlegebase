@@ -9,6 +9,7 @@ import {
   HrOnly,
   Home,
   IntegrationsScreen,
+  InvitePage,
   KnowledgeScreen,
   Root,
   SignInPage,
@@ -21,9 +22,11 @@ import {
 //   /sso               back from a sign-in provider (see lib/legacy-hash.ts)
 //   /sso-test          the window of an admin's "Test sign-in"
 //   /chat, /knowledge  everyone signed in
+//   /chat/:id          one of their saved conversations
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
-//   /admin/sign-in, /admin/members   admins (the Access screen's two tabs)
+//   /admin/sign-in, /admin/members, /admin/activity   admins (the Access screen's tabs)
+//   /invite/:token     accept an invite (signed in or not)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
   {
@@ -45,10 +48,13 @@ export const routes: RouteObject[] = [
             ],
           },
           { path: "sso", Component: SsoReturnPage },
+          { path: "invite/:token", Component: InvitePage },
           {
             Component: App,
             children: [
-              { path: "chat", element: null }, // the chat stays mounted in App, so it isn't lost
+              // The chat stays mounted in App, so it isn't lost on another screen.
+              { path: "chat", element: null },
+              { path: "chat/:conversationId", element: null }, // a saved conversation
               { path: "knowledge", Component: KnowledgeScreen },
               {
                 Component: HrOnly,
@@ -64,6 +70,7 @@ export const routes: RouteObject[] = [
                   { index: true, element: <Navigate to="sign-in" replace /> },
                   { path: "sign-in", element: <AccessScreen tab="sign-in" /> },
                   { path: "members", element: <AccessScreen tab="members" /> },
+                  { path: "activity", element: <AccessScreen tab="activity" /> },
                 ],
               },
             ],

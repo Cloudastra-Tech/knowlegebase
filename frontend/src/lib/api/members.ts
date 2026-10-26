@@ -1,7 +1,7 @@
-// The workspace's members (admin only, /api/admin/members).
+// The workspace's members and invites (admin only, /api/admin/members).
 
 import { json, request, seg } from "@/lib/api/client"
-import type { AccountRole, Member } from "@/lib/api/types"
+import type { AccountRole, Invite, Member } from "@/lib/api/types"
 
 export const membersApi = {
   members: () => request<{ members: Member[] }>("/admin/members"),
@@ -16,4 +16,13 @@ export const membersApi = {
       `/admin/members/${seg(username)}/sign-out`,
       json("POST"),
     ),
+  // Invites not yet accepted or withdrawn (pending, and expired ones to resend).
+  invites: () => request<{ invites: Invite[] }>("/admin/members/invites"),
+  invite: (email: string, role: AccountRole) =>
+    request<Invite>("/admin/members/invite", json("POST", { email, role })),
+  // A new link, emailed again (the last one stops working).
+  resendInvite: (id: number) =>
+    request<Invite>(`/admin/members/invites/${id}/resend`, json("POST")),
+  revokeInvite: (id: number) =>
+    request<{ ok: boolean }>(`/admin/members/invites/${id}`, json("DELETE")),
 }

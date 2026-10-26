@@ -132,6 +132,63 @@ describe("signed out", () => {
   })
 })
 
+describe("invites", () => {
+  const INVITE = {
+    email: "pat@contractor.example",
+    role: "hr",
+    workspace_name: "Acme",
+    expires_at: 2e9,
+  }
+
+  it("joins with a password at /invite/:token and lands signed in", async () => {
+    const sent: unknown[] = []
+    mockApi({
+      ...SIGNED_IN,
+      "POST /api/auth/invite/lookup": { ...INVITE, method: "password" },
+      "POST /api/auth/invite/accept": (body: unknown) => {
+        sent.push(body)
+        return { token: "tok-inv", user: { ...PUBLIC, username: INVITE.email, role: "hr" } }
+      },
+    })
+    const router = renderApp("/invite/abc123")
+
+    expect(await screen.findByText(/You were invited as HR/)).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText("Your name"), "Pat")
+    await user.type(screen.getByLabelText("Choose a password"), "a-good-password")
+    await user.click(screen.getByRole("button", { name: "Join Acme" }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/chat"))
+    expect(sent).toEqual([{ token: "abc123", name: "Pat", password: "a-good-password" }])
+    expect(session.token).toBe("tok-inv")
+  })
+
+  it("sends a single sign-on invitee to sign in, their email filled in", async () => {
+    mockApi({
+      "GET /api/auth/providers": { ...PASSWORD_ONLY, email_sso: true },
+      "POST /api/auth/invite/lookup": { ...INVITE, method: "sso" },
+      "POST /api/auth/invite/accept": { sso: true, email: INVITE.email },
+    })
+    const router = renderApp("/invite/abc123")
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Accept and sign in" }))
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"))
+    expect(await screen.findByDisplayValue(INVITE.email)).toBeInTheDocument()
+  })
+
+  it("says why a used link can't be used", async () => {
+    mockApi({
+      "POST /api/auth/invite/lookup": new Response(
+        '{"detail": "This invite has already been used. Sign in instead."}',
+        { status: 410 },
+      ),
+    })
+    renderApp("/invite/used")
+    expect(await screen.findByText("This invite has already been used. Sign in instead.")).toBeInTheDocument()
+  })
+})
+
 describe("roles", () => {
   it("keeps a public account off the HR screens", async () => {
     session.setToken("tok-5")

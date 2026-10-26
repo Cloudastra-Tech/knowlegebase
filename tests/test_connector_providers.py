@@ -327,6 +327,11 @@ def test_outline_is_connected_per_workspace_with_a_token_kept_encrypted(env, mon
                             "provider = 'outline'", (env.ws,)).fetchone()[0]
     assert b"test-outline-token" not in blob                     # encrypted (secret_box)
     assert integrations_store.secret(env.ws, "outline") == {"token": "test-outline-token"}
+    import audit_store
+    [event] = audit_store.list_events(env.ws, action="integration.connect")[0]
+    assert event["details"] == {"account": "Acme wiki (ann@acme.com)",
+                                "url": "https://wiki.example.com/"}
+    assert "test-outline-token" not in json.dumps(event)        # the address, never the token
 
     r = env.client.get("/api/integrations/outline/containers", headers=headers)
     assert [c["name"] for c in r.json()["items"]] == ["Engineering", "HR"]

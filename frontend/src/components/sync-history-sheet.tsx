@@ -16,7 +16,7 @@ import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
 // Why an item wasn't synced, in words (kb/services/sync.py, Skipped reasons).
-export const SKIP_REASONS: Record<string, string> = {
+const SKIP_REASONS: Record<string, string> = {
   too_large: "Too large to sync",
   unsupported: "A file type that can't be read",
   unreadable: "Couldn't be read",

@@ -1,0 +1,167 @@
+"""
+mailer.py  —  the app's outgoing email: invites, and notices to members.
+
+Which way it goes is set in the environment (.env):
+
+    MAIL_BACKEND=console    the default: nothing is sent, the email is written to
+                            the server log (for a developer's machine: copy the
+                            link from there)
+    MAIL_BACKEND=smtp       SMTP_HOST, SMTP_PORT (587), SMTP_USERNAME, SMTP_PASSWORD;
+                            STARTTLS unless SMTP_SECURITY=ssl (port 465) or none
+                            (a local relay only: the password would go in clear)
+    MAIL_BACKEND=resend     RESEND_API_KEY      (https://resend.com)
+    MAIL_BACKEND=postmark   POSTMARK_TOKEN      (https://postmarkapp.com, a server token)
+    MAIL_FROM               the sender, e.g. "Knowledge assistant <kb@example.com>"
+
+send(to, template, **values) renders one of TEMPLATES (a subject, a plain-text
+body and a simple HTML one) and sends it; it raises MailError if it couldn't.
+Values are escaped in the HTML.
+"""
+
+import html
+import logging
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
+
+import httpx
+
+log = logging.getLogger("uvicorn.error")
+
+BACKENDS = ("console", "smtp", "resend", "postmark")
+TIMEOUT = 15                         # seconds, for SMTP and the HTTP APIs
+DEFAULT_FROM = "Knowledge assistant <no-reply@localhost>"
+
+
+class MailError(Exception):
+    """The email wasn't sent. The message says why, without any secret."""
+
+
+# ---- Templates -------------------------------------------------------------------
+# Each: (subject, text, html), formatted with the values send() is given. The HTML
+# is a single plain column; every value in it is escaped first.
+TEMPLATES = {
+    "invite": (
+        "{inviter} invited you to {workspace_name}",
+        "{inviter} invited you to the {workspace_name} workspace of the Knowledge "
+        "assistant, as {role_label}.\n\n"
+        "Accept the invite:\n{link}\n\n"
+        "The link works once and expires on {expires}. If you weren't expecting it, "
+        "ignore this email.\n",
+        "<p>{inviter} invited you to the <strong>{workspace_name}</strong> workspace of the "
+        "Knowledge assistant, as {role_label}.</p>"
+        '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
+        'background:#18181b;color:#fafafa;text-decoration:none">Accept the invite</a></p>'
+        '<p style="color:#71717a;font-size:13px">Or open this link: {link}<br>'
+        "It works once and expires on {expires}. If you weren't expecting it, ignore this "
+        "email.</p>",
+    ),
+    "member_removed": (
+        "You were removed from {workspace_name}",
+        "An admin removed you from the {workspace_name} workspace of the Knowledge "
+        "assistant. You've been signed out.\n\nIf you think this is a mistake, ask your "
+        "company's admin.\n",
+        "<p>An admin removed you from the <strong>{workspace_name}</strong> workspace of the "
+        "Knowledge assistant. You've been signed out.</p>"
+        '<p style="color:#71717a;font-size:13px">If you think this is a mistake, ask your '
+        "company's admin.</p>",
+    ),
+    "notice": (
+        "{title}",
+        "{body}\n",
+        "<p><strong>{title}</strong></p><p>{body}</p>",
+    ),
+}
+
+
+def render(template, **values):
+    """(subject, text, html) of a template with these values."""
+    subject, text, page = TEMPLATES[template]
+    escaped = {k: html.escape(str(v), quote=True) for k, v in values.items()}
+    body = ('<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;'
+            f'color:#18181b;max-width:520px">{page.format(**escaped)}</div>')
+    return subject.format(**values), text.format(**values), body
+
+
+# ---- Sending ---------------------------------------------------------------------
+def backend():
+    name = os.getenv("MAIL_BACKEND", "console").strip().lower() or "console"
+    if name not in BACKENDS:
+        raise MailError(f"MAIL_BACKEND must be one of: {', '.join(BACKENDS)}.")
+    return name
+
+
+def sender():
+    return os.getenv("MAIL_FROM", "").strip() or DEFAULT_FROM
+
+
+def send(to, template, **values):
+    """Send one email. Raises MailError."""
+    subject, text, page = render(template, **values)
+    name = backend()
+    if name == "console":
+        log.warning("Email (MAIL_BACKEND=console, not sent) to %s: %s\n%s", to, subject, text)
+        return
+    try:
+        {"smtp": _smtp, "resend": _resend, "postmark": _postmark}[name](to, subject, text, page)
+    except MailError:
+        raise
+    except (OSError, smtplib.SMTPException, httpx.HTTPError) as e:
+        log.warning("Couldn't send an email through %s: %s", name, type(e).__name__)
+        raise MailError(f"The email couldn't be sent ({name}: {type(e).__name__}).") from None
+
+
+def _smtp(to, subject, text, page):
+    host = os.getenv("SMTP_HOST", "").strip()
+    if not host:
+        raise MailError("SMTP_HOST isn't set.")
+    security = os.getenv("SMTP_SECURITY", "starttls").strip().lower()
+    port = int(os.getenv("SMTP_PORT") or (465 if security == "ssl" else 587))
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = sender(), to, subject
+    msg.set_content(text)
+    msg.add_alternative(page, subtype="html")
+    context = ssl.create_default_context()
+    if security == "ssl":
+        server = smtplib.SMTP_SSL(host, port, timeout=TIMEOUT, context=context)
+    else:
+        server = smtplib.SMTP(host, port, timeout=TIMEOUT)
+    with server:
+        if security == "starttls":
+            server.starttls(context=context)
+        user = os.getenv("SMTP_USERNAME", "").strip()
+        if user:
+            server.login(user, os.getenv("SMTP_PASSWORD", ""))
+        server.send_message(msg)
+
+
+def _api_key(name):
+    key = os.getenv(name, "").strip()
+    if not key:
+        raise MailError(f"{name} isn't set.")
+    return key
+
+
+def _check(response, name):
+    if response.status_code >= 300:
+        raise MailError(f"{name} refused the email (HTTP {response.status_code}).")
+
+
+def _resend(to, subject, text, page):
+    r = httpx.post("https://api.resend.com/emails", timeout=TIMEOUT,
+                   headers={"Authorization": f"Bearer {_api_key('RESEND_API_KEY')}"},
+                   json={"from": sender(), "to": [to], "subject": subject, "text": text,
+                         "html": page})
+    _check(r, "Resend")
+
+
+def _postmark(to, subject, text, page):
+    name, address = parseaddr(sender())
+    r = httpx.post("https://api.postmarkapp.com/email", timeout=TIMEOUT,
+                   headers={"X-Postmark-Server-Token": _api_key("POSTMARK_TOKEN"),
+                            "Accept": "application/json"},
+                   json={"From": formataddr((name, address)), "To": to, "Subject": subject,
+                         "TextBody": text, "HtmlBody": page, "MessageStream": "outbound"})
+    _check(r, "Postmark")

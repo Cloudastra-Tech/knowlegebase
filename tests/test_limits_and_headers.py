@@ -46,7 +46,7 @@ def limits_on(monkeypatch):
 def fake_agent(monkeypatch):
     from kb.services import agents
 
-    def run(question, with_sources=False, on_event=None):
+    def run(question, with_sources=False, **kwargs):
         return f"About {question}", [], []
     monkeypatch.setattr(agents, "get_agent", lambda ws, role: run)
 

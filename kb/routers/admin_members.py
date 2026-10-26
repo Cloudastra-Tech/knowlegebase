@@ -1,12 +1,16 @@
-"""Members (admin): everyone in the workspace, their role and access."""
+"""Members (admin): everyone in the workspace, their role and access. Every
+change goes in the audit log (kb/audit.py). Invites: routers/invites.py."""
 
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+import mailer
 import members_store
 import sessions_store
+from kb.audit import audited
 from kb.deps import require_admin, ws_of
 
 router = APIRouter()
@@ -53,36 +57,50 @@ def list_members(user=Depends(require_admin)):
 
 
 @router.patch("/api/admin/members/{username}")
-def edit_member(username: str, body: MemberPatch, user=Depends(require_admin)):
+def edit_member(username: str, body: MemberPatch, user=Depends(require_admin),
+                audit=audited("member.update")):
     member = _workspace_member(user, username)
+    ws = member["workspace"]
     if "role" in body.model_fields_set:
-        members_store.set_role(member["username"], body.role, member["workspace"])
+        members_store.set_role(member["username"], body.role, ws)
     if body.disabled is not None:
-        members_store.set_disabled(member["username"], body.disabled)
+        members_store.set_disabled(member["username"], body.disabled, ws)
         if body.disabled:          # out now, on every device, not at their next click
-            sessions_store.delete_user(member["username"], member["workspace"])
-    log.warning("%s changed %s's access: %s", user["username"], member["username"],
-                body.model_dump(exclude_unset=True))
-    m = next(x for x in members_store.list_members(member["workspace"])
-             if x["username"] == member["username"])
+            sessions_store.delete_user(member["username"], ws)
+    audit.record("member", member["username"], body.model_dump(exclude_unset=True), user=user)
+    m = next(x for x in members_store.list_members(ws) if x["username"] == member["username"])
     return _member_out(m)
 
 
 @router.delete("/api/admin/members/{username}")
-def delete_member(username: str, user=Depends(require_admin)):
+def delete_member(username: str, user=Depends(require_admin), audit=audited("member.remove")):
     member = _workspace_member(user, username)
-    members_store.remove(member["username"])
+    members_store.remove(member["username"], member["workspace"])
     sessions_store.delete_user(member["username"], member["workspace"])
-    log.warning("%s removed %s", user["username"], member["username"])
+    audit.record("member", member["username"], {"role": member["role"]}, user=user)
+    _tell_removed(member)
     return {"ok": True}
 
 
+def _tell_removed(member):
+    """MAIL_MEMBER_REMOVED=on: email someone an admin removed that they were.
+    Best effort: the removal stands whether or not it's sent."""
+    if (os.getenv("MAIL_MEMBER_REMOVED", "off").strip().lower() not in ("on", "true", "1", "yes")
+            or "@" not in member["username"]):
+        return
+    try:
+        mailer.send(member["username"], "member_removed",
+                    workspace_name=members_store.workspace_name(member["workspace"]))
+    except mailer.MailError:
+        log.warning("Couldn't email %s that they were removed", member["username"])
+
+
 @router.post("/api/admin/members/{username}/sign-out")
-def sign_out_member(username: str, user=Depends(require_admin)):
+def sign_out_member(username: str, user=Depends(require_admin),
+                    audit=audited("member.sign_out")):
     """End every session a member has. They can sign in again (unless their access
     is off): for a lost laptop, say."""
     member = _workspace_member(user, username)
     ended = sessions_store.delete_user(member["username"], member["workspace"])
-    log.warning("%s signed %s out everywhere (%d sessions)", user["username"],
-                member["username"], ended)
+    audit.record("member", member["username"], {"sessions_ended": ended}, user=user)
     return {"ok": True, "ended": ended}

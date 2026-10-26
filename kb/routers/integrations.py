@@ -32,8 +32,10 @@ import docs_store
 import integrations_store
 import sync_store
 import workspaces
+import kb.audit
 import kb.state  # as kb.state: the callback's `state` parameter would hide it
 from connectors import base, registry
+from kb.audit import audited
 from kb.deps import current_role, current_user, public_url, require_hr, ws_of
 from kb.rate_limit import user_limit
 from kb.services import agents, sync
@@ -140,7 +142,8 @@ def integrations_catalog():
 
 
 @router.post("/api/integrations/{provider}/connect")
-def integration_connect(provider: str, request: Request, user=Depends(require_hr)):
+def integration_connect(provider: str, request: Request, user=Depends(require_hr),
+                        audit=audited("integration.connect_start")):
     c = _connector(provider)
     if c.AUTH != "oauth":
         raise HTTPException(400, f"{c.LABEL} is connected with a form, not a sign-in.")
@@ -156,11 +159,13 @@ def integration_connect(provider: str, request: Request, user=Depends(require_hr
     oauth_states[state] = {"workspace": ws_of(user), "user": user["username"],
                            "provider": provider, "expires": now + OAUTH_STATE_SECONDS,
                            "redirect_uri": redirect_uri}
+    audit.record("integration", provider, user=user)
     return {"url": c.auth_url(redirect_uri, state)}
 
 
 @router.get("/api/integrations/{provider}/callback")
-def integration_callback(provider: str, state: str = "", code: str = "", error: str = ""):
+def integration_callback(provider: str, request: Request, state: str = "", code: str = "",
+                         error: str = ""):
     """The provider sends the browser back here. The one-time `state` ties it to the
     workspace and user who clicked Connect (a redirect carries no session header)."""
     c = _connector(provider)
@@ -179,7 +184,9 @@ def integration_callback(provider: str, state: str = "", code: str = "", error: 
                     ws, type(e).__name__, exc_info=not isinstance(e, base.ConnectorError))
         reason = ("no_refresh_token" if "refresh token" in str(e) else "connect_failed")
         return RedirectResponse(f"/#integrations?error={reason}")
-    # TODO(audit): record "integration connected" once the audit helper is on dev.
+    row = integrations_store.get(ws, provider) or {}
+    kb.audit.record(request, ws, "integration.connect", pending["user"], "integration", provider,
+                    {"account": row.get("account")})
     if sync.ready_to_sync(ws, provider):
         sync.start_sync(ws, provider)
         return RedirectResponse(f"/#integrations?connected={provider}")
@@ -197,7 +204,8 @@ class SetupIn(BaseModel):
 
 
 @router.post("/api/integrations/{provider}/setup")
-def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr)):
+def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr),
+                      audit=audited("integration.connect")):
     """Connect a token / address connector (Outline, a website) from its form."""
     c = _connector(provider)
     if c.AUTH == "oauth":
@@ -208,7 +216,9 @@ def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr)):
         account = c.connect_form(ws, body.model_dump(), user["username"])
     except base.FormError as e:
         raise HTTPException(400, str(e))
-    # TODO(audit): record "integration connected" once the audit helper is on dev.
+    # The address is recorded; the token never is.
+    audit.record("integration", provider, {"account": account,
+                                           "url": body.url.strip()[:300] or None}, user=user)
     if sync.ready_to_sync(ws, provider):
         sync.start_sync(ws, provider)
     return {"ok": True, "account": account,
@@ -239,7 +249,8 @@ class ContainersIn(BaseModel):
 
 
 @router.put("/api/integrations/{provider}/containers")
-def integration_set_containers(provider: str, body: ContainersIn, user=Depends(require_hr)):
+def integration_set_containers(provider: str, body: ContainersIn, user=Depends(require_hr),
+                               audit=audited("integration.folders")):
     """Save what to sync, then sync: everything again if the picks changed, and
     what's no longer picked is removed (the admin's choice, so the mass-delete
     guard doesn't hold it back)."""
@@ -257,6 +268,10 @@ def integration_set_containers(provider: str, body: ContainersIn, user=Depends(r
             changed |= settings.get(key) != getattr(body, key)
             settings[key] = getattr(body, key)
     integrations_store.update(ws, provider, settings=settings)
+    audit.record("integration", provider,
+                 {"containers": [p["id"] for p in picked][:50],
+                  **{k: settings.get(k) for k in ("max_pages", "max_depth") if k in settings}},
+                 user=user)
     if changed:
         sync.start_sync(ws, provider, full=True, confirm_deletes=True)
     return {"containers": picked}
@@ -268,7 +283,8 @@ class SyncIn(BaseModel):
 
 
 @router.post("/api/integrations/{provider}/sync")
-def integration_sync(provider: str, body: SyncIn | None = None, user=Depends(require_hr)):
+def integration_sync(provider: str, body: SyncIn | None = None, user=Depends(require_hr),
+                     audit=audited("integration.sync")):
     """Sync now. full: list everything again. confirm_deletes: apply deletes the
     mass-delete guard held back."""
     _connector(provider)
@@ -277,6 +293,8 @@ def integration_sync(provider: str, body: SyncIn | None = None, user=Depends(req
     _connected(ws, provider)
     body = body or SyncIn()
     sync.start_sync(ws, provider, full=body.full, confirm_deletes=body.confirm_deletes)
+    audit.record("integration", provider, {k: True for k in ("full", "confirm_deletes")
+                                           if getattr(body, k)} or None, user=user)
     return {"ok": True}
 
 
@@ -290,9 +308,11 @@ def integration_runs(provider: str, user=Depends(require_hr)):
 
 
 @router.delete("/api/integrations/{provider}")
-def integration_disconnect(provider: str, user=Depends(require_hr)):
+def integration_disconnect(provider: str, user=Depends(require_hr),
+                           audit=audited("integration.disconnect")):
     _connector(provider)
     sync.disconnect(ws_of(user), provider)
+    audit.record("integration", provider, user=user)
     return {"ok": True}
 
 
@@ -301,7 +321,8 @@ class AccessIn(BaseModel):
 
 
 @router.put("/api/integrations/{provider}/access")
-def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
+def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
+                       audit=audited("integration.access")):
     """Who may ask about this connection's files: HR and admins only
     ("restricted", the default) or everyone in the workspace. Their chunks are
     re-tagged with the new level (nothing is embedded again)."""
@@ -311,8 +332,7 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr)):
     if integrations_store.access_of(row) != body.access:
         integrations_store.update(ws, provider,
                                   settings=dict(row.get("settings") or {}, access=body.access))
-        log.warning("%s set who can ask about %s files in %s to %s", user["username"],
-                    c.LABEL, ws, body.access)
+        audit.record("integration", provider, {"access": body.access}, user=user)
         indexing.schedule_retag(ws, provider)
     return {"access": body.access}
 
