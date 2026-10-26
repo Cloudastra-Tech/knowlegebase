@@ -33,9 +33,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# curl is only needed for the HEALTHCHECK below.
+# curl is only needed for the HEALTHCHECK below; xmlsec1 checks SAML signatures (saml_sp.py).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl xmlsec1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring in the pre-built Python packages from the builder stage.
@@ -58,4 +58,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
 # then launch the API + site bound to all interfaces. ONE worker on purpose:
 # sign-in codes, OAuth states, the re-index queue and login lockouts live in
 # memory, so several workers would not share them (sessions are in SQLite).
-CMD ["sh", "-c", "if [ ! -d chroma_db ] || [ -z \"$(ls -A chroma_db 2>/dev/null)\" ]; then echo 'Building chroma_db via ingest.py...'; python ingest.py; fi; exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8501} --proxy-headers --forwarded-allow-ips=*"]
+# FORWARDED_ALLOW_IPS: the reverse proxy's address. Only it may say (in
+# X-Forwarded-For) who the client is; "*" trusts anyone, so clients can pose as
+# other addresses and get around the per-address sign-in limits.
+CMD ["sh", "-c", "if [ ! -d chroma_db ] || [ -z \"$(ls -A chroma_db 2>/dev/null)\" ]; then echo 'Building chroma_db via ingest.py...'; python ingest.py; fi; exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8501} --proxy-headers --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-*}"]

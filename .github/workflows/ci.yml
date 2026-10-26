@@ -1,13 +1,13 @@
-# Runs the backend tests and the frontend lint + build on every PR and push to
-# main and the shared SSO branch. No secrets needed: the tests fake OpenAI and
-# the sign-in providers.
+# Runs the backend tests and the frontend lint + build on every PR into main and
+# every push to main. PRs into epic branches are checked locally before merging.
+# No secrets needed: the tests fake OpenAI and the sign-in providers.
 name: CI
 
 on:
   pull_request:
-    branches: [main, epic/sso]
+    branches: [main]
   push:
-    branches: [main, epic/sso]
+    branches: [main]
 
 jobs:
   backend:
@@ -19,6 +19,7 @@ jobs:
           python-version: "3.12"          # same as the Docker image
           cache: pip
           cache-dependency-path: requirements*.txt
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xmlsec1   # SAML tests
       - run: pip install -r requirements-dev.txt
       - run: pytest
         env:

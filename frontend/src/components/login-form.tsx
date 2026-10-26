@@ -13,13 +13,21 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, session, ssoStartUrl, type AuthOptions, type User } from "@/lib/api"
+import {
+  api,
+  session,
+  ssoStartUrl,
+  type AuthOptions,
+  type SsoConnection,
+  type User,
+} from "@/lib/api"
 import { cn, hashParams } from "@/lib/utils"
 
 // Why single sign-on sent someone back here: api.py redirects to /#login?error=<code>.
 const SSO_ERRORS: Record<string, string> = {
   not_allowed: "Your account isn't set up for this app. Ask your admin to add it.",
   not_workspace: "Use your company work account, not a personal or guest one.",
+  disabled: "Your access has been turned off. Ask your admin.",
   unverified: "Your sign-in provider didn't confirm your email address.",
   cancelled: "Sign-in was cancelled.",
   sso_failed: "Single sign-on didn't finish. Please try again.",
@@ -27,9 +35,19 @@ const SSO_ERRORS: Record<string, string> = {
   expired: "That sign-in expired. Please try again.",
 }
 
+// A failed sign-in also brings a reference (K7Q2-9XMA); the admin sees the same one
+// in Recent sign-ins, with exactly what went wrong.
+const REF = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/
+
 function ssoErrorFromUrl() {
-  const code = hashParams().get("error")
-  return code ? (SSO_ERRORS[code] ?? "Sign-in failed. Please try again.") : null
+  const params = hashParams()
+  const code = params.get("error")
+  if (!code) return null
+  const ref = params.get("ref") ?? ""
+  return {
+    message: SSO_ERRORS[code] ?? "Sign-in failed. Please try again.",
+    ref: REF.test(ref) ? ref : null,
+  }
 }
 
 // Logos by provider id. simple-icons has no Microsoft logo, so draw its four
@@ -50,6 +68,91 @@ function ProviderIcon({ id }: { id: string }) {
     <svg viewBox="0 0 24 24" className="fill-current" aria-hidden>
       <path d={path} />
     </svg>
+  )
+}
+
+// Sign in with a work email: its domain finds the workspace's own provider.
+// One provider: go straight there. Several: let the person pick.
+function EmailSso({ autoFocus }: { autoFocus: boolean }) {
+  const [email, setEmail] = useState("")
+  const [choices, setChoices] = useState<SsoConnection[] | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [looking, setLooking] = useState(false)
+
+  // Back from the provider's page via the browser's back button: the page can
+  // come back from its cache mid-"looking", so reset the button.
+  useEffect(() => {
+    const reset = (e: PageTransitionEvent) => e.persisted && setLooking(false)
+    window.addEventListener("pageshow", reset)
+    return () => window.removeEventListener("pageshow", reset)
+  }, [])
+
+  async function find(e: FormEvent) {
+    e.preventDefault()
+    setMessage(null)
+    setChoices(null)
+    setLooking(true)
+    try {
+      const { connections } = await api.ssoDiscover(email.trim())
+      if (connections.length === 1) {
+        window.location.assign(connections[0].url)
+        return                                   // keep the spinner while the page leaves
+      }
+      if (connections.length > 1) setChoices(connections)
+      else {
+        const domain = email.trim().split("@").pop()
+        setMessage(
+          `There's no single sign-on for ${domain} yet. Ask your admin, or use another way to sign in.`,
+        )
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Couldn't look up your sign-in.")
+    }
+    setLooking(false)
+  }
+
+  return (
+    <form onSubmit={find} className="flex flex-col gap-4">
+      <Field data-invalid={!!message || undefined}>
+        <FieldLabel htmlFor="sso-email">Work email</FieldLabel>
+        <Input
+          id="sso-email"
+          type="email"
+          autoComplete="email"
+          placeholder="you@company.com"
+          autoFocus={autoFocus}
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            setChoices(null)
+            setMessage(null)
+          }}
+          aria-invalid={!!message || undefined}
+          required
+        />
+        {message && <FieldError>{message}</FieldError>}
+      </Field>
+      {choices ? (
+        <Field>
+          <FieldDescription>Choose how to sign in:</FieldDescription>
+          {choices.map((c) => (
+            <Button key={c.id} variant="outline" asChild>
+              <a href={c.url}>
+                <KeyRound />
+                {c.name}
+              </a>
+            </Button>
+          ))}
+        </Field>
+      ) : (
+        <Field>
+          <Button type="submit" disabled={looking}>
+            {looking && <Loader2 className="animate-spin" />}
+            Continue with single sign-on
+          </Button>
+        </Field>
+      )}
+    </form>
   )
 }
 
@@ -92,71 +195,82 @@ export function LoginForm({
   // Nothing to choose until the server says which sign-in options are on.
   const providers = options?.providers ?? []
   const showPassword = options?.password ?? false
+  const emailSso = options?.email_sso ?? false
+  const anySso = emailSso || providers.length > 0
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <form onSubmit={submit}>
-        <FieldGroup>
-          <div className="flex flex-col items-center gap-2 text-center">
-            <h1 className="text-xl font-bold">Welcome back</h1>
-            <FieldDescription>Sign in to ask your company docs anything</FieldDescription>
-          </div>
-          {!options && !optionsFailed && <Skeleton className="h-9 w-full" />}
-          {optionsFailed && (
-            <FieldError>Couldn't load the sign-in options. Refresh the page to try again.</FieldError>
-          )}
-          {providers.length > 0 && (
+      <FieldGroup>
+        <div className="flex flex-col items-center gap-2 text-center">
+          <h1 className="text-xl font-bold">Welcome back</h1>
+          <FieldDescription>Sign in to ask your company docs anything</FieldDescription>
+        </div>
+        {!options && !optionsFailed && <Skeleton className="h-9 w-full" />}
+        {optionsFailed && (
+          <FieldError>Couldn't load the sign-in options. Refresh the page to try again.</FieldError>
+        )}
+        {emailSso && <EmailSso autoFocus />}
+        {providers.length > 0 && (
+          <Field>
+            {providers.map((p) => (
+              <Button key={p.id} variant="outline" asChild>
+                <a href={ssoStartUrl(p.id)}>
+                  <ProviderIcon id={p.id} />
+                  Continue with {p.name}
+                </a>
+              </Button>
+            ))}
+          </Field>
+        )}
+        {ssoError && (
+          <Field className="gap-1">
+            <FieldError>{ssoError.message}</FieldError>
+            {ssoError.ref && (
+              <FieldDescription className="text-xs">
+                Reference: <span className="font-mono select-all">{ssoError.ref}</span>. If it
+                keeps happening, give it to your admin.
+              </FieldDescription>
+            )}
+          </Field>
+        )}
+        {anySso && showPassword && <FieldSeparator>Or</FieldSeparator>}
+        {showPassword && (
+          <form onSubmit={submit} className="flex flex-col gap-4">
             <Field>
-              {providers.map((p) => (
-                <Button key={p.id} variant="outline" asChild>
-                  <a href={ssoStartUrl(p.id)}>
-                    <ProviderIcon id={p.id} />
-                    Continue with {p.name}
-                  </a>
-                </Button>
-              ))}
+              <FieldLabel htmlFor="username">Username</FieldLabel>
+              <Input
+                id="username"
+                autoComplete="username"
+                autoFocus={!emailSso}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
             </Field>
-          )}
-          {ssoError && <FieldError>{ssoError}</FieldError>}
-          {providers.length > 0 && showPassword && <FieldSeparator>Or</FieldSeparator>}
-          {showPassword && (
-            <>
-              <Field>
-                <FieldLabel htmlFor="username">Username</FieldLabel>
-                <Input
-                  id="username"
-                  autoComplete="username"
-                  autoFocus
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required
-                />
-              </Field>
-              <Field data-invalid={!!error || undefined}>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  aria-invalid={!!error || undefined}
-                  required
-                />
-                {error && <FieldError>{error}</FieldError>}
-              </Field>
-              <Field>
-                <Button type="submit" disabled={loading}>
-                  {loading && <Loader2 className="animate-spin" />}
-                  Login
-                </Button>
-              </Field>
-            </>
-          )}
-        </FieldGroup>
-      </form>
+            <Field data-invalid={!!error || undefined}>
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-invalid={!!error || undefined}
+                required
+              />
+              {error && <FieldError>{error}</FieldError>}
+            </Field>
+            <Field>
+              <Button type="submit" disabled={loading}>
+                {loading && <Loader2 className="animate-spin" />}
+                Login
+              </Button>
+            </Field>
+          </form>
+        )}
+      </FieldGroup>
       <FieldDescription className="px-6 text-center">
-        {providers.length > 0
+        {anySso
           ? "Use your work account. No access? Ask your admin."
           : "No account? Ask your admin to create one for you."}
       </FieldDescription>

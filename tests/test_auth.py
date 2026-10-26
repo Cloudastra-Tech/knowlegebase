@@ -4,10 +4,15 @@ Who gets in, and with which role — tested through the real API.
 Google / Microsoft are the only thing faked: the callback gets the claims a
 verified ID token would carry. Everything after that (sso.py's rules, the
 one-time code, the session, the role checks) is the real code.
+
+The accounts start out in the old config/users.json and config/sso.json, so
+every test here also relies on members_store copying them into the database.
 """
 
 import json
 import os
+import sqlite3
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -19,15 +24,16 @@ MS_ISS = "https://login.microsoftonline.com/tenant-id/v2.0"
 
 
 @pytest.fixture(scope="module")
-def env(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("auth")
-    with open(tmp / "sso.json", "w") as f:
+def env():
+    # conftest.py points these at a temporary folder.
+    with open(os.environ["SSO_CONFIG"], "w") as f:
         json.dump(SSO_CONFIG, f)
-    os.environ.update(OPENAI_API_KEY="sk-test", APP_DB=str(tmp / "app.db"),
-                      USERS_FILE=str(tmp / "users.json"), SSO_CONFIG=str(tmp / "sso.json"))
     from fastapi.testclient import TestClient
     import api
     import auth
+    import members_store
+    assert members_store.DB_PATH == os.environ["APP_DB"] != os.path.join("config", "app.db")
+    members_store._ready = False         # copy the files in even if another test opened it
 
     users = {"admin": {"name": "Admin", "role": "hr"},
              "staff": {"name": "Staff", "role": "public"},
@@ -35,20 +41,11 @@ def env(tmp_path_factory):
              "keeper": {"name": "Keeper", "role": "hr"}}
     for u in users.values():
         u["password"] = auth.hash_password("correct-horse")
-    auth.save_users(users)
+    with open(os.environ["USERS_FILE"], "w") as f:
+        json.dump(users, f)
+    members_store.set_password("boss", "Boss", auth.hash_password("correct-horse"),
+                               "default", "admin")
     return TestClient(api.app, follow_redirects=False)
-
-
-@pytest.fixture
-def sso_config(env):
-    """Rewrite config/sso.json for one test; the original comes back afterwards."""
-    import sso
-
-    def write(text):
-        with open(sso.CONFIG_FILE, "w") as f:
-            f.write(text)
-    yield write
-    write(json.dumps(SSO_CONFIG))
 
 
 @pytest.fixture
@@ -92,11 +89,19 @@ def sso_token(client, provider, name, claims):
     return r.json()["token"]
 
 
+def error_of(location):
+    """The error a redirect to the login page shows (it may carry a reference too)."""
+    assert location.startswith("/#login?"), location
+    return parse_qs(location.split("?", 1)[1])["error"][0]
+
+
 @pytest.mark.parametrize("username, x_role, status", [
     ("admin", "hr", 200),
     ("admin", "public", 403),      # HR viewing the app as a public user
     ("staff", "hr", 403),          # the header must not grant HR
     ("legacy", "hr", 403),         # no role on file means public, not HR
+    ("boss", "hr", 200),           # admin can do everything HR can
+    ("boss", "public", 403),
 ])
 def test_hr_screens_follow_the_account_role_not_the_header(env, username, x_role, status):
     token = password_token(env, username)
@@ -144,7 +149,7 @@ def test_sso_signs_in_to_the_workspace_with_the_configured_role(env, provider, n
     ("okta", {"email": "someone@othercorp.com", "email_verified": True}, "not_allowed"),
 ])
 def test_sso_turns_away_accounts_it_cannot_trust(env, provider, name, claims, error):
-    assert sso_callback(env, provider, name, claims) == f"/#login?error={error}"
+    assert error_of(sso_callback(env, provider, name, claims)) == error
 
 
 @pytest.mark.parametrize("provider_error, shown", [
@@ -153,7 +158,7 @@ def test_sso_turns_away_accounts_it_cannot_trust(env, provider, name, claims, er
 ])
 def test_provider_errors_reach_the_login_page(env, provider, provider_error, shown):
     location = sso_callback(env, provider, "google", GOOGLE_HR, query=f"error={provider_error}")
-    assert location == f"/#login?error={shown}"
+    assert error_of(location) == shown
 
 
 def test_other_oidc_providers_appear_once_configured(env, monkeypatch):
@@ -174,13 +179,51 @@ def test_sso_code_works_only_once(env, provider):
     assert env.post("/api/auth/sso/exchange", json={"code": code}).status_code == 401
 
 
-def test_sso_access_changes_apply_to_live_sessions(env, provider, sso_config):
+def test_sso_access_changes_apply_to_live_sessions(env, provider):
+    import members_store
     token = sso_token(env, provider, "google", GOOGLE_HR)
     assert env.get("/api/docs", headers=bearer(token)).status_code == 200
-    sso_config(json.dumps({"workspaces": {"default": {"domains": ["cloudastra.in"], "hr": []}}}))
-    assert env.get("/api/docs", headers=bearer(token)).status_code == 403    # HR taken away
-    sso_config(json.dumps({"workspaces": {}}))
-    assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # removed
+    try:
+        members_store.set_role(HR_EMAIL, "public")
+        assert env.get("/api/docs", headers=bearer(token)).status_code == 403    # HR taken away
+        members_store.remove_domain("cloudastra.in")
+        assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # domain gone
+    finally:
+        members_store.add_verified_domain("default", "cloudastra.in")
+        members_store.set_role(HR_EMAIL, "hr")
+    token = sso_token(env, provider, "google", GOOGLE_HR)
+    members_store.remove(HR_EMAIL)
+    try:
+        assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # member gone
+    finally:
+        members_store.set_role(HR_EMAIL, "hr")
+
+
+def test_sso_sign_in_adds_the_member_once(env, provider):
+    import members_store
+    email = "first.timer@cloudastra.in"
+    assert members_store.get(email) is None
+    claims = {"email": email, "email_verified": True, "hd": "cloudastra.in", "name": "First"}
+    sso_token(env, provider, "google", claims)
+    sso_token(env, provider, "google", claims)
+    member = members_store.get(email)
+    assert (member["workspace"], member["role"], member["name"]) == ("default", "public", "First")
+    assert member["last_login_at"] and member["password_hash"] is None
+
+
+def test_a_role_can_be_given_before_the_first_sign_in(env, provider):
+    import auth
+    auth._cli(["role", "new.admin@cloudastra.in", "admin"])
+    claims = {"email": "new.admin@cloudastra.in", "email_verified": True, "hd": "cloudastra.in"}
+    me = env.get("/api/auth/me", headers=bearer(sso_token(env, provider, "google", claims))).json()
+    assert me["role"] == "admin"
+
+
+def test_an_account_in_another_workspace_cant_sign_in_here(env, provider):
+    import members_store
+    members_store.set_role("moved@cloudastra.in", "public", workspace="acme")
+    claims = {"email": "moved@cloudastra.in", "email_verified": True, "hd": "cloudastra.in"}
+    assert error_of(sso_callback(env, provider, "google", claims)) == "not_allowed"
 
 
 def test_password_role_changes_apply_to_live_sessions(env):
@@ -193,10 +236,15 @@ def test_password_role_changes_apply_to_live_sessions(env):
         auth._cli(["role", "keeper", "hr"])
 
 
-def test_a_broken_sso_config_fails_safely(env, provider, sso_config):
+def test_an_unreadable_database_fails_safely(env, provider, monkeypatch):
+    import members_store
     token = sso_token(env, provider, "google", GOOGLE_HR)
-    sso_config("{ not json")
-    assert sso_callback(env, provider, "google", GOOGLE_HR) == "/#login?error=sso_failed"
+
+    def broken(*args):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(members_store, "get", broken)
+    monkeypatch.setattr(members_store, "workspace_for_domain", broken)
+    assert error_of(sso_callback(env, provider, "google", GOOGLE_HR)) == "sso_failed"
     assert env.get("/api/auth/me", headers=bearer(token)).status_code == 503
 
 
@@ -214,3 +262,16 @@ def test_password_login_can_be_turned_off(env, monkeypatch):
     r = env.post("/api/auth/login", json={"username": "admin", "password": "correct-horse"})
     assert r.status_code == 403
     assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # ends live sessions too
+
+
+def test_a_turned_off_password_account_cant_sign_in(env):
+    import auth
+    token = password_token(env, "staff")
+    auth._cli(["disable", "staff"])
+    try:
+        assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401
+        r = env.post("/api/auth/login", json={"username": "staff", "password": "correct-horse"})
+        assert r.status_code == 401
+    finally:
+        auth._cli(["enable", "staff"])
+    password_token(env, "staff")

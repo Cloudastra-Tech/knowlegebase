@@ -5,21 +5,14 @@ The provider (Google Workspace, Microsoft Entra ID, or any OpenID Connect
 provider such as Okta, Keycloak or Auth0) proves WHO someone is.
 This file decides WHAT they get: which workspace (company) and which role.
 
-That decision lives in config/sso.json (gitignored, like users.json):
+That decision comes from members_store.py (the database; manage it with
+`python auth.py`):
 
-    {
-      "workspaces": {
-        "default": {
-          "domains": ["cloudastra.in", "cloudastra.co"],
-          "hr": ["priya@cloudastra.in"]
-        }
-      }
-    }
-
-  * an email on one of a workspace's domains signs in to that workspace
-  * emails listed under "hr" get the HR / Admin role; everyone else is public
+  * an email on a domain a workspace has VERIFIED signs in to that workspace
+  * their role is the one on their member row: public unless someone set it
+    (`python auth.py role priya@cloudastra.in hr`); new people start as public
   * anyone else is turned away — having an account at the provider is not enough
-  * it's checked again on every request (api.py), so edits apply straight away
+  * it's checked again on every request (api.py), so changes apply straight away
 
 Server settings (.env). A provider only shows on the login page once it's set:
     GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET     (the same OAuth client Google Drive uses)
@@ -33,11 +26,18 @@ Such a provider must vouch for the email (email_verified). Anyone who can get a
 verified address on one of your domains there can sign in, so add only
 providers your organisation controls.
 
+A workspace's OWN provider ("connection", set up by its admin, stored in
+members_store.py) only signs people in to that workspace, and only with an
+email on a domain that workspace has verified. The login page finds it from
+the email someone types (connections_for_email). If the admin gave it group
+rules, it's the workspace's role source: the groups it sends at sign-in set the
+person's role. Other providers sign people in without changing their role (see
+the top of members_store.py, also for how that combines with a role set by hand).
+
 Authlib does the OpenID Connect work: the redirect, state + PKCE, and checking
 the ID token's signature, audience, issuer and expiry.
 """
 
-import json
 import os
 import re
 import secrets
@@ -46,18 +46,20 @@ import time
 
 from authlib.integrations.starlette_client import OAuth
 
-import workspaces
+import members_store
+import url_guard
 
-CONFIG_FILE = os.getenv("SSO_CONFIG", os.path.join("config", "sso.json"))
 CODE_SECONDS = 60           # the one-time code that hands a new session to the browser
 
 LABELS = {"google": "Google", "microsoft": "Microsoft"}
 SCOPES = "openid email profile"
+DEFAULT_GROUP_CLAIM = "groups"
 _GENERIC_ID = re.compile(r"^[a-z][a-z0-9]{0,19}$")
 
 _oauth = OAuth()
 _clients = {}
-_codes = {}                 # code -> (user, expires)
+_connection_clients = {}  # connection id -> (updated_at, Authlib client)
+_codes = {}                 # code -> (user, browser, expires)
 _codes_lock = threading.Lock()
 
 
@@ -131,15 +133,32 @@ def client(provider):
     return _clients[provider]
 
 
+def connection_client(conn):
+    """The Authlib client for a workspace's own provider. Built from the endpoints
+    saved with it (no discovery fetch), and every call it makes to the provider
+    goes through url_guard. Rebuilt whenever the connection is edited."""
+    cached = _connection_clients.get(conn["id"])
+    if cached and cached[0] == conn["updated_at"]:
+        return cached[1]
+    c = OAuth().register(
+        name=f"conn_{conn['id']}",
+        client_id=conn["client_id"],
+        client_secret=(members_store.connection_keys(conn["id"]) or {}).get("client_secret"),
+        client_kwargs={"scope": SCOPES, "code_challenge_method": "S256", "timeout": 10,
+                       "event_hooks": {"request": [url_guard.httpx_hook], "response": []}},
+        **conn["metadata"],
+    )
+    _connection_clients[conn["id"]] = (conn["updated_at"], c)
+    return c
+
+
+def connections_for_email(email):
+    """The enabled providers of the workspace that verified this email's domain."""
+    workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
+    return members_store.list_connections(workspace, enabled_only=True) if workspace else []
+
+
 # ---- Who gets in -------------------------------------------------------------
-def load_config():
-    """config/sso.json, or {} if there is none. Raises ValueError if it isn't valid JSON."""
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    with open(CONFIG_FILE, encoding="utf-8") as f:
-        return json.load(f)
-
-
 def _identity(provider, claims):
     """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
     the account belongs to (None for other providers). Refuses addresses the
@@ -172,49 +191,161 @@ def _identity(provider, claims):
     return email, (claims.get("name") or email.split("@")[0]), org
 
 
-def access_for(email, org=None, config=None):
-    """{"workspace", "role"} for an email, or None if no workspace takes it.
-    A Google sign-in must also come from a Workspace whose primary domain (org)
-    is one of that workspace's domains."""
-    config = load_config() if config is None else config
-    domain = email.rpartition("@")[2]
-    for slug, ws in (config.get("workspaces") or {}).items():
-        if not workspaces.valid(slug):
-            continue
-        domains = {d.strip().lower() for d in ws.get("domains", [])}
-        if domain in domains:
-            if org is not None and org not in domains:
-                return None
-            hr = {e.strip().lower() for e in ws.get("hr", [])}
-            return {"workspace": slug, "role": "hr" if email in hr else "public"}
-    return None
+def _workspace_for(email, org):
+    """The workspace that verified this email's domain, or None. A Google sign-in
+    must also come from a Google Workspace whose primary domain (org) that
+    workspace verified, so another organisation's Workspace can't vouch for it."""
+    workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
+    if workspace and org is not None and org not in members_store.verified_domains(workspace):
+        return None
+    return workspace
+
+
+def access_for(email, org=None, connection=None):
+    """{"workspace", "role"} for someone signed in with single sign-on, or None
+    if they may no longer use the app. Checked on every request: someone who came
+    through a workspace's own provider is also signed out once it's turned off."""
+    workspace = _workspace_for(email, org)
+    if workspace and connection is not None:
+        conn = members_store.get_connection(connection)
+        if not conn or not conn["enabled"] or conn["workspace"] != workspace:
+            return None
+    member = members_store.get(email) if workspace else None
+    if not member or member["workspace"] != workspace or member["disabled"]:
+        return None
+    member = members_store.check_group_admin(member)
+    return {"workspace": workspace, "role": member["role"]}
 
 
 def user_for(provider, claims):
-    """The session user for someone the provider just signed in."""
+    """The session user for someone the provider just signed in. Adds them as a
+    member the first time."""
     email, name, org = _identity(provider, claims)
-    access = access_for(email, org)
-    if not access:
+    workspace = _workspace_for(email, org)
+    member = members_store.record_sso_login(email, name, workspace) if workspace else None
+    if not member:
         raise NotAllowed("not_allowed")
-    return {"username": email, "name": name, "provider": provider, "org": org, **access}
+    if member["disabled"]:
+        raise NotAllowed("disabled")
+    return {"username": email, "name": name, "provider": provider, "org": org,
+            "workspace": workspace, "role": member["role"]}
+
+
+def check_connection_identity(conn, claims):
+    """(email, name) of someone a workspace's own provider vouches for, or
+    NotAllowed. The provider belongs to the workspace, so it's trusted for that
+    workspace's verified domains and nothing else. An email it marks as
+    unverified is refused; one with no email_verified claim at all (Entra ID
+    sends none) is accepted, since the domain check already limits it to the
+    workspace's own."""
+    email = claims.get("email")
+    email = email.strip().lower() if isinstance(email, str) else ""
+    if str(claims.get("email_verified")).lower() == "false" or "@" not in email:
+        raise NotAllowed("unverified")
+    if members_store.workspace_for_domain(email.rpartition("@")[2]) != conn["workspace"]:
+        raise NotAllowed("not_allowed")
+    member = members_store.get(email)
+    if member and member["workspace"] != conn["workspace"]:
+        raise NotAllowed("not_allowed")       # an account in another workspace
+    if member and member["disabled"]:
+        raise NotAllowed("disabled")
+    return email, claims.get("name") or email.split("@")[0]
+
+
+def claim_values(claims, name):
+    """The values of a claim or SAML attribute, as a list of strings. Names are
+    matched without regard to case; one that isn't there whole may be a dotted
+    path into nested claims ("realm_access.roles"). Whole names come first, as
+    SAML attribute names are often URLs, dots and all."""
+    def lookup(container, key):
+        if not isinstance(container, dict):
+            return None
+        if key in container:
+            return container[key]
+        return next((v for k, v in container.items() if k.lower() == key.lower()), None)
+
+    value = lookup(claims, name)
+    if value is None and "." in name:
+        value = claims
+        for part in name.split("."):
+            value = lookup(value, part)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if v is not None]
+    return [str(value)]
+
+
+def groups_from(conn, claims):
+    """(groups, role they give) under the provider's rules (None: no rules).
+    Only kept if the provider is the workspace's role source."""
+    groups = claim_values(claims, conn.get("group_claim") or DEFAULT_GROUP_CLAIM)
+    rules = members_store.group_rules(conn["id"])
+    return groups, members_store.role_for_groups(rules, groups) if rules else None
+
+
+def try_connection(conn, claims):
+    """What WOULD happen if these claims signed in, without signing anyone in
+    (the admin's "Test sign-in")."""
+    try:
+        email, name = check_connection_identity(conn, claims)
+    except NotAllowed as e:
+        email = claims.get("email")
+        email = email.strip().lower() if isinstance(email, str) else ""
+        detail = None
+        if e.reason == "not_allowed":          # which of the two rules it broke
+            domain = email.rpartition("@")[2]
+            detail = (f"{domain} isn't a verified domain of this workspace."
+                      if members_store.workspace_for_domain(domain) != conn["workspace"]
+                      else "This account belongs to another workspace.")
+        return {"ok": False, "reason": e.reason, "detail": detail, "email": email or None}
+    member = members_store.get(email)
+    sets_roles = members_store.role_source(conn["workspace"]) == conn["id"]
+    found = groups_from(conn, claims) if sets_roles else None
+    override = member["override_role"] if member else None
+    # Through another provider, the role their groups gave stays as it is.
+    group_role = found[1] if found else member["group_role"] if member else None
+    return {"ok": True, "email": email, "name": name,
+            "role": override or group_role or "public",
+            "role_source": "override" if override else "groups" if group_role else "default",
+            "groups": found[0] if found else None, "new_member": member is None,
+            "sets_roles": sets_roles}
+
+
+def user_for_connection(conn, claims):
+    """The session user for someone a workspace's own provider just signed in."""
+    email, name = check_connection_identity(conn, claims)
+    member = members_store.record_sso_login(email, name, conn["workspace"],
+                                            groups=groups_from(conn, claims),
+                                            source=conn["id"])
+    if not member:
+        raise NotAllowed("not_allowed")
+    members_store.record_connection_login(conn["id"])
+    return {"username": email, "name": name, "provider": conn["protocol"], "connection": conn["id"],
+            "org": None, "workspace": conn["workspace"], "role": member["role"]}
 
 
 # ---- Handing the session to the browser --------------------------------------
 # The provider sends the BROWSER back to us, so the result has to travel in a
 # URL. Rather than put the session token there (history, logs), we send a short
 # one-time code that the site swaps for the session with a POST.
-def issue_code(user):
+def issue_code(user, browser=None):
+    """A one-time code for `user`, redeemable only by the browser that started the
+    sign-in (`browser`: the ID in its sign-in cookie; see api.py)."""
     code = secrets.token_urlsafe(24)
     now = time.time()
     with _codes_lock:
-        for c in [c for c, (_, exp) in _codes.items() if exp < now]:
+        for c in [c for c, (_, _, exp) in _codes.items() if exp < now]:
             del _codes[c]
-        _codes[code] = (user, now + CODE_SECONDS)
+        _codes[code] = (user, browser, now + CODE_SECONDS)
     return code
 
 
-def redeem_code(code):
-    """The user a code was issued for, once; None if unknown, used or expired."""
+def redeem_code(code, browser=None):
+    """The user a code was issued for, once; None if unknown, used, expired, or
+    redeemed by another browser."""
     with _codes_lock:
-        user, expires = _codes.pop(code or "", (None, 0))
-    return user if expires > time.time() else None
+        user, issued_to, expires = _codes.pop(code or "", (None, None, 0))
+    if expires < time.time() or not secrets.compare_digest(str(issued_to), str(browser)):
+        return None
+    return user
