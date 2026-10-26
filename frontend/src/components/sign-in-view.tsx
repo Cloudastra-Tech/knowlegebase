@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   signIn,
@@ -165,6 +166,8 @@ function SignInRules({ settings, onChange }: { settings: SignInSettings; onChang
   )
 }
 
+const DEFAULT_ADMIN_DAYS = 30 // what turning expiry on starts with (members_store.py)
+
 function GroupAdminExpiry({
   settings,
   onChange,
@@ -172,19 +175,19 @@ function GroupAdminExpiry({
   settings: SignInSettings
   onChange: () => void
 }) {
-  const [days, setDays] = useState(String(settings.group_admin_days))
+  const on = settings.group_admin_days > 0
+  const [days, setDays] = useState(String(on ? settings.group_admin_days : DEFAULT_ADMIN_DAYS))
   const [saving, setSaving] = useState(false)
   const n = Number(days)
-  const valid = days.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= 3650
+  const valid = days.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= 3650
 
-  async function save(e: FormEvent) {
-    e.preventDefault()
+  async function apply(value: number) {
     setSaving(true)
     try {
-      await signIn.setGroupAdminDays(n)
+      await signIn.setGroupAdminDays(value)
       toast.success(
-        n
-          ? `Admin from groups now lasts ${n} days without a sign-in through the role source.`
+        value
+          ? `Admin from groups now lasts ${value} days without a sign-in through the role source.`
           : "Admin from groups no longer expires.",
       )
       onChange()
@@ -195,34 +198,51 @@ function GroupAdminExpiry({
     }
   }
 
+  function save(e: FormEvent) {
+    e.preventDefault()
+    if (valid) apply(n)
+  }
+
   return (
-    <form onSubmit={save} className="grid gap-2">
-      <Label htmlFor="group-admin-days">Expire admin from groups</Label>
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span>After</span>
-        <Input
-          id="group-admin-days"
-          type="number"
-          inputMode="numeric"
-          min={0}
-          max={3650}
-          value={days}
-          onChange={(e) => setDays(e.target.value)}
-          className="w-20"
-        />
-        <span>days without a sign-in through the role source</span>
-        {valid && n !== settings.group_admin_days && (
-          <Button type="submit" size="sm" variant="outline" disabled={saving}>
-            {saving && <Loader2 className="animate-spin" />}
-            Save
-          </Button>
+    <form onSubmit={save} className="flex items-start gap-3">
+      <Switch
+        id="group-admin-expiry"
+        className="mt-0.5"
+        checked={on}
+        disabled={saving}
+        onCheckedChange={(v) => apply(v ? (valid ? n : DEFAULT_ADMIN_DAYS) : 0)}
+      />
+      <div className="grid gap-1">
+        <Label htmlFor="group-admin-expiry">Expire admin from groups</Label>
+        <p className="text-sm text-muted-foreground">
+          Their groups are only checked when they sign in, so admin from groups that haven't been
+          sent in a while drops to what the rest of their groups give. Roles you set on the
+          Members tab don't expire, and the last admin always keeps it.
+        </p>
+        {on && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+            <span>After</span>
+            <Input
+              id="group-admin-days"
+              aria-label="Days"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={3650}
+              value={days}
+              onChange={(e) => setDays(e.target.value)}
+              className="w-20"
+            />
+            <span>days without a sign-in through the role source</span>
+            {valid && n !== settings.group_admin_days && (
+              <Button type="submit" size="sm" variant="outline" disabled={saving}>
+                {saving && <Loader2 className="animate-spin" />}
+                Save
+              </Button>
+            )}
+          </div>
         )}
       </div>
-      <p className="text-sm text-muted-foreground">
-        Their groups are only checked when they sign in, so admin from groups that are this
-        old drops to what the rest of their groups give. 0 = never. Roles you set on the
-        Members tab don't expire, and the last admin always keeps it.
-      </p>
     </form>
   )
 }
