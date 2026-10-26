@@ -10,6 +10,8 @@ a deploy gate or an uptime monitor: it touches each thing a request needs.
     integrations_key   the encryption key loads, and decrypts a stored secret
                        (a changed INTEGRATIONS_KEY breaks every SSO provider
                        and integration while everything else looks fine)
+    toxicity_guard     only with REQUIRE_TOXICITY_GUARD=1: the Guardrails Hub
+                       toxicity validator is loaded (safety.guards_status())
 
 Nothing here creates or changes anything: a missing database or index is
 reported, not made. Reasons are short and safe to show to anyone (the endpoint
@@ -101,12 +103,19 @@ def check_integrations_key(db_path, key_path=None):
             raise NotReady("the encryption key doesn't decrypt the stored secrets") from None
 
 
-def ready(db_path, index_folder, key_path=None):
-    """(all ok?, {check: "ok" or the reason it failed})."""
+def check_toxicity_guard(guards):
+    if guards["toxicity"] != "active":
+        raise NotReady("REQUIRE_TOXICITY_GUARD is set but the toxicity guard is not installed")
+
+
+def ready(db_path, index_folder, key_path=None, guards=None):
+    """(all ok?, {check: "ok" or the reason it failed}). `guards` is
+    safety.guards_status(); a missing toxicity guard only fails when it is required."""
     checks = {"database": lambda: check_database(db_path),
               "search_index": lambda: check_search_index(index_folder),
               "integrations_key": lambda: check_integrations_key(db_path, key_path)}
-    # TODO: add safety.guards_status() (is the toxicity guard loaded?) once it lands on dev.
+    if guards and guards["toxicity_required"]:
+        checks["toxicity_guard"] = lambda: check_toxicity_guard(guards)
     out = {}
     for name, check in checks.items():
         try:

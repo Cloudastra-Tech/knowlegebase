@@ -106,6 +106,7 @@ import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
 import members_store                 # noqa: E402
 import observability                 # noqa: E402
+import safety                        # noqa: E402
 import saml_sp                       # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
@@ -119,6 +120,7 @@ from connectors import google_drive, notion  # noqa: E402
 @contextlib.asynccontextmanager
 async def _lifespan(app):
     """Background jobs that run for the life of the server."""
+    safety.require_guards()          # REQUIRE_TOXICITY_GUARD=1: refuse to start without it
     threading.Thread(target=_sync_scheduler, daemon=True).start()
     threading.Thread(target=_saml_refresh_scheduler, daemon=True).start()
     yield
@@ -2385,17 +2387,21 @@ def sign_out_member(username: str, user=Depends(require_admin)):
 
 @app.get("/api/health")
 def health_check():
-    """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200."""
-    return {"ok": True}
+    """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200.
+    "guards" shows whether the toxicity check is running, since the app starts
+    without it unless REQUIRE_TOXICITY_GUARD says not to."""
+    return {"ok": True, "guards": safety.guards_status()}
 
 
 @app.get("/api/health/ready")
 def ready_check():
-    """Can this server actually serve? (database, search index, encryption key; see
-    health.py). 503 with the failing check's reason otherwise. For a deploy gate or
+    """Can this server actually serve? (database, search index, encryption key, and
+    the toxicity guard if REQUIRE_TOXICITY_GUARD; see health.py). 503 with the failing check's reason otherwise. For a deploy gate or
     an uptime monitor, not for Docker: restarting the container fixes none of them."""
-    ok, checks = health.ready(members_store.DB_PATH, ingest.DB_FOLDER)
-    return JSONResponse({"ok": ok, "checks": checks}, status_code=200 if ok else 503)
+    guards = safety.guards_status()
+    ok, checks = health.ready(members_store.DB_PATH, ingest.DB_FOLDER, guards=guards)
+    return JSONResponse({"ok": ok, "checks": checks, "guards": guards},
+                        status_code=200 if ok else 503)
 
 
 # ---- The website -------------------------------------------------------------
