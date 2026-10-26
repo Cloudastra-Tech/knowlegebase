@@ -246,6 +246,34 @@ changes with every update; agents reload when it does (`kb/services/agents.py`).
 
 ---
 
+## 📊 Question log and insights
+
+Every question is logged in `question_log` (`kb/services/question_log.py`): the
+chat router wraps the agent once (`question_log.tracked(...)`), so web, API and
+later Slack or MCP questions are all logged, saved in a conversation or not. A row
+holds the outcome (answered, not found, blocked + why, general knowledge, error,
+stopped), the tools and sources used, the highest access level the model read,
+the latency, and the tokens and model of every model call (a LangChain callback
+set for the run). Its **text** follows the workspace's setting, applied before it
+is written: `redacted` (the default: `safety.redact_pii`), `full`, or `metadata`
+(none). Text is cleared after `question_log_days` (90 by default); deleting a chat
+clears what was logged of its words.
+
+```
+  question ──► agent ──► question_log ──nightly──► insights_daily, source_stats
+                                     └──weekly───► content_gaps (embed, cluster, name)
+  documents (uploads + synced) ──────────────────► insights_docs (never cited, stale)
+```
+
+The admin Insights screen (`/admin/insights`, HR and admins) reads
+`GET /api/admin/insights` (`kb/services/insights.py`): rolled-up days plus today
+worked out live. It shows aggregates only: who asked is never shown (chat.md
+D3), sample questions follow the retention mode and leave out answers the
+viewer's role can't see. Its Feedback tab lists thumbs-down answers and promotes
+one to `eval_candidates`, a test-set candidate for `eval/golden`.
+
+---
+
 ## 🗄️ Database migrations
 
 Accounts, sign-in providers, sessions and integrations live in one SQLite file,

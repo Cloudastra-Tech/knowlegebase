@@ -2,7 +2,7 @@
 conversations_store.py  —  saved chats: conversations, their messages, and the
 feedback people give on answers; folders, the search index over them, the
 workspace's chat settings, and links that share them (config/app.db, see db.py;
-tables made by migrations/versions/0003_conversations.py and 0007_chat_history.py).
+tables made by migrations/versions/0003_conversations.py and 0008_chat_history.py).
 
 Only SQL lives here. Who may see what (visible_to), the history a follow-up is
 answered with, and an answer's state are decided in kb/services/conversations.py.

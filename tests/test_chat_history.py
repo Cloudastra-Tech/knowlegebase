@@ -368,6 +368,14 @@ def test_the_nightly_purge_deletes_chats_past_retention_with_everything_on_them(
     assert read(client, staff, recent)["messages"]
     assert conversations_store.feedback_of(staff, [old_answer]) == {}
     assert conversations_store.share_by_token(link["token"]) is None
+    # Deleted the normal way, so the question log forgets their words too (its trigger).
+    conn = db.connect()
+    logged = conn.execute("SELECT COUNT(*) FROM question_log WHERE workspace = ? AND "
+                          "question IS NOT NULL", (ws,)).fetchone()[0]
+    leftover = conn.execute("SELECT COUNT(*) FROM question_log WHERE message_id = ?",
+                            (old_answer,)).fetchone()[0]
+    conn.close()
+    assert logged == 1 and leftover == 0              # only the recent chat's question
     assert [r["conversation_id"] for r in search(client, staff, "thirty")] == [recent]
     event = events_of(ws, "chat.retention_purge")[0]
     assert (event["actor"], event["actor_type"]) == ("system", "system")
