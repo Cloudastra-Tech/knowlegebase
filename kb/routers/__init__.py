@@ -133,6 +133,16 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
   api_v1.py    (the public API: "Authorization: Bearer kb_live_...", an API key, not a session)
     POST   /v1/ask | /v1/search   GET /v1/sources | /v1/audit | /v1/openapi.json
     GET | POST | DELETE /v1/documents ...   see the module; the API we keep stable
+  slack.py
+    GET    /admin/slack           the Slack app: which app, which Slack team, settings (HR / Admin)
+    PUT    /admin/slack/app       {mode: central|custom, client_id, client_secret, signing_secret} (admin)
+    GET    /admin/slack/manifest  the app manifest with this server's URLs           (admin)
+    POST   /admin/slack/install   -> {url} of Slack's consent screen                (admin)
+    GET    /slack/oauth/callback  Slack sends the browser back here
+    DELETE /admin/slack/install   uninstall: the bot token is revoked                (admin)
+    PUT    /admin/slack/settings  {unknown_users, auto_answer, auto_answer_channels} (admin)
+    POST   /slack/events | /slack/commands | /slack/interactions   (Slack's signature, not a
+                                  session; /slack/apps/{app_key}/...: a customer's own app)
 And /mcp (kb/mcp_server.py, outside /api): the MCP server, with personal API keys.
 
 Chat, uploads, re-index and sync now are rate-limited per person and per workspace
