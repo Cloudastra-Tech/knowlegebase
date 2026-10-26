@@ -80,7 +80,6 @@ import contextlib
 import json
 import io
 import logging
-import queue
 import os
 import re
 import secrets
@@ -107,6 +106,7 @@ import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
 import members_store                 # noqa: E402
 import observability                 # noqa: E402
+import safety                        # noqa: E402
 import saml_sp                       # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
@@ -114,12 +114,13 @@ import sso_errors                    # noqa: E402
 import sso_setup                     # noqa: E402
 import url_guard                     # noqa: E402
 import workspaces                    # noqa: E402
-from agent import build_agent        # noqa: E402
+from agent import Cancelled, build_agent  # noqa: E402
 from connectors import google_drive, notion  # noqa: E402
 
 @contextlib.asynccontextmanager
 async def _lifespan(app):
     """Background jobs that run for the life of the server."""
+    safety.require_guards()          # REQUIRE_TOXICITY_GUARD=1: refuse to start without it
     threading.Thread(target=_sync_scheduler, daemon=True).start()
     threading.Thread(target=_saml_refresh_scheduler, daemon=True).start()
     yield
@@ -1771,49 +1772,70 @@ def _steps(trace):
             for t in trace]
 
 
+def _enter_chat(ws):
+    """Count a question in, once its workspace's index isn't being swapped."""
+    with _gate:
+        if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
+            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
+        _gate_of(ws)["active"] += 1
+
+
 @app.post("/api/chat/stream")
-def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
+async def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
     """Same as /api/chat, but streams what's happening as Server-Sent Events:
          status      {"text"}                       e.g. "Checking your question"
          step_start  {"id", "tool", "label"}        e.g. "Searching company docs"
          step_end    {"id", "tool", "result"}       e.g. "found 2 relevant documents"
          answer      {"text"}                       the answer so far (PII already masked)
          done        {"answer", "sources", "steps"} the final, checked answer
-         error       {"message"}"""
+         error       {"message"}
+    If the browser goes away mid-answer, the agent is told to stop."""
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
     ws = ws_of(user)
-    with _gate:
-        if not _gate.wait_for(lambda: not _gate_of(ws)["indexing"], timeout=120):
-            raise HTTPException(503, "Documents are being re-indexed. Try again in a moment.")
-        _gate_of(ws)["active"] += 1
+    await run_in_threadpool(_enter_chat, ws)      # may wait: keep the event loop free
 
-    events = queue.Queue()
+    loop = asyncio.get_running_loop()
+    events = asyncio.Queue()
+    stop = threading.Event()                      # set when the client disconnects
+
+    def put(event):                               # called from the worker thread
+        try:
+            loop.call_soon_threadsafe(events.put_nowait, event)
+        except RuntimeError:                      # the event loop has shut down
+            pass
 
     def work():
         try:
             answer, trace, sources = get_agent(ws, role)(question, with_sources=True,
-                                                         on_event=events.put)
-            events.put({"type": "done", "answer": answer, "sources": sources,
-                        "steps": _steps(trace)})
+                                                         on_event=put, cancel=stop)
+            put({"type": "done", "answer": answer, "sources": sources,
+                 "steps": _steps(trace)})
+        except Cancelled:                          # nobody is listening any more
+            pass
         except Exception as e:                     # show it in the chat, keep serving
             # Not the question itself: it's tenant data (its length helps spot limits).
             log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
                           ws, role, len(question))
-            events.put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
+            put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
         finally:
             with _gate:
                 _gate_of(ws)["active"] -= 1
                 _gate.notify_all()
-            events.put(None)
+            put(None)
 
     threading.Thread(target=work, daemon=True).start()
 
-    def sse():
-        while (event := events.get()) is not None:
-            yield f"data: {json.dumps(event)}\n\n"
+    async def sse():
+        try:
+            while (event := await events.get()) is not None:
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            # Ends normally, or is cancelled here when the client disconnects:
+            # either way nobody needs the rest of the work.
+            stop.set()
 
     # X-Accel-Buffering: no -> nginx passes each event through immediately.
     return StreamingResponse(sse(), media_type="text/event-stream",
@@ -2365,17 +2387,21 @@ def sign_out_member(username: str, user=Depends(require_admin)):
 
 @app.get("/api/health")
 def health_check():
-    """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200."""
-    return {"ok": True}
+    """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200.
+    "guards" shows whether the toxicity check is running, since the app starts
+    without it unless REQUIRE_TOXICITY_GUARD says not to."""
+    return {"ok": True, "guards": safety.guards_status()}
 
 
 @app.get("/api/health/ready")
 def ready_check():
-    """Can this server actually serve? (database, search index, encryption key; see
-    health.py). 503 with the failing check's reason otherwise. For a deploy gate or
+    """Can this server actually serve? (database, search index, encryption key, and
+    the toxicity guard if REQUIRE_TOXICITY_GUARD; see health.py). 503 with the failing check's reason otherwise. For a deploy gate or
     an uptime monitor, not for Docker: restarting the container fixes none of them."""
-    ok, checks = health.ready(members_store.DB_PATH, ingest.DB_FOLDER)
-    return JSONResponse({"ok": ok, "checks": checks}, status_code=200 if ok else 503)
+    guards = safety.guards_status()
+    ok, checks = health.ready(members_store.DB_PATH, ingest.DB_FOLDER, guards=guards)
+    return JSONResponse({"ok": ok, "checks": checks, "guards": guards},
+                        status_code=200 if ok else 503)
 
 
 # ---- The website -------------------------------------------------------------

@@ -1,5 +1,7 @@
 # Run the app with: docker compose up --build
 # Reads secrets from your local .env (OPENAI_API_KEY, OUTLINE_*, CF_ACCESS_*).
+# Production adds docker-compose.guardrails.yml (the Guardrails Hub build secret);
+# see deploy.md, step 4.
 services:
   knowledgebase:
     build: .
@@ -14,6 +16,11 @@ services:
       - ./config:/app/config         # login accounts, integrations DB + encryption key (never in the image)
       - ./data:/app/data             # per-workspace documents and synced connector files
     restart: unless-stopped
+    logging:                 # rotate the container log (Docker keeps it forever by default)
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   chroma_data:

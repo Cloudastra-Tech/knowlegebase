@@ -102,6 +102,11 @@ and (b) who is allowed to see it.
                                        ▼
                               Answer shown to you
 ```
+To answer sooner, GUARD 1 (and the prompt-injection check) actually runs at the
+same time as RETRIEVE. GENERATE waits for it, and nothing retrieved is shown or
+put in a prompt until it passes — a blocked question gets the same refusal.
+Each question keeps its own state, so people asking at once don't wait for
+each other.
 
 ---
 
