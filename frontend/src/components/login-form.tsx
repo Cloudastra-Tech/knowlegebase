@@ -261,15 +261,17 @@ function SignIn({
   onLogin,
   onCreate,
   error,
+  initialEmail = "",
 }: {
   options: AuthOptions
   onLogin: (user: User) => void
   onCreate: (suggestedName: string) => void
   error: ReturnType<typeof errorFromUrl>
+  initialEmail?: string // e.g. from an accepted invite (location.state.email)
 }) {
   const providers = options.providers
   const emailFirst = options.email_sso || providers.length > 0
-  const [email, setEmail] = useState("")
+  const [email, setEmail] = useState(initialEmail)
   // What each domain looked up to (the pass is derived from it while typing).
   const [routes, setRoutes] = useState<Record<string, SsoRoute | "failed">>({})
   const [choices, setChoices] = useState<SsoConnection[] | null>(null)
@@ -681,6 +683,7 @@ export function LoginForm({
                 options={options}
                 onLogin={onLogin}
                 error={error}
+                initialEmail={(location.state as { email?: string } | null)?.email}
                 onCreate={(suggested) => {
                   setWorkspaceName((n) => n || suggested)
                   changeMode("create")

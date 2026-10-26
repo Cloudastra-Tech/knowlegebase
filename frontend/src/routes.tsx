@@ -9,6 +9,7 @@ import {
   HrOnly,
   Home,
   IntegrationsScreen,
+  InvitePage,
   KnowledgeScreen,
   Root,
   SignInPage,
@@ -23,7 +24,8 @@ import {
 //   /chat, /knowledge  everyone signed in
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
-//   /admin/sign-in, /admin/members   admins (the Access screen's two tabs)
+//   /admin/sign-in, /admin/members, /admin/activity   admins (the Access screen's tabs)
+//   /invite/:token     accept an invite (signed in or not)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
   {
@@ -45,6 +47,7 @@ export const routes: RouteObject[] = [
             ],
           },
           { path: "sso", Component: SsoReturnPage },
+          { path: "invite/:token", Component: InvitePage },
           {
             Component: App,
             children: [
@@ -64,6 +67,7 @@ export const routes: RouteObject[] = [
                   { index: true, element: <Navigate to="sign-in" replace /> },
                   { path: "sign-in", element: <AccessScreen tab="sign-in" /> },
                   { path: "members", element: <AccessScreen tab="members" /> },
+                  { path: "activity", element: <AccessScreen tab="activity" /> },
                 ],
               },
             ],

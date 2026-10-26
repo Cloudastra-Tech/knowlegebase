@@ -9,9 +9,11 @@ import type { User } from "@/lib/api"
 export function LoginPage({
   onLogin,
   onBack,
+  children,
 }: {
-  onLogin: (user: User) => void
+  onLogin?: (user: User) => void
   onBack?: () => void
+  children?: React.ReactNode // another form in its place (accepting an invite)
 }) {
   return (
     <div className="dark flex min-h-svh w-full flex-col bg-background text-foreground antialiased [--ascii-accent:oklch(0.82_0.15_160)] selection:bg-[var(--ascii-accent)]/30 lg:flex-row">
@@ -41,7 +43,7 @@ export function LoginPage({
           Knowledge<span className="font-normal text-muted-foreground"> assistant</span>
         </button>
         <main className="flex flex-1 items-start justify-center pt-[8vh] pb-8 lg:items-center lg:pt-0">
-          <LoginForm onLogin={onLogin} className="w-full max-w-[400px]" />
+          {children ?? (onLogin && <LoginForm onLogin={onLogin} className="w-full max-w-[400px]" />)}
         </main>
         <footer className="text-center text-xs text-muted-foreground">By Cloudastra.</footer>
       </div>

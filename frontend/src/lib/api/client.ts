@@ -67,6 +67,19 @@ export function setForbiddenHandler(fn: () => void) {
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await send(path, init)
+  return res.json() as Promise<T>
+}
+
+// A file the server streams (e.g. the audit log's export): its bytes and the name
+// it suggests (Content-Disposition), for the browser to save.
+export async function download(path: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await send(path)
+  const named = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")
+  return { blob: await res.blob(), filename: named?.[1] ?? "download" }
+}
+
+async function send(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
   if (session.token) headers.set("Authorization", `Bearer ${session.token}`)
   headers.set("X-Role", session.role)
@@ -88,7 +101,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     if (res.status === 403 && !path.startsWith("/auth/")) onForbidden()
     throw new ApiError(res.status, message, retryAfterOf(res))
   }
-  return res.json() as Promise<T>
+  return res
 }
 
 export const docPath = (d: { access: Access; name: string }) =>

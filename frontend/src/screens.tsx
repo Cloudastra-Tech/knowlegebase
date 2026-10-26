@@ -4,6 +4,7 @@ import {
   Outlet,
   useLocation,
   useNavigate,
+  useParams,
   useSearchParams,
   type Location,
 } from "react-router"
@@ -34,6 +35,9 @@ const SignInView = lazy(() =>
   import("@/components/sign-in-view").then((m) => ({ default: m.SignInView })),
 )
 const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
+const InviteAccept = lazy(() =>
+  import("@/components/invite-accept").then((m) => ({ default: m.InviteAccept })),
+)
 
 // The old hash addresses (/#login, /#sso?code=..., ...) go to their new URLs.
 export function Root() {
@@ -78,6 +82,21 @@ export function SignInPage() {
           window.scrollTo(0, 0)
         }}
       />
+    </LazyPage>
+  )
+}
+
+// /invite/:token: accept an admin's invite, signed in or not (it signs in as the
+// invited account).
+export function InvitePage() {
+  const { signedIn } = useAuth()
+  const navigate = useNavigate()
+  const { token = "" } = useParams()
+  return (
+    <LazyPage fullScreen>
+      <LoginPage onBack={() => navigate("/")}>
+        <InviteAccept token={token} onJoined={(u, t) => signedIn(u, t)} />
+      </LoginPage>
     </LazyPage>
   )
 }
