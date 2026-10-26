@@ -159,7 +159,7 @@ def connections_for_email(email):
 
 
 # ---- Who gets in -------------------------------------------------------------
-def _identity(provider, claims):
+def identity(provider, claims):
     """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
     the account belongs to (None for other providers). Refuses addresses the
     provider doesn't vouch for."""
@@ -220,7 +220,7 @@ def access_for(email, org=None, connection=None):
 def user_for(provider, claims):
     """The session user for someone the provider just signed in. Adds them as a
     member the first time."""
-    email, name, org = _identity(provider, claims)
+    email, name, org = identity(provider, claims)
     workspace = _workspace_for(email, org)
     member = members_store.record_sso_login(email, name, workspace) if workspace else None
     if not member:

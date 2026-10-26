@@ -129,7 +129,8 @@ SESSION_SECONDS = 12 * 60 * 60
 # minute, plus a ceiling for all addresses together (an address can be faked in
 # X-Forwarded-For if the proxy settings trust anyone). RATE_LIMITS=off turns
 # them off (the tests do).
-LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20}
+LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20,
+          "signup": 10}
 ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 _hits = {}                # (bucket, address) -> recent times
 _hits_lock = threading.Lock()
@@ -258,7 +259,16 @@ def auth_providers():
         log.exception("Couldn't read the sign-in connections")
         email_sso = False
     return {"providers": [{"id": p, "name": sso.label(p)} for p in sso.configured()],
-            "password": auth.password_login_on(), "email_sso": email_sso}
+            "password": auth.password_login_on(), "email_sso": email_sso,
+            "signup": signup_on()}
+
+
+def signup_on():
+    """Can a new company create a workspace here? Only when whoever runs the server
+    says so (WORKSPACE_SIGNUP=on), and only with Google Workspace, which proves the
+    founder's company owns its domain."""
+    return (os.getenv("WORKSPACE_SIGNUP", "off").strip().lower() in ("on", "true", "1", "yes")
+            and "google" in sso.configured())
 
 
 @app.post("/api/auth/login")
@@ -319,9 +329,10 @@ class CodeIn(BaseModel):
     code: str
 
 
-def _login_error(error, ref=None, status_code=307):
+def _login_error(error, ref=None, status_code=307, tab="login"):
+    """Back to the sign-in page (or its Create a workspace tab) with what went wrong."""
     query = {"error": error, **({"ref": ref} if ref else {})}
-    return RedirectResponse("/#login?" + urllib.parse.urlencode(query), status_code=status_code)
+    return RedirectResponse(f"/#{tab}?" + urllib.parse.urlencode(query), status_code=status_code)
 
 
 class _ProviderFailed(Exception):
@@ -356,6 +367,7 @@ async def sso_start(provider: str, request: Request):
     c = sso.client(provider)
     if not c:
         return RedirectResponse("/#login?error=sso_unavailable")
+    request.session.pop(SIGNUP_KEY, None)
     _mark_browser(request)
     try:
         return await c.authorize_redirect(
@@ -371,7 +383,69 @@ async def sso_callback(provider: str, request: Request):
     c = sso.client(provider)
     if not c:
         return RedirectResponse("/#login?error=sso_unavailable")
+    signup = request.session.pop(SIGNUP_KEY, None)
+    if provider == "google" and signup and time.time() - signup.get("at", 0) < SIGNUP_SECONDS:
+        return await _finish_signup(c, request, signup["name"])
     return await _finish_sso(provider, c, request, lambda claims: sso.user_for(provider, claims))
+
+
+# ---- Sign-up: a new company creates its workspace ---------------------------------
+# The founder names the workspace, then signs in with Google. Their Google
+# Workspace account proves their company owns its primary domain (the `hd`
+# claim), so that domain is verified for the new workspace straight away and
+# they become its admin. It reuses the Google callback, so the provider needs no
+# new redirect URI: /start marks this browser's sign-in cookie, the callback
+# takes the mark off.
+SIGNUP_KEY = "signup"
+SIGNUP_SECONDS = 15 * 60
+
+
+@app.get("/api/auth/signup/google/start")
+async def signup_start(request: Request, name: str = ""):
+    rate_limit(request, "signup")
+    name = " ".join(name.split())
+    if not signup_on():
+        return _login_error("signup_off")
+    if not 1 <= len(name) <= 60:
+        return RedirectResponse("/#signup?error=name")
+    c = sso.client("google")
+    _mark_browser(request)
+    request.session[SIGNUP_KEY] = {"name": name, "at": time.time()}
+    try:
+        return await c.authorize_redirect(
+            request, _public_url(request, "/api/auth/sso/google/callback"),
+            **sso.authorize_params("google"))
+    except Exception:              # couldn't reach Google's discovery document
+        log.exception("Sign-up: couldn't start the Google sign-in")
+        return _login_error("sso_failed", tab="signup")
+
+
+async def _finish_signup(c, request, name):
+    """Google sent the founder back: create the workspace, or say why not."""
+    try:
+        claims, _ = await _provider_answer("google", c, request)
+        email, person, org = sso.identity("google", claims)
+    except _ProviderFailed as e:
+        ref = sso_errors.new_ref()
+        log.warning("Sign-up: Google sign-in failed (%s), reference %s", e.code, ref)
+        return _login_error(e.error, ref, tab="signup")
+    except sso.NotAllowed as e:    # unverified, or a personal account
+        return _login_error(e.reason, tab="signup")
+    if email.rpartition("@")[2] != org:
+        return _login_error("signup_domain", tab="signup")
+    try:
+        workspace = members_store.create_workspace(name, org, email, person)
+    except members_store.WorkspaceTaken as e:
+        return _login_error(e.reason, tab="signup")
+    except Exception:
+        ref = sso_errors.new_ref()
+        log.exception("Sign-up: couldn't create the workspace, reference %s", ref)
+        return _login_error("sso_failed", ref, tab="signup")
+    log.warning("Sign-up: %s created the workspace %s for %s", email, workspace, org)
+    members_store.log_event(workspace, "google", email, "signed_in")
+    user = {"username": email, "name": person, "provider": "google", "org": org,
+            "workspace": workspace, "role": "admin"}
+    return RedirectResponse("/#sso?welcome=1&code=" + _code_for(request, user))
 
 
 async def _provider_answer(name, c, request):
@@ -557,8 +631,41 @@ def sso_discover(body: EmailIn, request: Request):
     except sqlite3.Error:
         log.exception("Couldn't look up sign-in for an email")
         raise HTTPException(503, "Sign-in settings can't be read. Please try again.")
-    return {"connections": [{"id": c["id"], "name": c["label"], "url": _start_url(c, email)}
-                            for c in conns]}
+    return {"connections": [{"id": c["id"], "name": c["label"], "url": _start_url(c, email),
+                             "kind": _provider_kind(c)} for c in conns],
+            **_route_for(email)}
+
+
+# Whose logo the sign-in page shows for a workspace's provider, from where it lives.
+_KINDS = (("accounts.google.com", "google"), ("login.microsoftonline.com", "microsoft"),
+          ("sts.windows.net", "microsoft"), ("okta.com", "okta"), ("oktapreview.com", "okta"),
+          ("auth0.com", "auth0"), ("/realms/", "keycloak"), ("authentik", "authentik"))
+
+
+def _provider_kind(conn):
+    """"google", "microsoft", "okta", ... from the provider's issuer or entity ID,
+    or None when it's not one we know (the page then shows no logo)."""
+    where = (conn.get("issuer") or "").lower()
+    return next((kind for needle, kind in _KINDS if needle in where), None)
+
+
+def _route_for(email):
+    """For the sign-in page's route pass: which workspace this email's domain
+    belongs to, and where roles come from there. (The domain alone decides it,
+    and the lookup is rate-limited.)"""
+    workspace = members_store.workspace_for_domain(email.rpartition("@")[2])
+    if not workspace:
+        return {"workspace": None, "signup": signup_on()}
+    source = members_store.role_source(workspace)
+    conn = members_store.get_connection(source) if source else None
+    name = members_store.workspace_name(workspace)
+    if name == workspace:          # never named (made before sign-up): name it from the domain
+        name = email.rpartition("@")[2].split(".")[0].replace("-", " ").title()
+    return {"workspace": {"name": name,
+                          "google": "google" in sso.configured(),
+                          "password": auth.password_login_on()
+                          and not members_store.requires_sso(workspace),
+                          "roles_from": conn["label"] if conn and conn["enabled"] else None}}
 
 
 @app.get("/api/auth/sso/c/{cid}/start")

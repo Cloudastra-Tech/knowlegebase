@@ -439,6 +439,59 @@ def add_verified_domain(workspace, domain):
                      (workspace, domain, time.time()))
 
 
+class WorkspaceTaken(ValueError):
+    """Sign-up can't create this workspace. `reason`: "workspace_exists" (the
+    domain is already verified by a workspace) or "account_exists" (the founder
+    is already a member of one)."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def create_workspace(name, domain, email, person_name):
+    """Sign-up: a new workspace called `name`, with `domain` verified and `email`
+    as its first admin, all or nothing. The caller has proved `email` controls
+    `domain` (a Google Workspace account whose primary domain it is). Returns the
+    new workspace's slug; raises WorkspaceTaken."""
+    domain, email = domain.strip().lower(), email.strip().lower()
+    with _lock, _db() as conn:
+        if conn.execute("""SELECT 1 FROM workspace_domains
+                           WHERE domain = ? AND verified_at IS NOT NULL""", (domain,)).fetchone():
+            raise WorkspaceTaken("workspace_exists")
+        if conn.execute("SELECT 1 FROM members WHERE username = ?", (email,)).fetchone():
+            raise WorkspaceTaken("account_exists")
+        slug, now = _free_slug(conn, name, domain), time.time()
+        conn.execute("INSERT INTO workspaces (slug, name, created_at) VALUES (?, ?, ?)",
+                     (slug, name.strip(), now))
+        conn.execute("""INSERT INTO workspace_domains (workspace, domain, verify_token, verified_at)
+                        VALUES (?, ?, NULL, ?)""", (slug, domain, now))
+        conn.execute("""INSERT INTO members (username, workspace, name, override_role,
+                                             created_at, last_login_at)
+                        VALUES (?, ?, ?, 'admin', ?, ?)""",
+                     (email, slug, person_name or email.split("@")[0], now, now))
+        _settle_role(conn, email)
+    return slug
+
+
+def _free_slug(conn, name, domain):
+    """A workspace slug from its name (or else its domain) that isn't taken."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:32].strip("-")
+    if not workspaces.valid(base) or base == workspaces.DEFAULT:
+        base = re.sub(r"[^a-z0-9]+", "-", domain.split(".")[0])[:32].strip("-") or "workspace"
+    slug, n = base, 1
+    while conn.execute("SELECT 1 FROM workspaces WHERE slug = ?", (slug,)).fetchone():
+        n += 1
+        slug = f"{base}-{n}"
+    return slug
+
+
+def workspace_name(workspace):
+    with _db() as conn:
+        row = conn.execute("SELECT name FROM workspaces WHERE slug = ?", (workspace,)).fetchone()
+    return row["name"] if row else workspace
+
+
 def remove_domain(domain, workspace=None):
     """Stop a domain signing in (to `workspace`, or anywhere). False if it wasn't there."""
     sql, args = "DELETE FROM workspace_domains WHERE domain = ?", [domain.strip().lower()]
