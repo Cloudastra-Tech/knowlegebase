@@ -224,7 +224,21 @@ commit them from the server or copy them back if you want them in the repo.
   Keycloak in Docker) says it "points to a private network address" — the server
   only calls public addresses. For local testing, list it in `.env`:
   `SSO_ALLOW_PRIVATE_HOSTS=localhost:8180`.
-- **"Too many attempts. Wait a minute"** — the sign-in endpoints are rate-limited
+- **"You've asked 20 questions in the last minute"** (or "Your workspace has…") —
+  chat, uploads, **Re-index now** and **Sync now** are limited per person and per
+  workspace, per minute. Raise them in `.env`: `RATE_LIMIT_CHAT_USER` (default 20),
+  `RATE_LIMIT_CHAT_WORKSPACE` (300), and the same `_USER` / `_WORKSPACE` pair for
+  `UPLOAD` (30 / 120), `REINDEX` (5 / 20) and `SYNC` (5 / 20).
+- **An upload is refused as too large** — files can be up to `UPLOAD_MAX_FILE_MB`
+  (25) each and `UPLOAD_MAX_REQUEST_MB` (100) per upload; the second also caps any
+  other request body. Behind nginx, `client_max_body_size` must be at least as big
+  (nginx's default is 1 MB).
+- **Security headers** — every response carries a Content-Security-Policy,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options` and `Referrer-Policy`, and over
+  https `Strict-Transport-Security` (`HSTS_MAX_AGE`, default 180 days; `0` turns it
+  off). Behind a proxy that ends TLS, uvicorn learns it was https from
+  `X-Forwarded-Proto`, so `FORWARDED_ALLOW_IPS` (below) must include the proxy.
+- **"Too many attempts. Wait N seconds"** — the sign-in endpoints are rate-limited
   per address (and overall). Set `FORWARDED_ALLOW_IPS` in `.env` to your reverse
   proxy's address (e.g. `172.17.0.1` for nginx on the Docker host): uvicorn then
   takes the client's address from the proxy only. The default, `*`, trusts the
