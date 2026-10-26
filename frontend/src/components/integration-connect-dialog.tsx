@@ -18,8 +18,32 @@ import { api, type Integration } from "@/lib/api"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-// Connect a connector that takes a form instead of a sign-in: Outline (address +
-// API token) or a website (a start address). The server checks it before saving.
+// What the address + token form says, per connector.
+const TOKEN_COPY: Record<
+  string,
+  { description: string; address: string; placeholder: string; token: string; cloudflare: boolean }
+> = {
+  outline: {
+    description:
+      "Read-only. Create an API token in Outline (Settings → API & Apps). It is stored encrypted and used only to sync the collections you pick.",
+    address: "Wiki address",
+    placeholder: "https://wiki.example.com",
+    token: "API token",
+    cloudflare: true,
+  },
+  confluence_dc: {
+    description:
+      "Read-only, for self-hosted Confluence 7.9 or later. Create a personal access token in Confluence (your avatar → Settings → Personal access tokens). It is stored encrypted and used only to sync the spaces you pick.",
+    address: "Confluence address",
+    placeholder: "https://confluence.example.com",
+    token: "Personal access token",
+    cloudflare: false,
+  },
+}
+
+// Connect a connector that takes a form instead of a sign-in: Outline or Confluence
+// Data Center (address + token) or a website (a start address). The server checks
+// it before saving.
 export function IntegrationConnectDialog({
   item,
   open,
@@ -40,6 +64,7 @@ export function IntegrationConnectDialog({
   const [saving, setSaving] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const website = item.auth === "url"
+  const copy = TOKEN_COPY[item.id] ?? TOKEN_COPY.outline
   const ids = `connect-${item.id}`
 
   const [wasOpen, setWasOpen] = useState(false)
@@ -61,7 +86,9 @@ export function IntegrationConnectDialog({
         item.id,
         website
           ? { url, max_pages: Number(maxPages) || undefined, max_depth: Number(maxDepth) || undefined }
-          : { url, token, cf_client_id: cfId, cf_client_secret: cfSecret },
+          : copy.cloudflare
+            ? { url, token, cf_client_id: cfId, cf_client_secret: cfSecret }
+            : { url, token },
       )
       toast.success(
         res.choose ? `${item.name} connected. Now choose what to sync.` : `${item.name} connected. Syncing…`,
@@ -84,17 +111,17 @@ export function IntegrationConnectDialog({
             <DialogDescription>
               {website
                 ? "Public pages only. The crawler stays on this site, obeys robots.txt and re-checks pages on every sync."
-                : "Read-only. Create an API token in Outline (Settings → API & Apps). It is stored encrypted and used only to sync the collections you pick."}
+                : copy.description}
             </DialogDescription>
           </DialogHeader>
           <FieldGroup className="gap-4">
             <Field>
-              <FieldLabel htmlFor={`${ids}-url`}>{website ? "Start address" : "Wiki address"}</FieldLabel>
+              <FieldLabel htmlFor={`${ids}-url`}>{website ? "Start address" : copy.address}</FieldLabel>
               <Input
                 id={`${ids}-url`}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder={website ? "https://docs.example.com" : "https://wiki.example.com"}
+                placeholder={website ? "https://docs.example.com" : copy.placeholder}
                 inputMode="url"
                 required
                 autoFocus
@@ -131,7 +158,7 @@ export function IntegrationConnectDialog({
             ) : (
               <>
                 <Field>
-                  <FieldLabel htmlFor={`${ids}-token`}>API token</FieldLabel>
+                  <FieldLabel htmlFor={`${ids}-token`}>{copy.token}</FieldLabel>
                   <Input
                     id={`${ids}-token`}
                     type="password"
@@ -141,29 +168,31 @@ export function IntegrationConnectDialog({
                     required
                   />
                 </Field>
-                <Collapsible>
-                  <CollapsibleTrigger asChild>
-                    <Button type="button" variant="ghost" size="sm" className="w-fit px-1">
-                      Behind Cloudflare Access? <ChevronDown />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="grid gap-3 pt-2">
-                    <Field>
-                      <FieldLabel htmlFor={`${ids}-cf-id`}>Service token client ID</FieldLabel>
-                      <Input id={`${ids}-cf-id`} value={cfId} onChange={(e) => setCfId(e.target.value)} />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor={`${ids}-cf-secret`}>Service token client secret</FieldLabel>
-                      <Input
-                        id={`${ids}-cf-secret`}
-                        type="password"
-                        value={cfSecret}
-                        onChange={(e) => setCfSecret(e.target.value)}
-                        autoComplete="off"
-                      />
-                    </Field>
-                  </CollapsibleContent>
-                </Collapsible>
+                {copy.cloudflare && (
+                  <Collapsible>
+                    <CollapsibleTrigger asChild>
+                      <Button type="button" variant="ghost" size="sm" className="w-fit px-1">
+                        Behind Cloudflare Access? <ChevronDown />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="grid gap-3 pt-2">
+                      <Field>
+                        <FieldLabel htmlFor={`${ids}-cf-id`}>Service token client ID</FieldLabel>
+                        <Input id={`${ids}-cf-id`} value={cfId} onChange={(e) => setCfId(e.target.value)} />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor={`${ids}-cf-secret`}>Service token client secret</FieldLabel>
+                        <Input
+                          id={`${ids}-cf-secret`}
+                          type="password"
+                          value={cfSecret}
+                          onChange={(e) => setCfSecret(e.target.value)}
+                          autoComplete="off"
+                        />
+                      </Field>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
               </>
             )}
           </FieldGroup>

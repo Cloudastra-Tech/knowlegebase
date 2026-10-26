@@ -1,0 +1,252 @@
+{
+ "_source": [
+  "https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json (GET /spaces, /spaces/{id}/permissions, /spaces/{id}/pages, /spaces/{id}/blogposts, /pages/{id}, /blogposts/{id}: MultiEntityResult with _links.next)",
+  "https://dac-static.atlassian.com/cloud/confluence/swagger.v3.json (GET /wiki/rest/api/content/search: results of Content with version, space, ancestors, container, restrictions expansions; _links.next carries the cursor)",
+  "https://developer.atlassian.com/cloud/confluence/cql-fields/ (lastmodified >= \"yyyy-MM-dd HH:mm\")"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/rest/api/content/search",
+    "params": {
+     "cql~": "lastmodified >= \"2026-10-12 17:50\""
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "2002",
+       "type": "page",
+       "status": "current",
+       "title": "Salaries",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 2,
+        "when": "2026-10-20T10:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [
+        {
+         "id": "2001",
+         "type": "page",
+         "status": "current",
+         "title": "x"
+        }
+       ],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [
+            {
+             "type": "known",
+             "accountId": "acc-ann",
+             "email": "Ann@acme.com",
+             "publicName": "Ann"
+            }
+           ],
+           "start": 0,
+           "limit": 100,
+           "size": 1
+          },
+          "group": {
+           "results": [
+            {
+             "type": "group",
+             "name": "hr",
+             "id": "grp-hr"
+            }
+           ],
+           "start": 0,
+           "limit": 100,
+           "size": 1
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2002",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/2002"
+       }
+      },
+      {
+       "id": "2001",
+       "type": "page",
+       "status": "current",
+       "title": "Deploys",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 3,
+        "when": "2026-10-12T10:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2001",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/2001"
+       }
+      },
+      {
+       "id": "3002",
+       "type": "blogpost",
+       "status": "current",
+       "title": "Launch notes",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-21T10:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/3002",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/3002"
+       }
+      }
+     ],
+     "start": 0,
+     "limit": 100,
+     "size": 3,
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki",
+      "context": "/wiki"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/pages/2002",
+    "params": {
+     "body-format": "storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "2002",
+     "status": "current",
+     "title": "Salaries",
+     "spaceId": "1001",
+     "authorId": "acc-ann",
+     "createdAt": "2026-09-01T09:00:00.000Z",
+     "version": {
+      "createdAt": "2026-10-20T10:00:00.000Z",
+      "number": 2,
+      "minorEdit": false,
+      "authorId": "acc-ann"
+     },
+     "_links": {
+      "webui": "/spaces/ENG/pages/2002",
+      "tinyui": "/x/2002"
+     },
+     "parentId": null,
+     "parentType": null,
+     "body": {
+      "storage": {
+       "representation": "storage",
+       "value": "<p>Bands are reviewed in April.</p>"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/blogposts/3002",
+    "params": {
+     "body-format": "storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "3002",
+     "status": "current",
+     "title": "Launch notes",
+     "spaceId": "1001",
+     "authorId": "acc-ann",
+     "createdAt": "2026-09-01T09:00:00.000Z",
+     "version": {
+      "createdAt": "2026-10-21T10:00:00.000Z",
+      "number": 1,
+      "minorEdit": false,
+      "authorId": "acc-ann"
+     },
+     "_links": {
+      "webui": "/spaces/ENG/blog/3002",
+      "tinyui": "/x/3002"
+     },
+     "body": {
+      "storage": {
+       "representation": "storage",
+       "value": "<p>We launched.</p>"
+      }
+     }
+    }
+   }
+  }
+ ]
+}

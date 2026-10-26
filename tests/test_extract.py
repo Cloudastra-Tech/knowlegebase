@@ -56,6 +56,15 @@ def test_html_drops_boilerplate_and_keeps_main():
         assert junk not in page_obj.text
 
 
+def test_html_table_rows_are_consecutive_lines():
+    """chunking.py reads consecutive "a | b" lines as one table."""
+    page = (b"<p>Prices:</p><table><tr><th>Plan</th><th>Price</th></tr>"
+            b"<tr><td>Pro</td><td>2000</td></tr><tr><td>Team</td><td>5000</td></tr></table>"
+            b"<p>Billed yearly.</p>")
+    assert extract.extract(page, "text/html") == (
+        "Prices:\n\nPlan | Price\nPro | 2000\nTeam | 5000\n\nBilled yearly.")
+
+
 def test_html_links_and_robots_meta():
     page = b"""<html><head><meta name="robots" content="noindex, nofollow"></head><body>
     <a href="/a#top">A</a><a href="b.html">B</a><a href="https://other.com/x">X</a>

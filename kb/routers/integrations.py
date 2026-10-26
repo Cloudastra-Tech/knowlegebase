@@ -45,7 +45,8 @@ log = logging.getLogger("uvicorn.error")
 
 OAUTH_STATE_SECONDS = 10 * 60
 # Why connecting failed, for the redirect back to the Integrations screen.
-CALLBACK_ERRORS = {"access_denied": "consent_denied", "consent_required": "consent_denied"}
+CALLBACK_ERRORS = {"access_denied": "consent_denied", "consent_required": "consent_denied",
+                   "permission_denied": "consent_denied"}     # (Microsoft's admin consent)
 
 
 def _connector(provider):
@@ -117,6 +118,8 @@ def _integration_info(ws, c, role):
         info["base_url"] = settings.get("base_url")
         # The server-wide wiki (.env), searched live, when this workspace has no synced one.
         info["live_search"] = agents.outline_on(ws, role)
+    if provider == "confluence_dc":
+        info["base_url"] = settings.get("base_url")
     if provider == "google_drive":
         info["folders"] = info["containers"]           # the old name
     return info
@@ -167,22 +170,34 @@ def integration_connect(provider: str, request: Request, user=Depends(require_hr
 def integration_callback(provider: str, request: Request, state: str = "", code: str = "",
                          error: str = ""):
     """The provider sends the browser back here. The one-time `state` ties it to the
-    workspace and user who clicked Connect (a redirect carries no session header)."""
+    workspace and user who clicked Connect (a redirect carries no session header).
+    A connector may need one more trip through the provider (SharePoint: sign-in,
+    then the tenant admin's consent): it gets a new one-time state and goes on."""
     c = _connector(provider)
     pending = kb.state.oauth_states.pop(state, None)
     if not pending or pending["expires"] < time.time() or pending.get("provider") != provider:
         return RedirectResponse("/#integrations?error=expired")
+    step = pending.get("step")
+    if not error:
+        code = c.callback_code(dict(request.query_params), step)
     if error or not code:
         return RedirectResponse("/#integrations?error="
                                 + CALLBACK_ERRORS.get(error, "cancelled" if not error else
                                                       "connect_failed"))
     ws = pending["workspace"]
     try:
-        c.finish_connect(ws, code, pending["redirect_uri"], pending["user"])
+        c.finish_connect(ws, code, pending["redirect_uri"], pending["user"],
+                         **({"step": step} if step is not None else {}))
+    except base.NextStep as nxt:
+        again = secrets.token_urlsafe(24)
+        kb.state.oauth_states[again] = {**pending, "step": nxt.data,
+                                        "expires": time.time() + OAUTH_STATE_SECONDS}
+        return RedirectResponse(nxt.url(again))
     except Exception as e:
         log.warning("Integration %s: couldn't finish connecting workspace %s (%s)", provider,
                     ws, type(e).__name__, exc_info=not isinstance(e, base.ConnectorError))
-        reason = ("no_refresh_token" if "refresh token" in str(e) else "connect_failed")
+        reason = (getattr(e, "reason", None)
+                  or ("no_refresh_token" if "refresh token" in str(e) else "connect_failed"))
         return RedirectResponse(f"/#integrations?error={reason}")
     row = integrations_store.get(ws, provider) or {}
     kb.audit.record(request, ws, "integration.connect", pending["user"], "integration", provider,

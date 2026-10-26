@@ -1,0 +1,457 @@
+{
+ "_source": [
+  "https://docs.atlassian.com/ConfluenceServer/rest/8.5.4/ (GET /rest/api/user/current, /rest/api/space, /rest/api/content?spaceKey&type, /rest/api/content/search, /rest/api/content/{id}?expand=body.storage)",
+  "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html (Authorization: Bearer <PAT>)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/user/current",
+    "headers": {
+     "Authorization": "Bearer test-pat"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "known",
+     "username": "ann",
+     "userKey": "k-ann",
+     "displayName": "Ann Lee"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/space"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": 98305,
+       "key": "HR",
+       "name": "People",
+       "type": "global"
+      },
+      {
+       "id": 98306,
+       "key": "ENG",
+       "name": "Engineering",
+       "type": "global"
+      }
+     ],
+     "start": 0,
+     "limit": 100,
+     "size": 2,
+     "_links": {
+      "base": "https://confluence.acme.com",
+      "context": ""
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/content/search",
+    "params": {
+     "cql~": "space in (\"ENG\")"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "5001",
+       "type": "page",
+       "status": "current",
+       "title": "Handbook",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 4,
+        "when": "2026-10-01T10:00:00.000+02:00",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/display/ENG/Handbook",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/5001"
+       }
+      },
+      {
+       "id": "5002",
+       "type": "page",
+       "status": "current",
+       "title": "Pay bands",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 2,
+        "when": "2026-10-02T10:00:00.000+02:00",
+        "minorEdit": false
+       },
+       "ancestors": [
+        {
+         "id": "5001",
+         "type": "page",
+         "status": "current",
+         "title": "x"
+        }
+       ],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [
+            {
+             "type": "known",
+             "username": "ann",
+             "userKey": "k-ann",
+             "displayName": "Ann"
+            }
+           ],
+           "start": 0,
+           "limit": 100,
+           "size": 1
+          },
+          "group": {
+           "results": [
+            {
+             "type": "group",
+             "name": "confluence-hr"
+            }
+           ],
+           "start": 0,
+           "limit": 100,
+           "size": 1
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/display/ENG/Pay+bands",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/5002"
+       }
+      },
+      {
+       "id": "att6001",
+       "type": "attachment",
+       "status": "current",
+       "title": "policy.txt",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-10T09:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/5001/attachments/att6001",
+        "download": "/download/attachments/5001/policy.txt?version=1&api=v2"
+       },
+       "extensions": {
+        "mediaType": "text/plain",
+        "fileSize": 300,
+        "comment": ""
+       },
+       "container": {
+        "id": "5001",
+        "type": "page",
+        "status": "current",
+        "title": "x"
+       }
+      }
+     ],
+     "start": 0,
+     "limit": 100,
+     "size": 3,
+     "_links": {
+      "base": "https://confluence.acme.com",
+      "context": ""
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/content",
+    "params": {
+     "spaceKey": "ENG",
+     "type": "page"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "5001",
+       "type": "page",
+       "status": "current",
+       "title": "Handbook",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 4,
+        "when": "2026-10-01T10:00:00.000+02:00",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/display/ENG/Handbook",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/5001"
+       }
+      },
+      {
+       "id": "5002",
+       "type": "page",
+       "status": "current",
+       "title": "Pay bands",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 2,
+        "when": "2026-10-02T10:00:00.000+02:00",
+        "minorEdit": false
+       },
+       "ancestors": [
+        {
+         "id": "5001",
+         "type": "page",
+         "status": "current",
+         "title": "x"
+        }
+       ],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/display/ENG/Pay+bands",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/5002"
+       }
+      }
+     ],
+     "start": 0,
+     "limit": 100,
+     "size": 2,
+     "_links": {
+      "base": "https://confluence.acme.com",
+      "context": "",
+      "next": "/rest/api/content?spaceKey=ENG&type=page&status=current&limit=100&start=100"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/content",
+    "params": {
+     "spaceKey": "ENG",
+     "type": "page",
+     "start": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [],
+     "start": 0,
+     "limit": 100,
+     "size": 0,
+     "_links": {
+      "base": "https://confluence.acme.com",
+      "context": ""
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/content",
+    "params": {
+     "spaceKey": "ENG",
+     "type": "blogpost"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [],
+     "start": 0,
+     "limit": 100,
+     "size": 0,
+     "_links": {
+      "base": "https://confluence.acme.com",
+      "context": ""
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/content/5001",
+    "params": {
+     "expand": "body.storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "5001",
+     "type": "page",
+     "body": {
+      "storage": {
+       "value": "<h2>Welcome</h2><p>Read this first.</p>",
+       "representation": "storage"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/rest/api/content/5002",
+    "params": {
+     "expand": "body.storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "5002",
+     "type": "page",
+     "body": {
+      "storage": {
+       "value": "<p>Bands live here.</p>",
+       "representation": "storage"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://confluence.acme.com/download/attachments/5001/policy.txt",
+    "params": {
+     "version": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "text": "Laptops are replaced every 3 years."
+   }
+  }
+ ]
+}

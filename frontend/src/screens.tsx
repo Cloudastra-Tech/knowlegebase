@@ -206,8 +206,20 @@ const CONNECT_ERRORS: Record<string, string> = {
   no_refresh_token:
     "The provider didn't allow access while you're away. Remove the app's access in your account settings, then connect again.",
   connect_failed: "Couldn't finish connecting. Please try again.",
+  wrong_account:
+    "The approval came back for a different organisation than the one you signed in with, so nothing was connected.",
+  admin_consent_required:
+    "An administrator of your organisation has to approve the app. Ask one to connect it.",
+  missing_scope:
+    "The app wasn't given every permission it needs. Connect again and approve all of them.",
+  no_site: "That Atlassian account has no Confluence site the app can reach.",
 }
-const CONNECTOR_NAMES: Record<string, string> = { google_drive: "Google Drive", notion: "Notion" }
+const CONNECTOR_NAMES: Record<string, string> = {
+  google_drive: "Google Drive",
+  notion: "Notion",
+  confluence: "Confluence",
+  sharepoint: "SharePoint & OneDrive",
+}
 
 // Back from a provider's consent screen: /integrations?connected=... or ?error=...
 export function IntegrationsScreen() {
