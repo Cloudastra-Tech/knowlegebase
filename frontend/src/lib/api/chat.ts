@@ -1,20 +1,30 @@
-// Asking the assistant (/api/chat, /api/chat/stream) and the saved conversations
-// (/api/conversations, feedback on answers).
+// Asking the assistant (/api/chat, /api/chat/stream), the saved conversations
+// (/api/conversations: history, folders, search, branches, feedback on answers),
+// the workspace's chat settings, and share links (/api/shares, /api/shared).
 
 import { ApiError, json, request, retryAfterOf, seg, session, unauthorized } from "@/lib/api/client"
 import type {
+  ChatFolder,
   ChatReply,
+  ChatSearchResult,
+  ChatSettings,
   Conversation,
+  ConversationEdit,
+  ConversationList,
   ConversationSummary,
   Feedback,
   FeedbackReason,
   Passage,
+  SharedChat,
+  ShareLink,
   StreamEvent,
 } from "@/lib/api/types"
 
 export interface StreamOptions {
   conversationId?: string // saved there, answered with the conversation so far
   retryOf?: string // ask the question of this failed or stopped answer again
+  regenerateOf?: string // a new answer beside this finished one (a new branch)
+  editOf?: string // the question replaces this earlier question (a new branch)
   signal?: AbortSignal // aborting stops the answer (the server saves it as stopped)
 }
 
@@ -28,7 +38,7 @@ export const chatApi = {
   async chatStream(
     question: string,
     onEvent: (e: StreamEvent) => void,
-    { conversationId, retryOf, signal }: StreamOptions = {},
+    { conversationId, retryOf, regenerateOf, editOf, signal }: StreamOptions = {},
   ): Promise<ChatReply> {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
@@ -37,7 +47,13 @@ export const chatApi = {
         Authorization: `Bearer ${session.token}`,
         "X-Role": session.role,
       },
-      body: JSON.stringify({ question, conversation_id: conversationId, retry_of: retryOf }),
+      body: JSON.stringify({
+        question,
+        conversation_id: conversationId,
+        retry_of: retryOf,
+        regenerate_of: regenerateOf,
+        edit_of: editOf,
+      }),
       signal,
     })
     if (!res.ok || !res.body) {
@@ -76,16 +92,59 @@ export const chatApi = {
   // the role the app is viewed as can't see it.
   passage: (chunkId: string) => request<Passage>(`/passages/${seg(chunkId)}`),
 
-  conversations: () =>
-    request<{ conversations: ConversationSummary[] }>("/conversations").then(
-      (r) => r.conversations,
-    ),
+  // The signed-in person's chats (most recently used first) and their folders.
+  conversations: (limit = 200) => request<ConversationList>(`/conversations?limit=${limit}`),
+  searchConversations: (q: string) =>
+    request<{ results: ChatSearchResult[] }>(
+      `/conversations/search?q=${encodeURIComponent(q)}`,
+    ).then((r) => r.results),
   createConversation: () => request<ConversationSummary>("/conversations", json("POST", {})),
   conversation: (id: string) => request<Conversation>(`/conversations/${seg(id)}`),
+  updateConversation: (id: string, edit: ConversationEdit) =>
+    request<ConversationSummary>(`/conversations/${seg(id)}`, json("PATCH", edit)),
   renameConversation: (id: string, title: string) =>
     request<ConversationSummary>(`/conversations/${seg(id)}`, json("PATCH", { title })),
   deleteConversation: (id: string) =>
     request<{ ok: true }>(`/conversations/${seg(id)}`, json("DELETE")),
+  // "Branch in new chat": a new chat with a copy of this one up to the answer.
+  forkConversation: (id: string, messageId: string) =>
+    request<ConversationSummary>(
+      `/conversations/${seg(id)}/fork`,
+      json("POST", { message_id: messageId }),
+    ),
+
+  createFolder: (name: string) => request<ChatFolder>("/conversation-folders", json("POST", { name })),
+  renameFolder: (id: string, name: string) =>
+    request<ChatFolder>(`/conversation-folders/${seg(id)}`, json("PATCH", { name })),
+  deleteFolder: (id: string) =>
+    request<{ ok: true }>(`/conversation-folders/${seg(id)}`, json("DELETE")),
+
+  // An answer as markdown, its citations as footnotes (Copy).
+  answerMarkdown: (messageId: string) =>
+    request<{ markdown: string }>(`/messages/${seg(messageId)}/markdown`).then((r) => r.markdown),
+
+  chatSettings: () => request<ChatSettings>("/chat-settings"),
+  setChatSettings: (retentionDays: number | null, sharingEnabled: boolean) =>
+    request<ChatSettings>(
+      "/admin/chat-settings",
+      json("PUT", { retention_days: retentionDays, sharing_enabled: sharingEnabled }),
+    ),
+
+  createShare: (conversationId: string, messageId: string | null, expiresInDays: number | null) =>
+    request<ShareLink>(
+      "/shares",
+      json("POST", {
+        conversation_id: conversationId,
+        message_id: messageId,
+        expires_in_days: expiresInDays,
+      }),
+    ),
+  shares: (conversationId: string) =>
+    request<{ shares: ShareLink[] }>(
+      `/shares?conversation_id=${encodeURIComponent(conversationId)}`,
+    ).then((r) => r.shares),
+  revokeShare: (id: string) => request<{ ok: true }>(`/shares/${seg(id)}`, json("DELETE")),
+  openShare: (token: string) => request<SharedChat>(`/shared/${seg(token)}`),
 
   giveFeedback: (
     messageId: string,

@@ -1,19 +1,26 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode, type Ref } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
   BookOpen,
   Check,
+  ChevronLeft,
   ChevronRight,
   Clock,
+  Copy,
+  CornerDownRight,
   ExternalLink,
   FileText,
+  GitBranch,
   Globe,
   Info,
   Loader2,
   Lock,
+  MoreHorizontal,
+  RefreshCw,
   RotateCcw,
   SearchX,
+  Share2,
   ShieldAlert,
   Sparkles,
   ThumbsDown,
@@ -27,6 +34,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -40,6 +53,7 @@ import {
   type Step,
   type StepLine,
 } from "@/lib/api"
+import { branchOf } from "@/lib/chat-history"
 import { CitationsContext, citedNumber, placeOf, remarkCitations } from "@/lib/citations"
 
 // One line of the steps panel, live while the assistant works.
@@ -65,12 +79,24 @@ export interface Message {
   streaming?: boolean
   status?: string
   steps?: LiveStep[]
+  followups?: string[] // questions to ask next (the last answer shows them)
+  siblings?: string[] // its versions, with it: "‹ 2 / 3 ›" (lib/chat-history.ts branchOf)
+  copy?: string | null // a shared answer's markdown, ready to copy
 }
 
+// What an answer's buttons do. Without the optional ones (a shared chat, read only)
+// those buttons aren't shown.
 export interface AnswerActions {
-  onRetry: (message: Message) => void
-  onRephrase: (question: string) => void
-  onFeedback: (message: Message, feedback: Feedback | null) => void
+  onRetry?: (message: Message) => void
+  onRephrase?: (question: string) => void
+  onFeedback?: (message: Message, feedback: Feedback | null) => void
+  onRegenerate?: (message: Message) => void
+  onShare?: (message: Message) => void
+  onFork?: (message: Message) => void // "Branch in new chat"
+  onBranch?: (message: Message, to: string) => void // show another version
+  onFollowup?: (question: string) => void
+  onAskYourself?: (question: string) => void // a withheld answer, asked with your own role
+  busy?: boolean // an answer is being written: no new branches meanwhile
 }
 
 // One line of the sources under an answer. A cited passage opens in the source
@@ -134,16 +160,18 @@ function SourceCard({
 
 function StepRow({ step }: { step: LiveStep }) {
   const blocked = step.result === "blocked by access rules" || step.result === "failed"
+  // The icon's shape and a screen-reader word carry the status, not only its colour.
   return (
     <div className="flex items-start gap-2 text-xs">
       <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
         {!step.done ? (
-          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
         ) : blocked ? (
-          <TriangleAlert className="size-3.5 text-amber-600" />
+          <TriangleAlert className="size-3.5 text-amber-600" aria-hidden />
         ) : (
-          <Check className="size-3.5 text-emerald-600" />
+          <Check className="size-3.5 text-emerald-600" aria-hidden />
         )}
+        <span className="sr-only">{!step.done ? "Running:" : blocked ? "Problem:" : "Done:"}</span>
       </span>
       <span className={step.done ? "text-muted-foreground" : "text-foreground"}>
         {step.label}
@@ -297,7 +325,13 @@ const REASONS: { value: FeedbackReason; label: string }[] = [
 const THANKS = "Thanks. An admin can see this answer and your note."
 
 // Thumbs up / down under a finished answer. Thumbs down asks why.
-function FeedbackRow({ message, onFeedback }: { message: Message; onFeedback: AnswerActions["onFeedback"] }) {
+function FeedbackRow({
+  message,
+  onFeedback,
+}: {
+  message: Message
+  onFeedback: NonNullable<AnswerActions["onFeedback"]>
+}) {
   const [open, setOpen] = useState(false)
   const [reasons, setReasons] = useState<FeedbackReason[]>([])
   const [comment, setComment] = useState("")
@@ -417,7 +451,13 @@ function FeedbackRow({ message, onFeedback }: { message: Message; onFeedback: An
   )
 }
 
-function RetryButton({ message, onRetry }: { message: Message; onRetry: AnswerActions["onRetry"] }) {
+function RetryButton({
+  message,
+  onRetry,
+}: {
+  message: Message
+  onRetry: NonNullable<AnswerActions["onRetry"]>
+}) {
   return (
     <Button variant="outline" size="sm" onClick={() => onRetry(message)}>
       <RotateCcw />
@@ -431,12 +471,24 @@ function RetryButton({ message, onRetry }: { message: Message; onRetry: AnswerAc
 function AnswerBody({ message, actions }: { message: Message; actions: AnswerActions }) {
   const { state, text } = message
   if (message.withheld) {
+    // Decision D1: the whole answer is withheld, not only its sources: its text was
+    // written from them.
+    const ask = actions.onAskYourself
     return (
       <Alert>
         <Lock />
-        <AlertTitle>Answer hidden</AlertTitle>
+        <AlertTitle>{ask ? "You don't have access to some sources" : "Answer hidden"}</AlertTitle>
         <AlertDescription>
-          This answer used documents your current role can't see, so it isn't shown.
+          <p>
+            {ask
+              ? "This answer used documents your role can't see, so it isn't shown. Ask it yourself: you'll get an answer from what you can see."
+              : "This answer used documents your current role can't see, so it isn't shown."}
+          </p>
+          {ask && message.question && (
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => ask(message.question!)}>
+              Ask it yourself
+            </Button>
+          )}
         </AlertDescription>
       </Alert>
     )
@@ -458,19 +510,19 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
         <AlertDescription>
           <Markdown text={text} />
           <div className="mt-2 flex flex-wrap gap-2">
-            {message.question && (
-              <Button variant="outline" size="sm" onClick={() => actions.onRephrase(message.question!)}>
+            {message.question && actions.onRephrase && (
+              <Button variant="outline" size="sm" onClick={() => actions.onRephrase!(message.question!)}>
                 Rephrase
               </Button>
             )}
-            {message.id && message.feedback?.reasons?.includes("missing") !== true && (
+            {message.id && actions.onFeedback && message.feedback?.reasons?.includes("missing") !== true && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={async () => {
                   try {
                     const saved = await api.giveFeedback(message.id!, -1, ["missing"])
-                    actions.onFeedback(message, saved)
+                    actions.onFeedback!(message, saved)
                     toast.success("Thanks. HR and admins can see that this is missing.")
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : "Couldn't tell an admin.")
@@ -492,7 +544,7 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
         <AlertTitle>Couldn't answer</AlertTitle>
         <AlertDescription>
           <p>{text || "Something went wrong."}</p>
-          {message.id && (
+          {message.id && actions.onRetry && (
             <div className="mt-2">
               <RetryButton message={message} onRetry={actions.onRetry} />
             </div>
@@ -523,7 +575,7 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
           <span className="text-xs font-medium text-muted-foreground">
             {text ? "Stopped before the end" : "Stopped"}
           </span>
-          {message.id && <RetryButton message={message} onRetry={actions.onRetry} />}
+          {message.id && actions.onRetry && <RetryButton message={message} onRetry={actions.onRetry} />}
         </div>
       )}
     </div>
@@ -531,8 +583,152 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
 }
 
 const RATEABLE: AnswerState[] = ["answered", "partial", "general_knowledge", "not_found", "blocked"]
+// Answers worth copying, sharing or branching from.
+const SHAREABLE: AnswerState[] = ["answered", "partial", "general_knowledge", "not_found", "stopped"]
 
-export function AssistantMessage({ message, actions }: { message: Message; actions: AnswerActions }) {
+// "‹ 2 / 3 ›" under a question or an answer that has other versions (C10).
+export function BranchNav({
+  message,
+  onBranch,
+  disabled,
+}: {
+  message: Message
+  onBranch?: AnswerActions["onBranch"]
+  disabled?: boolean
+}) {
+  const branch = branchOf(message.id, message.siblings)
+  if (!branch || !onBranch) return null
+  const what = message.role === "user" ? "question" : "answer"
+  return (
+    <div className="flex items-center text-muted-foreground" role="group" aria-label={`Versions of this ${what}`}>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Previous version of this ${what}`}
+        disabled={disabled || !branch.prev}
+        onClick={() => branch.prev && onBranch(message, branch.prev)}
+        className="pointer-coarse:size-10"
+      >
+        <ChevronLeft />
+      </Button>
+      <span className="min-w-8 text-center text-xs tabular-nums" aria-live="polite">
+        {branch.index} / {branch.count}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Next version of this ${what}`}
+        disabled={disabled || !branch.next}
+        onClick={() => branch.next && onBranch(message, branch.next)}
+        className="pointer-coarse:size-10"
+      >
+        <ChevronRight />
+      </Button>
+    </div>
+  )
+}
+
+function IconAction({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  disabled?: boolean
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          disabled={disabled}
+          onClick={onClick}
+          className="pointer-coarse:size-10"
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+// Copy: the answer as markdown, its citations as footnotes (C25).
+async function copyAnswer(message: Message) {
+  try {
+    const text = message.copy ?? (message.id ? await api.answerMarkdown(message.id) : message.text)
+    await navigator.clipboard.writeText(text)
+    toast.success("Copied, with its sources as footnotes.")
+  } catch (err) {
+    toast.error(err instanceof Error && err.message ? err.message : "Couldn't copy it.")
+  }
+}
+
+// Under a finished answer: Copy, thumbs, Regenerate, Share, More, and its versions.
+function ActionRow({ message, actions }: { message: Message; actions: AnswerActions }) {
+  const state = message.state
+  const shareable = !!state && SHAREABLE.includes(state) && !message.withheld
+  const rateable = !!state && RATEABLE.includes(state) && !message.withheld
+  return (
+    <div className="flex flex-wrap items-center gap-0.5 text-muted-foreground">
+      {shareable && (
+        <IconAction label="Copy" onClick={() => copyAnswer(message)}>
+          <Copy />
+        </IconAction>
+      )}
+      {rateable && message.id && actions.onFeedback && (
+        <FeedbackRow key={message.id} message={message} onFeedback={actions.onFeedback} />
+      )}
+      {actions.onRegenerate && message.id && state !== "error" && (
+        <IconAction label="Write the answer again" disabled={actions.busy} onClick={() => actions.onRegenerate!(message)}>
+          <RefreshCw />
+        </IconAction>
+      )}
+      {actions.onShare && message.id && shareable && (
+        <IconAction label="Share" onClick={() => actions.onShare!(message)}>
+          <Share2 />
+        </IconAction>
+      )}
+      {actions.onFork && message.id && shareable && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="More" className="pointer-coarse:size-10">
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent>More</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem disabled={actions.busy} onSelect={() => actions.onFork!(message)}>
+              <GitBranch /> Branch in new chat
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      <BranchNav message={message} onBranch={actions.onBranch} disabled={actions.busy} />
+    </div>
+  )
+}
+
+export function AssistantMessage({
+  message,
+  actions,
+  last = false,
+  ref,
+}: {
+  message: Message
+  actions: AnswerActions
+  last?: boolean // the newest answer: it shows its follow-ups
+  ref?: Ref<HTMLDivElement>
+}) {
   const sources = useMemo(
     () => (message.withheld ? [] : (message.sources ?? [])),
     [message.withheld, message.sources],
@@ -548,7 +744,13 @@ export function AssistantMessage({ message, actions }: { message: Message; actio
   )
   return (
     <CitationsContext value={citations}>
-      <div className="flex gap-3" data-state={message.state}>
+      <div
+        ref={ref}
+        tabIndex={-1}
+        className="flex gap-3 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        data-state={message.state}
+        aria-label="Answer"
+      >
         <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
         </div>
@@ -575,8 +777,26 @@ export function AssistantMessage({ message, actions }: { message: Message; actio
             </div>
           )}
 
-          {finished && !message.withheld && message.state && RATEABLE.includes(message.state) && (
-            <FeedbackRow key={message.id} message={message} onFeedback={actions.onFeedback} />
+          {finished && message.state && message.state !== "pending" && (
+            <ActionRow message={message} actions={actions} />
+          )}
+
+          {finished && last && !actions.busy && actions.onFollowup && !message.withheld
+            && (message.followups?.length ?? 0) > 0 && (
+            <div className="flex flex-col items-start gap-1.5" aria-label="Follow-up questions" role="group">
+              {message.followups!.map((f) => (
+                <Button
+                  key={f}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => actions.onFollowup!(f)}
+                  className="h-auto max-w-full justify-start whitespace-normal py-1.5 text-left font-normal pointer-coarse:min-h-10"
+                >
+                  <CornerDownRight data-icon="inline-start" className="text-muted-foreground" />
+                  {f}
+                </Button>
+              ))}
+            </div>
           )}
         </div>
         <SourceSheet source={opened} onOpenChange={(open) => !open && setOpened(null)} />
