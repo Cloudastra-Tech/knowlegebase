@@ -13,3 +13,11 @@ data/
 
 # Copies synced from connectors (Google Drive, Notion) — private, never commit
 docs/connectors/
+
+# Impeccable design-skill working files (screenshots, decision rounds); its
+# PRODUCT/DESIGN records and surface briefs are committed.
+.impeccable/review/
+.impeccable/decision/
+.impeccable/questions/
+.impeccable/mocks/
+.impeccable/config.local.json
