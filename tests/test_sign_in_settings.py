@@ -1023,7 +1023,7 @@ def test_group_given_admin_expires_without_a_sign_in_through_the_role_source(cli
     cy = {"email": "cy@aging.example", "email_verified": True, "groups": ["kb-admins", "staff"]}
     headers = session_for(client, idp, source, cy)
     session_for(client, idp, source, {**cy, "email": "di@aging.example"})
-    members_store.set_role("di@aging.example", "hr")                 # an override
+    members_store.set_role("di@aging.example", "hr", "aging")               # an override
     groups_were_sent("cy@aging.example", days_ago=29)
     groups_were_sent("di@aging.example", days_ago=40)
     assert me(client, headers)["role"] == "admin"                    # 30 days by default

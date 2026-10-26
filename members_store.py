@@ -449,44 +449,57 @@ def has_password_accounts():
                             "LIMIT 1").fetchone() is not None
 
 
+class WrongWorkspace(ValueError):
+    """The account belongs to another workspace, so this one can't change it."""
+
+
 def set_password(username, name, password_hash, workspace, role=None):
-    """Add a password account, or reset its password. Keeps the role unless one is given."""
+    """Add a password account to `workspace`, or reset its password. Keeps the
+    role unless one is given. Raises WrongWorkspace if the username is taken in
+    another workspace: an account is never moved, or changed, from here."""
     username = username.strip().lower()
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
-        conn.execute("""INSERT INTO members
-                        (username, workspace, name, password_hash, override_role, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (username) DO UPDATE SET
-                            workspace = excluded.workspace,
-                            password_hash = excluded.password_hash,
-                            override_role = COALESCE(excluded.override_role,
-                                                     members.override_role)""",
-                     (username, workspace, name, password_hash, role, time.time()))
+        n = conn.execute("""INSERT INTO members
+                            (username, workspace, name, password_hash, override_role, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            ON CONFLICT (username) DO UPDATE SET
+                                password_hash = excluded.password_hash,
+                                override_role = COALESCE(excluded.override_role,
+                                                         members.override_role)
+                            WHERE members.workspace = excluded.workspace""",
+                         (username, workspace, name, password_hash, role, time.time())).rowcount
+        if not n:
+            raise WrongWorkspace(f"{username} belongs to another workspace.")
         _settle_role(conn, username)
 
 
-def set_role(username, role, workspace=workspaces.DEFAULT):
-    """Give someone a role, overriding their groups; None goes back to their groups.
-    Someone who hasn't signed in yet is added to `workspace`, so they have it from
-    their first single sign-on."""
+def set_role(username, role, workspace):
+    """Give someone in `workspace` a role, overriding their groups; None goes back
+    to their groups. Someone who hasn't signed in yet is added to `workspace`, so
+    they have it from their first single sign-on. Raises WrongWorkspace if they
+    belong to another workspace."""
     if role is not None and role not in ROLES:
         raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
     username = username.strip().lower()
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
-        conn.execute("""INSERT INTO members (username, workspace, name, override_role, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT (username) DO UPDATE SET override_role = excluded.override_role""",
-                     (username, workspace, username.split("@")[0], role, time.time()))
+        n = conn.execute("""INSERT INTO members (username, workspace, name, override_role, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT (username) DO UPDATE SET override_role = excluded.override_role
+                            WHERE members.workspace = excluded.workspace""",
+                         (username, workspace, username.split("@")[0], role,
+                          time.time())).rowcount
+        if not n:
+            raise WrongWorkspace(f"{username} belongs to another workspace.")
         _settle_role(conn, username)
 
 
-def set_disabled(username, disabled):
-    """Turn someone's access off (or back on). False if there's no such member."""
+def set_disabled(username, disabled, workspace):
+    """Turn someone's access off (or back on). False if `workspace` has no such member."""
     with _lock, _db() as conn:
-        n = conn.execute("UPDATE members SET disabled = ? WHERE username = ?",
-                         (int(bool(disabled)), username.strip().lower())).rowcount
+        n = conn.execute("UPDATE members SET disabled = ? WHERE username = ? AND workspace = ?",
+                         (int(bool(disabled)), username.strip().lower(), workspace)).rowcount
     return n > 0
 
 
@@ -508,11 +521,11 @@ def _keep_an_admin(conn, workspace, before):
         raise NoAdminLeft(before)
 
 
-def remove(username):
-    """Returns False if there was no such member."""
+def remove(username, workspace):
+    """Returns False if `workspace` has no such member."""
     with _lock, _db() as conn:
-        n = conn.execute("DELETE FROM members WHERE username = ?",
-                         (username.strip().lower(),)).rowcount
+        n = conn.execute("DELETE FROM members WHERE username = ? AND workspace = ?",
+                         (username.strip().lower(), workspace)).rowcount
     return n > 0
 
 

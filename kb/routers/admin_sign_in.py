@@ -1,7 +1,6 @@
 """Sign-in settings (admin): a workspace's domains, its own providers (OIDC and
 SAML), the roles their groups give, "Test sign-in", and the SSO policy."""
 
-import logging
 import re
 import time
 import urllib.parse
@@ -17,13 +16,13 @@ import sso_errors
 import sso_setup
 import url_guard
 from kb import state
+from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
 from kb.rate_limit import rate_limit
 from kb.services.saml_refresh import next_refresh, read_idp
 from kb.services.sign_in import explained, new_sso_test
 
 router = APIRouter()
-log = logging.getLogger("uvicorn.error")
 
 
 class DomainIn(BaseModel):
@@ -214,7 +213,7 @@ class PolicyIn(BaseModel):
 
 
 @router.put("/api/admin/sign-in/policy")
-def set_policy(body: PolicyIn, user=Depends(require_admin)):
+def set_policy(body: PolicyIn, user=Depends(require_admin), audit=audited("sign_in.policy")):
     """Require single sign-on: nobody but the workspace's admins may use a password."""
     ws = ws_of(user)
     if body.require_sso:
@@ -223,22 +222,24 @@ def set_policy(body: PolicyIn, user=Depends(require_admin)):
         if not (members_store.list_connections(ws, enabled_only=True) or sso.configured()):
             raise HTTPException(400, "Turn on a sign-in provider first, or nobody could sign in.")
     members_store.set_requires_sso(ws, body.require_sso)
-    log.warning("%s turned %s single sign-on for %s", user["username"],
-                "on required" if body.require_sso else "off required", ws)
+    audit.record("workspace", ws, {"require_sso": body.require_sso}, user=user)
     return {"require_sso": body.require_sso}
 
 
 @router.post("/api/admin/sign-in/domains")
-def add_domain(body: DomainIn, user=Depends(require_admin)):
+def add_domain(body: DomainIn, user=Depends(require_admin), audit=audited("domain.add")):
     try:
         domain = sso_setup.normalize_domain(body.domain)
     except sso_setup.SetupError as e:
         raise _setup_error(e)
-    return _domain_out(members_store.claim_domain(ws_of(user), domain))
+    row = members_store.claim_domain(ws_of(user), domain)
+    audit.record("domain", domain, user=user)
+    return _domain_out(row)
 
 
 @router.post("/api/admin/sign-in/domains/{domain}/verify")
-def verify_domain(domain: str, request: Request, user=Depends(require_admin)):
+def verify_domain(domain: str, request: Request, user=Depends(require_admin),
+                  audit=audited("domain.verify")):
     rate_limit(request, "dns_check")
     ws = ws_of(user)
     row = members_store.get_domain(ws, domain)
@@ -253,23 +254,31 @@ def verify_domain(domain: str, request: Request, user=Depends(require_admin)):
             members_store.mark_verified(ws, row["domain"])
         except ValueError as e:
             raise HTTPException(409, str(e))
-        log.warning("Workspace %s verified the domain %s", ws, row["domain"])
+        audit.record("domain", row["domain"], user=user)
     return _domain_out(members_store.get_domain(ws, domain))
 
 
 @router.delete("/api/admin/sign-in/domains/{domain}")
-def delete_domain(domain: str, user=Depends(require_admin)):
+def delete_domain(domain: str, user=Depends(require_admin), audit=audited("domain.remove")):
     domain = domain.strip().lower()
     row = members_store.get_domain(ws_of(user), domain)
     if row and row["verified_at"]:
         _keep_a_way_in(user, ws_of(user), domain=domain)
     if not members_store.remove_domain(domain, workspace=ws_of(user)):
         raise HTTPException(404, "This workspace doesn't have that domain.")
+    audit.record("domain", domain, {"was_verified": bool(row and row["verified_at"])}, user=user)
     return {"ok": True}
 
 
+def _changed(fields):
+    """What an admin changed on a provider, for the audit log: never a secret's value."""
+    return {k: ("(changed)" if k in ("keys", "secret") else v) for k, v in fields.items()
+            if k not in ("metadata", *members_store.METADATA_STATUS)}
+
+
 @router.post("/api/admin/sign-in/connections")
-def add_connection(body: ConnectionIn, request: Request, user=Depends(require_admin)):
+def add_connection(body: ConnectionIn, request: Request, user=Depends(require_admin),
+                   audit=audited("connection.create")):
     try:
         issuer = sso_setup.normalize_issuer(body.issuer)
         metadata = sso_setup.oidc_metadata(issuer)
@@ -282,12 +291,15 @@ def add_connection(body: ConnectionIn, request: Request, user=Depends(require_ad
                                            cid=_connection_id(body.id))
     if not body.enabled:
         conn = members_store.update_connection(conn["workspace"], conn["id"], enabled=False)
+    audit.record("connection", conn["id"], {"protocol": "oidc", "label": conn["label"],
+                                            "issuer": issuer, "enabled": body.enabled},
+                 user=user)
     return _connection_out(request, conn)
 
 
 @router.patch("/api/admin/sign-in/connections/{cid}")
 def edit_connection(cid: str, body: ConnectionPatch, request: Request,
-                    user=Depends(require_admin)):
+                    user=Depends(require_admin), audit=audited("connection.update")):
     ws = ws_of(user)
     conn = members_store.get_connection(cid)
     if not conn or conn["workspace"] != ws:
@@ -314,11 +326,13 @@ def edit_connection(cid: str, body: ConnectionPatch, request: Request,
         _keep_a_way_in(user, ws, without=cid)
     if fields:
         conn = members_store.update_connection(ws, cid, **fields)
+        audit.record("connection", cid, _changed(fields), user=user)
     return _connection_out(request, conn)
 
 
 @router.post("/api/admin/sign-in/saml-connections")
-def add_saml_connection(body: SamlConnectionIn, request: Request, user=Depends(require_admin)):
+def add_saml_connection(body: SamlConnectionIn, request: Request, user=Depends(require_admin),
+                        audit=audited("connection.create")):
     if not (body.label or "").strip():
         raise HTTPException(400, "Give the sign-in button a name.")
     entity_id, settings, status = _saml_settings(body)
@@ -330,12 +344,15 @@ def add_saml_connection(body: SamlConnectionIn, request: Request, user=Depends(r
     conn = members_store.update_connection(conn["workspace"], cid, **status,
                                            **({"enabled": False} if body.enabled is False
                                               else {}))
+    audit.record("connection", cid, {"protocol": "saml", "label": conn["label"],
+                                     "issuer": entity_id, "enabled": conn["enabled"]},
+                 user=user)
     return _connection_out(request, conn)
 
 
 @router.patch("/api/admin/sign-in/saml-connections/{cid}")
 def edit_saml_connection(cid: str, body: SamlConnectionIn, request: Request,
-                         user=Depends(require_admin)):
+                         user=Depends(require_admin), audit=audited("connection.update")):
     ws = ws_of(user)
     conn = members_store.get_connection(cid)
     if not conn or conn["workspace"] != ws or conn["protocol"] != "saml":
@@ -353,11 +370,12 @@ def edit_saml_connection(cid: str, body: SamlConnectionIn, request: Request,
         fields.update(status)
     if fields:
         conn = members_store.update_connection(ws, cid, **fields)
+        audit.record("connection", cid, _changed(fields), user=user)
     return _connection_out(request, conn)
 
 
 @router.post("/api/admin/sign-in/connections/{cid}/test")
-def test_connection(cid: str, user=Depends(require_admin)):
+def test_connection(cid: str, user=Depends(require_admin), audit=audited("connection.test")):
     """Start a "Test sign-in": open `url` in a popup, then poll /tests/{ticket}."""
     ws = ws_of(user)
     conn = members_store.get_connection(cid)
@@ -366,7 +384,8 @@ def test_connection(cid: str, user=Depends(require_admin)):
     if conn["protocol"] == "saml" and not saml_sp.xmlsec_binary():
         raise HTTPException(400, "SAML isn't available on this server: xmlsec1 isn't installed.")
     ticket = new_sso_test(ws, cid)
-    path = (f"/api/auth/saml/{cid}/start" if conn["protocol"] == "saml"
+    audit.record("connection", cid, user=user)
+    path =(f"/api/auth/saml/{cid}/start" if conn["protocol"] == "saml"
             else f"/api/auth/sso/c/{cid}/start")
     return {"ticket": ticket, "url": f"{path}?" + urllib.parse.urlencode({"test": ticket})}
 
@@ -400,7 +419,7 @@ def _no_admin_left(e):
 
 @router.put("/api/admin/sign-in/connections/{cid}/roles")
 def set_group_roles(cid: str, body: GroupRulesIn, request: Request,
-                    user=Depends(require_admin)):
+                    user=Depends(require_admin), audit=audited("connection.roles")):
     """Roles from the groups a provider sends: they apply at each person's next
     sign-in. Rules make it the workspace's one role source (members_store.py)."""
     ws = ws_of(user)
@@ -418,8 +437,9 @@ def set_group_roles(cid: str, body: GroupRulesIn, request: Request,
         raise _no_admin_left(e)
     if not found:
         raise HTTPException(404, "This workspace has no such sign-in provider.")
-    log.warning("%s set the group rules of %s; the role source of %s is %s", user["username"],
-                cid, ws, members_store.role_source(ws))
+    audit.record("connection", cid, {"group_claim": claim,
+                                     "rules": [r.model_dump() for r in body.rules],
+                                     "role_source": members_store.role_source(ws)}, user=user)
     return _connection_out(request, members_store.get_connection(cid))
 
 
@@ -428,9 +448,11 @@ class GroupAdminDaysIn(BaseModel):
 
 
 @router.put("/api/admin/sign-in/group-admin-days")
-def set_group_admin_days(body: GroupAdminDaysIn, user=Depends(require_admin)):
+def set_group_admin_days(body: GroupAdminDaysIn, user=Depends(require_admin),
+                         audit=audited("sign_in.group_admin_days")):
     """How long admin from groups lasts without a sign-in through the role source (0: forever)."""
     members_store.set_group_admin_days(ws_of(user), body.days)
+    audit.record("workspace", ws_of(user), {"days": body.days}, user=user)
     return {"group_admin_days": body.days}
 
 
@@ -457,12 +479,16 @@ def _keep_a_way_in(user, ws, without=None, domain=None):
 
 
 @router.delete("/api/admin/sign-in/connections/{cid}")
-def delete_connection(cid: str, user=Depends(require_admin)):
+def delete_connection(cid: str, user=Depends(require_admin),
+                      audit=audited("connection.delete")):
     _keep_a_way_in(user, ws_of(user), without=cid)
+    conn = members_store.get_connection(cid)
     try:
         found = members_store.delete_connection(ws_of(user), cid)
     except members_store.NoAdminLeft as e:
         raise _no_admin_left(e)
     if not found:
         raise HTTPException(404, "This workspace has no such sign-in provider.")
+    audit.record("connection", cid, {"label": conn["label"], "protocol": conn["protocol"]},
+                 user=user)
     return {"ok": True}

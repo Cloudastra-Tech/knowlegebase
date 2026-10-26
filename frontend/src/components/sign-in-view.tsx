@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { ActivityView } from "@/components/activity-view"
 import { MembersView } from "@/components/members-view"
 import { GroupRulesDialog } from "@/components/sign-in-group-rules"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
@@ -888,7 +889,14 @@ function Events({ events }: { events: SignInEvent[] }) {
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export type AccessTab = "sign-in" | "members"
+export type AccessTab = "sign-in" | "members" | "activity"
+
+// The Activity tab's "Sign-ins": the same events as the sign-in settings show.
+function SignInActivity() {
+  const settings = useQuery(queries.signInSettings()).data
+  if (!settings) return <Skeleton className="h-48 rounded-2xl" />
+  return <Events events={settings.events} />
+}
 
 export function SignInView({
   workspace,
@@ -920,14 +928,17 @@ export function SignInView({
           <TabsList>
             <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
       <div className="mt-6">
         {tab === "sign-in" ? (
           <SignInSettingsView workspace={workspace} onOpenIntegrations={onOpenIntegrations} />
-        ) : (
+        ) : tab === "members" ? (
           <MembersView me={me} />
+        ) : (
+          <ActivityView signIns={<SignInActivity />} />
         )}
       </div>
     </div>

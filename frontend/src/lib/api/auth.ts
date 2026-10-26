@@ -1,7 +1,7 @@
 // Signing in and out (/api/auth/*).
 
-import { request } from "@/lib/api/client"
-import type { AuthOptions, SsoRoute, User } from "@/lib/api/types"
+import { json, request } from "@/lib/api/client"
+import type { AuthOptions, InviteAccepted, InviteInfo, SsoRoute, User } from "@/lib/api/types"
 
 // A full-page navigation (not fetch): the server redirects to Google / Microsoft.
 export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/start`
@@ -35,4 +35,9 @@ export const authApi = {
   logoutEverywhere: () =>
     request<{ ok: boolean; ended: number }>("/auth/logout-everywhere", { method: "POST" }),
   me: () => request<User>("/auth/me"),
+  // The accept page (/invite/:token). The token goes in the body, not a URL.
+  inviteLookup: (token: string) =>
+    request<InviteInfo>("/auth/invite/lookup", json("POST", { token })),
+  inviteAccept: (token: string, name: string, password: string) =>
+    request<InviteAccepted>("/auth/invite/accept", json("POST", { token, name, password })),
 }

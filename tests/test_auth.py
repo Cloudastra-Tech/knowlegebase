@@ -184,19 +184,19 @@ def test_sso_access_changes_apply_to_live_sessions(env, provider):
     token = sso_token(env, provider, "google", GOOGLE_HR)
     assert env.get("/api/docs", headers=bearer(token)).status_code == 200
     try:
-        members_store.set_role(HR_EMAIL, "public")
+        members_store.set_role(HR_EMAIL, "public", "default")
         assert env.get("/api/docs", headers=bearer(token)).status_code == 403    # HR taken away
         members_store.remove_domain("cloudastra.in")
         assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # domain gone
     finally:
         members_store.add_verified_domain("default", "cloudastra.in")
-        members_store.set_role(HR_EMAIL, "hr")
+        members_store.set_role(HR_EMAIL, "hr", "default")
     token = sso_token(env, provider, "google", GOOGLE_HR)
-    members_store.remove(HR_EMAIL)
+    members_store.remove(HR_EMAIL, "default")
     try:
         assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # member gone
     finally:
-        members_store.set_role(HR_EMAIL, "hr")
+        members_store.set_role(HR_EMAIL, "hr", "default")
 
 
 def test_sso_sign_in_adds_the_member_once(env, provider):

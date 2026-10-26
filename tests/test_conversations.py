@@ -85,7 +85,7 @@ def client(fakes):
     yield c
     state.agents.clear()
     for name, role in roles.items():                  # undo any role change a test made
-        members_store.set_role(name, role)
+        members_store.set_role(name, role, "default")
 
 
 def headers(client, who, role="hr"):
@@ -219,7 +219,7 @@ def test_an_owner_demoted_from_hr_no_longer_sees_restricted_answers(client):
     bonus_answer, refund_answer = read(client, "hana", cid)["messages"][1::2]
     assert "March" in bonus_answer["content"] and not bonus_answer["withheld"]
 
-    members_store.set_role("hana", "public")
+    members_store.set_role("hana", "public", "default")
     chat = read(client, "hana", cid)
     assert chat["role_changed"]
     questions = [m["content"] for m in chat["messages"] if m["author"] == "user"]

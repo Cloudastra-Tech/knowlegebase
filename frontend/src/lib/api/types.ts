@@ -117,6 +117,56 @@ export interface Member {
   created_at: number
 }
 
+// ---- Invites (admin sends; the invitee accepts at /invite/:token) ----
+export type InviteStatus = "pending" | "expired" | "accepted" | "revoked"
+
+export interface Invite {
+  id: number
+  email: string
+  role: AccountRole
+  status: InviteStatus
+  invited_by: string
+  created_at: number
+  sent_at: number | null
+  expires_at: number
+}
+
+// What the accept page shows (POST /auth/invite/lookup).
+export interface InviteInfo {
+  email: string
+  role: AccountRole
+  workspace_name: string
+  // "sso": they sign in through the workspace's provider; null: no way in here
+  method: "password" | "sso" | null
+  expires_at: number
+}
+
+export type InviteAccepted = { token: string; user: User } | { sso: true; email: string }
+
+// ---- The admin audit log (GET /admin/audit) ----
+export interface AuditEvent {
+  id: number
+  workspace: string
+  at: number
+  actor: string | null
+  actor_type: "user" | "api_key" | "scim" | "system" | "operator"
+  action: string // e.g. "member.update"
+  target_type: string | null
+  target_id: string | null
+  ip: string | null
+  user_agent: string | null
+  details: Record<string, unknown>
+  prev_hash: string
+  hash: string
+}
+
+export interface AuditFilters {
+  actor?: string
+  action?: string // exact, or every action under a prefix ending in "."
+  from?: number // Unix seconds
+  to?: number
+}
+
 // What the IdP needs before the provider is added (GET /admin/sign-in/new-provider).
 export interface NewProvider {
   id: string

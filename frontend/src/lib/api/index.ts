@@ -1,6 +1,7 @@
 // The backend client, split by domain. Import from "@/lib/api": `api` and `signIn`
 // keep the shape they had when this was one file.
 
+import { auditApi } from "@/lib/api/audit"
 import { authApi } from "@/lib/api/auth"
 import { chatApi } from "@/lib/api/chat"
 import { docsApi } from "@/lib/api/docs"
@@ -19,5 +20,5 @@ export { signupStartUrl, ssoStartUrl } from "@/lib/api/auth"
 
 export const api = { ...authApi, ...chatApi, ...docsApi, ...integrationsApi }
 
-// Sign-in settings and members (admin only).
-export const signIn = { ...signInSettingsApi, ...membersApi }
+// Sign-in settings, members, invites and the audit log (admin only).
+export const signIn = { ...signInSettingsApi, ...membersApi, ...auditApi }

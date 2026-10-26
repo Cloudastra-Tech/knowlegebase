@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { KeyRound, MoreHorizontal, Search } from "lucide-react"
+import { KeyRound, MailPlus, MoreHorizontal, Search } from "lucide-react"
 import { toast } from "sonner"
 
+import { InviteDialog, PendingInvites } from "@/components/invites"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -233,6 +234,7 @@ export function MembersView({ me }: { me: string }) {
   const queryClient = useQueryClient()
   const members = useQuery(queries.members()).data?.members ?? null
   const [query, setQuery] = useState("")
+  const [inviting, setInviting] = useState(false)
 
   const load = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queries.members().queryKey })
@@ -257,17 +259,24 @@ export function MembersView({ me }: { me: string }) {
             their groups.
           </p>
         </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Search members"
-            placeholder="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-56 pl-8"
-          />
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:flex-none">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              aria-label="Search members"
+              placeholder="Search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full pl-8 sm:w-56"
+            />
+          </div>
+          <Button onClick={() => setInviting(true)}>
+            <MailPlus data-icon="inline-start" /> Invite
+          </Button>
         </div>
       </div>
+      <PendingInvites />
+      <InviteDialog open={inviting} onOpenChange={setInviting} />
       <div className="mt-4 divide-y rounded-xl border">
         {shown.map((m) => (
           <MemberRow key={m.username} m={m} me={m.username === me} onChange={load} />

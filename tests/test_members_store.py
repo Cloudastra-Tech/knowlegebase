@@ -61,7 +61,7 @@ def test_a_domain_listed_twice_stays_with_the_first_workspace(store):
 def test_the_files_are_copied_only_once(store):
     store("users.json", USERS)
     assert members_store.get("bob")
-    members_store.remove("bob")                     # changed in the database since
+    members_store.remove("bob", "acme")                   # changed in the database since
     store("users.json", {**USERS, "carol": {"name": "Carol", "password": "x"}})
     store.restart()
     assert members_store.get("bob") is None and members_store.get("carol") is None
@@ -103,7 +103,7 @@ def test_the_login_page_asks_for_an_email_once_any_provider_is_on(store):
 
 def test_roles_are_checked(store):
     with pytest.raises(ValueError):
-        members_store.set_role("pat@acme.com", "owner")
+        members_store.set_role("pat@acme.com", "owner", "acme")
 
 
 def test_an_older_database_gains_the_new_columns_and_keeps_roles(store, tmp_path):
@@ -124,7 +124,7 @@ def test_an_older_database_gains_the_new_columns_and_keeps_roles(store, tmp_path
     assert (boss["role"], boss["override_role"], boss["disabled"]) == ("hr", "hr", False)
     assert (pat["role"], pat["override_role"]) == ("public", None)
     store.restart()                                  # and only once
-    members_store.set_role("boss", None)
+    members_store.set_role("boss", None, "default")
     store.restart()
     assert members_store.get("boss")["role"] == "public"
 
@@ -169,10 +169,10 @@ def test_a_role_comes_from_the_override_then_the_groups_then_public(store):
                                        source=src)
     sign_in(["eng"], "hr")
     assert members_store.get("pat@acme.com")["role"] == "hr"
-    members_store.set_role("pat@acme.com", "public")          # an admin overrides it
+    members_store.set_role("pat@acme.com", "public", "acme")        # an admin overrides it
     sign_in(["eng"], "hr")
     assert members_store.get("pat@acme.com")["role"] == "public"
-    members_store.set_role("pat@acme.com", None)              # back to the groups
+    members_store.set_role("pat@acme.com", None, "acme")            # back to the groups
     assert members_store.get("pat@acme.com")["role"] == "hr"
     sign_in([], None)
     assert members_store.get("pat@acme.com")["role"] == "public"   # left the group
