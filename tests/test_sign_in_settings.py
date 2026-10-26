@@ -7,6 +7,7 @@ answer at the callback (the claims of a verified ID token). The rest is real.
 """
 
 import json
+import re
 import socket
 import sqlite3
 from urllib.parse import parse_qs, urlsplit
@@ -284,6 +285,12 @@ def callback(client, idp, conn, claims, state="y"):
     return r.headers["location"]
 
 
+def error_of(location):
+    """The error a redirect to the login page shows (it may carry a reference too)."""
+    assert location.startswith("/#login?"), location
+    return parse_qs(location.split("?", 1)[1])["error"][0]
+
+
 def session_for(client, idp, conn, claims):
     location = callback(client, idp, conn, claims)
     assert location.startswith("/#sso?code="), location
@@ -336,7 +343,7 @@ def test_a_workspace_provider_signs_people_in_to_that_workspace(client, idp, acm
 def test_a_workspace_provider_cant_vouch_for_anyone_else(client, idp, acme_sso, claims, error):
     import members_store
     members_store.add_verified_domain("globex", "globex.example")
-    assert callback(client, idp, acme_sso, claims) == f"/#login?error={error}"
+    assert error_of(callback(client, idp, acme_sso, claims)) == error
 
 
 def test_turning_a_provider_off_signs_its_people_out(client, idp, acme_sso, acme):
@@ -550,7 +557,7 @@ def test_turning_someone_off_ends_their_access(client, acme, acme_sso, idp):
     path = "/api/admin/members/off@acme.example"
     assert client.patch(path, headers=acme, json={"disabled": True}).json()["disabled"]
     assert client.get("/api/auth/me", headers=headers).status_code == 401
-    assert callback(client, idp, acme_sso, claims) == "/#login?error=disabled"
+    assert error_of(callback(client, idp, acme_sso, claims)) == "disabled"
     client.patch(path, headers=acme, json={"disabled": False})
     assert callback(client, idp, acme_sso, claims).startswith("/#sso?code=")
     assert client.delete(path, headers=acme).status_code == 200
@@ -785,3 +792,124 @@ def test_only_failures_from_a_real_sign_in_are_logged_and_never_verbatim(client,
                 "&error_description=Call+the+helpdesk+at+555")
     events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
     assert (events[0]["outcome"], events[0]["reason"]) == ("failed", "access_denied")
+
+
+# ---- Why a sign-in failed: codes, references and provider health ------------------------
+@pytest.fixture
+def token_endpoint(monkeypatch):
+    """Stand in for the provider's token endpoint (the network under Authlib): it
+    answers every request with answer["status"] and answer["json"]. (Authlib uses
+    httpx2 when it's installed, else httpx.)"""
+    import importlib
+    answer = {"status": 200, "json": {}}
+    for name in ("httpx", "httpx2"):
+        try:
+            lib = importlib.import_module(name)
+        except ImportError:
+            continue
+
+        async def handle(self, request, lib=lib):
+            assert str(request.url) == DOC["token_endpoint"]
+            return lib.Response(answer["status"], json=answer["json"])
+        monkeypatch.setattr(lib.AsyncHTTPTransport, "handle_async_request", handle)
+    return answer
+
+
+def new_browser():
+    from fastapi.testclient import TestClient
+    import api
+    return TestClient(api.app, follow_redirects=False)
+
+
+def started(browser, conn):
+    """Start a sign-in in this browser: the state the provider will send back."""
+    return state_of(browser.get(f"/api/auth/sso/c/{conn['id']}/start").headers["location"])
+
+
+def sign_in_attempt(conn, query="code=x"):
+    """A browser that starts a sign-in and comes back from the provider: where it lands."""
+    browser = new_browser()
+    state = started(browser, conn)
+    return browser.get(f"/api/auth/sso/c/{conn['id']}/callback?{query}&state={state}"
+                       ).headers["location"]
+
+
+def health_of(client, acme, conn):
+    settings = client.get("/api/admin/sign-in", headers=acme).json()
+    return next(c["health"] for c in settings["connections"] if c["id"] == conn["id"])
+
+
+def test_a_wrong_client_secret_is_named_and_the_provider_shows_as_failing(
+        client, acme, token_endpoint, monkeypatch):
+    import members_store
+    import sso_setup
+    conn = members_store.create_connection(
+        "acme", "oidc", "Flaky SSO", ISSUER, "kb", {"client_secret": "wrong"},
+        {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
+    try:
+        token_endpoint.update(status=401, json={
+            "error": "invalid_client", "error_description": "Bad secret. Call the helpdesk at 555"})
+        locations = [sign_in_attempt(conn) for _ in range(2)]
+        # The person: a general message and a reference, nothing about the secret.
+        refs = [parse_qs(loc.split("?", 1)[1])["ref"][0] for loc in locations]
+        assert [error_of(loc) for loc in locations] == ["sso_failed", "sso_failed"]
+        assert all(re.fullmatch(r"[A-Z2-9]{4}-[A-Z2-9]{4}", ref) for ref in refs)
+        # The admin: the same reference, and exactly what's wrong.
+        settings = client.get("/api/admin/sign-in", headers=acme).json()
+        latest = settings["events"][0]
+        assert (latest["outcome"], latest["reason"], latest["ref"], latest["reason_text"]) == (
+            "failed", "invalid_client", refs[1], "Client ID or secret is wrong")
+        assert "helpdesk" not in json.dumps(settings)
+        health = health_of(client, acme, conn)
+        assert (health["status"], health["code"], health["count"], health["reason"]) == (
+            "failing", "invalid_client", 2, "Client ID or secret is wrong")
+        assert health["since"] == settings["events"][1]["at"]
+        # Someone cancelling at the provider says nothing about its settings.
+        assert error_of(sign_in_attempt(conn, "error=access_denied")) == "cancelled"
+        assert health_of(client, acme, conn)["count"] == 2
+        # The next sign-in that works clears it.
+        browser = new_browser()
+        state = started(browser, conn)
+        fake_answer(monkeypatch, {"email": "fixed@acme.example", "email_verified": True})
+        assert browser.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state={state}"
+                           ).headers["location"].startswith("/#sso?code=")
+        assert health_of(client, acme, conn) == {"status": "ok"}
+    finally:
+        client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme)
+
+
+def test_keycloaks_answer_to_a_wrong_secret_is_named_too(client, acme, token_endpoint):
+    """Keycloak says unauthorized_client ("Invalid client credentials") where the
+    RFC says invalid_client: it's still the secret, not the flow."""
+    import members_store
+    import sso_setup
+    conn = members_store.create_connection(
+        "acme", "oidc", "Keycloak", ISSUER, "kb", {"client_secret": "wrong"},
+        {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
+    try:
+        token_endpoint.update(status=401, json={
+            "error": "unauthorized_client",
+            "error_description": "Invalid client or Invalid client credentials"})
+        sign_in_attempt(conn)
+        assert health_of(client, acme, conn)["code"] == "invalid_client"
+    finally:
+        client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=acme)
+
+
+def test_a_refusal_carries_a_reference_too(client, acme, acme_sso, idp):
+    location = callback(client, idp, acme_sso, {"email": "x@acme.example",
+                                                "email_verified": False})
+    ref = parse_qs(location.split("?", 1)[1])["ref"][0]
+    events = client.get("/api/admin/sign-in", headers=acme).json()["events"]
+    assert (events[0]["reason"], events[0]["ref"]) == ("unverified", ref)
+
+
+def test_a_test_sign_in_names_the_failure_the_same_way(client, acme, acme_sso, token_endpoint):
+    before = health_of(client, acme, acme_sso)
+    token_endpoint.update(status=400, json={"error": "invalid_grant"})
+    ticket, location = start_test(client, acme, acme_sso)
+    client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state={state_of(location)}")
+    result = result_of(client, acme, ticket)["result"]
+    assert (result["ok"], result["reason"]) == (False, "invalid_grant")
+    assert result["reason_text"].startswith("Redirect URI doesn't match")
+    assert health_of(client, acme, acme_sso) == before      # a failed test doesn't count

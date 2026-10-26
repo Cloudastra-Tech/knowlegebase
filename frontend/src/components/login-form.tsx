@@ -35,9 +35,19 @@ const SSO_ERRORS: Record<string, string> = {
   expired: "That sign-in expired. Please try again.",
 }
 
+// A failed sign-in also brings a reference (K7Q2-9XMA); the admin sees the same one
+// in Recent sign-ins, with exactly what went wrong.
+const REF = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/
+
 function ssoErrorFromUrl() {
-  const code = hashParams().get("error")
-  return code ? (SSO_ERRORS[code] ?? "Sign-in failed. Please try again.") : null
+  const params = hashParams()
+  const code = params.get("error")
+  if (!code) return null
+  const ref = params.get("ref") ?? ""
+  return {
+    message: SSO_ERRORS[code] ?? "Sign-in failed. Please try again.",
+    ref: REF.test(ref) ? ref : null,
+  }
 }
 
 // Logos by provider id. simple-icons has no Microsoft logo, so draw its four
@@ -212,7 +222,17 @@ export function LoginForm({
             ))}
           </Field>
         )}
-        {ssoError && <FieldError>{ssoError}</FieldError>}
+        {ssoError && (
+          <Field className="gap-1">
+            <FieldError>{ssoError.message}</FieldError>
+            {ssoError.ref && (
+              <FieldDescription className="text-xs">
+                Reference: <span className="font-mono select-all">{ssoError.ref}</span>. If it
+                keeps happening, give it to your admin.
+              </FieldDescription>
+            )}
+          </Field>
+        )}
         {anySso && showPassword && <FieldSeparator>Or</FieldSeparator>}
         {showPassword && (
           <form onSubmit={submit} className="flex flex-col gap-4">

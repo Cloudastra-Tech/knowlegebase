@@ -58,7 +58,20 @@ export interface SignInConnection {
   // Roles from the groups it sends (empty: it doesn't set roles)
   group_claim: string | null
   group_rules: GroupRule[]
+  health: ProviderHealth
 }
+
+// Failing: its latest real sign-ins all failed, since `since` (api.py, sso_errors.py).
+export type ProviderHealth =
+  | { status: "ok" }
+  | {
+      status: "failing"
+      since: number
+      count: number
+      code: string
+      reason: string
+      fix: string | null
+    }
 
 export interface GroupRule {
   group: string
@@ -96,7 +109,10 @@ export interface SignInEvent {
   connection: string | null
   email: string | null
   outcome: "signed_in" | "refused" | "failed" | "test"
-  reason: string | null
+  reason: string | null // a code (sso_errors.py)
+  reason_text: string | null // what it means, for the admin
+  fix: string | null
+  ref: string | null // the reference the person was shown
   at: number
 }
 
@@ -133,7 +149,9 @@ export interface SamlConnectionInput {
 // The result of an admin's "Test sign-in": what the provider sent, and what would happen.
 export interface SsoTestResult {
   ok: boolean
-  reason?: string | null
+  reason?: string | null // a code (sso_errors.py)
+  reason_text?: string | null
+  fix?: string | null
   detail?: string | null
   email?: string | null
   name?: string

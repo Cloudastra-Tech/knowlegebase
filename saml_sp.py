@@ -47,6 +47,8 @@ from saml2.metadata import entity_descriptor
 from saml2.saml import NAMEID_FORMAT_EMAILADDRESS, NAMEID_FORMAT_UNSPECIFIED
 from saml2.xmldsig import DIGEST_SHA256, SIG_RSA_SHA256
 
+import sso_errors
+
 CLOCK_SKEW_SECONDS = 120
 REQUEST_SECONDS = 10 * 60          # how long the IdP has to answer
 # Where IdPs usually put the email, tried in order after the connection's own choice.
@@ -60,7 +62,12 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,63}$", re.I)
 
 
 class SamlError(ValueError):
-    """The IdP's answer can't be used. The message is for the server log."""
+    """The IdP's answer can't be used. The message is for the server log; `code`
+    (sso_errors.py) says why, for the admin."""
+
+    def __init__(self, message, code="saml_invalid"):
+        super().__init__(message)
+        self.code = code
 
 
 # ---- The xmlsec1 program ---------------------------------------------------------
@@ -159,15 +166,19 @@ def finish(conn, keys, base, saml_response, request_ids):
             response = client.parse_authn_request_response(
                 saml_response, BINDING_HTTP_POST, outstanding={r: "/" for r in request_ids})
         except Exception as e:             # pysaml2 has many error types; all mean "no"
-            raise SamlError(f"{type(e).__name__}: {e}") from None
+            raise SamlError(f"{type(e).__name__}: {e}",
+                            sso_errors.from_saml_exception(e, saml_response)) from None
     if response is None or response.assertion is None:
-        raise SamlError("No assertion in the response")
+        # pysaml2 gives no answer when it was sent to another address (Destination)
+        raise SamlError("No assertion in the response", "saml_audience")
     if response.issuer() != conn["issuer"]:
-        raise SamlError(f"Issued by {response.issuer()!r}, not {conn['issuer']!r}")
+        raise SamlError(f"Issued by {response.issuer()!r}, not {conn['issuer']!r}",
+                        "saml_issuer")
     identity = response.get_identity() or {}
     email = _email(identity, response.name_id, conn["metadata"].get("email_attribute"))
     if not email:
-        raise SamlError(f"No email in the assertion (attributes: {sorted(identity)})")
+        raise SamlError(f"No email in the assertion (attributes: {sorted(identity)})",
+                        "saml_no_email")
     expires = None
     subject = response.assertion.subject
     for confirmation in (subject.subject_confirmation if subject else []) or []:

@@ -12,6 +12,7 @@ every test here also relies on members_store copying them into the database.
 import json
 import os
 import sqlite3
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -88,6 +89,12 @@ def sso_token(client, provider, name, claims):
     return r.json()["token"]
 
 
+def error_of(location):
+    """The error a redirect to the login page shows (it may carry a reference too)."""
+    assert location.startswith("/#login?"), location
+    return parse_qs(location.split("?", 1)[1])["error"][0]
+
+
 @pytest.mark.parametrize("username, x_role, status", [
     ("admin", "hr", 200),
     ("admin", "public", 403),      # HR viewing the app as a public user
@@ -142,7 +149,7 @@ def test_sso_signs_in_to_the_workspace_with_the_configured_role(env, provider, n
     ("okta", {"email": "someone@othercorp.com", "email_verified": True}, "not_allowed"),
 ])
 def test_sso_turns_away_accounts_it_cannot_trust(env, provider, name, claims, error):
-    assert sso_callback(env, provider, name, claims) == f"/#login?error={error}"
+    assert error_of(sso_callback(env, provider, name, claims)) == error
 
 
 @pytest.mark.parametrize("provider_error, shown", [
@@ -151,7 +158,7 @@ def test_sso_turns_away_accounts_it_cannot_trust(env, provider, name, claims, er
 ])
 def test_provider_errors_reach_the_login_page(env, provider, provider_error, shown):
     location = sso_callback(env, provider, "google", GOOGLE_HR, query=f"error={provider_error}")
-    assert location == f"/#login?error={shown}"
+    assert error_of(location) == shown
 
 
 def test_other_oidc_providers_appear_once_configured(env, monkeypatch):
@@ -216,7 +223,7 @@ def test_an_account_in_another_workspace_cant_sign_in_here(env, provider):
     import members_store
     members_store.set_role("moved@cloudastra.in", "public", workspace="acme")
     claims = {"email": "moved@cloudastra.in", "email_verified": True, "hd": "cloudastra.in"}
-    assert sso_callback(env, provider, "google", claims) == "/#login?error=not_allowed"
+    assert error_of(sso_callback(env, provider, "google", claims)) == "not_allowed"
 
 
 def test_password_role_changes_apply_to_live_sessions(env):
@@ -237,7 +244,7 @@ def test_an_unreadable_database_fails_safely(env, provider, monkeypatch):
         raise sqlite3.OperationalError("database is locked")
     monkeypatch.setattr(members_store, "get", broken)
     monkeypatch.setattr(members_store, "workspace_for_domain", broken)
-    assert sso_callback(env, provider, "google", GOOGLE_HR) == "/#login?error=sso_failed"
+    assert error_of(sso_callback(env, provider, "google", GOOGLE_HR)) == "sso_failed"
     assert env.get("/api/auth/me", headers=bearer(token)).status_code == 503
 
 

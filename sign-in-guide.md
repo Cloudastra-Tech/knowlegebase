@@ -203,16 +203,50 @@ supported.
 ## Troubleshooting
 
 **Access → Sign-in → Recent sign-ins** shows each sign-in and refusal, with the
-reason. **Test sign-in** shows what the provider sent.
+reason and how to fix it. **Test sign-in** shows what the provider sent, and the
+same reason.
 
-| What you see | What to do |
-|---|---|
-| "isn't a verified domain of this workspace" | Verify that domain (step 1). The person's email must be on it exactly. |
-| "didn't send a verified email address" | Make the provider send an email (OpenID Connect: the `email` scope / claim; SAML: NameID or an `email` attribute, or set **Email attribute**). |
-| "belongs to another workspace" | That email is already a member of another workspace. Contact support. |
-| "Their access has been turned off" | Members → turn their access back on. |
-| SAML: "Neither the response nor the assertions are signed", "Failed to verify signature" | Your provider must sign the assertion or the response, with the certificate in the metadata you gave us. If you rotated its certificate, update the metadata (**Edit**). |
-| SAML: "Condition not OK" or an expiry error | The clocks are more than 2 minutes apart, or the answer took too long. Check your provider's clock. |
-| SAML: "Unsolicited response" | Sign-ins must start from our sign-in page, not your provider's app launcher. |
-| OpenID Connect: an `invalid_client` / redirect error at the provider | The client secret or our Redirect URI doesn't match what's registered there. |
-| Roles don't follow groups | Test sign-in: is the group claim there, under the name in **Roles from groups**? Groups apply at the next sign-in. |
+When a sign-in fails, the person only sees a general message and a
+**reference** such as `K7Q2-9XMA` ("Reference: K7Q2-9XMA" under the error). The
+same reference is on that attempt in Recent sign-ins (and in the server log), so
+when someone reports a problem, ask for it. A provider whose latest sign-ins all
+failed shows **Failing** on its card, with since when, why and how many attempts;
+it clears at the next sign-in that works (a passing Test sign-in counts too).
+Cancelling at the provider and other things only the person can cause don't make
+a provider fail.
+
+Each reason has a code (in `sso_errors.py`):
+
+| Code | Reason | What to do |
+|---|---|---|
+| `invalid_client` | Client ID or secret is wrong | Copy the client ID and secret from your provider's app again (**Edit**). A secret that expired there needs a new one. |
+| `invalid_grant` | Redirect URI doesn't match what's registered, or the sign-in took too long | Register exactly the Redirect URI under **Setup details** at your provider. |
+| `unauthorized_client` | The provider's app isn't allowed to sign people in this way | Turn on the authorization code flow ("standard flow") for the app. |
+| `invalid_scope` | The provider doesn't allow the `openid`, `email` and `profile` scopes | Allow them for the app at your provider. |
+| `consent_required` | The provider needs an admin to approve this app first | Entra ID: **Grant admin consent** for the app. |
+| `access_denied` | Cancelled at the provider | Nothing, if they cancelled. Otherwise check they're assigned to the app. |
+| `provider_unreachable` | Couldn't reach the provider | Check the provider is up and its issuer URL is right. |
+| `token_invalid` | The provider's answer couldn't be verified (issuer, audience or signature) | The issuer URL and client ID here must match your provider's app exactly. |
+| `state_mismatch` | The sign-in was finished in another browser or tab, or took too long | Nothing: start again from the sign-in page. |
+| `provider_error` | The provider refused the sign-in | Look for the attempt in your provider's sign-in logs. |
+| `settings_unreadable` | This provider's saved settings can't be read | The server's encryption key changed: **Edit** and enter the client secret again. |
+| `saml_signature` | The provider's signing certificate changed | Click **Refresh metadata** on the provider's card (added by URL), or paste the new certificate / metadata (**Edit**). |
+| `saml_unsigned` | Neither the response nor the assertion is signed | Make your provider sign the assertion or the response. |
+| `saml_unsolicited` | Sign-in started at the provider's app launcher | Start from our sign-in page; hide the app's tile, or make it a bookmark to our sign-in page. |
+| `saml_unknown_request` | The answer was to a sign-in that expired, was already finished, or was started for another provider | Nothing, if it's now and then: start again. |
+| `saml_expired` | Clocks are more than 2 minutes apart, or the answer took too long | Check your provider's clock. |
+| `saml_audience` | The answer was meant for another app (audience or destination doesn't match) | Your provider must have this app's entity ID and ACS URL exactly as under **Setup details**. |
+| `saml_issuer` | The answer came from a different identity provider | Refresh the metadata, or check its entity ID (**Edit**). |
+| `saml_no_email` | The answer had no email address | Send it as the NameID or an attribute, and set **Email attribute** if it has another name. |
+| `saml_refused` | The provider refused the sign-in (for example, they aren't assigned to the app) | Check the assignment and your provider's sign-in logs. |
+| `saml_replayed` | The same answer was sent twice | Nothing: start again from the sign-in page. |
+| `saml_invalid` | The provider's answer couldn't be read | Run Test sign-in to see what the provider sends. |
+| `unverified` | The provider didn't send a verified email address | OpenID Connect: the `email` scope / claim; SAML: NameID or an `email` attribute, or set **Email attribute**. |
+| `not_allowed` | Their email isn't on a verified domain of this workspace, or the account belongs to another workspace | Verify that domain (step 1); the email must be on it exactly. Another workspace: contact support. |
+| `not_workspace` | A personal or guest account, not a work one | Sign in with the work account. |
+| `disabled` | Their access has been turned off | Members → turn their access back on. |
+| `sso_required` | Single sign-on is required, so their password can't be used | Sign in with single sign-on. |
+| `sso_failed` | Something went wrong on this server | Find the reference in the server log. |
+
+Roles don't follow groups? Test sign-in: is the group claim there, under the name
+in **Roles from groups**? Groups apply at the next sign-in.

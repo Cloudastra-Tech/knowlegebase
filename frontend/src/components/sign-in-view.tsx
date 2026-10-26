@@ -7,7 +7,9 @@ import {
   Loader2,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   ShieldCheck,
+  TriangleAlert,
   XCircle,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -25,6 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -50,6 +53,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   signIn,
+  type ProviderHealth,
   type SignInConnection,
   type SignInDomain,
   type SignInEvent,
@@ -61,16 +65,18 @@ import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-// Why a sign-in was refused, for the admin (codes from api.py / sso.py).
-const REASONS: Record<string, string> = {
-  not_allowed:
-    "Their email isn't on a verified domain of this workspace, or the account belongs to another workspace.",
-  unverified: "The provider didn't send a verified email address.",
-  cancelled: "They cancelled at the provider.",
-  sso_failed: "The provider's answer couldn't be checked.",
-  disabled: "Their access has been turned off (Members).",
+// Why a sign-in failed or was refused, for the admin. The server explains each
+// code (sso_errors.py); an event logged before codes just has its old text.
+const explain = (x: { reason?: string | null; reason_text?: string | null }) =>
+  x.reason_text ?? x.reason ?? ""
+
+// "10:42" today, "12 Mar, 10:42" before then.
+function clockTime(epoch: number) {
+  const d = new Date(epoch * 1000)
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  if (d.toDateString() === new Date().toDateString()) return time
+  return `${d.toLocaleDateString([], { day: "numeric", month: "short" })}, ${time}`
 }
-const reasonText = (reason?: string | null) => (reason ? (REASONS[reason] ?? reason) : "")
 
 const PROTOCOL = { oidc: "OpenID Connect", saml: "SAML" } as const
 
@@ -287,6 +293,21 @@ function ProviderRow({
   onChange: () => void
 }) {
   const [confirm, setConfirm] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // A SAML provider added by URL: fetch its metadata (and new certificate) again.
+  async function refreshMetadata() {
+    setRefreshing(true)
+    try {
+      await signIn.editSaml(conn.id, { metadata_url: conn.metadata_url! })
+      toast.success(`Refreshed ${conn.label}'s metadata. Run Test sign-in to check it.`)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   async function toggle() {
     try {
@@ -322,6 +343,11 @@ function ProviderRow({
               {PROTOCOL[conn.protocol]}
             </Badge>
             <OnBadge on={conn.enabled} onLabel="On" offLabel="Off" />
+            {conn.health.status === "failing" && (
+              <Badge variant="destructive" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-destructive" /> Failing
+              </Badge>
+            )}
           </div>
           <p className="truncate text-sm text-muted-foreground">
             {conn.issuer} · last sign-in {timeAgo(conn.last_login_at)}
@@ -361,6 +387,15 @@ function ProviderRow({
           </DropdownMenu>
         </div>
       </div>
+      {conn.health.status === "failing" && (
+        <HealthAlert
+          health={conn.health}
+          onRefresh={
+            conn.health.code === "saml_signature" && conn.metadata_url ? refreshMetadata : undefined
+          }
+          refreshing={refreshing}
+        />
+      )}
       <Collapsible>
         <CollapsibleTrigger className="group mt-3 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" />
@@ -410,6 +445,43 @@ function ProviderRow({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  )
+}
+
+// Its latest sign-ins all failed: since when, why, and what to do. Clears on the
+// next sign-in that works.
+function HealthAlert({
+  health,
+  onRefresh,
+  refreshing,
+}: {
+  health: Extract<ProviderHealth, { status: "failing" }>
+  onRefresh?: () => void
+  refreshing: boolean
+}) {
+  return (
+    <Alert variant="destructive" className="mt-3 border-destructive/30 bg-destructive/5">
+      <TriangleAlert />
+      <AlertTitle>
+        Failing since {clockTime(health.since)} — {health.reason} ({health.count}{" "}
+        {health.count === 1 ? "attempt" : "attempts"})
+      </AlertTitle>
+      <AlertDescription className="text-destructive/90">
+        {health.fix && <p>{health.fix}</p>}
+        {onRefresh && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2 text-foreground"
+            onClick={onRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Refresh metadata
+          </Button>
+        )}
+      </AlertDescription>
+    </Alert>
   )
 }
 
@@ -552,10 +624,15 @@ function TestDialog({
                     {state.result.email ? `${state.result.email} would be turned away. ` : "It didn't work. "}
                     {state.result.reason === "not_allowed" && state.result.detail
                       ? state.result.detail
-                      : reasonText(state.result.reason)}
+                      : explain(state.result)}
                   </p>
-                  {state.result.detail && state.result.reason !== "not_allowed" && (
-                    <p className="mt-1 font-mono text-xs break-all">{state.result.detail}</p>
+                  {state.result.fix && state.result.reason !== "not_allowed" && (
+                    <p className="mt-1">{state.result.fix}</p>
+                  )}
+                  {(state.result.reason || state.result.detail) && state.result.reason !== "not_allowed" && (
+                    <p className="mt-1 font-mono text-xs break-all">
+                      {[state.result.reason, state.result.detail].filter(Boolean).join(" · ")}
+                    </p>
                   )}
                 </div>
               </div>
@@ -612,10 +689,16 @@ function Events({ events }: { events: SignInEvent[] }) {
           <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
           <span className="text-muted-foreground">via {e.connection ?? "a deleted provider"}</span>
           <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
-          {e.reason && (
-            <p className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
-              {reasonText(e.reason)}
-            </p>
+          {(e.reason || e.ref) && (
+            <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
+              <p>
+                {explain(e)}
+                {e.ref && (
+                  <span className="ml-2 font-mono whitespace-nowrap select-all">Ref {e.ref}</span>
+                )}
+              </p>
+              {e.fix && e.outcome === "failed" && <p className="mt-0.5">{e.fix}</p>}
+            </div>
           )}
         </div>
       ))}
