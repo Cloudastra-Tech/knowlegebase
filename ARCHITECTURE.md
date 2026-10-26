@@ -108,6 +108,15 @@ put in a prompt until it passes — a blocked question gets the same refusal.
 Each question keeps its own state, so people asking at once don't wait for
 each other.
 
+**One answer, cited.** The search hands the model numbered passages (S1, S2, …,
+each its own spotlighted block), and ONE model call writes the answer, putting
+`[S1]` after what it took from each. The server keeps only markers that point at a
+passage read for this question that the asker may see, renumbers them in order of
+first use, and lists those passages under the answer, where each opens at the
+cited span (`GET /api/passages/{chunk_id}`, checked against the role every time).
+Every chunk carries what that needs: `chunk_id`, `doc_id`, title, provider, link,
+access, `modified`, `char_start`/`char_end`, PDF page and heading path (ingest.py).
+
 ---
 
 ## 🔐 The two safety layers (don't mix them up)

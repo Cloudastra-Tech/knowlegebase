@@ -1,5 +1,6 @@
-"""Chat: a question in, the agent's answer out (whole, or streamed as SSE). Streamed
-questions can belong to a saved conversation (kb/routers/conversations.py)."""
+"""Chat: a question in, the agent's answer out (whole, or streamed as SSE), citing
+passages as [S1], [S2], ... Streamed questions can belong to a saved conversation
+(kb/routers/conversations.py). A cited passage opens through /api/passages."""
 
 import asyncio
 import json
@@ -7,7 +8,7 @@ import logging
 import threading
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -16,7 +17,7 @@ import conversations_store
 from agent import Cancelled
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
-from kb.services import agents, conversations, question_log
+from kb.services import agents, conversations, indexing, passages, question_log
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -57,6 +58,20 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
             "steps": _steps(trace, user["role"] == "admin")}
 
 
+@router.get("/api/passages/{chunk_id}")
+def passage(chunk_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
+            user=Depends(current_user), role=Depends(current_role)):
+    """A cited passage and the document's text around it, for the source viewer:
+    {title, provider, url, access, page, heading_path, modified, text, before,
+    after}. Checked against the asker's role on every call; a passage that isn't
+    in the index and one they may not see are the same 404."""
+    found = passages.get(indexing.current(ws_of(user))[0], chunk_id, role)
+    if not found:
+        raise HTTPException(404, "That passage isn't in your documents any more, "
+                                 "or your role can't see it.")
+    return found
+
+
 def _steps(trace, details=True):
     """The tools the agent used. Their raw input and output only with details
     (admins): they can be long, and they're the model's working, not the answer."""
@@ -76,7 +91,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
          status      {"text"}                       e.g. "Checking your question"
          step_start  {"id", "tool", "label"}        e.g. "Searching company docs"
          step_end    {"id", "tool", "result"}       e.g. "found 2 relevant documents"
-         answer      {"text"}                       the answer so far (PII already masked)
+         answer      {"text", "sources"?}           the answer so far (PII already masked,
+                                                    [S#] checked); sources when they change
          done        {"answer", "sources", "steps", "state", "standalone_question",
                       "message_id"}                 the final, checked answer
          error       {"message", "message_id"}
@@ -154,7 +170,9 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
                  "standalone_question": standalone(),
                  "message_id": turn["message_id"] if turn else None})
         except Cancelled:                          # nobody is listening any more
-            save(seen["text"], "stopped", out, standalone_question=standalone())
+            # What was shown, with the passages its markers cite so far.
+            save(seen["text"], "stopped", out, sources=out.get("sources") or [],
+                 standalone_question=standalone())
         except Exception as e:                     # show it in the chat, keep serving
             # Not the question itself: it's tenant data (its length helps spot limits).
             log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",

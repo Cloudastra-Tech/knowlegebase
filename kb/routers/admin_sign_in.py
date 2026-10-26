@@ -430,7 +430,9 @@ def set_group_roles(cid: str, body: GroupRulesIn, request: Request,
                                               make_role_source=body.make_role_source)
     except members_store.RoleSourceTaken as e:
         source = members_store.get_connection(e.source)
-        name = source["label"] if source else "another provider"
+        name = (source["label"] if source else
+                "SCIM provisioning" if e.source == members_store.SCIM_SOURCE else
+                "another provider")
         raise HTTPException(409, f"Roles come from {name}. A workspace takes roles from one "
                                  "provider: switch it to this one to save these rules.")
     except members_store.NoAdminLeft as e:

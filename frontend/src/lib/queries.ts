@@ -21,6 +21,15 @@ export const queries = {
       queryFn: () => api.conversation(id),
       retry: false,
     }),
+  // A cited passage for the source viewer. Who may read it depends on the role; a
+  // 404 (gone from the index, or not for this role) falls back to the saved snippet.
+  passage: (chunkId: string) =>
+    queryOptions({
+      queryKey: ["passage", session.role, chunkId],
+      queryFn: () => api.passage(chunkId),
+      retry: false,
+      meta: { silent: true },
+    }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
   // One connection's sync history and skipped items (the history sheet).
   integrationRuns: (provider: string) =>
@@ -43,6 +52,7 @@ export const queries = {
     queryOptions({ queryKey: ["rated-answers", session.role], queryFn: () => insights.ratedAnswers(-1) }),
   evalCases: () => queryOptions({ queryKey: ["eval-cases"], queryFn: insights.evalCases }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
+  scimSettings: () => queryOptions({ queryKey: ["scim-settings"], queryFn: signIn.scim }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

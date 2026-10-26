@@ -180,7 +180,16 @@ export interface SignInEvent {
   connection_id: string | null
   connection: string | null
   email: string | null
-  outcome: "signed_in" | "refused" | "failed" | "test" | "warning" | "updated" | "attention"
+  // scim: what the identity provider did through SCIM (Provisioning)
+  outcome:
+    | "signed_in"
+    | "refused"
+    | "failed"
+    | "test"
+    | "warning"
+    | "updated"
+    | "attention"
+    | "scim"
   reason: string | null // a code (sso_errors.py)
   reason_text: string | null // what it means, for the admin
   fix: string | null
@@ -196,6 +205,29 @@ export interface SignInSettings {
   password_login: boolean // the server allows passwords at all
   role_source: string | null // the one provider whose groups set roles
   group_admin_days: number // admin from groups lasts this long without a sign-in (0: forever)
+}
+
+// ---- Provisioning (SCIM): an identity provider adds and removes members ----
+export interface ScimToken {
+  id: number
+  hint: string // its last 4 characters; the token itself is only shown when made
+  created_by: string
+  created_at: number
+  last_used_at: number | null
+  revoked_at: number | null
+}
+
+export interface ScimSettings {
+  base_url: string // what the identity provider calls (Okta's base URL, Entra's tenant URL)
+  tokens: ScimToken[]
+  max_tokens: number
+  last_sync_at: number | null // the provider's last request
+  role_source: string | null // "scim" when SCIM's groups set roles
+  group_rules: GroupRule[]
+  retention_days: number // a deleted user is anonymised after this
+  users: number
+  groups: number
+  events: SignInEvent[]
 }
 
 export interface OidcConnectionInput {
@@ -340,12 +372,47 @@ export interface IntegrationSetup {
   max_depth?: number
 }
 
-export interface Source {
+// Why a passage was found (agent.py _source): its rank among the search's matches
+// (null: the opening of a matched document, added for context), whether the
+// meaning search found it, and the searched words it contains.
+export interface SourceWhy {
+  rank: number | null
+  of: number
+  meaning: boolean
+  terms: string[]
+}
+
+// Where a passage sits in its document (rag.passage_of).
+export interface PassagePlace {
+  doc_id?: string | null
+  chunk_id?: string | null // opens the passage (GET /api/passages/{chunk_id})
+  page?: number | null // PDFs, 1-based
+  heading_path?: string | null // "Handbook › Refunds"
+  char_start?: number | null
+  char_end?: number | null
+  modified?: string | null // ISO time the document last changed
+}
+
+export interface Source extends PassagePlace {
+  n?: number // a cited passage: the answer's [S{n}] marker
   title: string
   provider: string
   url: string | null
   kind?: "general_knowledge" // Wikipedia: not from the company's documents
   access?: Access
+  snippet?: string // the passage, as it was when the answer was written
+  why?: SourceWhy
+}
+
+// GET /api/passages/{chunk_id}: a passage and its document's text around it.
+export interface Passage extends PassagePlace {
+  title: string
+  provider: string
+  url: string | null
+  access: Access
+  text: string
+  before: string
+  after: string
 }
 
 // A tool the assistant used. Its raw input and output come to admins only.
@@ -389,7 +456,7 @@ export type StreamEvent =
   | { type: "status"; text: string }
   | { type: "step_start"; id: string; tool: string; label: string }
   | { type: "step_end"; id: string; tool: string; result: string }
-  | { type: "answer"; text: string }
+  | { type: "answer"; text: string; sources?: Source[] } // sources: when the cited ones change
   | ({ type: "done" } & ChatReply)
   | { type: "error"; message: string; message_id?: string | null }
 

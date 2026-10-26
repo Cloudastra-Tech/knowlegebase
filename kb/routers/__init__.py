@@ -26,6 +26,7 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
   chat.py
     POST   /chat                  {question, role} -> {answer, sources, steps}
     POST   /chat/stream           same, streamed live (steps + answer tokens) as SSE
+    GET    /passages/{chunk_id}   a cited passage and the text around it (role-checked)
   docs.py
     GET    /docs                  list documents                       (HR / Admin)
     GET    /docs/{access}/{name}  text of a .txt, or the file itself    (HR / Admin)
@@ -92,6 +93,13 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/eval-cases      answers promoted to the test set            (HR / Admin)
     POST   /admin/eval-cases      {message_id, expected_answer}: promote a rated answer (admin)
     DELETE /admin/eval-cases/{id}                                              (admin)
+  scim.py      (SCIM 2.0: "Authorization: Bearer <the workspace's SCIM token>", not a session)
+    /scim/v2/ServiceProviderConfig | Schemas | ResourceTypes | Users | Groups
+                                  an identity provider provisions members and groups
+    GET    /admin/sign-in/scim    base URL, tokens, last sync, rules, SCIM events     (admin)
+    POST   /admin/sign-in/scim/tokens       a new token, shown once                  (admin)
+    DELETE /admin/sign-in/scim/tokens/{id}  revoke it                               (admin)
+    PUT    /admin/sign-in/scim/roles {rules, make_role_source}: roles from SCIM's groups (admin)
   health.py
     GET    /health                the process is up (Docker's HEALTHCHECK)
     GET    /health/ready          can it serve: database, index, key, guards (503 if not)
