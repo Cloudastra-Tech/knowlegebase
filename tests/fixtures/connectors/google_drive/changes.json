@@ -1,0 +1,44 @@
+{
+ "exchanges": [
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/changes",
+               "params": {"pageToken": "100", "includeItemsFromAllDrives": "true",
+                          "supportsAllDrives": "true", "includeRemoved": "true"}},
+   "response": {"status": 200, "json": {"kind": "drive#changeList", "nextPageToken": "103",
+    "changes": [
+     {"kind": "drive#change", "changeType": "file", "fileId": "doc1", "removed": false,
+      "file": {"id": "doc1", "name": "Travel policy (2026)",
+               "mimeType": "application/vnd.google-apps.document",
+               "modifiedTime": "2026-10-05T09:00:00.000Z",
+               "webViewLink": "https://docs.google.com/document/d/doc1/edit?usp=drivesdk",
+               "parents": ["fold-root"], "trashed": false}},
+     {"kind": "drive#change", "changeType": "file", "fileId": "pdf1", "removed": true}
+    ]}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/changes",
+               "params": {"pageToken": "103"}},
+   "response": {"status": 200, "json": {"kind": "drive#changeList", "newStartPageToken": "105",
+    "changes": [
+     {"kind": "drive#change", "changeType": "file", "fileId": "docx1", "removed": false,
+      "file": {"id": "docx1", "name": "Onboarding.docx",
+               "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+               "modifiedTime": "2026-09-18T08:30:00.000Z", "parents": ["somewhere-else"],
+               "trashed": false}},
+     {"kind": "drive#change", "changeType": "file", "fileId": "txt1", "removed": false,
+      "file": {"id": "txt1", "name": "Notes.txt", "mimeType": "text/plain", "size": "40",
+               "modifiedTime": "2026-10-06T09:00:00.000Z",
+               "webViewLink": "https://drive.google.com/file/d/txt1/view?usp=drivesdk",
+               "parents": ["fold-sub"], "trashed": false}},
+     {"kind": "drive#change", "changeType": "file", "fileId": "other1", "removed": false,
+      "file": {"id": "other1", "name": "Someone's diary",
+               "mimeType": "application/vnd.google-apps.document",
+               "modifiedTime": "2026-10-06T09:00:00.000Z", "parents": ["not-picked"],
+               "trashed": false}},
+     {"kind": "drive#change", "changeType": "drive", "driveId": "shared-1", "removed": false}
+    ]}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files/doc1/export",
+               "params": {"mimeType": "text/plain"}},
+   "response": {"status": 200, "text": "Trips need approval from a manager."}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files/txt1",
+               "params": {"alt": "media"}},
+   "response": {"status": 200, "text": "Remember the receipts."}}
+ ]
+}

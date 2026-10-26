@@ -2,6 +2,8 @@
 docs_store.py  —  the files in docs/ that the assistant answers from.
 
 Plain file operations behind the Documents screen (the React app via api.py):
+Text and PDF files, plus Word, PowerPoint, Excel, Markdown and HTML, which
+ingest.py reads through connectors/extract.py.
     docs/public/      -> everyone can search these
     docs/restricted/  -> only HR / Admin can search these
 """
@@ -12,11 +14,12 @@ import shutil
 
 DOCS_FOLDER = "docs"
 ACCESS_LEVELS = ("public", "restricted")
-EXTENSIONS = (".txt", ".pdf")      # what ingest.py can read
+EXTENSIONS = (".txt", ".pdf", ".md", ".html", ".docx", ".pptx", ".xlsx")  # ingest.EXTENSIONS
+OFFICE = (".docx", ".pptx", ".xlsx")     # zip archives
 
 
 def list_docs(root=DOCS_FOLDER):
-    """Uploaded .txt/.pdf files of a workspace, as dicts (access, name, path, size).
+    """Uploaded files of a workspace, as dicts (access, name, path, size).
     (Files synced by connectors live in root/connectors/ and are not listed.)"""
     found = []
     for access in ACCESS_LEVELS:
@@ -78,8 +81,11 @@ _BINARY_STARTS = (b"%PDF-", b"PK\x03\x04", b"MZ", b"\x7fELF", b"\x89PNG", b"\xff
 
 def content_matches(name, head):
     """Do the first bytes of a file (up to 8 KB) look like what its extension
-    says? A PDF starts with %PDF- (within its first 1 KB); a text file has no
-    NUL bytes and doesn't start like a known binary format."""
+    says? A PDF starts with %PDF- (within its first 1 KB); a Word, PowerPoint or
+    Excel file is a zip archive (PK); a text file (.txt, .md, .html) has no NUL
+    bytes and doesn't start like a known binary format."""
     if name.lower().endswith(".pdf"):
         return b"%PDF-" in head[:1024]
+    if name.lower().endswith(OFFICE):
+        return head.startswith(b"PK\x03\x04")
     return b"\x00" not in head and not head.startswith(_BINARY_STARTS)

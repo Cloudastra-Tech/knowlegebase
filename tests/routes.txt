@@ -33,8 +33,10 @@ GET    /api/health health_check -
 GET    /api/health/ready ready_check -
 GET    /api/index/status index_status current_user
 GET    /api/integrations list_integrations current_user,current_role
-GET    /api/integrations/google_drive/folders drive_folders require_hr
+GET    /api/integrations/catalog integrations_catalog -
 GET    /api/integrations/{provider}/callback integration_callback -
+GET    /api/integrations/{provider}/containers integration_containers require_hr
+GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role
 GET    /api/passages/{chunk_id} passage current_user,current_role
 PATCH  /api/admin/members/{username} edit_member require_admin,audited
@@ -63,12 +65,13 @@ POST   /api/conversations create_conversation current_user,current_role,audited
 POST   /api/docs create_doc require_hr,audited
 POST   /api/docs/upload upload_docs require_hr,audited
 POST   /api/integrations/{provider}/connect integration_connect require_hr,audited
+POST   /api/integrations/{provider}/setup integration_setup require_hr,audited
 POST   /api/integrations/{provider}/sync integration_sync require_hr,audited
 POST   /api/reindex reindex require_hr,audited
 PUT    /api/admin/sign-in/connections/{cid}/roles set_group_roles require_admin,audited
 PUT    /api/admin/sign-in/group-admin-days set_group_admin_days require_admin,audited
 PUT    /api/admin/sign-in/policy set_policy require_admin,audited
 PUT    /api/docs/{access}/{name} save_doc require_hr,audited
-PUT    /api/integrations/google_drive/folders drive_set_folders require_hr,audited
 PUT    /api/integrations/{provider}/access integration_access require_hr,audited
+PUT    /api/integrations/{provider}/containers integration_set_containers require_hr,audited
 PUT    /api/messages/{mid}/feedback give_feedback current_user,current_role,audited

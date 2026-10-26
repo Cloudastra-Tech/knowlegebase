@@ -244,13 +244,28 @@ def test_outline_status_follows_the_role(outline, monkeypatch):
     token = client.post("/api/auth/login", json={"username": "wiki-reader@default.example",
                                                  "password": "correct-horse"}).json()["token"]
 
-    def status(x_role):
+    def live(x_role):
         headers = {"Authorization": f"Bearer {token}", "X-Role": x_role}
         items = client.get("/api/integrations", headers=headers).json()["integrations"]
-        return next(i for i in items if i["id"] == "outline")["status"]
+        return next(i for i in items if i["id"] == "outline")["live_search"]
 
-    assert status("hr") == "connected"
-    assert status("public") == "unavailable"
+    assert live("hr") is True
+    assert live("public") is False
+
+
+def test_a_synced_outline_wiki_replaces_the_live_tool(outline):
+    """With the server's wiki in .env AND a synced Outline connection, the
+    workspace searches its synced copy: the live tool isn't offered."""
+    import integrations_store
+    from kb.services import agents
+    assert agents.outline_on("default", "hr")
+    integrations_store.connect("default", "outline", "Wiki", {"token": "ol_api_x"}, "admin")
+    try:
+        assert not agents.outline_on("default", "hr")
+        assert not agents.outline_on("default", "public")
+    finally:
+        integrations_store.remove("default", "outline")
+    assert agents.outline_on("default", "hr")
 
 
 def test_outline_collections_limit_search_and_reading(monkeypatch):
