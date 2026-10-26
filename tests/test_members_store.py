@@ -8,12 +8,14 @@ import json
 
 import pytest
 
+import db
 import members_store
 
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    monkeypatch.setattr(members_store, "DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setattr(db, "_migrated", set())
     monkeypatch.setattr(members_store, "USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setattr(members_store, "SSO_FILE", str(tmp_path / "sso.json"))
     monkeypatch.setattr(members_store, "_ready", False)
@@ -24,6 +26,7 @@ def store(tmp_path, monkeypatch):
 
     def restart():                    # as if the server started again
         monkeypatch.setattr(members_store, "_ready", False)
+        monkeypatch.setattr(db, "_migrated", set())
     write.restart = restart
     return write
 
@@ -106,8 +109,8 @@ def test_roles_are_checked(store):
 def test_an_older_database_gains_the_new_columns_and_keeps_roles(store, tmp_path):
     """A config/app.db from before group roles: roles set by hand become overrides."""
     import sqlite3
-    with sqlite3.connect(tmp_path / "app.db") as db:
-        db.executescript("""
+    with sqlite3.connect(tmp_path / "app.db") as old:
+        old.executescript("""
             CREATE TABLE workspaces (slug TEXT PRIMARY KEY, name TEXT NOT NULL,
                                      created_at REAL NOT NULL);
             CREATE TABLE members (username TEXT PRIMARY KEY, workspace TEXT NOT NULL,
@@ -130,8 +133,9 @@ def test_an_older_event_log_keeps_its_rows_and_takes_metadata_events(store, tmp_
     """sso_events from before 'updated' / 'attention': its CHECK is widened, once."""
     import sqlite3
     members_store.get("nobody")                    # a database as it was before them
-    with sqlite3.connect(tmp_path / "app.db") as db:
-        db.executescript("""
+    with sqlite3.connect(tmp_path / "app.db") as old:
+        old.executescript("""
+            DROP TABLE alembic_version;
             DROP TABLE sso_events;
             CREATE TABLE sso_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL,
@@ -181,11 +185,12 @@ def test_a_role_comes_from_the_override_then_the_groups_then_public(store):
 def test_an_interrupted_role_migration_is_finished_next_time(store, tmp_path):
     """The column was added (ALTER TABLE commits by itself) but the copy wasn't."""
     import sqlite3
-    members_store.get("nobody")                              # a current database
-    with sqlite3.connect(tmp_path / "app.db") as db:
-        db.execute("INSERT INTO members (username, workspace, name, role, created_at) "
-                   "VALUES ('boss', 'default', 'Boss', 'hr', 0)")
-        db.execute("DELETE FROM imports WHERE source = 'roles-as-overrides'")
+    members_store.get("nobody")                              # a database from before Alembic
+    with sqlite3.connect(tmp_path / "app.db") as old:
+        old.execute("DROP TABLE alembic_version")
+        old.execute("INSERT INTO members (username, workspace, name, role, created_at) "
+                    "VALUES ('boss', 'default', 'Boss', 'hr', 0)")
+        old.execute("DELETE FROM imports WHERE source = 'roles-as-overrides'")
     store.restart()
     assert members_store.get("boss")["override_role"] == "hr"
 
@@ -204,8 +209,9 @@ def test_a_database_from_before_role_sources_gets_one(store, tmp_path):
                                    source=used)
     for cid in (used, unruled):
         members_store.record_connection_login(cid)
-    with sqlite3.connect(tmp_path / "app.db") as db:
-        db.executescript("""
+    with sqlite3.connect(tmp_path / "app.db") as old:
+        old.executescript("""
+            DROP TABLE alembic_version;
             UPDATE workspaces SET role_source = NULL;
             UPDATE members SET groups_updated_at = NULL, last_login_at = 1000;
             DELETE FROM imports WHERE source = 'role-source';

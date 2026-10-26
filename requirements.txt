@@ -26,3 +26,5 @@ dnspython==2.8.0           # checks the DNS TXT record that proves a workspace o
 pysaml2==7.5.5             # SAML sign-in (saml_sp.py); checks signatures with the xmlsec1 program
 itsdangerous==2.2.0        # signs the short-lived cookie that holds sign-in state (SessionMiddleware)
 sentry-sdk==2.72.0         # optional error tracking (observability.py), only with SENTRY_DSN; also GlitchTip
+alembic==1.20.1            # versioned migrations for config/app.db (db.py, migrations/)
+SQLAlchemy==2.1.6          # what Alembic runs migrations through (already pulled in by langchain-community; the stores use plain sqlite3)

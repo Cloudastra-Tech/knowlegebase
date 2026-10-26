@@ -269,6 +269,7 @@ def test_an_admin_can_sign_a_member_out_everywhere(client):
 
 def test_turning_access_off_or_removing_ends_their_sessions(client):
     import auth
+    import db
     import members_store
     import sessions_store
     members_store.set_password("lim-a-leaver", "Leaver", auth.hash_password(PASSWORD),
@@ -282,13 +283,14 @@ def test_turning_access_off_or_removing_ends_their_sessions(client):
     leaver = login(client, "lim-a-leaver")
     assert sessions_store.delete_user("nobody") == 0
     assert client.delete(path, headers=admin).status_code == 200
-    with sqlite3.connect(sessions_store.DB_PATH) as conn:
+    with sqlite3.connect(db.DB_PATH) as conn:
         left = conn.execute("SELECT COUNT(*) FROM sessions WHERE username = ?",
                             ("lim-a-leaver",)).fetchone()[0]
     assert left == 0
 
 
 def test_an_old_sessions_table_gets_the_new_columns(tmp_path, monkeypatch):
+    import db
     import sessions_store
     path = str(tmp_path / "old.db")
     with sqlite3.connect(path) as conn:
@@ -298,10 +300,10 @@ def test_an_old_sessions_table_gets_the_new_columns(tmp_path, monkeypatch):
                             ("t2", {"username": "other", "workspace": "acme"})):
             conn.execute("INSERT INTO sessions VALUES (?, ?, ?)",
                          (sessions_store._hash(token), json.dumps(user), time.time() + 60))
-    monkeypatch.setattr(sessions_store, "DB_PATH", path)
-    monkeypatch.setattr(sessions_store, "_migrated", set())
+    monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", set())
     assert sessions_store.get("t1")["username"] == "Old@Acme.example"   # still signed in
-    sessions_store._migrate(sessions_store._db())                      # again: no harm
+    db.migrate(path)                                                   # again: no harm
     with sqlite3.connect(path) as conn:
         rows = conn.execute("SELECT username, workspace FROM sessions ORDER BY username").fetchall()
     assert rows == [("old@acme.example", "acme"), ("other", "acme")]
