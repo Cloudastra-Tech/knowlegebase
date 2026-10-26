@@ -26,6 +26,8 @@ from fastapi import HTTPException
 
 import conversations_store as store
 import members_store
+import workspaces
+from kb.deps import ws_of
 from kb.services import conversations
 
 EXPIRY_CHOICES = (1, 7, 30, None)       # days; None: as long as the chat is kept
@@ -42,7 +44,7 @@ def member_role(ws, username):
     """The role someone has in `ws` now ("hr" or "public"), or None if they're no
     longer an enabled member of it."""
     member = members_store.check_group_admin(members_store.get(username))
-    if not member or member["disabled"] or member["workspace"] != ws:
+    if not member or member["disabled"] or (member["workspace"] or workspaces.DEFAULT) != ws:
         return None
     return "hr" if member["role"] in members_store.STAFF_ROLES else "public"
 
@@ -74,7 +76,7 @@ def is_restricted(messages):
 def open_share(token, viewer, viewer_role):
     """The link `token` as `viewer` (a signed-in user, viewing the app as
     viewer_role) may see it. Raises 404 / 410."""
-    ws = viewer.get("workspace")
+    ws = ws_of(viewer)
     share = store.share_by_token(token)
     if not share or share["workspace"] != ws:
         raise HTTPException(404, NOT_FOUND)
