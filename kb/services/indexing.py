@@ -29,6 +29,7 @@ import time
 import db
 import ingest
 import integrations_store
+import sync_store
 import workspaces
 from kb import jobs
 
@@ -132,23 +133,24 @@ def index(ws, full=False, docs=None, progress=None):
     rebuild (see the top of this file). Returns the run's summary."""
     row = _row(ws)
     access = integrations_store.chunk_access_levels(ws)
+    info = sync_store.doc_info(ws)        # synced files' titles and links
     if full or not row or row["fingerprint"] != ingest.FINGERPRINT:
-        return _rebuild(ws, row, access, progress)
+        return _rebuild(ws, row, access, progress, info)
     result = ingest.update(progress, docs_folder=workspaces.docs_root(ws),
                            collection=row["collection"], connector_access=access,
-                           workspace=ws, only=docs)
+                           workspace=ws, only=docs, doc_info=info)
     if any(result[k] for k in ("embedded", "deleted_chunks", "retagged", "changed")):
         _changed(ws)
     return {**result, "mode": "incremental"}
 
 
-def _rebuild(ws, row, access, progress):
+def _rebuild(ws, row, access, progress, info):
     generation = (row["generation"] if row else 0) + 1
     new = f"{workspaces.collection(ws)}__g{generation}"
     old = row["collection"] if row else workspaces.collection(ws)
     try:
         result = ingest.main(progress, docs_folder=workspaces.docs_root(ws), collection=new,
-                             connector_access=access, workspace=ws)
+                             connector_access=access, workspace=ws, doc_info=info)
         stored = ingest.summary(new)["chunks"]
         if stored != result["chunks"]:
             raise RuntimeError(f"the new index holds {stored} chunks, not {result['chunks']}")

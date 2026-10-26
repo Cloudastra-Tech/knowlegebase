@@ -253,28 +253,91 @@ export type IntegrationStatus =
   | "not_configured"
   | "unavailable"
 
-export interface Integration {
-  id: "uploads" | "google_drive" | "notion" | "outline"
+// How a connector is connected: by signing in to it, with a pasted token, or an address.
+export type ConnectorAuth = "oauth" | "token" | "url"
+// What its picker shows: a folder tree, a flat list, a list of addresses, or nothing.
+export type PickerKind = "tree" | "list" | "urls" | "none"
+
+// A sync error, already in plain words (the code says which actions to offer).
+export interface IntegrationError {
+  code: string
+  message: string
+}
+
+// One sync run, as the history sheet shows it.
+export interface SyncRun {
+  id: number
+  kind: "full" | "incremental" | "imported"
+  status: "running" | "done" | "failed" | "held"
+  started_at: number
+  finished_at: number | null
+  upserted: number
+  deleted: number
+  skipped: number
+  unchanged: number
+  held_deletes: number
+  limit_reached: number
+  error: IntegrationError | null
+}
+
+export interface SkippedItem {
+  title: string
+  url: string | null
+  reason: string
+}
+
+// Something that can be picked to sync: a Drive folder, Shared Drive or file, a
+// Notion page, an Outline collection, or a website's start address.
+export interface Container {
+  id: string
   name: string
+  kind: string
+  mimeType?: string
+  has_children?: boolean
+  url?: string | null
+}
+
+// One card on the Integrations screen: a connector from the server's registry
+// (connectors/registry.py), uploaded files, or one coming soon.
+export interface Integration {
+  id: string
+  name: string
+  availability: "live" | "soon"
   status: IntegrationStatus
+  description?: string
+  icon?: string | null // a simple-icons slug
+  auth?: ConnectorAuth
+  picker?: PickerKind
+  picker_required?: boolean
+  unit?: string // what it counts: "files", "pages", ...
+  acl?: boolean
+  setup_env?: string
   doc_count?: number
+  skipped_count?: number
   account?: string | null
   connected_by?: string | null
   last_sync_at?: number | null
-  last_error?: string | null
+  error?: IntegrationError | null
   access?: ConnectorAccess // who may ask about a connection's synced files
-  folders?: DriveFolder[]
+  containers?: Container[]
+  held_deletes?: number
+  last_run?: SyncRun | null
+  limits?: { max_pages: number | null; max_depth: number | null }
+  base_url?: string | null // Outline
+  live_search?: boolean // Outline: the server's wiki is searched live instead
 }
 
 // "restricted": HR and admins only (the default). "everyone": the whole workspace.
 export type ConnectorAccess = "restricted" | "everyone"
 
-// Something picked to sync from Google Drive: a folder, a Shared Drive or one file.
-export interface DriveFolder {
-  id: string
-  name: string
-  kind: "folder" | "drive" | "file"
-  mimeType?: string
+// What a token / address connector's form sends (Outline, a website).
+export interface IntegrationSetup {
+  url?: string
+  token?: string
+  cf_client_id?: string
+  cf_client_secret?: string
+  max_pages?: number
+  max_depth?: number
 }
 
 export interface Source {

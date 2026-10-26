@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 
 # LangChain pieces — each is one step of the pipeline
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
@@ -54,7 +55,9 @@ DB_FOLDER = "chroma_db"
 EMBED_MODEL = "text-embedding-3-small"
 CHUNK_SIZE = 500          # characters (about 110-125 tokens)
 CHUNK_OVERLAP = 100
-EXTENSIONS = (".txt", ".pdf")
+# .txt and .pdf are read here; the rest are turned into text by connectors/extract.py
+# (uploads; connectors write .txt or .pdf).
+EXTENSIONS = (".txt", ".pdf", ".md", ".html", ".htm", ".docx", ".pptx", ".xlsx")
 BATCH = 128               # chunks per embedding call
 # Everything that decides what a chunk's text and vector are. An index built
 # with other settings can't be updated chunk by chunk: it is rebuilt.
@@ -101,25 +104,19 @@ def _connector_of(key):
     return parts[1] if len(parts) > 2 and parts[0] == "connectors" else None
 
 
-def _manifest_info(docs_folder, key, manifests):
-    """Files synced by a connector (docs/.../connectors/<provider>/) come with a
-    manifest.json giving each file's real title and link — attach it so answers
-    can cite "Q3 plan (Google Drive)" with a link instead of a file id."""
-    folder = os.path.join(docs_folder, os.path.dirname(key))
-    if folder not in manifests:
-        try:
-            with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
-                manifests[folder] = json.load(f)
-        except (OSError, ValueError):
-            manifests[folder] = {}
-    info = manifests[folder].get(os.path.basename(key)) or {}
+def _source_info(key, doc_info):
+    """Files synced by a connector (docs/.../connectors/<provider>/) have a row in
+    source_items (sync_store.doc_info) giving each file's real title and link —
+    attach it so answers can cite "Q3 plan (Google Drive)" with a link instead
+    of a file id."""
+    info = (doc_info or {}).get(key) or {}
     if not info:
         return {}
     return {"title": info.get("title") or "", "url": info.get("url") or "",
             "provider": info.get("provider") or ""}
 
 
-def doc_meta(docs_folder, key, connector_access, manifests):
+def doc_meta(docs_folder, key, connector_access, doc_info=None):
     """What every chunk of a document carries besides its own position.
 
     ACCESS LEVEL (permission control): this is how enterprises secure RAG —
@@ -131,7 +128,7 @@ def doc_meta(docs_folder, key, connector_access, manifests):
     provider = _connector_of(key)
     meta = {"doc_key": key, "connector": provider or ""}
     if provider:
-        meta.update(_manifest_info(docs_folder, key, manifests))
+        meta.update(_source_info(key, doc_info))
         meta["access"] = (connector_access or {}).get(provider, "restricted")
     else:
         meta["access"] = "restricted" if "/restricted/" in "/" + key else "public"
@@ -181,6 +178,12 @@ def load_and_split(docs_folder, key, meta, namespace):
     path = os.path.join(docs_folder, *key.split("/"))
     if key.endswith(".pdf"):
         documents = PyPDFLoader(path).load()
+    elif not key.endswith(".txt"):
+        # Word, PowerPoint, Excel, Markdown, HTML: one Document of its text.
+        from connectors import extract
+        with open(path, "rb") as f:
+            text = extract.extract(f.read(), name=key)
+        documents = [Document(page_content=text, metadata={"source": path})]
     else:
         # UTF-8 first (Windows would otherwise guess cp1252 and garble text),
         # detect the encoding only if that fails.
@@ -241,14 +244,15 @@ def _reporter(progress):
 
 
 def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None,
-         workspace=None):
+         workspace=None, doc_info=None):
     """Build a search index from a docs folder, from scratch. Returns a summary dict.
     progress(step, total, message) — optional callback, e.g. for a UI progress bar.
     docs_folder / collection — which workspace (defaults = the original setup).
     connector_access — {provider: "public" | "restricted"} for synced files, from
     each connection's setting (integrations_store.chunk_access_levels); a provider
     missing from it is restricted.
-    workspace — goes into the chunk ids (default: the collection's name)."""
+    workspace — goes into the chunk ids (default: the collection's name).
+    doc_info — {doc key: {title, url, provider}} for synced files (sync_store.doc_info)."""
     report = _reporter(progress)
     collection = collection or "langchain"
     namespace = workspace or collection
@@ -262,12 +266,12 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
     store = _store(collection)
 
     keys = doc_files(docs_folder) if os.path.isdir(docs_folder) else []
-    manifests, items, failed = {}, [], []
+    items, failed = [], []
     report(2, "Splitting into chunks")
     for key in keys:
         path = os.path.join(docs_folder, *key.split("/"))
         try:
-            meta = doc_meta(docs_folder, key, connector_access, manifests)
+            meta = doc_meta(docs_folder, key, connector_access, doc_info)
             meta.update(doc_stat=_file_stat(path), doc_hash=_doc_hash(path, meta.get("title")))
             items += load_and_split(docs_folder, key, meta, namespace)
         except Exception:
@@ -302,7 +306,7 @@ def _same(metas, field):
 
 
 def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None,
-           workspace=None, only=None):
+           workspace=None, only=None, doc_info=None):
     """Bring an existing collection in line with the docs folder, document by
     document. Returns a summary dict (with what was embedded, re-tagged, removed).
 
@@ -331,7 +335,7 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
         keys = sorted(set(only))
         stored = _stored_docs(store, keys)
 
-    manifests, failed = {}, []
+    failed = []
     stats = Counter()
     adds, retags, deletes = [], [], []        # (id, text, meta) / (id, meta) / id
     report(2, "Reading changed documents")
@@ -343,7 +347,7 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
                 deletes += have["ids"]
                 stats["removed"] += 1
             continue
-        meta = doc_meta(docs_folder, key, connector_access, manifests)
+        meta = doc_meta(docs_folder, key, connector_access, doc_info)
         stat = _file_stat(path)
         if have and _same(have["metas"], "doc_stat") == stat and all(
                 _same(have["metas"], k) == meta.get(k) for k in DOC_FIELDS):

@@ -78,7 +78,7 @@ def fakes(monkeypatch, tmp_path):
     from kb.services import indexing, sync
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kwargs: None)
     monkeypatch.setattr(indexing, "schedule_retag", lambda ws, provider: None)
-    monkeypatch.setattr(sync, "start_sync", lambda ws, provider: None)
+    monkeypatch.setattr(sync, "start_sync", lambda ws, provider, **options: None)
     monkeypatch.setattr(workspaces, "docs_root", lambda ws: str(tmp_path / ws))
     monkeypatch.setattr(sso_setup, "normalize_issuer", lambda issuer: issuer)
     monkeypatch.setattr(sso_setup, "oidc_metadata", lambda issuer: {
@@ -201,8 +201,8 @@ CASES = [
     ("integration.disconnect", lambda c, h, ws, txt: _notion(ws),
      lambda ws, _: ("DELETE", "/api/integrations/notion", {})),
     ("integration.folders", lambda c, h, ws, txt: _drive(ws),
-     lambda ws, _: ("PUT", "/api/integrations/google_drive/folders",
-                    {"json": {"folders": [{"id": "f1", "name": "HR", "kind": "folder"}]}})),
+     lambda ws, _: ("PUT", "/api/integrations/google_drive/containers",
+                    {"json": {"containers": [{"id": "f1", "name": "HR", "kind": "folder"}]}})),
     ("conversation.create", None, lambda ws, _: ("POST", "/api/conversations", {"json": {}})),
     ("conversation.rename", lambda c, h, ws, txt: _conversation(ws),
      lambda ws, cid: ("PATCH", f"/api/conversations/{cid}", {"json": {"title": "Pay"}})),
@@ -245,9 +245,10 @@ def test_connecting_an_integration_is_audited_at_both_ends(client, fakes, monkey
     import integrations_store
     from connectors import notion
     from kb.services import sync
-    monkeypatch.setattr(notion, "configured", lambda: True)
-    monkeypatch.setattr(notion, "auth_url", lambda redirect_uri, state: f"https://n/?s={state}")
-    monkeypatch.setattr(notion, "finish_connect", lambda ws, code, uri, user:
+    c = notion.CONNECTOR
+    monkeypatch.setattr(c, "configured", lambda: True)
+    monkeypatch.setattr(c, "auth_url", lambda redirect_uri, state: f"https://n/?s={state}")
+    monkeypatch.setattr(c, "finish_connect", lambda ws, code, uri, user:
                         integrations_store.connect(ws, "notion", "Acme Notion", {"t": code}, user))
     monkeypatch.setattr(sync, "ready_to_sync", lambda ws, provider: True)
     ws = new_workspace()

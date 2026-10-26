@@ -218,7 +218,7 @@ and never wait on each other. The workers run inside the API, or as
 
 ```
   upload / edit / delete ──► index job (that document)     ┐
-  connector sync changed ──► index job (check every file)  ├─► ingest.update: only what changed
+  connector sync changed ──► index job (those documents)   ├─► ingest.update: only what changed
   "Re-index"             ──► index job                     ┘     is embedded; deleted files'
   access level changed   ──► retag job ─► chunks' access tag      chunks are removed
                                           updated, no embedding
