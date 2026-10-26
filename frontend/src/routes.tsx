@@ -13,6 +13,7 @@ import {
   InvitePage,
   KnowledgeScreen,
   Root,
+  SharedScreen,
   SignInPage,
   SsoReturnPage,
 } from "@/screens"
@@ -24,6 +25,7 @@ import {
 //   /sso-test          the window of an admin's "Test sign-in"
 //   /chat, /knowledge  everyone signed in
 //   /chat/:id          one of their saved conversations
+//   /s/:token          a chat or answer shared by someone in their workspace
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
 //   /admin/sign-in, /admin/members, /admin/activity   admins (the Access screen's tabs)
@@ -57,6 +59,7 @@ export const routes: RouteObject[] = [
               // The chat stays mounted in App, so it isn't lost on another screen.
               { path: "chat", element: null },
               { path: "chat/:conversationId", element: null }, // a saved conversation
+              { path: "s/:token", Component: SharedScreen },
               { path: "knowledge", Component: KnowledgeScreen },
               {
                 Component: HrOnly,

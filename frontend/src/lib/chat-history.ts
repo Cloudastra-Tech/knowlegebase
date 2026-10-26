@@ -40,11 +40,21 @@ export function groupChats(chats: ConversationSummary[], now = new Date()): Grou
 }
 
 // A search snippet ("…the \u0002refund\u0003 policy…") as pieces, the matches marked.
+const START = String.fromCharCode(2)
+const END = String.fromCharCode(3)
+
 export function splitSnippet(snippet: string): { text: string; match: boolean }[] {
   const out: { text: string; match: boolean }[] = []
-  for (const [i, part] of snippet.split(/[\u0002\u0003]/).entries()) {
-    if (part) out.push({ text: part, match: i % 2 === 1 })
+  let text = ""
+  let match = false
+  for (const ch of snippet) {
+    if (ch === START || ch === END) {
+      if (text) out.push({ text, match })
+      text = ""
+      match = ch === START
+    } else text += ch
   }
+  if (text) out.push({ text, match })
   return out
 }
 

@@ -64,10 +64,9 @@ import {
 } from "@/components/ui/sidebar"
 import { api, type ChatFolder, type ConversationSummary } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
+import { MOD_KEY } from "@/lib/chat-events"
 import { groupChats, keptFor, splitSnippet } from "@/lib/chat-history"
 import { queries } from "@/lib/queries"
-
-export const MOD_KEY = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"
 
 function useDebounced<T>(value: T, ms: number) {
   const [debounced, setDebounced] = useState(value)
@@ -96,48 +95,70 @@ function NameDialog({
   maxLength: number
   onSave: (name: string) => Promise<void>
 }) {
-  const [name, setName] = useState(initial)
-  const [saving, setSaving] = useState(false)
-  useEffect(() => {
-    if (open) setName(initial)
-  }, [open, initial])
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault()
-            if (!name.trim()) return
-            setSaving(true)
-            try {
-              await onSave(name)
-              onOpenChange(false)
-            } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Couldn't save it.")
-            } finally {
-              setSaving(false)
-            }
-          }}
-        >
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-label={label}
-            maxLength={maxLength}
-            autoFocus
-          />
-          <DialogFooter className="mt-4">
-            <Button type="submit" disabled={saving || !name.trim()}>
-              {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
-              Save
-            </Button>
-          </DialogFooter>
-        </form>
+        {/* Mounted while open, so it starts from `initial` each time. */}
+        <NameForm
+          label={label}
+          initial={initial}
+          maxLength={maxLength}
+          onSave={onSave}
+          onDone={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
+  )
+}
+
+function NameForm({
+  label,
+  initial,
+  maxLength,
+  onSave,
+  onDone,
+}: {
+  label: string
+  initial: string
+  maxLength: number
+  onSave: (name: string) => Promise<void>
+  onDone: () => void
+}) {
+  const [name, setName] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault()
+        if (!name.trim()) return
+        setSaving(true)
+        try {
+          await onSave(name)
+          onDone()
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Couldn't save it.")
+        } finally {
+          setSaving(false)
+        }
+      }}
+    >
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        aria-label={label}
+        maxLength={maxLength}
+        autoFocus
+      />
+      <DialogFooter className="mt-4">
+        <Button type="submit" disabled={saving || !name.trim()}>
+          {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          Save
+        </Button>
+      </DialogFooter>
+    </form>
   )
 }
 

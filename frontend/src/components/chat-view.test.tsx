@@ -143,7 +143,24 @@ describe("the chat", () => {
     mockApi({
       ...SIGNED_IN,
       "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
-      "GET /api/conversations/c1": SAVED,
+      // Read again once the answer is done (for its versions): now with the follow-up.
+      "GET /api/conversations/c1": () =>
+        asked.length
+          ? {
+              ...SAVED,
+              messages: [
+                ...SAVED.messages,
+                { ...SAVED.messages[0], id: "q2", parent_id: "a1", content: "How long?" },
+                {
+                  ...SAVED.messages[1],
+                  id: "a2",
+                  parent_id: "q2",
+                  content: "Thirty days from the request.",
+                  sources: [],
+                },
+              ],
+            }
+          : SAVED,
       "POST /api/chat/stream": (body: unknown) => {
         asked.push(body)
         return sse(
