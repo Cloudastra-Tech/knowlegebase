@@ -26,7 +26,7 @@ class _Site(StaticFiles):
             response = await super().get_response(path, scope)
         except HTTPException as exc:
             # A missing API route, asset or file (a "." in its name) stays a 404.
-            screen = (not path.startswith(("api/", "assets/"))
+            screen = (not path.startswith(("api/", "assets/", "scim/"))
                       and "." not in path.rsplit("/", 1)[-1])
             if exc.status_code != 404 or not screen:
                 raise

@@ -54,6 +54,10 @@ alone, so it doesn't change with the button someone clicks.
       each of their requests, and for everyone when the members are listed.
     * Databases from before role sources: the provider with rules that signed
       someone in last became the role source (migrations/legacy.py).
+    * SCIM can be the role source instead of a provider (role_source = SCIM_SOURCE,
+      its rules in scim_group_rules): then the groups the identity provider pushes
+      through /scim/v2 set group roles as they change (scim_store.py), sign-ins
+      set none, and group-given admin doesn't expire, since SCIM keeps it current.
 
 Until there's a screen for it, manage it with `python auth.py` (see its help).
 
@@ -86,9 +90,12 @@ STAFF_ROLES = ("hr", "admin")      # see HR documents and the HR / Admin screens
 TXT_PREFIX = "_knowledge-assistant"
 EVENTS_KEPT = 500
 # 'warning': role-source admin kept; 'updated' / 'attention': a SAML provider's
-# metadata changed by itself, or needs a look. sso_events' CHECK allows exactly
+# metadata changed by itself, or needs a look; 'scim': what the identity
+# provider did through SCIM (scim_store.py). sso_events' CHECK allows exactly
 # these: a new one needs a migration.
-EVENT_OUTCOMES = ('signed_in', 'refused', 'failed', 'test', 'warning', 'updated', 'attention')
+EVENT_OUTCOMES = ('signed_in', 'refused', 'failed', 'test', 'warning', 'updated', 'attention',
+                  'scim')
+SCIM_SOURCE = "scim"               # workspaces.role_source / members.group_source: SCIM's groups
 GROUP_ADMIN_DAYS = 30              # group-given admin lasts this long without a sign-in
                                    # (the column's default in the schema too)
 
@@ -664,7 +671,7 @@ def delete_connection(workspace, cid):
         if n:                              # roles its groups gave go with it
             conn.execute("UPDATE workspaces SET role_source = NULL "
                          "WHERE slug = ? AND role_source = ?", (workspace, cid))
-            _regroup(conn, cid, [])
+            _regroup(conn, cid, [], workspace)
             _keep_an_admin(conn, workspace, before)
     return n > 0
 
@@ -771,16 +778,22 @@ def _log_event(conn, workspace, cid, email, outcome, reason=None, ref=None):
                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
                  (workspace, cid, email, outcome, (reason or "")[:300] or None, ref,
                   time.time()))
-    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND id NOT IN
-                    (SELECT id FROM sso_events WHERE workspace = ?
-                     ORDER BY id DESC LIMIT ?)""", (workspace, workspace, EVENTS_KEPT))
+    # SCIM's events are kept apart: a big first sync mustn't push out the sign-ins.
+    scim = int(outcome == "scim")
+    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND (outcome = 'scim') = ?
+                    AND id NOT IN (SELECT id FROM sso_events
+                                   WHERE workspace = ? AND (outcome = 'scim') = ?
+                                   ORDER BY id DESC LIMIT ?)""",
+                 (workspace, scim, workspace, scim, EVENTS_KEPT))
 
 
-def recent_events(workspace, limit=50):
+def recent_events(workspace, limit=50, scim=False):
+    """The newest sign-in events, or (`scim`) the newest SCIM ones."""
     with _db() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT connection_id, email, outcome, reason, ref, at FROM sso_events "
-            "WHERE workspace = ? ORDER BY id DESC LIMIT ?", (workspace, limit))]
+            "WHERE workspace = ? AND (outcome = 'scim') = ? ORDER BY id DESC LIMIT ?",
+            (workspace, int(scim), limit))]
 
 
 def connection_events(cid, limit=100):
@@ -806,14 +819,7 @@ def set_group_rules(workspace, cid, group_claim, rules, make_role_source=False):
     RoleSourceTaken unless `make_role_source`. No rules on the role source: the
     workspace has none. Raises NoAdminLeft (changing nothing) if the group roles
     that go were its only admins."""
-    for _, role in rules:
-        if role not in ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
-    kept, seen = [], set()
-    for group, role in rules:
-        if group.strip().lower() not in seen:
-            seen.add(group.strip().lower())
-            kept.append({"group_name": group.strip(), "role": role})
+    kept = _kept_rules(rules)
     with _lock, _db() as conn:
         n = conn.execute("UPDATE sso_connections SET group_claim = ?, updated_at = ? "
                          "WHERE id = ? AND workspace = ?",
@@ -835,25 +841,113 @@ def set_group_rules(workspace, cid, group_claim, rules, make_role_source=False):
             # before), else at each person's next sign-in through it.
             conn.execute("UPDATE workspaces SET role_source = ? WHERE slug = ?",
                          (cid, workspace))
-            for row in conn.execute("SELECT DISTINCT group_source FROM members "
-                                    "WHERE workspace = ? AND group_source != ?",
-                                    (workspace, cid)).fetchall():
-                _regroup(conn, row["group_source"], [])
+            _drop_other_sources(conn, workspace, cid)
         elif source == cid and not kept:
             conn.execute("UPDATE workspaces SET role_source = NULL WHERE slug = ?",
                          (workspace,))
-        _regroup(conn, cid, kept)
+        _regroup(conn, cid, kept, workspace)
         _keep_an_admin(conn, workspace, before)
         _expire_group_admins(conn, workspace)
     return True
 
 
-def _regroup(conn, cid, rules):
-    """The rules of provider `cid` changed: recompute the group role of everyone it
-    gave one to, from the groups it sent at their last sign-in. (No rules, or a
-    deleted provider: they lose it.)"""
-    for row in conn.execute("SELECT username, groups FROM members WHERE group_source = ?",
-                            (cid,)).fetchall():
+def _kept_rules(rules):
+    """[(group, role)] checked, first of each group (without regard to case) kept."""
+    for _, role in rules:
+        if role not in ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(ROLES)}.")
+    kept, seen = [], set()
+    for group, role in rules:
+        if group.strip().lower() not in seen:
+            seen.add(group.strip().lower())
+            kept.append({"group_name": group.strip(), "role": role})
+    return kept
+
+
+# ---- Roles from SCIM's groups -------------------------------------------------
+def scim_group_rules(workspace):
+    with _db() as conn:
+        return _scim_rules(conn, workspace)
+
+
+def _scim_rules(conn, workspace):
+    return [dict(r) for r in conn.execute(
+        "SELECT group_name, role FROM scim_group_rules WHERE workspace = ? "
+        "ORDER BY group_name COLLATE NOCASE", (workspace,))]
+
+
+def set_scim_group_rules(workspace, rules, make_role_source=False):
+    """Replace the rules for the groups SCIM pushes ([(group, role)]). Rules make
+    SCIM the workspace's role source, the same way set_group_rules does for a
+    provider (RoleSourceTaken, NoAdminLeft); its group roles apply at once, from
+    the groups SCIM has pushed."""
+    kept = _kept_rules(rules)
+    with _lock, _db() as conn:
+        _ensure_workspace(conn, workspace)
+        source = conn.execute("SELECT role_source FROM workspaces WHERE slug = ?",
+                              (workspace,)).fetchone()["role_source"]
+        if kept and source not in (None, SCIM_SOURCE) and not make_role_source:
+            raise RoleSourceTaken(source)
+        before = _admins(conn, workspace)
+        conn.execute("DELETE FROM scim_group_rules WHERE workspace = ?", (workspace,))
+        for r in kept:
+            conn.execute("INSERT INTO scim_group_rules (workspace, group_name, role) "
+                         "VALUES (?, ?, ?)", (workspace, r["group_name"], r["role"]))
+        if kept and source != SCIM_SOURCE:
+            conn.execute("UPDATE workspaces SET role_source = ? WHERE slug = ?",
+                         (SCIM_SOURCE, workspace))
+            _drop_other_sources(conn, workspace, SCIM_SOURCE)
+            apply_scim_groups(conn, workspace)
+        elif source == SCIM_SOURCE and not kept:
+            conn.execute("UPDATE workspaces SET role_source = NULL WHERE slug = ?",
+                         (workspace,))
+        _regroup(conn, SCIM_SOURCE, kept, workspace)
+        _keep_an_admin(conn, workspace, before)
+
+
+def apply_scim_groups(conn, workspace, usernames=None):
+    """In a transaction that changed SCIM's groups (scim_store.py): when SCIM is
+    the role source, set these members' groups (default: everyone SCIM has put
+    in a group) from the groups it pushed, and their group role by its rules.
+    The caller checks _keep_an_admin."""
+    if conn.execute("SELECT 1 FROM workspaces WHERE slug = ? AND role_source = ?",
+                    (workspace, SCIM_SOURCE)).fetchone() is None:
+        return
+    if usernames is None:
+        usernames = [r["username"] for r in conn.execute(
+            """SELECT m.username FROM scim_group_members m
+               JOIN scim_groups g ON g.id = m.group_id WHERE g.workspace = ?
+               UNION SELECT username FROM members WHERE workspace = ? AND group_source = ?""",
+            (workspace, workspace, SCIM_SOURCE))]
+    rules, now = _scim_rules(conn, workspace), time.time()
+    for username in usernames:
+        names = [r["display_name"] for r in conn.execute(
+            """SELECT g.display_name FROM scim_groups g
+               JOIN scim_group_members m ON m.group_id = g.id
+               WHERE g.workspace = ? AND m.username = ?
+               ORDER BY g.display_name COLLATE NOCASE""", (workspace, username))]
+        conn.execute("UPDATE members SET groups = ?, group_role = ?, group_source = ?, "
+                     "groups_updated_at = ? WHERE username = ? AND workspace = ?",
+                     (json.dumps(names[:100]), role_for_groups(rules, names) if rules else None,
+                      SCIM_SOURCE, now, username, workspace))
+        _settle_role(conn, username)
+
+
+def _drop_other_sources(conn, workspace, source):
+    """`source` just became the role source: group roles any other source (a
+    provider, or SCIM) gave in the workspace no longer count."""
+    for row in conn.execute("SELECT DISTINCT group_source FROM members "
+                            "WHERE workspace = ? AND group_source != ?",
+                            (workspace, source)).fetchall():
+        _regroup(conn, row["group_source"], [], workspace)
+
+
+def _regroup(conn, cid, rules, workspace):
+    """The rules of provider `cid` (or SCIM) in `workspace` changed: recompute the
+    group role of everyone it gave one to, from the groups it sent last. (No
+    rules, or a deleted provider: they lose it.)"""
+    for row in conn.execute("SELECT username, groups FROM members WHERE group_source = ? "
+                            "AND workspace = ?", (cid, workspace)).fetchall():
         role = role_for_groups(rules, json.loads(row["groups"] or "[]")) if rules else None
         conn.execute("UPDATE members SET group_role = ? WHERE username = ?",
                      (role, row["username"]))
@@ -872,6 +966,7 @@ def group_admin_stale(member, days):
     """Is their admin from groups the role source last sent over `days` ago?"""
     return bool(days and member["role"] == "admin" and not member["override_role"]
                 and member["group_role"] == "admin" and member["groups_updated_at"]
+                and member.get("group_source") != SCIM_SOURCE
                 and member["groups_updated_at"] < time.time() - days * 86400)
 
 
@@ -879,6 +974,7 @@ def check_group_admin(member):
     """The same for one member, on each request: cheap unless their admin comes
     from groups at least a day old. Returns their row as it is now."""
     if (not member or member["group_role"] != "admin"
+            or member.get("group_source") == SCIM_SOURCE
             or (member["groups_updated_at"] or time.time()) > time.time() - 86400):
         return member
     with _lock, _db() as conn:
@@ -890,14 +986,16 @@ def check_group_admin(member):
 
 def _expire_group_admins(conn, workspace, username=None):
     """True if someone's admin expired. Someone who is the workspace's last admin
-    keeps it, and its admins are warned (at most once a day per person)."""
+    keeps it, and its admins are warned (at most once a day per person). Admin
+    from SCIM's groups never expires: SCIM sends every change as it happens."""
     days = conn.execute("SELECT group_admin_days FROM workspaces WHERE slug = ?",
                         (workspace,)).fetchone()
     days = days["group_admin_days"] if days else GROUP_ADMIN_DAYS
     if not days:
         return False
     sql = ("SELECT username, groups, group_source, override_role FROM members "
-           "WHERE workspace = ? AND group_role = 'admin' AND groups_updated_at < ?")
+           "WHERE workspace = ? AND group_role = 'admin' AND groups_updated_at < ? "
+           f"AND group_source IS NOT '{SCIM_SOURCE}'")
     args = [workspace, time.time() - days * 86400]
     if username:
         sql, args = sql + " AND username = ?", args + [username]

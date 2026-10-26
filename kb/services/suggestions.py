@@ -65,8 +65,8 @@ def _words(text):
 
 
 def _one_line(text, limit):
-    text = untrusted.strip_unknown_links(" ".join(str(text or "").split()), set())
-    text = text.replace(untrusted.REMOVED, "").strip()
+    text, _ = untrusted.strip_unknown_links(" ".join(str(text or "").split()), set())
+    text = " ".join(text.replace(untrusted.REMOVED, "").split())
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 

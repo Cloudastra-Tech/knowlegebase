@@ -244,6 +244,32 @@ at your provider (Okta: *Sign-out redirect URIs*; Entra: add it as another *Web
 redirect URI*; Keycloak: *Valid post logout redirect URIs*). SAML single logout isn't
 supported.
 
+## 8. Provisioning (SCIM)
+
+With SCIM, your identity provider adds people before their first sign-in,
+keeps their names and groups current, and turns them off here the moment it
+does there (they're signed out everywhere at once). **Access → Sign-in →
+Provisioning (SCIM)**:
+
+1. **New token**, and copy it: it's shown once. Give your provider the token
+   and the **SCIM base URL** shown there (Okta: *SCIM connector base URL*, with
+   *HTTP Header* authentication; Entra ID: *Tenant URL* and *Secret token*).
+   The section's setup notes have the steps for both, with links to their docs.
+2. Only emails on your verified domains, or addresses you've invited, can be
+   provisioned; anything else is refused and listed in *Recent SCIM events*.
+   People sign in with their **work email**, so map it (Entra: keep
+   `emails[type eq "work"].value`; `userName` may be a UPN).
+3. **Roles from groups** there makes SCIM the role source: the groups your
+   provider pushes set roles as they change, and admin from them doesn't
+   expire. As with providers, a workspace has one role source.
+4. Deleting someone at the provider turns them off now and anonymises their
+   name and email after `SCIM_RETENTION_DAYS` (default 30); the row and the
+   audit log stay. No SCIM change can remove the workspace's last admin: the
+   provider gets an error saying so.
+
+Revoke a token from the same section; the provider is refused from its next
+request. Every change SCIM makes is in **Access → Activity** (actor *scim*).
+
 ## Troubleshooting
 
 **Access → Sign-in → Recent sign-ins** shows each sign-in and refusal, with the

@@ -27,6 +27,25 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     POST   /chat                  {question, role} -> {answer, sources, steps}
     POST   /chat/stream           same, streamed live (steps + answer tokens) as SSE
     GET    /passages/{chunk_id}   a cited passage and the text around it (role-checked)
+  conversations.py
+    GET    /conversations         your saved chats and folders
+    GET    /conversations/search  ?q: your chats by title, question or answer (role-checked)
+    POST   /conversations         a new chat
+    GET    /conversations/{id}    its messages as shown, each with its versions
+    PATCH  /conversations/{id}    {title, pinned, folder_id, active_leaf_id}
+    DELETE /conversations/{id}
+    POST   /conversations/{id}/fork  {message_id}: "Branch in new chat"
+    GET/POST /conversation-folders, PATCH/DELETE /conversation-folders/{id}
+    GET    /messages/{id}/markdown  an answer with its citations as footnotes (Copy)
+    PUT/DELETE /messages/{id}/feedback   thumbs up / down
+    GET    /admin/feedback        the workspace's feedback                 (HR / Admin)
+    GET    /chat-settings         how long chats are kept, sharing on or off
+    PUT    /admin/chat-settings   {retention_days: 30|90|365|null, sharing_enabled} (admin)
+  shares.py
+    POST   /shares                {conversation_id, message_id?, expires_in_days} -> the link
+    GET    /shares                ?conversation_id: your links to it that still work
+    DELETE /shares/{id}           revoke a link
+    GET    /shared/{token}        open a link (same workspace; answers role-checked)
   docs.py
     GET    /docs                  list documents                       (HR / Admin)
     GET    /docs/{access}/{name}  text of a .txt, or the file itself    (HR / Admin)
@@ -84,6 +103,13 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/audit           ?actor&action&from&to&cursor: the audit log, newest first (admin)
     GET    /admin/audit/export    ?format=csv|jsonl (+ the filters), streamed           (admin)
     GET    /admin/audit/verify    check the hash chain                                  (admin)
+  scim.py      (SCIM 2.0: "Authorization: Bearer <the workspace's SCIM token>", not a session)
+    /scim/v2/ServiceProviderConfig | Schemas | ResourceTypes | Users | Groups
+                                  an identity provider provisions members and groups
+    GET    /admin/sign-in/scim    base URL, tokens, last sync, rules, SCIM events     (admin)
+    POST   /admin/sign-in/scim/tokens       a new token, shown once                  (admin)
+    DELETE /admin/sign-in/scim/tokens/{id}  revoke it                               (admin)
+    PUT    /admin/sign-in/scim/roles {rules, make_role_source}: roles from SCIM's groups (admin)
   health.py
     GET    /health                the process is up (Docker's HEALTHCHECK)
     GET    /health/ready          can it serve: database, index, key, guards (503 if not)

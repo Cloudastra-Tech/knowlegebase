@@ -66,18 +66,24 @@ export function RoleSelect({
   )
 }
 
+// Whose rules: a sign-in provider, or SCIM provisioning (protocol "scim").
+export type RulesTarget = Pick<SignInConnection, "id" | "label" | "group_claim" | "group_rules"> & {
+  protocol: SignInConnection["protocol"] | "scim"
+}
+
 // Which groups (from the provider) give which role. Opened with a new `key` each
 // time, so it starts from the provider's saved rules.
-// A workspace takes roles from one provider, its role source (`roleSource`, or
-// null). Rules on another provider switch the source, once the admin confirms.
+// A workspace takes roles from one provider (or SCIM), its role source
+// (`roleSource`, or null). Rules on another one switch the source, once the
+// admin confirms.
 export function GroupRulesDialog({
   conn,
   roleSource,
   onOpenChange,
   onSaved,
 }: {
-  conn: SignInConnection | null
-  roleSource: SignInConnection | null
+  conn: RulesTarget | null
+  roleSource: { id: string; label: string } | null
   onOpenChange: (open: boolean) => void
   onSaved: () => void
 }) {
@@ -88,6 +94,9 @@ export function GroupRulesDialog({
   const [confirmSwitch, setConfirmSwitch] = useState(false)
 
   const saml = conn?.protocol === "saml"
+  // SCIM's groups are pushed as they change, so its rules apply at once.
+  const scim = conn?.protocol === "scim"
+  const when = scim ? "straight away" : "at each person's next sign-in through it"
   const isSource = !!conn && roleSource?.id === conn.id
   const otherSource = !isSource ? roleSource : null
   const sourceName = otherSource?.label ?? "another provider"
@@ -105,10 +114,11 @@ export function GroupRulesDialog({
     setSaving(true)
     try {
       const saved = kept()
-      await signIn.setGroupRules(conn.id, claim.trim(), saved, makeRoleSource)
+      if (scim) await signIn.setScimRules(saved, makeRoleSource)
+      else await signIn.setGroupRules(conn.id, claim.trim(), saved, makeRoleSource)
       toast.success(
         saved.length && makeRoleSource
-          ? `Roles now come from ${conn.label}. The roles ${sourceName}'s groups gave are gone; ${conn.label}'s apply at each person's next sign-in through it.`
+          ? `Roles now come from ${conn.label}. The roles ${sourceName}'s groups gave are gone; ${conn.label}'s apply ${when}.`
           : saved.length
             ? `Saved. ${conn.label} now sets roles from groups.`
             : isSource
@@ -139,8 +149,9 @@ export function GroupRulesDialog({
             <DialogTitle>Roles from groups: {conn?.label}</DialogTitle>
             <DialogDescription>
               People get the highest role their groups at the provider give them. Saving
-              applies it now to everyone whose groups we know, and again at each sign-in. A
-              role you set for someone on the Members tab wins over this.
+              applies it now to everyone whose groups we know, and again{" "}
+              {scim ? "whenever your provider changes a group" : "at each sign-in"}. A role you
+              set for someone on the Members tab wins over this.
             </DialogDescription>
           </DialogHeader>
 
@@ -152,28 +163,31 @@ export function GroupRulesDialog({
           ) : (
             !isSource && (
               <p className="rounded-lg bg-muted/40 p-3 text-sm text-muted-foreground">
-                Saving rules makes {conn?.label} the role source: only sign-ins through it set
-                roles. Signing in through your other providers leaves roles as they are.
+                {scim
+                  ? "Saving rules makes SCIM the role source: the groups your identity provider pushes set roles, and signing in leaves them as they are."
+                  : `Saving rules makes ${conn?.label} the role source: only sign-ins through it set roles. Signing in through your other providers leaves roles as they are.`}
               </p>
             )
           )}
 
-          <Field>
-            <FieldLabel htmlFor="group-claim">
-              {saml ? "Attribute with the groups" : "Claim with the groups"}
-            </FieldLabel>
-            <Input
-              id="group-claim"
-              placeholder="groups"
-              value={claim}
-              onChange={(e) => setClaim(e.target.value)}
-            />
-            <FieldDescription>
-              {saml
-                ? "The SAML attribute name, e.g. groups, Role, or Entra's …/claims/groups. Test sign-in shows what your provider sends."
-                : "Empty means groups. A nested claim works too, e.g. realm_access.roles. Test sign-in shows what your provider sends."}
-            </FieldDescription>
-          </Field>
+          {!scim && (
+            <Field>
+              <FieldLabel htmlFor="group-claim">
+                {saml ? "Attribute with the groups" : "Claim with the groups"}
+              </FieldLabel>
+              <Input
+                id="group-claim"
+                placeholder="groups"
+                value={claim}
+                onChange={(e) => setClaim(e.target.value)}
+              />
+              <FieldDescription>
+                {saml
+                  ? "The SAML attribute name, e.g. groups, Role, or Entra's …/claims/groups. Test sign-in shows what your provider sends."
+                  : "Empty means groups. A nested claim works too, e.g. realm_access.roles. Test sign-in shows what your provider sends."}
+              </FieldDescription>
+            </Field>
+          )}
 
           <div className="grid grid-cols-1 gap-2">
             <p className="text-sm font-medium">Rules</p>
@@ -181,7 +195,7 @@ export function GroupRulesDialog({
               <div key={i} className="flex items-center gap-2">
                 <Input
                   aria-label={`Group ${i + 1}`}
-                  placeholder="Group name"
+                  placeholder={scim ? "Group name, as pushed" : "Group name"}
                   value={r.group}
                   onChange={(e) => update(i, { group: e.target.value })}
                   className="min-w-0 flex-1"
@@ -241,9 +255,10 @@ export function GroupRulesDialog({
               </AlertDialogTitle>
               <AlertDialogDescription>
                 The roles {sourceName}'s groups gave are gone straight away, and {conn?.label}'s
-                rules apply at each person's next sign-in through it. Roles you set on the
-                Members tab stay. Signing in through {sourceName} no longer changes anyone's
-                role.
+                rules apply {when}. Roles you set on the Members tab stay.{" "}
+                {roleSource?.id === "scim"
+                  ? "Groups SCIM pushes no longer change anyone's role."
+                  : `Signing in through ${sourceName} no longer changes anyone's role.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
