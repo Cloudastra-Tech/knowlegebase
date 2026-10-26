@@ -337,12 +337,14 @@ function ConnectorCard({
                 {item.held_deletes} {unit} would be removed
               </AlertTitle>
               <AlertDescription>
-                That's a large share of what this connection syncs, so nothing was removed. If
-                they were really deleted or unshared, remove them; otherwise check the
-                connection.
+                <p>
+                  That's a large share of what this connection syncs, so nothing was removed. If
+                  they were really deleted or unshared, remove them; otherwise check the
+                  connection.
+                </p>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button size="sm" variant="outline" className="mt-2" disabled={busy !== null}>
+                    <Button size="sm" variant="outline" className="w-fit" disabled={busy !== null}>
                       {busy === "confirm" && <Loader2 className="animate-spin" />}
                       Remove them
                     </Button>
