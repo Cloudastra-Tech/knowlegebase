@@ -338,6 +338,9 @@ def main(argv=None):
         print("\n[PASSED] nothing was exfiltrated.")
         return
 
+    import faithfulness
+    import ingest
+    import models
     import rag
     from agent import build_agent
 
@@ -373,8 +376,12 @@ def main(argv=None):
             "golden": os.path.relpath(args.golden),
             "repeat": args.repeat,
             "judge_model": JUDGE_MODEL,
-            "settings": {name: repr(getattr(rag, name, None))
-                         for name in ("USE_HYDE", "USE_RERANK", "RERANKER")},
+            "settings": {**{name: repr(getattr(rag, name, None))
+                            for name in ("USE_HYDE", "MULTI_QUERY", "RERANKER",
+                                         "RECENCY_BOOST")},
+                         "index": ingest.FINGERPRINT, "answer_model": models.answer_model(),
+                         "fast_model": models.fast_model(),
+                         "faithfulness": faithfulness.mode()},
         },
         "summary": summary,
         "items": items,

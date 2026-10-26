@@ -2,6 +2,7 @@
 the site. api.py builds the one `uvicorn api:app` serves."""
 
 import contextlib
+import logging
 import os
 import secrets
 
@@ -15,6 +16,9 @@ from kb import jobs, mcp_server, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, audit, auth, chat,
                         conversations, docs, health, index, insights, integrations, invites,
                         knowledge, saml, scim, shares, signup, sso)
+from kb.services import indexing
+
+log = logging.getLogger("uvicorn.error")
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, shares, index, docs,
            integrations, knowledge, admin_members, invites, audit, insights, health, scim,
@@ -31,6 +35,12 @@ async def _lifespan(app):
     # Re-indexing, connector syncs and the SAML metadata refresh run as jobs
     # (kb/jobs.py): here, unless JOBS_IN_PROCESS=off and `python -m kb.worker` does.
     jobs.start_in_process()
+    # An index built with other chunking or embedding settings is rebuilt (a
+    # shadow rebuild: the old one answers until the new one is ready).
+    try:
+        indexing.schedule_stale()
+    except Exception:
+        log.exception("Index: couldn't check which indexes need rebuilding")
     # The MCP server's requests run in its session manager's task group.
     async with app.state.mcp.running():
         yield

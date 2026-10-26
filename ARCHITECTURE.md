@@ -23,7 +23,7 @@ If you can read this, you can explain the app to anyone.
 | **Chroma** | Stores those numbers + searches them | The librarian |
 | **BM25** | Keyword search (exact words) | The index at the back of a book |
 | **RRF** | Merges keyword + meaning results | The judge that ranks both |
-| **OpenAI `gpt-4o-mini`** | Writes the final answer | The writer |
+| **OpenAI `gpt-4o-mini`** | Writes the final answer (ANSWER_MODEL; small jobs on FAST_MODEL, models.py) | The writer |
 | **Guardrails AI** | Safety checks on input & output | The security guard |
 | **Permission filter** | Decides which docs you may search | The keycard / access control |
 
@@ -41,7 +41,7 @@ If you can read this, you can explain the app to anyone.
               [ LangChain loads files ]
                        │
                        ▼
-              [ Split into small chunks ]        ← RecursiveCharacterTextSplitter
+              [ Split into chunks by structure ]  ← chunking.py: headings, table rows, code, pages
                        │
                        ▼
         [ TAG each chunk: public or restricted ] ← permission metadata
@@ -78,6 +78,7 @@ and (b) who is allowed to see it.
                     │   ┌── BM25 keyword search ──┐         │
                     │   │                          ├─ RRF ──┼──► best chunks
                     │   └── Chroma meaning search ─┘         │
+                    │   (+ optional reranker: rerankers.py)  │
                     │                                       │
                     │   🔑 permission filter: a 'public'    │
                     │      user only ever searches PUBLIC   │

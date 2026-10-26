@@ -238,7 +238,7 @@ def test_the_answer_cites_passages_in_order_with_their_place(citing):
         sentence = answer.split(f"[S{n}]")[0].rsplit("\n", 1)[-1].strip()
         assert sentence and sentence in by_n[n]["snippet"]
     refund = next(s for s in sources if "full refund within 30 days" in s["snippet"])
-    assert refund["title"] == "handbook.txt" and refund["heading_path"] == "About us"
+    assert refund["title"] == "handbook.txt" and refund["heading_path"] == "Refund policy"
     assert refund["provider"] == "Company documents" and refund["url"] is None
     assert refund["access"] == "public" and refund["chunk_id"] and refund["doc_id"]
     assert isinstance(refund["char_start"], int) and refund["char_end"] > refund["char_start"]
