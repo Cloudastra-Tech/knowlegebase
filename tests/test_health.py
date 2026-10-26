@@ -17,8 +17,8 @@ def server(tmp_path, monkeypatch):
     and the key that encrypted it."""
     from fastapi.testclient import TestClient
     import api
+    import db as app_db
     import ingest
-    import members_store
     import secret_box
 
     key = Fernet.generate_key().decode()
@@ -33,7 +33,7 @@ def server(tmp_path, monkeypatch):
     import chromadb
     chromadb.PersistentClient(path=str(index)).get_or_create_collection("langchain")
 
-    monkeypatch.setattr(members_store, "DB_PATH", str(db))
+    monkeypatch.setattr(app_db, "DB_PATH", str(db))
     monkeypatch.setattr(ingest, "DB_FOLDER", str(index))
     monkeypatch.setattr(secret_box, "KEY_PATH", str(tmp_path / "integrations.key"))
     client = TestClient(api.app)
@@ -52,8 +52,8 @@ def test_a_healthy_server_is_ready(server):
 
 
 def test_liveness_stays_200_when_not_ready(server, monkeypatch):
-    import members_store
-    monkeypatch.setattr(members_store, "DB_PATH", str(server.paths["db"]) + ".missing")
+    import db as app_db
+    monkeypatch.setattr(app_db, "DB_PATH", str(server.paths["db"]) + ".missing")
     assert ready(server)[0] == 503
     r = server.get("/api/health")
     assert (r.status_code, r.json()) == (200, {"ok": True})

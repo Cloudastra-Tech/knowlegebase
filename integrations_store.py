@@ -1,7 +1,7 @@
 """
 integrations_store.py  —  which tools each workspace has connected.
 
-A tiny SQLite database (config/app.db, gitignored and mounted in Docker).
+A tiny SQLite database (config/app.db, gitignored and mounted in Docker; see db.py).
 OAuth tokens are ENCRYPTED (secret_box.py).
 
 Each connection also says WHO may ask about the files it syncs (settings["access"]):
@@ -12,14 +12,12 @@ restricted: an admin opens it up on purpose, never by accident.
 """
 
 import json
-import os
-import sqlite3
 import threading
 import time
 
+import db
 import secret_box
 
-DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
 _lock = threading.Lock()
 
 ACCESS_LEVELS = ("restricted", "everyone")
@@ -27,23 +25,7 @@ DEFAULT_ACCESS = "restricted"
 
 
 def _db():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""CREATE TABLE IF NOT EXISTS integrations (
-        workspace    TEXT NOT NULL,
-        provider     TEXT NOT NULL,
-        status       TEXT NOT NULL,          -- connected | syncing | error
-        account      TEXT,                   -- e.g. the Google account email
-        secret       BLOB,                   -- encrypted JSON (tokens)
-        settings     TEXT DEFAULT '{}',      -- JSON (e.g. chosen folder)
-        connected_by TEXT,
-        connected_at REAL,
-        last_sync_at REAL,
-        last_error   TEXT,
-        doc_count    INTEGER DEFAULT 0,
-        PRIMARY KEY (workspace, provider))""")
-    return conn
+    return db.connect()
 
 
 def _row(r):

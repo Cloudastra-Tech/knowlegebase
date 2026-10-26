@@ -184,6 +184,48 @@ public"), but it can never *raise* it — the server decides.
 
 ---
 
+## 🗄️ Database migrations
+
+Accounts, sign-in providers, sessions and integrations live in one SQLite file,
+`config/app.db` (`APP_DB`). `db.py` is the only place it's found and opened
+(WAL mode, a 5 s busy timeout, `foreign_keys = ON`, `sqlite3.Row` rows); the
+stores use plain `sqlite3`. Its schema is kept by **Alembic** migrations in
+`migrations/versions/`, numbered `0001`, `0002`, ….
+
+**How a database gets upgraded.** The first `db.connect()` in a process runs
+every migration the file doesn't have yet, in one transaction (`BEGIN IMMEDIATE`:
+all or nothing, and a second worker starting at the same moment waits, then finds
+nothing to do). A database made before Alembic (app tables, no `alembic_version`)
+is first brought to the baseline by `migrations/legacy.py`, the old stores' own
+add-a-column and data-fix steps, frozen, then marked as at `0001`. Nothing to do
+by hand on deploy: the new image upgrades `config/app.db` on its first request.
+`alembic upgrade head` (in the repo root, or `docker compose exec knowledgebase
+alembic upgrade head`) does the same on demand; `alembic current` shows where a
+database is. Back up first (`scripts/backup.sh`): there's no automatic way down.
+
+**Adding a migration.**
+
+1. `alembic revision -m "add members.locale" --rev-id 0002` (next number) makes
+   `migrations/versions/0002_add_members_locale.py`.
+2. Write `upgrade()` with `op.add_column`, `op.create_table`, `op.create_index`,
+   or raw SQL through `op.get_bind().exec_driver_sql(...)`. To change a column or
+   a CHECK, which SQLite can't do in place, use `with op.batch_alter_table("t") as b:`
+   (it copies the table; foreign keys are off while migrating, so the copy doesn't
+   cascade-delete anything, and the upgrade is undone if it leaves a dangling
+   reference). Fill new columns from old data in the same migration.
+3. Never edit a migration that has been merged, and never edit
+   `migrations/legacy.py` or `0001_baseline.py`: databases already ran them.
+4. Keep it **expand / contract**: add the new column or table and start writing
+   it; switch reads in a later release; drop the old one later still. The previous
+   release must keep working on the upgraded schema, so a rollback is just
+   deploying the old image.
+5. Test it: `tests/test_migrations.py` upgrades an empty database and every
+   pre-Alembic fixture in `tests/fixtures/legacy_dbs/` to the newest migration and
+   checks every row survives and the schema matches a new database's. Add a test
+   for your data change there.
+
+---
+
 ## 📊 Mermaid diagrams (render in GitHub / VS Code preview)
 
 > To view: open this file's **Markdown Preview** in VS Code (Ctrl+Shift+V).

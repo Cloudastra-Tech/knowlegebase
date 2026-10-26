@@ -200,6 +200,15 @@ cd genai && docker compose ps              # STATUS: Up
 | Rebuild vector DB from scratch | `docker compose down -v && docker compose up -d --build` |
 | Re-index after editing `docs/` by hand | `docker compose exec knowledgebase python ingest.py && docker compose restart` |
 | Shell into the container | `docker compose exec knowledgebase sh` |
+| Which database migration `config/app.db` is at | `docker compose exec knowledgebase alembic current` |
+
+**Database upgrades** happen by themselves: a new version upgrades
+`config/app.db` in place on its first request, in one transaction, keeping every
+row (an older file, from before migrations, is detected and brought up to date
+too). The log says `Database upgraded from 0001 to 0002` (and, once, `Bringing a
+database from before migrations to the baseline`) when it does. Take a backup (`scripts/backup.sh`) before deploying
+a release that adds a migration: there is no automatic way back down. How
+migrations work and how to add one: [ARCHITECTURE.md](ARCHITECTURE.md), "Database migrations".
 
 ## Health checks and error tracking
 
