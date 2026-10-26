@@ -1,8 +1,12 @@
 import "@testing-library/jest-dom/vitest"
-import { cleanup } from "@testing-library/react"
+import { cleanup, configure } from "@testing-library/react"
 import { afterEach, vi } from "vitest"
 
 import { session } from "@/lib/api"
+
+// The pages load lazily (React.lazy); the first test to open one also waits for it
+// to be compiled, which can take longer than the default second on a slow machine.
+configure({ asyncUtilTimeout: 5000 })
 
 // What jsdom doesn't have and the pages use: media queries (reduced motion), the
 // observers behind the ASCII art, scrolling.

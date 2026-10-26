@@ -36,12 +36,19 @@ export const routes: RouteObject[] = [
         Component: AuthRoot,
         children: [
           { index: true, Component: Home },
-          { Component: SignInPage, children: [{ path: "login" }, { path: "signup" }] },
+          // The leaves render nothing themselves (element: null): the page is the parent.
+          {
+            Component: SignInPage,
+            children: [
+              { path: "login", element: null },
+              { path: "signup", element: null },
+            ],
+          },
           { path: "sso", Component: SsoReturnPage },
           {
             Component: App,
             children: [
-              { path: "chat" }, // the chat stays mounted in App, so it isn't lost
+              { path: "chat", element: null }, // the chat stays mounted in App, so it isn't lost
               { path: "knowledge", Component: KnowledgeScreen },
               {
                 Component: HrOnly,
