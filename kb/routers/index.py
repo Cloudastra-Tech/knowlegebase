@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends
 
 from kb import state
+from kb.audit import audited
 from kb.deps import current_user, require_hr, ws_of
 from kb.rate_limit import user_limit
 from kb.services import indexing
@@ -11,10 +12,11 @@ router = APIRouter()
 
 
 @router.post("/api/reindex")
-def reindex(user=Depends(require_hr)):
+def reindex(user=Depends(require_hr), audit=audited("index.reindex")):
     """Manual re-index (changes already re-index automatically)."""
     user_limit(user, "reindex")
     indexing.schedule_index(ws_of(user))
+    audit.record("index", ws_of(user), user=user)
     return index_status(user)
 
 
