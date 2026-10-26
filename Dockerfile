@@ -67,7 +67,7 @@ COPY . .
 # The built React site, served by api.py.
 COPY --from=web /web/dist ./frontend/dist
 
-# Same port the Streamlit version used, so nginx needs no change.
+# Port 8501, which the reverse proxy (nginx) in front already points at.
 EXPOSE 8501
 
 # Simple health check so orchestrators know when the app is up.

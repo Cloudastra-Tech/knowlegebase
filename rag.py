@@ -11,7 +11,7 @@ This is the "open-book exam" part:
 
     R-A-G = Retrieval-Augmented Generation. That's literally these steps.
 
-This file is imported by app.py. You can also test it directly:
+This file is imported by agent.py. You can also test it directly:
     python rag.py
 """
 
