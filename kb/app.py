@@ -9,6 +9,7 @@ import threading
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
+import db
 import observability
 import safety
 from kb import middleware, settings, site
@@ -24,6 +25,9 @@ ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, index, docs, integratio
 async def _lifespan(app):
     """Background jobs that run for the life of the server."""
     safety.require_guards()          # REQUIRE_TOXICITY_GUARD=1: refuse to start without it
+    # Bring the database up to date now (db.py migrates on its first connection),
+    # so a failing migration stops the start instead of the first request.
+    db.connect().close()
     threading.Thread(target=sync.sync_scheduler, daemon=True).start()
     threading.Thread(target=saml_refresh.saml_refresh_scheduler, daemon=True).start()
     yield

@@ -67,6 +67,18 @@ def test_required_guard_starts_when_installed(api, monkeypatch):
                                                               "toxicity_required": True}
 
 
+def test_startup_brings_the_database_up_to_date(api, monkeypatch, tmp_path):
+    """Migrations run when the server starts, not at its first request."""
+    import sqlite3
+    import db
+    path = str(tmp_path / "app.db")
+    monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", set())
+    with _client(api):
+        with sqlite3.connect(path) as conn:
+            assert conn.execute("SELECT version_num FROM alembic_version").fetchall()
+
+
 def _default_forwarded_allow_ips():
     with open(os.path.join(ROOT, "Dockerfile")) as f:
         return re.search(r"--forwarded-allow-ips=\$\{FORWARDED_ALLOW_IPS:-([^}]*)\}", f.read()).group(1)
