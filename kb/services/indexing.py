@@ -24,6 +24,7 @@ works the same when the jobs run in another process (kb/worker.py).
 
 import json
 import logging
+import os
 import time
 
 import db
@@ -109,6 +110,30 @@ def schedule_index(ws, docs=None, full=False):
     full: rebuild everything into a new collection."""
     jobs.enqueue("index", ws, {"full": full, "docs": docs}, lane=lane(ws),
                  dedupe_key=f"index:{ws}")
+
+
+def schedule_stale():
+    """Queue a run for every workspace whose index was built with other chunking or
+    embedding settings (ingest.FINGERPRINT): index() rebuilds it into a new
+    collection while the old one keeps answering, then switches. Called at start,
+    so a release that changes how documents are chunked re-indexes on its own.
+    REINDEX_ON_SETTINGS_CHANGE=off leaves them until their next change. Returns
+    the workspaces queued."""
+    if (os.getenv("REINDEX_ON_SETTINGS_CHANGE") or "on").strip().lower() in ("0", "off",
+                                                                            "false", "no"):
+        return []
+    conn = db.connect()
+    try:
+        rows = conn.execute("SELECT workspace, fingerprint FROM search_indexes").fetchall()
+    finally:
+        conn.close()
+    stale = [r["workspace"] for r in rows if r["fingerprint"] != ingest.FINGERPRINT]
+    for ws in stale:
+        schedule_index(ws)
+    if stale:
+        log.info("Index: %d workspace(s) were indexed with other settings; rebuilding them",
+                 len(stale))
+    return stale
 
 
 def schedule_retag(ws, provider):

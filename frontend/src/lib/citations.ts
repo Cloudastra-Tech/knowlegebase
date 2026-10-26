@@ -92,6 +92,22 @@ export function updatedOn(modified?: string | null) {
   return `Updated ${date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
 }
 
+// How stale a source is, for the hover card: "Updated 8 months ago", "Updated
+// 2 years ago"; under a month, the date as updatedOn gives it ("" without one).
+export function updatedAgo(modified?: string | null, now: Date = new Date()) {
+  if (!modified) return ""
+  const date = new Date(modified)
+  if (Number.isNaN(date.getTime())) return ""
+  const months =
+    (now.getFullYear() - date.getFullYear()) * 12 +
+    now.getMonth() -
+    date.getMonth() -
+    (now.getDate() < date.getDate() ? 1 : 0)
+  if (months < 1) return updatedOn(modified)
+  if (months < 24) return `Updated ${months} month${months === 1 ? "" : "s"} ago`
+  return `Updated ${Math.floor(months / 12)} years ago`
+}
+
 const ORDINAL = new Intl.PluralRules("en", { type: "ordinal" })
 const SUFFIX: Record<string, string> = { one: "st", two: "nd", few: "rd", other: "th" }
 

@@ -38,7 +38,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
 from collections import Counter
 from datetime import datetime, timezone
@@ -48,9 +47,12 @@ from dotenv import load_dotenv
 # LangChain pieces — each is one step of the pipeline
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
+
+import chunk_context
+import chunking
+import models
 
 # Load the secret OPENAI_API_KEY from the .env file into the program.
 load_dotenv()
@@ -62,22 +64,46 @@ DOCS_FOLDER = "docs"
 DB_FOLDER = "chroma_db"
 
 EMBED_MODEL = "text-embedding-3-small"
-CHUNK_SIZE = 500          # characters (about 110-125 tokens)
-CHUNK_OVERLAP = 100
 # .txt and .pdf are read here; the rest are turned into text by connectors/extract.py
 # (uploads; connectors write .txt or .pdf).
 EXTENSIONS = (".txt", ".pdf", ".md", ".html", ".htm", ".docx", ".pptx", ".xlsx")
 BATCH = 128               # chunks per embedding call
-# Everything that decides what a chunk's text and vector are. An index built
-# with other settings can't be updated chunk by chunk: it is rebuilt.
-FINGERPRINT = hashlib.sha256(json.dumps({
-    "model": EMBED_MODEL, "chunk_size": CHUNK_SIZE, "overlap": CHUNK_OVERLAP,
-    "header": "[title]", "ids": 1}, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _env_choice(name, choices):
+    value = (os.getenv(name) or "").strip().lower()
+    return value if value in choices else choices[0]
+
+
+# CONTEXTUAL CHUNK HEADER (pipeline.md P1-3), the line every chunk starts with:
+#   title      "[Leave policy]": the document's title (the default)
+#   headings   "[Leave policy › Sick leave]": and the headings the chunk sits under
+CHUNK_CONTEXT = _env_choice("RAG_CHUNK_CONTEXT", ("title", "headings"))
+# RAG_CHUNK_SUMMARY=llm: also one model-written sentence placing the chunk in its
+# document (chunk_context.py; one FAST model call per new chunk, cached). Off by default.
+CHUNK_SUMMARY = _env_choice("RAG_CHUNK_SUMMARY", ("off", "llm"))
+
+
+def fingerprint():
+    """Everything that decides what a chunk's text and vector are, hashed. An
+    index built with other settings can't be updated chunk by chunk: it is
+    rebuilt (a shadow rebuild into a new collection, kb/services/indexing.py,
+    started by the app when it sees an index with another FINGERPRINT)."""
+    return hashlib.sha256(json.dumps({
+        "model": EMBED_MODEL, "chunker": chunking.VERSION,
+        "chunk_tokens": chunking.CHUNK_TOKENS, "min_tokens": chunking.MIN_TOKENS,
+        "overlap_tokens": chunking.OVERLAP_TOKENS, "header": CHUNK_CONTEXT,
+        "summary": f"llm:{models.fast_model()}:{chunk_context.PROMPT_VERSION}"
+                   if CHUNK_SUMMARY == "llm" else "off",
+        "ids": 1}, sort_keys=True).encode()).hexdigest()[:16]
+
+
+FINGERPRINT = fingerprint()
 # The version of the per-chunk metadata load_and_split writes. It is not part of
 # FINGERPRINT: an index whose chunks carry an older one is brought up to date by
 # update(), document by document, re-splitting (the ids come out the same) and
 # re-tagging, with no embedding call.
-CHUNK_META = 2
+CHUNK_META = 3
 UPLOADS = "Company documents"     # the provider of files uploaded on the Documents screen
 
 
@@ -203,30 +229,11 @@ def _clean(meta):
     return {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))}
 
 
-# A Markdown heading ("## Refunds", as the Notion sync writes them), or a short
-# line of its own ending in a colon ("Refund policy:") after a blank line.
-_MD_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$", re.M)
-_LABEL_HEADING = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*([^\n:.!?#]{2,60}):[ \t]*(?=\n)")
-HEADING_SEPARATOR = " › "
-
-
-def _headings(text):
-    """[(position, level, heading)] in a document's text, in order. A label line
-    ("Refund policy:") ranks below every Markdown level."""
-    found = [(m.start(), len(m.group(1)), m.group(2).strip()) for m in _MD_HEADING.finditer(text)]
-    found += [(m.start(1), 7, m.group(1).strip()) for m in _LABEL_HEADING.finditer(text)]
-    return sorted(found)
-
-
-def heading_path(headings, position):
-    """The headings a position in the text sits under, outermost first, joined
-    by HEADING_SEPARATOR ('' if none)."""
-    path = []
-    for start, level, title in headings:
-        if start > position:
-            break
-        path = [(lv, t) for lv, t in path if lv < level] + [(level, title)]
-    return HEADING_SEPARATOR.join(t for _, t in path)[:300]
+# Headings ("## Refunds", "Refund policy:") and the path of them a position sits
+# under: see chunking.py.
+HEADING_SEPARATOR = chunking.HEADING_SEPARATOR
+_headings = chunking.headings
+heading_path = chunking.heading_path
 
 
 def load_and_split(docs_folder, key, meta, namespace):
@@ -234,11 +241,13 @@ def load_and_split(docs_folder, key, meta, namespace):
 
     1. LOAD — a "Document" in LangChain = the text + some metadata (like the
        filename). PDFs come one Document per page.
-    2. SPLIT — cut big text into small overlapping chunks. WHY chunk? The AI
-       can only read a limited amount of text at once, and search is more
-       accurate on small focused pieces than on a whole book. chunk_overlap
-       repeats a little text between pieces so a sentence cut in half keeps
-       its meaning."""
+    2. SPLIT — cut the text into chunks. WHY chunk? The AI can only read a
+       limited amount of text at once, and search is more accurate on focused
+       pieces than on a whole book. chunking.split follows the document's
+       STRUCTURE: a chunk starts at a heading, a table is cut between rows with
+       its header row repeated, a code block stays whole, and sizes are tokens.
+       A PDF is split page by page (every chunk knows its page), with the
+       headings of earlier pages carried over."""
     path = os.path.join(docs_folder, *key.split("/"))
     if key.endswith(".pdf"):
         documents = PyPDFLoader(path).load()
@@ -252,42 +261,52 @@ def load_and_split(docs_folder, key, meta, namespace):
         # UTF-8 first (Windows would otherwise guess cp1252 and garble text),
         # detect the encoding only if that fails.
         documents = TextLoader(path, encoding="utf-8", autodetect_encoding=True).load()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        add_start_index=True,   # remember where each chunk sits in its document
-    )
-    # Split one loaded Document (a PDF page, or the whole text file) at a time:
-    # the same chunks as splitting them all at once, each next to its source.
-    chunks = [(d, chunk) for d in documents for chunk in splitter.split_documents([d])]
-
-    # CONTEXTUAL CHUNK HEADER: start every chunk with its document's title.
-    # A chunk in the middle of "Bible Navigator — Technical Audit" often never
-    # says "Bible Navigator"; without the title, a search for it misses those
-    # chunks and the model can't tell what they are about.
+    # CONTEXTUAL CHUNK HEADER: start every chunk with its document's title (and,
+    # with RAG_CHUNK_CONTEXT=headings, the headings it is under). A chunk in the
+    # middle of "Bible Navigator — Technical Audit" often never says "Bible
+    # Navigator"; without the title, a search for it misses those chunks and the
+    # model can't tell what they are about.
     title = _header_title(meta, key)
-    headings = {}
+    summary_llm = whole = None
+    if CHUNK_SUMMARY == "llm":
+        summary_llm = chunk_context._llm()
+        whole = "\n\n".join(d.page_content for d in documents)
     out = []
-    for n, (source, chunk) in enumerate(chunks):
-        text = chunk.page_content
-        if title and not text.startswith(title):
-            text = f"[{title}]\n{text}"
-        cid = chunk_id(namespace, key, n, text)
-        # PASSAGE METADATA: where the chunk sits, for citations and "open at passage".
-        passage = {"chunk_id": cid, "doc_id": doc_id(namespace, key), "chunk_meta": CHUNK_META}
-        start = chunk.metadata.get("start_index", -1)
-        if start >= 0:
-            end = start + len(chunk.page_content)
-            passage.update(char_start=start, char_end=end)
-            if id(source) not in headings:
-                headings[id(source)] = _headings(source.page_content)
-            found = headings[id(source)]
-            # The headings it starts under; before the first one, its own first.
-            path = heading_path(found, start) or heading_path(
-                found, next((at for at, _, _ in found if start <= at < end), -1))
+    stack = []                        # the headings a PDF page starts under
+    for source in documents:
+        page_text = source.page_content
+        found = _headings(page_text)
+        for piece in chunking.split(page_text):
+            body = page_text[piece.start:piece.end]
+            if not body.strip():
+                continue
+            # The headings its text (after any it opens with) is under; before
+            # the first one, its own first.
+            path = heading_path(found, piece.at, stack) or heading_path(
+                found, next((at for at, _, _ in found if piece.start <= at < piece.end), -1),
+                stack)
+            label = (f"{title}{HEADING_SEPARATOR}{path}"
+                     if CHUNK_CONTEXT == "headings" and title and path else title)
+            header = [f"[{label}]"] if label and not body.startswith(label) else []
+            context = chunk_context.context_for(whole, body, summary_llm) if summary_llm else ""
+            if context:               # for search only: never shown as the source's text
+                header.append(context)
+            if piece.prefix:          # a table's header row, repeated
+                header.append(piece.prefix)
+            text = "\n".join(header + [body])
+            cid = chunk_id(namespace, key, len(out), text)
+            # PASSAGE METADATA: where the chunk sits, for citations and "open at passage".
+            passage = {"chunk_id": cid, "doc_id": doc_id(namespace, key), "chunk_meta": CHUNK_META,
+                       "start_index": piece.start, "char_start": piece.start,
+                       "char_end": piece.end, "block": piece.kind}
             if path:
                 passage["heading_path"] = path
-        out.append((cid, text, _clean({**chunk.metadata, **meta, **passage})))
+            if piece.rows:
+                passage["rows"] = piece.rows
+            if context:
+                passage["chunk_context"] = context
+            out.append((cid, text, _clean({**source.metadata, **meta, **passage})))
+        stack = chunking.heading_stack(found, len(page_text), stack)
     return out
 
 

@@ -21,6 +21,8 @@ _tmp = tempfile.mkdtemp(prefix="kb-tests-")
 atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 os.environ["RATE_LIMITS"] = "off"         # every test signs in from the same address
+# Starting the app doesn't rebuild indexes other tests left with other settings.
+os.environ["REINDEX_ON_SETTINGS_CHANGE"] = "off"
 # No model calls for a chat's title or its follow-ups (kb/services/suggestions.py):
 # the question's own words, and follow-ups from the cited passages' headings.
 os.environ.update(CHAT_AUTO_TITLE="off", CHAT_FOLLOWUPS="headings")
