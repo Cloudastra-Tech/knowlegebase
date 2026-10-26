@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   Download,
@@ -47,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { api, type Access, type Doc, type UploadLimits } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
+import { queries } from "@/lib/queries"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const sameDoc = (a: Doc | null, b: Doc | null) =>
@@ -430,36 +432,29 @@ function DocEditor({
   )
 }
 
+const NO_DOCS: Doc[] = []
+
 export function DocsView() {
-  const [docs, setDocs] = useState<Doc[]>([])
+  const queryClient = useQueryClient()
+  const { data, isPending: loading } = useQuery(queries.docs())
+  const docs = data?.docs ?? NO_DOCS
+  const uploadLimits = data?.upload_limits ?? null
   const { status: indexStatus, refresh: refreshIndex } = useIndexStatus()
   const indexing = indexStatus?.status === "indexing"
-  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | Access>("all")
-  const [selected, setSelected] = useState<Doc | null>(null)
-  const [uploadLimits, setUploadLimits] = useState<UploadLimits | null>(null)
+  // The picked document as the latest list has it: null until it's there, and
+  // once it's gone.
+  const [picked, setPicked] = useState<{ access: Access; name: string } | null>(null)
+  const selected = docs.find((d) => sameDoc(d, picked as Doc)) ?? null
 
   const refresh = useCallback(
-    (select?: { access: Access; name: string }) =>
-      api
-        .listDocs()
-        .then((data) => {
-          setDocs(data.docs)
-          setUploadLimits(data.upload_limits ?? null)
-          refreshIndex()                    // a change just started a re-index
-          setSelected((current) => {
-            const wanted = select ?? current
-            return data.docs.find((d) => sameDoc(d, wanted as Doc)) ?? null
-          })
-        })
-        .catch((err) => toast.error(errorText(err)))
-        .finally(() => setLoading(false)),
-    [refreshIndex],
+    async (select?: { access: Access; name: string }) => {
+      if (select) setPicked(select)
+      await queryClient.invalidateQueries({ queryKey: queries.docs().queryKey })
+      refreshIndex()                        // a change just started a re-index
+    },
+    [queryClient, refreshIndex],
   )
-
-  useEffect(() => {
-    refresh()
-  }, [refresh])
 
   async function reindex() {
     try {
@@ -518,7 +513,7 @@ export function DocsView() {
               visible.map((d) => (
                 <button
                   key={`${d.access}/${d.name}`}
-                  onClick={() => setSelected(d)}
+                  onClick={() => setPicked(d)}
                   className={cn(
                     "flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left text-sm transition-colors hover:bg-muted",
                     sameDoc(selected, d) && "bg-muted",
@@ -543,7 +538,7 @@ export function DocsView() {
             doc={selected}
             onSaved={() => refresh()}
             onDeleted={() => {
-              setSelected(null)
+              setPicked(null)
               refresh()
             }}
           />

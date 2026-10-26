@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react"
-import { toast } from "sonner"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-react"
 import { siGoogledrive, siNotion } from "simple-icons"
 
@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { api, type KnowledgeItem } from "@/lib/api"
+import { type KnowledgeItem } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
+import { queries } from "@/lib/queries"
 
 function when(modified: KnowledgeItem["modified"]) {
   if (!modified) return "—"
@@ -31,25 +32,23 @@ function SourceIcon({ source }: { source: string }) {
 
 // Everything the assistant can search in this workspace, in one list.
 export function KnowledgeView() {
-  const [items, setItems] = useState<KnowledgeItem[] | null>(null)
-  const [workspace, setWorkspace] = useState("")
-  const [outline, setOutline] = useState(false)
+  const { data, refetch } = useQuery(queries.knowledge())
+  const items = data?.items ?? null
+  const workspace = data?.workspace ?? ""
+  const outline = data?.outline ?? false
   const [query, setQuery] = useState("")
   const [source, setSource] = useState("all")
   const { status: indexStatus } = useIndexStatus()
 
-  // Reload when an index run finishes, so chunk counts stay current.
-  const finishedAt = indexStatus?.finished_at
+  // Reload when an index run finishes, so chunk counts stay current. (undefined:
+  // the index status hasn't loaded yet, which isn't a run finishing.)
+  const finishedAt = indexStatus ? indexStatus.finished_at : undefined
+  const seenFinishedAt = useRef(finishedAt)
   useEffect(() => {
-    api
-      .knowledge()
-      .then((d) => {
-        setItems(d.items)
-        setWorkspace(d.workspace)
-        setOutline(d.outline)
-      })
-      .catch((err) => toast.error(err instanceof Error ? err.message : "Couldn't load"))
-  }, [finishedAt])
+    if (finishedAt === seenFinishedAt.current) return
+    if (seenFinishedAt.current !== undefined) void refetch()
+    seenFinishedAt.current = finishedAt
+  }, [finishedAt, refetch])
 
   const sources = useMemo(() => [...new Set((items ?? []).map((i) => i.source))], [items])
   const visible = (items ?? []).filter(
