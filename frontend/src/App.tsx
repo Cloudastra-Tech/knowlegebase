@@ -63,11 +63,13 @@ export default function App() {
   const [role, setRole] = useState<Role>(session.role)
   const [screen, setScreen] = useState<Screen>("chat")
   const [openDrivePicker, setOpenDrivePicker] = useState(false)
-  // Signed out: the landing page, or the sign-in form at #login (or #login?error=...).
-  const [wantsLogin, setWantsLogin] = useState(() => window.location.hash.startsWith("#login"))
+  // Signed out: the landing page, or the sign-in page at #login (or #login?error=...),
+  // opened on its Create a workspace tab at #signup.
+  const authHash = () => /^#(login|signup)/.test(window.location.hash)
+  const [wantsLogin, setWantsLogin] = useState(authHash)
 
   useEffect(() => {
-    const onHash = () => setWantsLogin(window.location.hash.startsWith("#login"))
+    const onHash = () => setWantsLogin(authHash())
     window.addEventListener("hashchange", onHash)
     return () => window.removeEventListener("hashchange", onHash)
   }, [])
@@ -75,7 +77,7 @@ export default function App() {
   function goTo(hash: string) {
     if (hash) window.location.hash = hash
     else history.replaceState(null, "", window.location.pathname)
-    setWantsLogin(hash.startsWith("login"))
+    setWantsLogin(/^(login|signup)/.test(hash))
     window.scrollTo(0, 0)
   }
 
@@ -163,12 +165,18 @@ export default function App() {
     })
     if (window.location.hash.startsWith("#sso")) {
       const code = hashParams().get("code")
+      const welcome = hashParams().get("welcome") === "1"
       history.replaceState(null, "", window.location.pathname)
       api
         .ssoExchange(code ?? "")
         .then(({ token, user }) => {
           session.setToken(token)
           signedIn(user)
+          if (welcome && user.role === "admin") {
+            session.setRole("hr")
+            setRole("hr")
+            setScreen("sign-in")
+          }
         })
         .catch(() => {
           window.location.hash = "login?error=expired"
@@ -236,7 +244,7 @@ export default function App() {
         {wantsLogin ? (
           <LoginPage onLogin={onLogin} onBack={() => goTo("")} />
         ) : (
-          <LandingPage onSignIn={() => goTo("login")} />
+          <LandingPage onSignIn={() => goTo("login")} onGetStarted={() => goTo("signup")} />
         )}
       </LazyPage>
     )
@@ -392,7 +400,11 @@ export default function App() {
         {screen === "sign-in" && activeRole === "hr" && user.role === "admin" && (
           <div className="h-full overflow-y-auto">
             <LazyPage>
-              <SignInView workspace={user.workspace} me={user.username} />
+              <SignInView
+                workspace={user.workspace}
+                me={user.username}
+                onOpenIntegrations={() => openScreen("integrations")}
+              />
             </LazyPage>
           </div>
         )}

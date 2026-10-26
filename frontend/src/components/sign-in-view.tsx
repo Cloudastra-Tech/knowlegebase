@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   ChevronDown,
+  Circle,
   Globe,
   KeyRound,
   Loader2,
@@ -884,7 +886,15 @@ function Events({ events }: { events: SignInEvent[] }) {
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export function SignInView({ workspace, me }: { workspace: string; me: string }) {
+export function SignInView({
+  workspace,
+  me,
+  onOpenIntegrations,
+}: {
+  workspace: string
+  me: string
+  onOpenIntegrations?: () => void
+}) {
   const [tab, setTab] = useState<"sign-in" | "members">("sign-in")
 
   return (
@@ -906,12 +916,118 @@ export function SignInView({ workspace, me }: { workspace: string; me: string })
           </TabsList>
         </Tabs>
       </div>
-      <div className="mt-6">{tab === "sign-in" ? <SignInSettingsView /> : <MembersView me={me} />}</div>
+      <div className="mt-6">
+        {tab === "sign-in" ? (
+          <SignInSettingsView workspace={workspace} onOpenIntegrations={onOpenIntegrations} />
+        ) : (
+          <MembersView me={me} />
+        )}
+      </div>
     </div>
   )
 }
 
-function SignInSettingsView() {
+// ---- Getting started ---------------------------------------------------------------
+// A new workspace (made at sign-up) has a verified domain and one admin. Until it
+// has a provider of its own, show what's left; it can also be put away.
+function GettingStarted({
+  settings,
+  workspace,
+  onAddProvider,
+  onOpenIntegrations,
+}: {
+  settings: SignInSettings
+  workspace: string
+  onAddProvider: () => void
+  onOpenIntegrations?: () => void
+}) {
+  const key = `kb-setup-done:${workspace}`
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(key) === "1"
+    } catch {
+      return false
+    }
+  })
+  const domains = settings.domains.filter((d) => d.verified).map((d) => d.domain)
+  if (hidden || settings.connections.length) return null
+
+  function hide() {
+    try {
+      localStorage.setItem(key, "1")
+    } catch {
+      // private window: it just comes back next time
+    }
+    setHidden(true)
+  }
+
+  const steps: { done: boolean; title: string; body: string; action?: React.ReactNode }[] = [
+    {
+      done: domains.length > 0,
+      title: domains.length ? `${domains.join(", ")} is verified` : "Verify your email domain",
+      body: domains.length
+        ? "Colleagues with an email on it can sign in with Continue with Google Workspace now."
+        : "Add it under Email domains below, then add the DNS record it shows.",
+    },
+    {
+      done: false,
+      title: "Add your company's identity provider",
+      body: "Optional. If you use Okta, Microsoft Entra ID or any SAML provider, add it so access follows your directory.",
+      action: (
+        <Button size="sm" variant="outline" onClick={onAddProvider}>
+          <Plus data-icon="inline-start" /> Add provider
+        </Button>
+      ),
+    },
+    {
+      done: false,
+      title: "Connect your documents",
+      body: "Google Drive, Notion, or files you upload: what your colleagues' questions are answered from.",
+      action: onOpenIntegrations && (
+        <Button size="sm" variant="outline" onClick={onOpenIntegrations}>
+          Open Integrations <ArrowRight data-icon="inline-end" />
+        </Button>
+      ),
+    },
+  ]
+
+  return (
+    <Section
+      title="Set up your workspace"
+      description="Your workspace is ready. Three things make it useful for everyone."
+      action={
+        <Button size="sm" variant="ghost" onClick={hide}>
+          Done
+        </Button>
+      }
+    >
+      <ol className="flex flex-col gap-4">
+        {steps.map((s) => (
+          <li key={s.title} className="flex flex-wrap items-start gap-3">
+            {s.done ? (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Done" />
+            ) : (
+              <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="To do" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{s.title}</p>
+              <p className="text-sm text-muted-foreground">{s.body}</p>
+            </div>
+            {s.action}
+          </li>
+        ))}
+      </ol>
+    </Section>
+  )
+}
+
+function SignInSettingsView({
+  workspace,
+  onOpenIntegrations,
+}: {
+  workspace: string
+  onOpenIntegrations?: () => void
+}) {
   const [settings, setSettings] = useState<SignInSettings | null>(null)
   const [editing, setEditing] = useState<SignInConnection | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -974,6 +1090,12 @@ function SignInSettingsView() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
+          <GettingStarted
+            settings={settings}
+            workspace={workspace}
+            onAddProvider={() => openDialog(null)}
+            onOpenIntegrations={onOpenIntegrations}
+          />
           <Section title="Sign-in rules" description="How people in this workspace sign in.">
             <div className="grid grid-cols-1 gap-5">
               <SignInRules settings={settings} onChange={load} />

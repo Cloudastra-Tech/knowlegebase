@@ -344,7 +344,13 @@ function Section({
   )
 }
 
-export function LandingPage({ onSignIn }: { onSignIn: () => void }) {
+export function LandingPage({
+  onSignIn,
+  onGetStarted = onSignIn,
+}: {
+  onSignIn: () => void
+  onGetStarted?: () => void // the sign-in page's Create a workspace tab
+}) {
   const live = INTEGRATIONS.filter((i) => i.live).length
   return (
     <div className="min-h-svh bg-background text-foreground">
@@ -391,7 +397,7 @@ export function LandingPage({ onSignIn }: { onSignIn: () => void }) {
               straight answer, with the exact sources it came from.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Button size="lg" className="rounded-full px-6" onClick={onSignIn}>
+              <Button size="lg" className="rounded-full px-6" onClick={onGetStarted}>
                 Get started <ArrowRight />
               </Button>
               <Button size="lg" variant="outline" className="rounded-full px-6" asChild>
