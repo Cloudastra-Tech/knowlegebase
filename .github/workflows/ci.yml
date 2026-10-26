@@ -1,13 +1,19 @@
-# Runs the backend tests and the frontend lint + build on every PR into main and
-# every push to main. PRs into epic branches are checked locally before merging.
-# No secrets needed: the tests fake OpenAI and the sign-in providers.
+# Runs the backend tests and the frontend lint + build on every PR into dev or
+# main and every push to them. Feature work goes to dev; dev is promoted to main,
+# which is production. No secrets needed: the tests fake OpenAI and the sign-in
+# providers.
 name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [dev, main]
   push:
-    branches: [main]
+    branches: [dev, main]
+
+# A newer push to the same PR or branch cancels the run it replaces.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
