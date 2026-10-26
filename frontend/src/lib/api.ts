@@ -55,7 +55,8 @@ export interface SignInConnection {
   metadata_url?: string | null
   email_attribute?: string | null
   signs_requests?: boolean
-  // Roles from the groups it sends (empty: it doesn't set roles)
+  // Roles from the groups it sends. They only count on the workspace's role
+  // source (SignInSettings.role_source); empty: it doesn't set roles.
   group_claim: string | null
   group_rules: GroupRule[]
   health: ProviderHealth
@@ -89,6 +90,8 @@ export interface Member {
   override_role: AccountRole | null
   group_role: AccountRole | null
   groups: string[]
+  groups_updated_at: number | null // when the role source last sent their groups
+  admin_kept: boolean // admin from groups past the limit: kept only as the last admin
   disabled: boolean
   has_password: boolean
   last_login_at: number | null
@@ -108,7 +111,7 @@ export interface SignInEvent {
   connection_id: string | null
   connection: string | null
   email: string | null
-  outcome: "signed_in" | "refused" | "failed" | "test"
+  outcome: "signed_in" | "refused" | "failed" | "test" | "warning"
   reason: string | null // a code (sso_errors.py)
   reason_text: string | null // what it means, for the admin
   fix: string | null
@@ -122,6 +125,8 @@ export interface SignInSettings {
   events: SignInEvent[]
   require_sso: boolean // passwords only for admins
   password_login: boolean // the server allows passwords at all
+  role_source: string | null // the one provider whose groups set roles
+  group_admin_days: number // admin from groups lasts this long without a sign-in (0: forever)
 }
 
 export interface OidcConnectionInput {
@@ -157,8 +162,9 @@ export interface SsoTestResult {
   name?: string
   role?: AccountRole
   role_source?: RoleSource
-  groups?: string[] | null // null: the provider has no group rules
+  groups?: string[] | null // null: the provider doesn't set roles
   new_member?: boolean
+  sets_roles?: boolean // the provider is the role source
   sent: Record<string, string>
 }
 
@@ -372,10 +378,16 @@ export const signIn = {
       `/admin/sign-in/connections/${seg(id)}/test`,
       json("POST"),
     ),
-  setGroupRules: (id: string, group_claim: string, rules: GroupRule[]) =>
+  // make_role_source: take over setting roles from another provider (else a 409)
+  setGroupRules: (id: string, group_claim: string, rules: GroupRule[], make_role_source = false) =>
     request<SignInConnection>(
       `/admin/sign-in/connections/${seg(id)}/roles`,
-      json("PUT", { group_claim: group_claim || null, rules }),
+      json("PUT", { group_claim: group_claim || null, rules, make_role_source }),
+    ),
+  setGroupAdminDays: (days: number) =>
+    request<{ group_admin_days: number }>(
+      "/admin/sign-in/group-admin-days",
+      json("PUT", { days }),
     ),
   members: () => request<{ members: Member[] }>("/admin/members"),
   // role: null goes back to the role their groups give

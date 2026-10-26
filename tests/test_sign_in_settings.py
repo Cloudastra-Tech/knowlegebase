@@ -913,3 +913,150 @@ def test_a_test_sign_in_names_the_failure_the_same_way(client, acme, acme_sso, t
     assert (result["ok"], result["reason"]) == (False, "invalid_grant")
     assert result["reason_text"].startswith("Redirect URI doesn't match")
     assert health_of(client, acme, acme_sso) == before      # a failed test doesn't count
+
+
+# ---- One role source per workspace, and group-given admin that goes stale -----------------
+def workspace_with_providers(slug, *labels, password_admin=True):
+    """A workspace with its domain verified, an admin with a password (unless
+    not wanted), and an enabled provider per label."""
+    import auth
+    import members_store
+    import sso_setup
+    if password_admin:
+        members_store.set_password(f"{slug}-admin", "Admin", auth.hash_password("correct-horse"),
+                                   slug, "admin")
+    members_store.add_verified_domain(slug, f"{slug}.example")
+    return [members_store.create_connection(
+        slug, "oidc", label, ISSUER, "kb", {"client_secret": "s"},
+        {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test") for label in labels]
+
+
+def put_rules(client, headers, conn, rules, **extra):
+    return client.put(f"/api/admin/sign-in/connections/{conn['id']}/roles", headers=headers,
+                      json={"rules": [{"group": g, "role": r} for g, r in rules], **extra})
+
+
+def groups_were_sent(username, days_ago):
+    import time
+    import members_store
+    with sqlite3.connect(members_store.DB_PATH) as db:
+        db.execute("UPDATE members SET groups_updated_at = ? WHERE username = ?",
+                   (time.time() - days_ago * 86400, username))
+
+
+def test_only_the_role_source_sets_roles_whichever_provider_someone_uses(client, idp):
+    saml, oidc = workspace_with_providers("duo", "Duo SAML", "Duo OIDC")
+    admin = as_user(client, "duo-admin")
+    assert put_rules(client, admin, saml, [("kb-admins", "admin")]).status_code == 200
+    assert client.get("/api/admin/sign-in", headers=admin).json()["role_source"] == saml["id"]
+    alice = {"email": "alice@duo.example", "email_verified": True, "groups": ["kb-admins"]}
+    assert me(client, session_for(client, idp, saml, alice))["role"] == "admin"
+    # The other provider has no rules: signing in through it leaves her role alone.
+    via_oidc = session_for(client, idp, oidc, {**alice, "groups": []})
+    assert me(client, via_oidc)["role"] == "admin"
+    assert me(client, session_for(client, idp, saml, alice))["role"] == "admin"
+    member = next(m for m in client.get("/api/admin/members", headers=admin).json()["members"]
+                  if m["username"] == "alice@duo.example")
+    assert (member["role_source"], member["groups"]) == ("groups", ["kb-admins"])
+    assert member["groups_updated_at"]
+    # A test sign-in through the other one says so, and shows the role she keeps.
+    import sso
+    tried = sso.try_connection(oidc, {**alice, "groups": []})
+    assert (tried["role"], tried["sets_roles"]) == ("admin", False)
+
+
+def test_rules_on_a_second_provider_switch_the_role_source_only_when_asked(client, idp):
+    import members_store
+    first, second = workspace_with_providers("swap", "First", "Second")
+    admin = as_user(client, "swap-admin")
+    put_rules(client, admin, first, [("kb-admins", "admin")])
+    bo = {"email": "bo@swap.example", "email_verified": True, "groups": ["kb-admins", "staff"]}
+    headers = session_for(client, idp, first, bo)
+    members_store.set_role("pinned@swap.example", "admin", workspace="swap")
+    r = put_rules(client, admin, second, [("staff", "hr")])
+    assert r.status_code == 409 and "Roles come from First" in r.json()["detail"]
+    assert members_store.group_rules(second["id"]) == []              # nothing saved
+    assert me(client, headers)["role"] == "admin"
+    # Rules that set no role don't need the switch.
+    assert put_rules(client, admin, second, []).status_code == 200
+    r = put_rules(client, admin, second, [("staff", "hr")], make_role_source=True)
+    assert r.status_code == 200
+    assert members_store.role_source("swap") == second["id"]
+    # First's group roles no longer count; Second's apply at the next sign-in through it.
+    assert me(client, headers)["role"] == "public"
+    assert me(client, session_for(client, idp, first, bo))["role"] == "public"
+    assert me(client, session_for(client, idp, second, bo))["role"] == "hr"
+    assert members_store.get("pinned@swap.example")["role"] == "admin"   # an override stays
+    # Clearing the source's rules leaves the workspace without one.
+    assert put_rules(client, admin, second, []).status_code == 200
+    assert members_store.role_source("swap") is None
+    assert me(client, headers)["role"] == "public"
+
+
+def test_the_role_source_cant_change_or_go_if_that_leaves_no_admin(client, idp):
+    import members_store
+    source, other = workspace_with_providers("lone", "Source", "Other", password_admin=False)
+    members_store.set_group_rules("lone", source["id"], None, [("kb-admins", "admin")])
+    boss = {"email": "boss@lone.example", "email_verified": True, "groups": ["kb-admins"]}
+    session_for(client, idp, source, boss)
+    headers = session_for(client, idp, other, boss)        # signed in through the other one
+    assert me(client, headers)["role"] == "admin"
+    for r in (put_rules(client, headers, source, []),
+              put_rules(client, headers, other, [("staff", "hr")], make_role_source=True),
+              client.delete(f"/api/admin/sign-in/connections/{source['id']}", headers=headers)):
+        assert r.status_code == 400 and "no admin" in r.json()["detail"], r.text
+    assert members_store.role_source("lone") == source["id"]           # nothing changed
+    assert members_store.get_connection(source["id"])
+    assert me(client, headers)["role"] == "admin"
+    # With another admin, the same change goes through.
+    members_store.set_role("deputy@lone.example", "admin", workspace="lone")
+    assert put_rules(client, headers, other, [("staff", "hr")],
+                     make_role_source=True).status_code == 200
+    assert me(client, headers)["role"] == "public"
+
+
+def test_group_given_admin_expires_without_a_sign_in_through_the_role_source(client, idp):
+    import members_store
+    (source,) = workspace_with_providers("aging", "Aging SSO")
+    admin = as_user(client, "aging-admin")
+    put_rules(client, admin, source, [("kb-admins", "admin"), ("staff", "hr")])
+    cy = {"email": "cy@aging.example", "email_verified": True, "groups": ["kb-admins", "staff"]}
+    headers = session_for(client, idp, source, cy)
+    session_for(client, idp, source, {**cy, "email": "di@aging.example"})
+    members_store.set_role("di@aging.example", "hr")                 # an override
+    groups_were_sent("cy@aging.example", days_ago=29)
+    groups_were_sent("di@aging.example", days_ago=40)
+    assert me(client, headers)["role"] == "admin"                    # 30 days by default
+    groups_were_sent("cy@aging.example", days_ago=31)
+    assert me(client, headers)["role"] == "hr"            # what the groups give without admin
+    listed = {m["username"]: m for m in
+              client.get("/api/admin/members", headers=admin).json()["members"]}
+    assert (listed["di@aging.example"]["role"], listed["di@aging.example"]["override_role"]) == (
+        "hr", "hr")                                                  # the override is untouched
+    # A sign-in through the role source brings it back.
+    assert me(client, session_for(client, idp, source, cy))["role"] == "admin"
+    # 0: never.
+    assert client.put("/api/admin/sign-in/group-admin-days", headers=admin,
+                      json={"days": 0}).status_code == 200
+    assert client.get("/api/admin/sign-in", headers=admin).json()["group_admin_days"] == 0
+    groups_were_sent("cy@aging.example", days_ago=400)
+    assert me(client, headers)["role"] == "admin"
+    assert client.put("/api/admin/sign-in/group-admin-days", headers=admin,
+                      json={"days": -1}).status_code == 422
+
+
+def test_the_last_admin_keeps_admin_from_stale_groups_and_admins_are_warned(client, idp):
+    import members_store
+    (source,) = workspace_with_providers("last", "Last SSO", password_admin=False)
+    members_store.set_group_rules("last", source["id"], None, [("kb-admins", "admin")])
+    headers = session_for(client, idp, source, {"email": "eve@last.example",
+                                                "email_verified": True, "groups": ["kb-admins"]})
+    groups_were_sent("eve@last.example", days_ago=90)
+    assert me(client, headers)["role"] == "admin"
+    assert me(client, headers)["role"] == "admin"
+    warnings = [e for e in client.get("/api/admin/sign-in", headers=headers).json()["events"]
+                if e["outcome"] == "warning"]
+    assert [(e["email"], e["reason"], e["connection"]) for e in warnings] == [
+        ("eve@last.example", "last_admin_kept", "Last SSO")]         # once, not every request
+    (eve,) = client.get("/api/admin/members", headers=headers).json()["members"]
+    assert (eve["role"], eve["admin_kept"]) == ("admin", True)

@@ -137,7 +137,10 @@ LAYER 2 — GUARDRAILS          "the backup net"
                                      otherwise                    → public
 ```
 `admin` is HR plus control over who may sign in (the **Access** screen); the
-app treats both as HR / Admin. Groups are read at each sign-in.
+app treats both as HR / Admin. Groups are read at each sign-in through the
+workspace's **role source** (the one provider with group rules); signing in
+through another provider leaves the role alone. Admin from groups the role
+source hasn't sent in 30 days (configurable) expires, except for the last admin.
 Your role is looked up again on **every request**, so taking someone's HR role
 away works straight away. The website can *lower* it (an HR user can "view as
 public"), but it can never *raise* it — the server decides.

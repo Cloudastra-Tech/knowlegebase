@@ -983,6 +983,8 @@ def sign_in_settings(request: Request, user=Depends(require_admin)):
     return {"domains": [_domain_out(d) for d in members_store.list_domains(ws)],
             "connections": [_connection_out(request, c) for c in connections],
             "require_sso": members_store.requires_sso(ws),
+            "role_source": members_store.role_source(ws),
+            "group_admin_days": members_store.group_admin_days(ws),
             "password_login": auth.password_login_on(),
             "events": [{**e, "connection": _event_method(labels, e["connection_id"]),
                         **_explained(e["reason"])}
@@ -1178,18 +1180,50 @@ class GroupRule(BaseModel):
 class GroupRulesIn(BaseModel):
     group_claim: str | None = Field(default=None, max_length=300)
     rules: list[GroupRule] = Field(default_factory=list, max_length=200)
+    make_role_source: bool = False   # take over setting roles from another provider
+
+
+def _no_admin_left(e):
+    who = ", ".join(e.admins)
+    return HTTPException(400, f"This would leave the workspace with no admin ({who} "
+                              f"{'is' if len(e.admins) == 1 else 'are'} admin through "
+                              "groups). Make someone else admin on the Members tab first.")
 
 
 @app.put("/api/admin/sign-in/connections/{cid}/roles")
 def set_group_roles(cid: str, body: GroupRulesIn, request: Request,
                     user=Depends(require_admin)):
-    """Roles from the groups a provider sends: they apply at each person's next sign-in."""
+    """Roles from the groups a provider sends: they apply at each person's next
+    sign-in. Rules make it the workspace's one role source (members_store.py)."""
     ws = ws_of(user)
     claim = (body.group_claim or "").strip() or None
-    if not members_store.set_group_rules(ws, cid, claim,
-                                         [(r.group, r.role) for r in body.rules]):
+    try:
+        found = members_store.set_group_rules(ws, cid, claim,
+                                              [(r.group, r.role) for r in body.rules],
+                                              make_role_source=body.make_role_source)
+    except members_store.RoleSourceTaken as e:
+        source = members_store.get_connection(e.source)
+        name = source["label"] if source else "another provider"
+        raise HTTPException(409, f"Roles come from {name}. A workspace takes roles from one "
+                                 "provider: switch it to this one to save these rules.")
+    except members_store.NoAdminLeft as e:
+        raise _no_admin_left(e)
+    if not found:
         raise HTTPException(404, "This workspace has no such sign-in provider.")
+    log.warning("%s set the group rules of %s; the role source of %s is %s", user["username"],
+                cid, ws, members_store.role_source(ws))
     return _connection_out(request, members_store.get_connection(cid))
+
+
+class GroupAdminDaysIn(BaseModel):
+    days: int = Field(ge=0, le=3650)
+
+
+@app.put("/api/admin/sign-in/group-admin-days")
+def set_group_admin_days(body: GroupAdminDaysIn, user=Depends(require_admin)):
+    """How long admin from groups lasts without a sign-in through the role source (0: forever)."""
+    members_store.set_group_admin_days(ws_of(user), body.days)
+    return {"group_admin_days": body.days}
 
 
 def _keep_a_way_in(user, ws, without=None, domain=None):
@@ -1217,7 +1251,11 @@ def _keep_a_way_in(user, ws, without=None, domain=None):
 @app.delete("/api/admin/sign-in/connections/{cid}")
 def delete_connection(cid: str, user=Depends(require_admin)):
     _keep_a_way_in(user, ws_of(user), without=cid)
-    if not members_store.delete_connection(ws_of(user), cid):
+    try:
+        found = members_store.delete_connection(ws_of(user), cid)
+    except members_store.NoAdminLeft as e:
+        raise _no_admin_left(e)
+    if not found:
         raise HTTPException(404, "This workspace has no such sign-in provider.")
     return {"ok": True}
 
@@ -1721,12 +1759,18 @@ class MemberPatch(BaseModel):
     disabled: bool | None = None
 
 
-def _member_out(m):
+def _member_out(m, admin_days=None):
     source = ("override" if m["override_role"] else
               "groups" if m["group_role"] else "default")
+    if admin_days is None:
+        admin_days = members_store.group_admin_days(m["workspace"])
     return {"username": m["username"], "name": m["name"], "role": m["role"],
             "role_source": source, "override_role": m["override_role"],
-            "group_role": m["group_role"], "groups": m["groups"], "disabled": m["disabled"],
+            "group_role": m["group_role"], "groups": m["groups"],
+            "groups_updated_at": m["groups_updated_at"],
+            # admin from groups older than the limit: kept only as the last admin
+            "admin_kept": members_store.group_admin_stale(m, admin_days),
+            "disabled": m["disabled"],
             "has_password": m["has_password"], "last_login_at": m["last_login_at"],
             "created_at": m["created_at"]}
 
@@ -1743,7 +1787,10 @@ def _workspace_member(user, username):
 
 @app.get("/api/admin/members")
 def list_members(user=Depends(require_admin)):
-    return {"members": [_member_out(m) for m in members_store.list_members(ws_of(user))]}
+    ws = ws_of(user)
+    members_store.expire_group_admins(ws)            # so the list shows who's admin now
+    days = members_store.group_admin_days(ws)
+    return {"members": [_member_out(m, days) for m in members_store.list_members(ws)]}
 
 
 @app.patch("/api/admin/members/{username}")
