@@ -138,6 +138,8 @@ Knowledge assistant looks like a well-kept ledger: white paper, graphite ink, ha
 
 The system is shadcn/ui on the `radix-nova` style with a neutral base colour, set entirely in Plus Jakarta Sans. Density is moderate: 32px controls, 14px body text, 20px panel padding. Surfaces are flat and outlined by default; at most one element per screen is lifted with a soft, layered shadow, and it is always the thing you act on (the sign-in card, the chat composer, the landing page's product preview).
 
+**The sign-in page is the one dark screen.** By the owner's choice it follows the Watermelon UI "auth-11" block: a split screen with a rounded photo panel on the left (large screens) and the form on the right, larger pill and 44px controls, a heading with one word in a light serif italic, and a staggered rise-in entrance (`motion`, honouring reduced motion). It gets there with the same tokens: the page root carries the `dark` class, so the `.dark` set in `index.css` applies there and nowhere else.
+
 Two registers share the same tokens. The marketing register (landing page) uses larger type, pill-shaped buttons and generous 80–112px section spacing. The working register (chat, Integrations, Sign-in settings, Members, the sign-in page) uses 10px-radius controls, 24px screen titles and 16–24px rhythm.
 
 **Key Characteristics:**

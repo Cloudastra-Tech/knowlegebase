@@ -15,7 +15,7 @@ Audience and job: returning employees (most frequent: type work email, go), new 
 
 THESIS: Getting in should be legible. One card, two tabs, Sign in and Create a workspace; the email you type tells you, before you leave the page, which workspace you are entering, how it signs you in and where your role comes from. It refuses the category default: a stack of equal-weight "Continue with X" buttons and a password form that leave people guessing which is theirs.
 
-OWN-WORLD: the app's own: white ground, near-black primary, neutral greys, Plus Jakarta Sans, shadcn Tabs, Field, Input, Button, Badge; 12px-radius card; Lucide icons and simple-icons brand marks.
+OWN-WORLD: the user pinned the Watermelon UI "auth-11" block: a dark split screen (the page root carries `.dark`, so the app's own dark tokens apply), rounded photo panel left on large screens, form right; Plus Jakarta Sans with one light serif-italic word in the heading; pill and 44px shadcn controls; a staggered rise-in via motion.
 
 STORY: a visitor types their email, watches the route pass resolve to their company and its method, presses Continue and lands in. A new company sees "No workspace for acme.com yet" and one click takes them to Create a workspace.
 

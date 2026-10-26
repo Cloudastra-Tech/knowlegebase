@@ -20,15 +20,16 @@ export interface AuthOptions {
   password: boolean
   // Some workspace has its own sign-in provider: ask for a work email first.
   email_sso: boolean
-  // A new company can create its workspace here (with Google Workspace).
+  // A new company can create its workspace here (with Google Workspace)...
   signup: boolean
+  // ...with an invite code.
+  signup_invite: boolean
 }
 
 // What the sign-in page's route pass shows for a work email's domain.
 export interface SsoRoute {
   connections: SsoConnection[]
   workspace: {
-    name: string
     google: boolean // "Continue with Google Workspace" works for it
     password: boolean // its people may still use a password
     roles_from: string | null // the provider whose groups set roles; null: the admin
@@ -360,8 +361,9 @@ const docPath = (d: { access: Access; name: string }) =>
 // A full-page navigation (not fetch): the server redirects to Google / Microsoft.
 export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/start`
 // Sign-up: name the workspace, then confirm with Google Workspace.
-export const signupStartUrl = (name: string) =>
-  `/api/auth/signup/google/start?name=${encodeURIComponent(name)}`
+export const signupStartUrl = (name: string, code = "") =>
+  `/api/auth/signup/google/start?name=${encodeURIComponent(name)}` +
+  (code ? `&code=${encodeURIComponent(code)}` : "")
 
 const json = (method: string, body?: unknown): RequestInit => ({
   method,
