@@ -1,7 +1,7 @@
 # knowlegebase
 
 RAG chat app: FastAPI API (`api.py`, port 8010) + React/shadcn site (`frontend/`, Vite proxies
-`/api` to 8010). Streamlit `app.py` is legacy. Default branch `main`; sign-in code is `auth.py`,
+`/api` to 8010). Default branch `main`; sign-in code is `auth.py`,
 `sso.py`, `saml_sp.py`, `members_store.py`. Architecture: `ARCHITECTURE.md`; ops: `deploy.md`.
 
 Linux setup (Python 3.12, venv dir is `venv/`):
