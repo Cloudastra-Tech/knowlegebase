@@ -29,6 +29,9 @@ const IntegrationsView = lazy(() =>
 const InsightsView = lazy(() =>
   import("@/components/insights-view").then((m) => ({ default: m.InsightsView })),
 )
+const ApiKeysView = lazy(() =>
+  import("@/components/api-keys-view").then((m) => ({ default: m.ApiKeysView })),
+)
 const KnowledgeView = lazy(() =>
   import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
 )
@@ -163,6 +166,14 @@ export function DocsScreen() {
   return (
     <Screen>
       <DocsView />
+    </Screen>
+  )
+}
+
+export function ApiKeysScreen() {
+  return (
+    <Screen>
+      <ApiKeysView />
     </Screen>
   )
 }

@@ -1,5 +1,5 @@
 import { lazy, useState } from "react"
-import { ChevronDown, LogOut, MonitorSmartphone } from "lucide-react"
+import { ChevronDown, KeyRound, LogOut, MonitorSmartphone } from "lucide-react"
 import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
 
@@ -189,6 +189,12 @@ export default function App() {
                     {user.username.includes("@") ? user.username : `@${user.username}`}
                   </div>
                 </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/api-keys">
+                    <KeyRound /> API keys
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut}>
                   <LogOut /> Sign out

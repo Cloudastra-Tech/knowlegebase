@@ -200,6 +200,19 @@ class HybridRetriever:
         self.rrf_k = rrf_k
         self.intros = {}      # source -> its first chunks (set by load_chain)
 
+    @staticmethod
+    def _hits(retriever, query, k):
+        """retriever's chunks for query: as many as it returns by itself, or k of
+        them when k is given (each retriever is shared by every question at
+        once, so its own setting is left as it is)."""
+        if k and hasattr(retriever, "vectorstore"):           # Chroma, with its filter
+            return retriever.vectorstore.similarity_search(
+                query, k=k, filter=retriever.search_kwargs.get("filter"))
+        if k and hasattr(retriever, "vectorizer"):            # BM25
+            return retriever.vectorizer.get_top_n(retriever.preprocess_func(query),
+                                                  retriever.docs, n=k)
+        return retriever.invoke(query)
+
     def intros_for(self, docs, max_docs=2):
         """The opening chunks of the top documents among `docs` that aren't
         already included — added to the context, not used for ranking."""
@@ -208,17 +221,18 @@ class HybridRetriever:
         return [i for src in sources for i in self.intros.get(src, [])
                 if i.page_content not in have]
 
-    def invoke(self, query, dense_query=None):
+    def invoke(self, query, dense_query=None, k=None):
         """query: what the user asked — the KEYWORD search uses exactly this.
         dense_query: an enriched version for the MEANING search only (e.g.
         the question + a HyDE guess); defaults to query. A guessed answer must
         not feed keyword search: its invented words would match real chunks.
+        k: how many chunks (default top_k), each search asked for as many.
         Each chunk comes back as a copy whose metadata also says how it was
         found ("why this source"): rank (1 = best, after fusion), dense_rank and
         bm25_rank (None when that search didn't return it), and its chunk_id."""
         # Run both searches. Each returns an ORDERED list of chunks (best first).
-        dense_hits = self.dense.invoke(dense_query or query)
-        bm25_hits = self.bm25.invoke(query)
+        dense_hits = self._hits(self.dense, dense_query or query, k)
+        bm25_hits = self._hits(self.bm25, query, k)
 
         # Score every chunk by its rank in each list (RRF).
         scores = {}        # chunk text -> fused score
@@ -232,7 +246,7 @@ class HybridRetriever:
                 ranks.setdefault(key, {}).setdefault(name, rank + 1)
 
         # Sort by fused score (highest first) and return the top chunks.
-        best = sorted(scores, key=scores.get, reverse=True)[: self.top_k]
+        best = sorted(scores, key=scores.get, reverse=True)[: k or self.top_k]
         return [Document(page_content=k, id=docs[k].id, metadata={
                     **docs[k].metadata,
                     "chunk_id": docs[k].metadata.get("chunk_id") or docs[k].id,
