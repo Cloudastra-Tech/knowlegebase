@@ -91,7 +91,8 @@ import urllib.parse
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import (FileResponse, JSONResponse, RedirectResponse, Response,
+                               StreamingResponse)
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from saml2 import time_util as saml2_time
@@ -101,9 +102,11 @@ load_dotenv()
 
 import auth                          # noqa: E402  (needs the .env loaded first)
 import docs_store                    # noqa: E402
+import health                        # noqa: E402
 import ingest                        # noqa: E402
 import integrations_store            # noqa: E402
 import members_store                 # noqa: E402
+import observability                 # noqa: E402
 import saml_sp                       # noqa: E402
 import sessions_store                # noqa: E402
 import sso                           # noqa: E402
@@ -122,6 +125,7 @@ async def _lifespan(app):
     yield
 
 
+observability.init_error_tracking()   # only with SENTRY_DSN; before the app is made
 app = FastAPI(title="Knowledge Assistant API", lifespan=_lifespan)
 log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 # Holds Authlib's state / nonce / PKCE verifier between the redirect to Google or
@@ -1233,6 +1237,8 @@ def _provider_logout_url(request, user):
     try:
         conn = members_store.get_connection(user.get("connection"))
     except sqlite3.Error:
+        log.exception("Couldn't read sign-in connection %s to sign out there",
+                      user.get("connection"))
         return None
     end = conn and conn["protocol"] == "oidc" and conn["logout_at_idp"] and \
         conn["metadata"].get("end_session_endpoint")
@@ -1793,6 +1799,9 @@ def chat_stream(body: ChatIn, user=Depends(current_user), role=Depends(current_r
             events.put({"type": "done", "answer": answer, "sources": sources,
                         "steps": _steps(trace)})
         except Exception as e:                     # show it in the chat, keep serving
+            # Not the question itself: it's tenant data (its length helps spot limits).
+            log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
+                          ws, role, len(question))
             events.put({"type": "error", "message": f"Something went wrong: {type(e).__name__}"})
         finally:
             with _gate:
@@ -1837,6 +1846,7 @@ def _run_index(ws):
                 for key in [k for k in _agents if k[0] == ws]:
                     del _agents[key]   # next question loads the new index
         except Exception as e:        # keep the server alive; show it in the UI
+            log.exception("Index: re-indexing workspace %s failed", ws)
             error = f"{type(e).__name__}: {e}"
         finally:
             with _gate:
@@ -2035,6 +2045,7 @@ def _sync(ws, provider):
         if changed:
             _schedule_index(ws)
     except Exception as e:
+        log.exception("Sync: %s failed for workspace %s", provider, ws)
         integrations_store.update(ws, provider, status="error",
                                   last_error=f"{type(e).__name__}: {e}"[:500])
     finally:
@@ -2129,6 +2140,7 @@ def integration_callback(provider: str, state: str = "", code: str = "", error: 
     try:
         c.finish_connect(ws, code, pending["redirect_uri"], pending["user"])
     except Exception:
+        log.exception("Integration %s: couldn't finish connecting workspace %s", provider, ws)
         return RedirectResponse("/#integrations?error=connect_failed")
     if _ready_to_sync(ws, provider):
         _start_sync(ws, provider)
@@ -2194,6 +2206,7 @@ def drive_folders(parent: str = "", user=Depends(require_hr)):
     try:
         return google_drive.list_folders(ws, parent or None)
     except Exception as e:
+        log.exception("Google Drive: couldn't list folders for workspace %s", ws)
         raise HTTPException(502, f"Couldn't list Google Drive folders: {e}")
 
 
@@ -2233,8 +2246,9 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
         for meta in col.get(include=["metadatas"])["metadatas"]:
             key = os.path.normcase(os.path.abspath(meta.get("source", "")))
             chunks[key] = chunks.get(key, 0) + 1
-    except Exception:
-        pass                                   # no index yet: everything shows 0
+    except Exception as e:                     # no index yet: everything shows 0
+        if type(e).__name__ != "NotFoundError":
+            log.exception("Knowledge: couldn't read the search index of workspace %s", ws)
 
     def indexed(path):
         return chunks.get(os.path.normcase(os.path.abspath(path)), 0)
@@ -2350,8 +2364,18 @@ def sign_out_member(username: str, user=Depends(require_admin)):
 
 
 @app.get("/api/health")
-def health():
+def health_check():
+    """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200."""
     return {"ok": True}
+
+
+@app.get("/api/health/ready")
+def ready_check():
+    """Can this server actually serve? (database, search index, encryption key; see
+    health.py). 503 with the failing check's reason otherwise. For a deploy gate or
+    an uptime monitor, not for Docker: restarting the container fixes none of them."""
+    ok, checks = health.ready(members_store.DB_PATH, ingest.DB_FOLDER)
+    return JSONResponse({"ok": ok, "checks": checks}, status_code=200 if ok else 503)
 
 
 # ---- The website -------------------------------------------------------------

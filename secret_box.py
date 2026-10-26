@@ -4,8 +4,9 @@ secret_box.py  —  encrypts secrets before they go into the database.
 Integration tokens (Google Drive, Notion) and single sign-on client secrets are
 stored ENCRYPTED with a key from INTEGRATIONS_KEY, or, if that isn't set, a key
 generated once into config/integrations.key. Losing the key means reconnecting
-the integrations and re-entering the sign-in secrets, so back it up with the
-database (or set INTEGRATIONS_KEY).
+the integrations and re-entering the sign-in secrets, so back it up — but
+never in the same place as the database, or one leaked backup decrypts
+everything (scripts/backup.sh keeps them apart). Or set INTEGRATIONS_KEY.
 """
 
 import json

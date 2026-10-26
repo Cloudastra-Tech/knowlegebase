@@ -32,6 +32,7 @@ Run a quick demo:  python agent.py
 """
 
 import ast
+import logging
 import operator
 import os
 import re
@@ -48,6 +49,8 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from rag import load_chain, answer_question
 from safety import check_prompt_injection, redact_pii
+
+log = logging.getLogger("uvicorn.error")
 
 
 # ---- Calculator: arithmetic only --------------------------------------------
@@ -93,6 +96,13 @@ def _safe(text):
     """Make text printable on a Windows cp1252 console (emoji-safe)."""
     enc = sys.stdout.encoding or "utf-8"
     return str(text).encode(enc, "replace").decode(enc, "replace")
+
+
+def _tool_error(name, e):
+    """What a tool tells the model when an outside service fails. Logged by type
+    only: the message can carry the question's words (e.g. in a URL)."""
+    log.warning("Agent: the %s tool failed (%s)", name, type(e).__name__)
+    return f"Error: {e}"
 
 
 def _outline_collections():
@@ -355,7 +365,7 @@ def build_agent(role="public", collection=None, outline=True):
             value = data["rates"][to_currency]
             return f"{amount} {from_currency} = {value} {to_currency}"
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("convert_currency", e)
 
     @tool
     def wikipedia(topic: str) -> str:
@@ -370,7 +380,7 @@ def build_agent(role="public", collection=None, outline=True):
             data = requests.get(url, headers=headers, timeout=10).json()
             return data.get("extract", "No summary found.")
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("wikipedia", e)
 
     @tool
     def search_outline(query: str) -> str:
@@ -439,7 +449,7 @@ def build_agent(role="public", collection=None, outline=True):
                 lines.append(f"- {title} (id: {doc_id}): {snippet}")
             return "\n".join(lines)
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("search_outline", e)
 
     @tool
     def read_outline_doc(document_id: str) -> str:
@@ -462,7 +472,7 @@ def build_agent(role="public", collection=None, outline=True):
                 text = text[:8000] + "\n\n...(document truncated)"
             return f"# {title}\n\n{text}"
         except Exception as e:
-            return f"Error: {e}"
+            return _tool_error("read_outline_doc", e)
 
     tools = [search_docs, calculator, convert_currency, wikipedia]
     if outline:                       # only workspaces with the wiki connected
