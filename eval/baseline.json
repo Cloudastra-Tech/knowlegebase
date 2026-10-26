@@ -1,7 +1,7 @@
 {
-  "hit_rate": 0.9722,
-  "recall": 0.9722,
-  "mrr": 0.8773,
-  "evidence_hit_rate": 0.9722,
-  "evidence_mrr": 0.8588
+  "hit_rate": 0.9767,
+  "recall": 0.9767,
+  "mrr": 0.905,
+  "evidence_hit_rate": 0.9767,
+  "evidence_mrr": 0.8236
 }

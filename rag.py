@@ -15,9 +15,13 @@ This file is imported by agent.py. You can also test it directly:
     python rag.py
 """
 
+import contextvars
+import logging
 import os
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from dotenv import load_dotenv
 
 import regex      # Unicode-aware regular expressions (\p{L} = any letter, any script)
@@ -28,31 +32,79 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.retrievers import BM25Retriever   # keyword search
 
+import models
+import rerankers
 from ingest import CHROMA_LOCK
 from safety import check_question, check_answer  # our Guardrails-AI safety layer
 from untrusted import RULE, spotlight
 
 load_dotenv()
+log = logging.getLogger("uvicorn.error")
 DB_FOLDER = "chroma_db"
 INTRO_CHARS = 1200      # chunks starting this early count as a document's intro
 INTRO_CHUNKS = 3        # ...at most this many per document (title + summary)
 
-# ----------------------------------------------------------------------------
-# Phase 3 retrieval upgrades — ON/OFF switches.
-# HyDE adds ONE extra gpt-4o-mini call per question (more tokens, ~1 s).
-# Turn it off with RAG_HYDE=off in .env. Measure with evaluate.py before
-# changing the default.
-# ----------------------------------------------------------------------------
-USE_HYDE = os.getenv("RAG_HYDE", "on").strip().lower() not in ("0", "off", "false", "no")
+TOP_K = 4               # chunks a search keeps without a reranker
 
-# RERANK: a slot for a REAL reranker (a cross-encoder or a rerank API) —
+
+def _switch(name, default):
+    """An on/off/auto setting from .env: True, False or "auto"."""
+    value = (os.getenv(name) or default).strip().lower()
+    if value in ("0", "off", "false", "no"):
+        return False
+    if value in ("1", "on", "true", "yes", "always"):
+        return True
+    return "auto"
+
+
+def _env_float(name, default):
+    try:
+        return float(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+# ----------------------------------------------------------------------------
+# Retrieval upgrades — switches (.env). Each one that calls a model uses the
+# FAST model (models.py) and runs alongside the others, not one after another.
+# Measure with evaluate.py (needs a key) before changing a default.
+# ----------------------------------------------------------------------------
+# HyDE: a guessed answer added to the MEANING search only (never to keyword
+# search: its invented words would match real chunks). RAG_HYDE=
+#   auto   only for a short or vague question (is_vague), the default: a
+#          specific question already matches well, and skipping it saves a call
+#   on     every question;  off   never
+USE_HYDE = _switch("RAG_HYDE", "auto")
+# MULTI-QUERY: RAG_MULTI_QUERY=on asks for MULTI_QUERY_N rewordings of the
+# question, each searched by MEANING too (keyword search keeps the question as
+# asked), all fused together. One more call per question; off by default.
+MULTI_QUERY = _switch("RAG_MULTI_QUERY", "off") is True
+MULTI_QUERY_N = 3
+
+# RERANK: a REAL reranker (rerankers.py: RERANKER=cohere / voyage / local) —
 # a callable (question, docs) -> docs, best first. None = keep the fused order.
-# It only pays off over a LARGER candidate pool than the context keeps (e.g.
-# fuse 30-50 chunks, rerank, keep the top 4), so plugging one in also means
-# raising the k of both searches and HybridRetriever's top_k in load_chain.
+# With one, both searches return rerankers.CANDIDATES chunks, the reranker
+# scores the fused pool, and the best rerankers.KEEP reach the model.
 # (The old LLM rerank reordered the same 4 chunks it was given: one extra
 # call that changed nothing about WHICH chunks the model read.)
-RERANKER = None
+RERANKER = rerankers.from_env()
+
+# FRESHNESS: when chunks rank close, the one from the more recently changed
+# document goes first. A chunk's score is multiplied by 1 + RECENCY_BOOST x
+# its freshness (1 for the newest document among the candidates, halving every
+# RECENCY_HALF_LIFE_DAYS older). Mild on purpose: at 0.03, near the top a newer
+# chunk passes the one just above it, never one ranked two places higher.
+# RAG_RECENCY_BOOST=0 turns it off.
+RECENCY_BOOST = max(0.0, _env_float("RAG_RECENCY_BOOST", 0.03))
+RECENCY_HALF_LIFE_DAYS = max(1.0, _env_float("RAG_RECENCY_HALF_LIFE_DAYS", 365))
+
+
+# FRESHNESS (pipeline.md P1-7): every passage's block carries its document's
+# `updated` date, and when two disagree the newer one wins, said openly.
+FRESHNESS_RULE = (
+    "If two passages disagree (a different price, date, number or rule), go by the one "
+    "whose block has the later `updated` date, and say that an older document says "
+    "otherwise.")
 
 
 # This is the INSTRUCTION we give the AI. Notice the strict rules:
@@ -76,6 +128,7 @@ How to respond:
 - Never invent facts that aren't supported by the context. Never guess: don't
   use words like "likely", "probably" or "might" to fill gaps — say only what
   the context states, and if it's partial, say what it does cover.
+- """ + FRESHNESS_RULE + """
 - """ + RULE + """
 
 Context:
@@ -110,10 +163,14 @@ def load_chain(role="public", collection=None):
         vectorstore = Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings,
                              collection_name=collection or "langchain")
 
+    # With a reranker, both searches bring a larger pool for it to choose from.
+    reranker = RERANKER
+    pool = rerankers.CANDIDATES if reranker else TOP_K
+
     # ---- SEARCH 1: semantic (dense) — matches by MEANING ----
     # The 'filter' makes Chroma only search chunks whose access is allowed.
     dense_retriever = vectorstore.as_retriever(
-        search_kwargs={"k": 4, "filter": {"access": {"$in": allowed}}}
+        search_kwargs={"k": pool, "filter": {"access": {"$in": allowed}}}
     )
 
     # ---- SEARCH 2: keyword (BM25, sparse) — matches by exact WORDS ----
@@ -131,13 +188,16 @@ def load_chain(role="public", collection=None):
     if texts:
         bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas,
                                                   preprocess_func=tokenize)
-        bm25_retriever.k = 4
+        bm25_retriever.k = pool
     else:                       # an empty workspace: nothing to search yet
         bm25_retriever = _NoHits()
 
     # ---- HYBRID: fuse both searches with Reciprocal Rank Fusion (RRF) ----
-    # Our own little retriever runs BOTH searches and merges their rankings.
-    retriever = HybridRetriever(dense_retriever, bm25_retriever, top_k=4)
+    # Our own little retriever runs BOTH searches and merges their rankings
+    # (then reranks the pool, if a reranker is plugged in).
+    retriever = HybridRetriever(dense_retriever, bm25_retriever,
+                                top_k=rerankers.KEEP if reranker else TOP_K,
+                                pool=pool, reranker=reranker)
 
     # DOCUMENT INTROS: the first chunks of every document (title, summary).
     # Matching chunks are often from the middle of a document; for "what is X?"
@@ -152,8 +212,9 @@ def load_chain(role="public", collection=None):
                               for _, t, m in sorted(chunks, key=lambda c: c[0])[:INTRO_CHUNKS]]
                         for src, chunks in intros.items()}
 
-    # The chat model that writes the final answer.
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    # The FAST model (models.py): HyDE, multi-query, rewriting a follow-up and
+    # the output guard's rewrite. The agent's own model writes the answer.
+    llm = ChatOpenAI(model=models.fast_model(), temperature=0)
 
     return retriever, llm
 
@@ -193,11 +254,14 @@ class HybridRetriever:
     between rank 1 and rank 2 so no single search dominates.
     """
 
-    def __init__(self, dense_retriever, bm25_retriever, top_k=4, rrf_k=60):
+    def __init__(self, dense_retriever, bm25_retriever, top_k=4, rrf_k=60, pool=None,
+                 reranker=None):
         self.dense = dense_retriever
         self.bm25 = bm25_retriever
         self.top_k = top_k
         self.rrf_k = rrf_k
+        self.pool = max(pool or top_k, top_k)   # fused candidates a reranker scores
+        self.reranker = reranker
         self.intros = {}      # source -> its first chunks (set by load_chain)
 
     @staticmethod
@@ -221,38 +285,88 @@ class HybridRetriever:
         return [i for src in sources for i in self.intros.get(src, [])
                 if i.page_content not in have]
 
-    def invoke(self, query, dense_query=None, k=None):
+    def invoke(self, query, dense_query=None, dense_queries=None, k=None):
         """query: what the user asked — the KEYWORD search uses exactly this.
         dense_query: an enriched version for the MEANING search only (e.g.
-        the question + a HyDE guess); defaults to query. A guessed answer must
-        not feed keyword search: its invented words would match real chunks.
-        k: how many chunks (default top_k), each search asked for as many.
+        the question + a HyDE guess); defaults to query. dense_queries: several
+        (multi-query), each searched by meaning and fused like the rest. A
+        guessed answer must not feed keyword search: its invented words would
+        match real chunks.
+        k: how many chunks (default top_k), each search asked for as many (at
+        least the reranker's pool, when one is plugged in).
         Each chunk comes back as a copy whose metadata also says how it was
-        found ("why this source"): rank (1 = best, after fusion), dense_rank and
-        bm25_rank (None when that search didn't return it), and its chunk_id."""
-        # Run both searches. Each returns an ORDERED list of chunks (best first).
-        dense_hits = self._hits(self.dense, dense_query or query, k)
-        bm25_hits = self._hits(self.bm25, query, k)
+        found ("why this source"): rank (1 = best, after fusion and any
+        rerank), dense_rank and bm25_rank (None when that search didn't return
+        it), fused_rank and rerank_score (with a reranker), and its chunk_id."""
+        want = k or self.top_k
+        each = max(k, self.pool) if k and self.reranker else k
+        # Run the searches. Each returns an ORDERED list of chunks (best first).
+        lists = [("dense_rank", self._hits(self.dense, q, each))
+                 for q in (dense_queries or [dense_query or query])]
+        lists.append(("bm25_rank", self._hits(self.bm25, query, each)))
 
         # Score every chunk by its rank in each list (RRF).
         scores = {}        # chunk text -> fused score
         docs = {}          # chunk text -> the Document object
         ranks = {}         # chunk text -> {"dense_rank": n, "bm25_rank": n}
-        for name, hits in (("dense_rank", dense_hits), ("bm25_rank", bm25_hits)):
+        for name, hits in lists:
             for rank, doc in enumerate(hits):
                 key = doc.page_content
                 scores[key] = scores.get(key, 0) + 1 / (self.rrf_k + rank)
                 docs[key] = doc
-                ranks.setdefault(key, {}).setdefault(name, rank + 1)
+                seen = ranks.setdefault(key, {})
+                seen[name] = min(seen.get(name, rank + 1), rank + 1)
 
-        # Sort by fused score (highest first) and return the top chunks.
-        best = sorted(scores, key=scores.get, reverse=True)[: k or self.top_k]
-        return [Document(page_content=k, id=docs[k].id, metadata={
-                    **docs[k].metadata,
-                    "chunk_id": docs[k].metadata.get("chunk_id") or docs[k].id,
-                    "rank": n, "dense_rank": ranks[k].get("dense_rank"),
-                    "bm25_rank": ranks[k].get("bm25_rank")})
-                for n, k in enumerate(best, 1)]
+        # Sort by fused score (highest first): the candidates.
+        order = sorted(scores, key=scores.get, reverse=True)[: max(self.pool, want)]
+        fused = {key: n for n, key in enumerate(order, 1)}
+        rerank = {}
+        if self.reranker and order:
+            # The reranker reads the question with each candidate and reorders them.
+            ranked = self.reranker(query, [Document(page_content=key, id=docs[key].id,
+                                                    metadata=dict(docs[key].metadata))
+                                           for key in order])
+            order = [d.page_content for d in ranked if d.page_content in fused]
+            rerank = {d.page_content: d.metadata.get("rerank_score") for d in ranked}
+        order = prefer_recent(order, {key: docs[key].metadata for key in order}, self.rrf_k)
+        best = order[:want]
+        return [Document(page_content=key, id=docs[key].id, metadata={
+                    **docs[key].metadata,
+                    "chunk_id": docs[key].metadata.get("chunk_id") or docs[key].id,
+                    "rank": n, "dense_rank": ranks[key].get("dense_rank"),
+                    "bm25_rank": ranks[key].get("bm25_rank"),
+                    **({"fused_rank": fused[key], "rerank_score": rerank.get(key)}
+                       if self.reranker else {})})
+                for n, key in enumerate(best, 1)]
+
+
+def _timestamp(meta):
+    """A chunk's document's last change (metadata `modified`, ISO) in seconds, or None."""
+    value = meta.get("modified")
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def prefer_recent(order, metas, rrf_k=60, boost=None, half_life_days=None):
+    """`order` (keys, best first) with the FRESHNESS boost applied (see
+    RECENCY_BOOST): each position's score 1 / (rrf_k + position) is multiplied
+    by 1 + boost x freshness, freshness being 1 for the newest document among
+    them and halving every half_life_days older (0 without a date). Only near
+    ties change places; the same dates everywhere change nothing."""
+    boost = RECENCY_BOOST if boost is None else boost
+    half_life = (half_life_days or RECENCY_HALF_LIFE_DAYS) * 86400
+    times = {k: _timestamp(metas.get(k) or {}) for k in order}
+    known = [t for t in times.values() if t is not None]
+    if not boost or len(order) < 2 or not known:
+        return list(order)
+    newest = max(known)
+    fresh = {k: 0.0 if t is None else 0.5 ** ((newest - t) / half_life) for k, t in times.items()}
+    score = {k: (1 + boost * fresh[k]) / (rrf_k + n) for n, k in enumerate(order)}
+    return sorted(order, key=lambda k: -score[k])
 
 
 def hyde_expand(question, llm):
@@ -269,6 +383,67 @@ def hyde_expand(question, llm):
         f"Question: {question}\n\nHypothetical answer:"
     )
     return llm.invoke(prompt).content
+
+
+# Words that say nothing about WHAT is asked: a question made of little else is vague.
+_GENERIC = set("""a an the is are was were be do does did what whats who which when where why
+how can could would should will may might must of in on at to for from by with and or not no
+our your my their its this that these those it i we you they me us any some all about tell
+give show explain describe please there here more info information detail details policy
+policies rule rules process thing things stuff one ones same other else again also so""".split())
+VAGUE_WORDS = 2         # content words at most: vague
+SHORT_WORDS = 4         # words at most: short
+
+
+def is_vague(question):
+    """True for a SHORT question ("leave?", "refund policy") or a VAGUE one
+    that names little ("tell me more about the policy"): these match chunks
+    poorly as typed, which is when a HyDE guess helps (RAG_HYDE=auto)."""
+    words = tokenize(question)
+    content = [w for w in words if w not in _GENERIC]
+    return len(words) <= SHORT_WORDS or len(content) <= VAGUE_WORDS
+
+
+MULTI_QUERY_PROMPT = (
+    "Write {n} different search queries that would find the passages answering the "
+    "question below in a company's documents: other words for the same thing, the "
+    "terms a policy or a handbook would use, or one part of a two-part question. One "
+    "query per line, no numbering, no answer.\n\nQuestion: {question}\n\nQueries:")
+
+
+def query_variants(question, llm, n=MULTI_QUERY_N):
+    """Up to n rewordings of the question (multi-query), for the meaning search only."""
+    reply = str(llm.invoke(MULTI_QUERY_PROMPT.format(n=n, question=question)).content or "")
+    out = []
+    for line in reply.splitlines():
+        line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip().strip('"')
+        if line and line.casefold() != question.casefold() and line not in out:
+            out.append(line[:300])
+    return out[:n]
+
+
+def dense_queries(question, llm):
+    """What the MEANING search looks for: the question (with a HyDE guess when
+    USE_HYDE says so) and, with MULTI_QUERY, its rewordings. The model calls run
+    side by side, in the caller's context (so a question's token count, kept in
+    a context variable, sees them)."""
+    hyde = USE_HYDE is True or (USE_HYDE == "auto" and is_vague(question))
+    if not MULTI_QUERY:
+        return [question + "\n" + hyde_expand(question, llm) if hyde else question]
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
+        guess = (pool.submit(contextvars.copy_context().run, hyde_expand, question, llm)
+                 if hyde else None)
+        variants = pool.submit(contextvars.copy_context().run, query_variants, question, llm)
+        first = question + "\n" + guess.result() if guess else question
+        try:
+            more = variants.result()
+        except Exception as e:             # the rewordings are a bonus: search without them
+            log.warning("Retrieval: multi-query failed (%s)", type(e).__name__)
+            more = []
+    finally:
+        pool.shutdown(wait=False)
+    return [first] + more
 
 
 def _document_name(doc):
@@ -325,20 +500,17 @@ def retrieve(question, retriever, llm, role="public", guard=None):
         if not ok:
             return None, reason      # None = blocked by a guard (not "no results")
 
-    # ---- 0. HyDE (optional) — enrich the MEANING search only -----------
-    dense_query = question
-    if USE_HYDE:
-        dense_query = question + "\n" + hyde_expand(question, llm)
+    # ---- 0. HyDE / multi-query (optional) — enrich the MEANING search only
+    queries = dense_queries(question, llm)
 
-    # ---- 1. RETRIEVE ---------------------------------------------------
-    # Keyword search gets the question as asked; meaning search the enriched one.
-    docs = retriever.invoke(question, dense_query=dense_query)
+    # ---- 1. RETRIEVE (and rerank, if a reranker is plugged in: RERANKER) -
+    # Keyword search gets the question as asked; meaning search the enriched one(s).
+    if len(queries) == 1:
+        docs = retriever.invoke(question, dense_query=queries[0])
+    else:
+        docs = retriever.invoke(question, dense_queries=queries)
 
-    # ---- 1b. RERANK (only if a real reranker is plugged in, see RERANKER)
-    if RERANKER:
-        docs = RERANKER(question, docs)
-
-    # ---- 1c. Add how the top documents BEGIN (title / summary), so a chunk
+    # ---- 1b. Add how the top documents BEGIN (title / summary), so a chunk
     # from the middle of a document is read in context. They come after the
     # matched chunks and have no rank (they weren't matched, see HybridRetriever).
     if hasattr(retriever, "intros_for"):
@@ -370,7 +542,9 @@ def answer_question(question, retriever, llm, role="public", guard=None):
     # is its own delimited block too (untrusted.spotlight): documents are data,
     # and nothing written in one can pass for the end of its block.
     context = "\n\n".join(spotlight(d.page_content, "company_documents",
-                                      document=_document_name(d)) for d in docs)
+                                      document=_document_name(d),
+                                      updated=str(d.metadata.get("modified") or "")[:10])
+                          for d in docs)
 
     # ---- 3. GENERATE ---------------------------------------------------
     # Fill the prompt template, then ask the AI to write the answer.

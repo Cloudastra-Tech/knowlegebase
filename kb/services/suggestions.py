@@ -24,6 +24,7 @@ import re
 from langchain_openai import ChatOpenAI
 
 import conversations_store
+import models
 import untrusted
 
 log = logging.getLogger("uvicorn.error")
@@ -52,7 +53,7 @@ FOLLOWUP_PROMPT = (
 
 
 def _llm():
-    return ChatOpenAI(model="gpt-4o-mini", temperature=0, timeout=TIMEOUT, max_retries=0)
+    return ChatOpenAI(model=models.fast_model(), temperature=0, timeout=TIMEOUT, max_retries=0)
 
 
 def _mode(name, default, allowed):

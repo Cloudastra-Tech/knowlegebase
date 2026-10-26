@@ -48,10 +48,14 @@ class UsageCounter(BaseCallbackHandler):
         super().__init__()
         self._lock = threading.Lock()
         self.tokens_in = self.tokens_out = self.calls = 0
+        # Input tokens OpenAI served from its prompt cache (part of tokens_in);
+        # None until a call reports it (models.py, PROMPT CACHING).
+        self.tokens_cached = None
         self.models = {}              # model name -> tokens
 
     def on_llm_end(self, response, **kwargs):
         tokens_in = tokens_out = 0
+        cached = None
         model = (response.llm_output or {}).get("model_name")
         for generations in response.generations or []:
             for g in generations:
@@ -61,15 +65,22 @@ class UsageCounter(BaseCallbackHandler):
                 if usage:
                     tokens_in += usage.get("input_tokens") or 0
                     tokens_out += usage.get("output_tokens") or 0
+                    read = (usage.get("input_token_details") or {}).get("cache_read")
+                    if read is not None:
+                        cached = (cached or 0) + read
                     model = (message.response_metadata or {}).get("model_name") or model
         if not (tokens_in or tokens_out):             # older providers: llm_output only
             usage = (response.llm_output or {}).get("token_usage") or {}
             tokens_in = usage.get("prompt_tokens") or 0
             tokens_out = usage.get("completion_tokens") or 0
+            read = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+            cached = read if read is not None else cached
         with self._lock:
             self.calls += 1
             self.tokens_in += tokens_in
             self.tokens_out += tokens_out
+            if cached is not None:
+                self.tokens_cached = (self.tokens_cached or 0) + cached
             if model:
                 self.models[model] = self.models.get(model, 0) + tokens_in + tokens_out
 
@@ -89,8 +100,8 @@ register_configure_hook(_counter, inheritable=True)
 def counting():
     """A UsageCounter for the model calls made in this context. LangGraph carries
     the context into the threads its nodes and tools run in; a plain thread pool
-    doesn't, so calls made from one (agent.py's input guards and parallel search)
-    aren't counted."""
+    doesn't, so agent.py and rag.py submit to theirs (the input guards, the
+    parallel search, HyDE and multi-query) in a copy of the context."""
     counter = UsageCounter()
     token = _counter.set(counter)
     try:
@@ -156,6 +167,7 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
             max_access=max_access, latency_ms=latency_ms,
             tokens_in=usage.tokens_in if usage else None,
             tokens_out=usage.tokens_out if usage else None,
+            tokens_cached=usage.tokens_cached if usage else None,
             model=usage.model if usage else None)
     except Exception:
         log.exception("Question log: couldn't log a question in workspace %s", ws)

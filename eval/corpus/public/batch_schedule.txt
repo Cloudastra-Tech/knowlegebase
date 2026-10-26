@@ -1,0 +1,35 @@
+Batch schedule 2027 (Google Sheet)
+
+Batch,Course,Start date,Mode,City,Seats left,Coordinator
+B-01,PE-101,2027-01-04,Online,Remote,4,Kavya Menon
+B-02,PY-110,2027-01-04,Classroom,Pune,11,Rohit Sharma
+B-03,ACC-210,2027-01-04,Classroom,Mumbai,0,Sana Qureshi
+B-04,DS-300,2027-01-09,Weekend,Bengaluru,7,Vikram Rao
+B-05,PE-101,2027-02-01,Classroom,Chennai,15,Anita Pillai
+B-06,PY-110,2027-02-01,Online,Remote,22,Kavya Menon
+B-07,ACC-210,2027-02-01,Online,Remote,9,Sana Qureshi
+B-08,DS-300,2027-02-06,Weekend,Pune,3,Rohit Sharma
+B-09,PE-101,2027-03-01,Online,Remote,18,Kavya Menon
+B-10,PY-110,2027-03-01,Classroom,Bengaluru,6,Vikram Rao
+B-11,ACC-210,2027-03-01,Classroom,Delhi,12,Farhan Ali
+B-12,DS-300,2027-03-06,Weekend,Mumbai,8,Sana Qureshi
+B-13,PE-101,2027-04-05,Classroom,Pune,20,Rohit Sharma
+B-14,PY-110,2027-04-05,Online,Remote,25,Kavya Menon
+B-15,ACC-210,2027-04-05,Online,Remote,14,Farhan Ali
+B-16,DS-300,2027-04-10,Weekend,Chennai,5,Anita Pillai
+B-17,PE-101,2027-05-03,Online,Remote,30,Kavya Menon
+B-18,PY-110,2027-05-03,Classroom,Delhi,10,Farhan Ali
+B-19,ACC-210,2027-05-03,Classroom,Bengaluru,2,Vikram Rao
+B-20,DS-300,2027-05-08,Weekend,Delhi,9,Farhan Ali
+B-21,PE-101,2027-06-07,Classroom,Mumbai,16,Sana Qureshi
+B-22,PY-110,2027-06-07,Online,Remote,27,Kavya Menon
+B-23,ACC-210,2027-06-07,Online,Remote,13,Farhan Ali
+B-24,DS-300,2027-06-12,Weekend,Bengaluru,1,Vikram Rao
+B-25,PE-101,2027-07-05,Online,Remote,24,Kavya Menon
+B-26,PY-110,2027-07-05,Classroom,Chennai,12,Anita Pillai
+B-27,ACC-210,2027-07-05,Classroom,Pune,17,Rohit Sharma
+B-28,DS-300,2027-07-10,Weekend,Mumbai,6,Sana Qureshi
+B-29,PE-101,2027-08-02,Classroom,Delhi,19,Farhan Ali
+B-30,PY-110,2027-08-02,Online,Remote,21,Kavya Menon
+B-31,ACC-210,2027-08-02,Online,Remote,8,Sana Qureshi
+B-32,DS-300,2027-08-07,Weekend,Pune,4,Rohit Sharma
