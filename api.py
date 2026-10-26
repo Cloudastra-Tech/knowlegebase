@@ -59,7 +59,8 @@ Endpoints (all under /api, all except login need "Authorization: Bearer <token>"
     PATCH  /admin/members/{username} {role: public|hr|admin|null, disabled}       (admin)
     DELETE /admin/members/{username}                                               (admin)
     DELETE /admin/sign-in/connections/{id}                                         (admin)
-Every document change re-indexes automatically; connectors re-sync every 30 minutes.
+Every document change re-indexes automatically; connectors re-sync every 30 minutes;
+SAML providers set up from a metadata URL fetch it again daily (or as it says).
 
 ROLES come from the account (members_store.py): public, hr or admin. Admin
 counts as HR everywhere here. An HR / Admin account can send "X-Role: public" to
@@ -110,6 +111,7 @@ from connectors import google_drive, notion  # noqa: E402
 async def _lifespan(app):
     """Background jobs that run for the life of the server."""
     threading.Thread(target=_sync_scheduler, daemon=True).start()
+    threading.Thread(target=_saml_refresh_scheduler, daemon=True).start()
     yield
 
 
@@ -660,6 +662,133 @@ def _saml_conn(cid, trial=None):
         return None, None
 
 
+# ---- The IdP's metadata, fetched again from its URL ------------------------------------
+# An IdP rotates its signing key by publishing the new certificate in its metadata
+# (often beside the old one for a while). A provider set up from a metadata URL
+# fetches it again: on a schedule (daily, or sooner if the metadata says), and
+# when an answer's signature fails (at most every SAML_REFRESH_GAP). Only changes
+# from the SAME IdP are applied: a new entity ID, or a sign-in URL on another
+# host, is held back for the admin to look at ("needs review").
+# Every worker runs the schedule; each fetch is claimed in the database first
+# (members_store.claim_metadata_fetch), so a provider is fetched by one of them.
+SAML_REFRESH_EVERY = 24 * 60 * 60        # unless its validUntil / cacheDuration say sooner
+SAML_REFRESH_CHECK_EVERY = 10 * 60       # how often the schedule looks; also the shortest wait
+SAML_REFRESH_RETRY = 60 * 60             # after a failed fetch
+SAML_REFRESH_GAP = 5 * 60                # at most one fetch per provider this often
+CERT_UPDATED = "Certificate updated automatically"
+
+
+def _next_refresh(idp):
+    """When metadata just read (saml_sp.read_idp_metadata) should be fetched again."""
+    wait = min(SAML_REFRESH_EVERY, idp["refresh_within"] or SAML_REFRESH_EVERY)
+    return time.time() + max(SAML_REFRESH_CHECK_EVERY, wait)
+
+
+def _metadata_attention(conn, column, problem, reason, **status):
+    """Record a metadata problem; tell the admin when it's a new one."""
+    members_store.set_metadata_status(conn["id"], **{column: problem}, **status)
+    if conn.get(column) != problem:
+        members_store.log_event(conn["workspace"], conn["id"], None, "attention", reason)
+        # TODO: email the workspace's admins as well, once there's a way to send mail.
+
+
+def _refresh_saml_metadata(conn, due_by=None):
+    """Fetch a SAML provider's metadata from its URL again (the same checks as
+    when it was added), and apply it if it's from the same IdP. Returns the
+    connection as it is now, or None if this didn't fetch: it has no URL, it
+    isn't due by `due_by`, or it was fetched less than SAML_REFRESH_GAP ago (by
+    any worker)."""
+    settings, cid = conn["metadata"], conn["id"]
+    url = settings.get("metadata_url")
+    if not url or not members_store.claim_metadata_fetch(cid, SAML_REFRESH_GAP, due_by):
+        return None
+    try:
+        xml = sso_setup.fetch_saml_metadata(url).decode("utf-8", "replace")
+        idp = _read_idp(xml)
+    except (sso_setup.SetupError, saml_sp.SamlError, url_guard.UnsafeURL) as e:
+        log.warning("SAML %s: couldn't refresh its metadata: %s", cid, e)
+        # Only our own checks' words reach the admin, never what the provider sent.
+        problem = ("couldn't fetch it from the metadata URL." if isinstance(e, sso_setup.SetupError)
+                   else str(e))
+        _metadata_attention(conn, "metadata_error", problem,
+                            f"Metadata refresh failed: {problem}",
+                            metadata_due_at=time.time() + SAML_REFRESH_RETRY)
+        return members_store.get_connection(cid)
+    old_host, new_host = (urllib.parse.urlsplit(u or "").hostname
+                          for u in (settings.get("sso_url"), idp["sso_url"]))
+    if idp["entity_id"] != conn["issuer"]:
+        review = "the identity provider's entity ID changed"
+    elif new_host != old_host:
+        review = "its sign-in URL moved to another host"
+    else:
+        review = None
+    if review:
+        log.warning("SAML %s: fetched metadata not applied: %s", cid, review)
+        _metadata_attention(conn, "needs_review", review,
+                            f"Metadata change needs review: {review}. Nothing was changed: "
+                            "if it's right, load it again (Edit → Metadata URL).",
+                            metadata_error=None, metadata_due_at=_next_refresh(idp))
+        return members_store.get_connection(cid)
+    status = {"metadata_refreshed_at": time.time(), "metadata_due_at": _next_refresh(idp),
+              "needs_review": None, "metadata_error": None}
+    if xml == settings.get("idp_metadata"):
+        members_store.set_metadata_status(cid, **status)
+        return members_store.get_connection(cid)
+    try:
+        before = saml_sp.read_idp_metadata(settings["idp_metadata"])["fingerprints"]
+    except (KeyError, saml_sp.SamlError):
+        before = None
+    new = {**settings, "idp_metadata": xml, "sso_url": idp["sso_url"],
+           "want_authn_requests_signed": idp["want_authn_requests_signed"]}
+    if not members_store.replace_metadata(cid, conn["updated_at"], new, **status):
+        return members_store.get_connection(cid)    # an admin changed it meanwhile: theirs stands
+    if before != idp["fingerprints"]:
+        log.warning("SAML %s: its IdP's signing certificates changed; updated", cid)
+        members_store.log_event(conn["workspace"], cid, None, "updated", CERT_UPDATED)
+    elif (idp["sso_url"], idp["want_authn_requests_signed"]) != (
+            settings.get("sso_url"), bool(settings.get("want_authn_requests_signed"))):
+        members_store.log_event(conn["workspace"], cid, None, "updated",
+                                "Sign-in settings updated automatically from the metadata")
+    return members_store.get_connection(cid)
+
+
+def _saml_newer_metadata(conn, trial):
+    """After an answer's signature failed: (connection, keys) with IdP metadata
+    newer than `conn`'s, fetched now or by another worker just before; or None."""
+    if not conn["metadata"].get("metadata_url"):
+        return None
+    try:
+        _refresh_saml_metadata(conn)
+    except Exception:              # e.g. the database is busy: the answer is just refused
+        log.exception("SAML %s: couldn't refresh its metadata", conn["id"])
+    newer, keys = _saml_conn(conn["id"], trial)
+    if newer and newer["metadata"].get("idp_metadata") != conn["metadata"].get("idp_metadata"):
+        return newer, keys
+    return None
+
+
+def _refresh_due_saml_metadata(now=None):
+    """Fetch the metadata of every provider set up from a URL that's due by `now`."""
+    now = now or time.time()
+    try:
+        connections = members_store.saml_connections_from_urls()
+    except sqlite3.Error:
+        log.exception("Couldn't list the SAML providers to refresh")
+        return
+    for c in connections:
+        if (c["metadata_due_at"] or 0) <= now:
+            try:
+                _refresh_saml_metadata(c, due_by=now)
+            except Exception:
+                log.exception("SAML %s: couldn't refresh its metadata", c["id"])
+
+
+def _saml_refresh_scheduler():
+    while True:
+        time.sleep(SAML_REFRESH_CHECK_EVERY)
+        _refresh_due_saml_metadata()
+
+
 _sp_metadata_cache = {}    # (connection id, updated_at, base URL) -> XML
 
 
@@ -723,9 +852,23 @@ def saml_acs(cid: str, request: Request, SAMLResponse: str = Form(""),
             return _finish_sso_test(trial, conn, _test_failure(code, detail))
         return _login_error("sso_failed", _log_failure(conn, code), status_code=303)
 
+    def check(conn, keys):
+        return saml_sp.finish(conn, keys, _public_url(request, ""), SAMLResponse,
+                              members_store.open_saml_requests(cid))
+
     try:
-        answer = saml_sp.finish(conn, keys, _public_url(request, ""), SAMLResponse,
-                                members_store.open_saml_requests(cid))
+        try:
+            answer = check(conn, keys)
+        except saml_sp.SamlError as e:
+            # Signed with a key we don't know: the IdP may have a new one. Check
+            # the SAME answer against its metadata as it is now. Nothing has been
+            # used up by a check (that's below, once), so every rule still holds.
+            newer = _saml_newer_metadata(conn, trial) if e.bad_signature else None
+            if not newer:
+                raise
+            log.warning("SAML %s: a signature failed; checking again with new metadata", cid)
+            conn, keys = newer
+            answer = check(conn, keys)
     except saml_sp.SamlError as e:
         log.warning("SAML %s: refused an answer: %s", cid, e)
         return refuse(e.code, f"SAML: {e}")
@@ -893,11 +1036,20 @@ def _connection_out(request, c):
     if c["protocol"] == "saml":
         entity_id, acs, metadata_url = saml_sp.sp_urls(_public_url(request, ""), c["id"])
         settings = c["metadata"]
+        try:
+            cert_expires_at = saml_sp.read_idp_metadata(settings["idp_metadata"])[
+                "cert_expires_at"]
+        except (KeyError, saml_sp.SamlError):
+            cert_expires_at = None
         return {**out, "sp_entity_id": entity_id, "acs_url": acs,
                 "sp_metadata_url": metadata_url, "sso_url": settings.get("sso_url"),
                 "metadata_url": settings.get("metadata_url"),
                 "email_attribute": settings.get("email_attribute"),
-                "signs_requests": bool(settings.get("want_authn_requests_signed"))}
+                "signs_requests": bool(settings.get("want_authn_requests_signed")),
+                "metadata_refreshed_at": c.get("metadata_refreshed_at"),
+                "cert_expires_at": cert_expires_at,
+                "needs_review": bool(c.get("needs_review")),
+                "review_reason": c.get("needs_review")}
     return {**out, "client_id": c["client_id"],
             "redirect_uri": _public_url(request, f"/api/auth/sso/c/{c['id']}/callback"),
             "logout_at_idp": c["logout_at_idp"],
@@ -906,8 +1058,10 @@ def _connection_out(request, c):
 
 
 def _saml_settings(body, old=None):
-    """(IdP entity ID, settings) from the admin's input, checked. `old` settings
-    are kept for anything not given. Raises HTTPException(400)."""
+    """(IdP entity ID, settings, metadata status) from the admin's input, checked.
+    `old` settings are kept for anything not given. The status (see
+    members_store.METADATA_STATUS) is empty if the IdP's metadata wasn't given
+    again. Raises HTTPException(400)."""
     if not saml_sp.xmlsec_binary():
         raise HTTPException(400, "SAML isn't available on this server: xmlsec1 isn't "
                                  "installed. Ask whoever runs it.")
@@ -937,8 +1091,7 @@ def _saml_settings(body, old=None):
                                      "or its entity ID, sign-in URL and certificate.")
         else:
             xml = settings["idp_metadata"]
-        idp = saml_sp.read_idp_metadata(xml)
-        url_guard.require_https(idp["sso_url"])
+        idp = _read_idp(xml)
     except sso_setup.SetupError as e:
         raise _setup_error(e)
     except (saml_sp.SamlError, url_guard.UnsafeURL) as e:
@@ -947,7 +1100,20 @@ def _saml_settings(body, old=None):
                     want_authn_requests_signed=idp["want_authn_requests_signed"])
     if body.email_attribute is not None:
         settings["email_attribute"] = body.email_attribute.strip() or None
-    return idp["entity_id"], settings
+    status = {}
+    if any(sources):           # new metadata, checked by the admin: nothing to review
+        fetched = bool(body.metadata_url)
+        status = {"metadata_refreshed_at": time.time() if fetched else None,
+                  "metadata_due_at": _next_refresh(idp) if fetched else None,
+                  "needs_review": None, "metadata_error": None}
+    return idp["entity_id"], settings, status
+
+
+def _read_idp(xml):
+    """saml_sp.read_idp_metadata, and the browser is only sent to https."""
+    idp = saml_sp.read_idp_metadata(xml)
+    url_guard.require_https(idp["sso_url"])
+    return idp
 
 
 def _setup_error(e):
@@ -1115,14 +1281,15 @@ def edit_connection(cid: str, body: ConnectionPatch, request: Request,
 def add_saml_connection(body: SamlConnectionIn, request: Request, user=Depends(require_admin)):
     if not (body.label or "").strip():
         raise HTTPException(400, "Give the sign-in button a name.")
-    entity_id, settings = _saml_settings(body)
+    entity_id, settings, status = _saml_settings(body)
     cid = _connection_id(body.id)
     sp_key, sp_cert = saml_sp.new_keypair(f"Knowledge assistant {cid}")
     conn = members_store.create_connection(ws_of(user), "saml", body.label.strip(), entity_id,
                                            None, {"sp_key": sp_key, "sp_cert": sp_cert},
                                            settings, user["username"], cid=cid)
-    if body.enabled is False:
-        conn = members_store.update_connection(conn["workspace"], cid, enabled=False)
+    conn = members_store.update_connection(conn["workspace"], cid, **status,
+                                           **({"enabled": False} if body.enabled is False
+                                              else {}))
     return _connection_out(request, conn)
 
 
@@ -1142,7 +1309,8 @@ def edit_saml_connection(cid: str, body: SamlConnectionIn, request: Request,
             _keep_a_way_in(user, ws, without=cid)
     if any(v is not None for v in (body.metadata_url, body.metadata_xml, body.entity_id,
                                    body.sso_url, body.certificate, body.email_attribute)):
-        fields["issuer"], fields["metadata"] = _saml_settings(body, old=conn["metadata"])
+        fields["issuer"], fields["metadata"], status = _saml_settings(body, old=conn["metadata"])
+        fields.update(status)
     if fields:
         conn = members_store.update_connection(ws, cid, **fields)
     return _connection_out(request, conn)

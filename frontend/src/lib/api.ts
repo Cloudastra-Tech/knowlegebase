@@ -55,6 +55,10 @@ export interface SignInConnection {
   metadata_url?: string | null
   email_attribute?: string | null
   signs_requests?: boolean
+  metadata_refreshed_at?: number | null // last fetched again from metadata_url
+  cert_expires_at?: number | null // the earliest-expiring signing certificate still valid
+  needs_review?: boolean // fetched metadata wasn't applied: another entity ID or host
+  review_reason?: string | null
   // Roles from the groups it sends. They only count on the workspace's role
   // source (SignInSettings.role_source); empty: it doesn't set roles.
   group_claim: string | null
@@ -111,7 +115,7 @@ export interface SignInEvent {
   connection_id: string | null
   connection: string | null
   email: string | null
-  outcome: "signed_in" | "refused" | "failed" | "test" | "warning"
+  outcome: "signed_in" | "refused" | "failed" | "test" | "warning" | "updated" | "attention"
   reason: string | null // a code (sso_errors.py)
   reason_text: string | null // what it means, for the admin
   fix: string | null

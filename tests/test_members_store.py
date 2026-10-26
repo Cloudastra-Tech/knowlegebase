@@ -126,6 +126,31 @@ def test_an_older_database_gains_the_new_columns_and_keeps_roles(store, tmp_path
     assert members_store.get("boss")["role"] == "public"
 
 
+def test_an_older_event_log_keeps_its_rows_and_takes_metadata_events(store, tmp_path):
+    """sso_events from before 'updated' / 'attention': its CHECK is widened, once."""
+    import sqlite3
+    members_store.get("nobody")                    # a database as it was before them
+    with sqlite3.connect(tmp_path / "app.db") as db:
+        db.executescript("""
+            DROP TABLE sso_events;
+            CREATE TABLE sso_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL,
+                connection_id TEXT, email TEXT,
+                outcome TEXT NOT NULL CHECK (outcome IN ('signed_in', 'refused', 'failed', 'test')),
+                reason TEXT, at REAL NOT NULL);
+            INSERT INTO sso_events (workspace, connection_id, email, outcome, at)
+                VALUES ('acme', 'c1', 'pat@acme.com', 'signed_in', 1);
+        """)
+    store.restart()
+    members_store.log_event("acme", "c1", None, "updated", "Certificate updated automatically")
+    store.restart()
+    members_store.log_event("acme", "c1", None, "attention", "Metadata refresh failed: x")
+    assert [e["outcome"] for e in members_store.recent_events("acme")] == [
+        "attention", "updated", "signed_in"]
+    with pytest.raises(sqlite3.IntegrityError):
+        members_store.log_event("acme", "c1", None, "anything")
+
+
 def test_a_role_comes_from_the_override_then_the_groups_then_public(store):
     rules = [{"group_name": "Engineering", "role": "hr"}, {"group_name": "IT", "role": "admin"}]
     groups = members_store.role_for_groups(rules, ["engineering", "it", "sales"])

@@ -64,7 +64,8 @@ load and name the same issuer.
 ### SAML
 
 You give us your provider's metadata, one of three ways:
-**Metadata URL** (best: it's fetched now), **Metadata XML** (paste the file), or
+**Metadata URL** (best: it's fetched now, and again every day, so a new signing
+certificate is picked up by itself), **Metadata XML** (paste the file), or
 **Enter by hand** (entity ID, sign-in URL, signing certificate). Your provider
 needs: our **Entity ID** (also called audience or identifier) and **ACS URL**
 (single sign-on URL, reply URL), or simply our **SP metadata URL**, which has
@@ -251,7 +252,7 @@ Each reason has a code (in `sso_errors.py`):
 | `state_mismatch` | The sign-in was finished in another browser or tab, or took too long | Nothing: start again from the sign-in page. |
 | `provider_error` | The provider refused the sign-in | Look for the attempt in your provider's sign-in logs. |
 | `settings_unreadable` | This provider's saved settings can't be read | The server's encryption key changed: **Edit** and enter the client secret again. |
-| `saml_signature` | The provider's signing certificate changed | Click **Refresh metadata** on the provider's card (added by URL), or paste the new certificate / metadata (**Edit**). |
+| `saml_signature` | The provider's signing certificate changed | Added by **Metadata URL**, a new certificate is picked up by itself (the metadata is fetched again daily, and when a signature doesn't match: "Certificate updated automatically" in Recent sign-ins); if it still fails, click **Refresh metadata**. Pasted or typed in, it can't be: the card warns 30 days before the certificate expires; give the new one with **Edit**. |
 | `saml_unsigned` | Neither the response nor the assertion is signed | Make your provider sign the assertion or the response. |
 | `saml_unsolicited` | Sign-in started at the provider's app launcher | Start from our sign-in page; hide the app's tile, or make it a bookmark to our sign-in page. |
 | `saml_unknown_request` | The answer was to a sign-in that expired, was already finished, or was started for another provider | Nothing, if it's now and then: start again. |
@@ -276,3 +277,9 @@ the role source.
 Warning "they're the only admin, so they keep it": their admin comes from groups
 the role source hasn't sent in a while. Make someone else admin (Members), or
 have them sign in through the role source.
+
+**Needs review** on a SAML provider, or "Metadata refresh failed": the metadata at
+its URL now names another entity ID, or a sign-in URL on another host, so it
+wasn't applied (the old one still works). If the change is right, **Edit** →
+*Metadata URL* → Save. "Refresh failed": the URL didn't answer with valid
+metadata; it's tried again within the hour.
