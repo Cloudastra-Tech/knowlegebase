@@ -672,3 +672,41 @@ def test_the_question_log_records_the_provider_and_model(fake_aws):
     report = insights.report(w, "hr", day, day)
     assert report["totals"]["cost_unknown_models"] == ["meta.llama3-70b-instruct-v1:0"]
     assert report["totals"]["cost_usd"] == 0                   # not guessed
+
+
+# ---- The one-shot chat when Bedrock fails --------------------------------------------------
+def test_the_one_shot_chat_says_plainly_when_bedrock_fails(client, fake_aws, no_openai):
+    """Bedrock throttles the answer: POST /api/chat says so with a 502, never a
+    bare 500, and nothing falls back to OpenAI."""
+    from botocore.exceptions import ClientError
+    w = new_workspace()
+    on_bedrock(w)
+
+    def throttled(**request):
+        raise ClientError({"Error": {"Code": "ThrottlingException", "Message": "Too many"}},
+                          "ConverseStream")
+    fake_aws.runtime.converse_stream = throttled
+    fake_aws.runtime.converse = throttled
+    r = client.post("/api/chat", json={"question": "How long do refunds take?"},
+                    headers=login(client, w, "staff"))
+    assert r.status_code == 502, r.text
+    assert r.json()["detail"].startswith("The assistant couldn't answer just now (")
+    assert no_openai == []
+
+
+def test_the_one_shot_chat_says_plainly_when_bedrock_isnt_set_up(client, fake_aws, no_openai):
+    """A workspace on Bedrock whose settings can't be used (no AWS region): a 502
+    naming the error, not a 500, and not OpenAI instead."""
+    import db
+    w = new_workspace()
+    on_bedrock(w)
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE model_providers SET region = NULL WHERE workspace = ?", (w,))
+    conn.close()
+    models.forget()
+    r = client.post("/api/chat", json={"question": "How long do refunds take?"},
+                    headers=login(client, w, "staff"))
+    assert r.status_code == 502, r.text
+    assert "ProviderError" in r.json()["detail"]
+    assert no_openai == []

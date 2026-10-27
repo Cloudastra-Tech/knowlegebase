@@ -15,7 +15,6 @@ import conversations_store
 import db
 import insights_store
 import question_log_store as log_store
-from kb.routers import insights as router
 from kb.services import conversations, quality
 from test_conversations import client, fakes  # noqa: F401  (fixtures)
 from test_insights import at, docs_root, fresh_default  # noqa: F401  (fixtures)
@@ -103,7 +102,7 @@ def test_the_weekly_job_suggests_thumbs_down_and_not_found_cases():
     assert cases[hr_only]["role"] == "hr"            # stays with HR (visible_to)
     gap = cases[f"log:{first}"]
     assert gap["origin"] == "not_found" and gap["question"] == "parental leave in Germany?"
-    assert router._golden(gap) == {"id": f"gap-{gap['id']}", "question": gap["question"],
+    assert quality.golden(gap) == {"id": f"gap-{gap['id']}", "question": gap["question"],
                                    "role": "public", "expect": "not_found", "sources": [],
                                    "notes": "", "origin": "feedback"}
     # Run again: nothing new, nothing changed.

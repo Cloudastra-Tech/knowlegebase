@@ -1,7 +1,7 @@
 """
 docs_store.py  —  the files in docs/ that the assistant answers from.
 
-Plain file operations behind the Documents screen (the React app via api.py):
+Plain file operations behind the Documents screen (the React app via kb/routers/docs.py):
 Text and PDF files, plus Word, PowerPoint, Excel, Markdown and HTML, which
 ingest.py reads through connectors/extract.py.
     docs/public/      -> everyone can search these

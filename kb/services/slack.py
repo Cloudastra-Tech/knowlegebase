@@ -771,7 +771,7 @@ def confident(done):
             and any(isinstance(s.get("n"), int) for s in done.sources))
 
 
-@jobs.handler(JOB, max_attempts=1)
+@jobs.handler(JOB, max_attempts=1, interactive=True)   # someone waits
 def run(job):
     p = job.payload
     ws = job.workspace

@@ -5,7 +5,10 @@ webhooks_store.py  —  an admin's outbound webhooks and what was sent to them
     webhooks             the URL, the events it wants, enabled or not, and its
                          signing secret, SEALED under the workspace's data key
                          (secret_box): shown once when it's made, then only its
-                         last 4 characters
+                         last 4 characters. After a rotation the previous secret
+                         (sealed too) still signs until previous_secret_until.
+                         failures: attempts failed in a row (migration 0023);
+                         disabled_reason / disabled_at: turned off by the server
     webhook_deliveries   one row per event per endpoint: the body sent, its
                          status (pending, delivered, failed), attempts, when it's
                          tried next and the last response code. Kept KEEP_DAYS.
@@ -19,11 +22,13 @@ import db
 import secret_box
 
 secret_box.register("webhooks", "secret", ("id",))
+secret_box.register("webhooks", "previous_secret", ("id",))
 
 KEEP_DAYS = 30
 MAX_PER_WORKSPACE = 20
 _PUBLIC = ("id", "workspace", "url", "description", "events", "secret_hint", "enabled",
-           "created_by", "created_at", "updated_at")
+           "created_by", "created_at", "updated_at", "failures", "disabled_reason",
+           "disabled_at", "previous_secret_until")
 _DELIVERY = ("id", "webhook_id", "event", "event_id", "status", "attempts", "next_at",
              "response_code", "error", "created_at", "last_attempt_at", "delivered_at")
 
@@ -90,11 +95,70 @@ def secret(workspace, hook_id):
     return secret_box.unseal(row[0], workspace) if row else None
 
 
+def signing_secrets(workspace, hook_id, now=None):
+    """The secrets a delivery is signed with: the current one, then the previous
+    one while its grace period after a rotation lasts."""
+    now = time.time() if now is None else now
+    with _db() as conn:
+        row = conn.execute("SELECT secret, previous_secret, previous_secret_until FROM webhooks "
+                           "WHERE workspace = ? AND id = ?", (workspace, hook_id)).fetchone()
+    if not row:
+        return []
+    out = [secret_box.unseal(row["secret"], workspace)]
+    if row["previous_secret"] is not None and (row["previous_secret_until"] or 0) > now:
+        out.append(secret_box.unseal(row["previous_secret"], workspace))
+    return out
+
+
+def rotate_secret(workspace, hook_id, new, grace, now=None):
+    """`new` signs from now on; the secret it replaces also signs for `grace`
+    seconds (0: it stops now), so the receiver can switch without missing one."""
+    now = time.time() if now is None else now
+    with _db() as conn:
+        if grace > 0:
+            conn.execute("UPDATE webhooks SET previous_secret = secret, previous_secret_until = ? "
+                         "WHERE workspace = ? AND id = ?", (now + grace, workspace, hook_id))
+        else:
+            conn.execute("UPDATE webhooks SET previous_secret = NULL, previous_secret_until = "
+                         "NULL WHERE workspace = ? AND id = ?", (workspace, hook_id))
+        conn.execute("UPDATE webhooks SET secret = ?, secret_hint = ?, updated_at = ? "
+                     "WHERE workspace = ? AND id = ?",
+                     (secret_box.seal(new, workspace), new[-4:], now, workspace, hook_id))
+    return get(workspace, hook_id)
+
+
+def note_attempt(workspace, hook_id, ok):
+    """Count a delivery attempt: a success clears the failures in a row, a failure
+    adds one. Returns how many attempts in a row have failed now."""
+    with _db() as conn:
+        if ok:
+            conn.execute("UPDATE webhooks SET failures = 0 WHERE workspace = ? AND id = ?",
+                         (workspace, hook_id))
+            return 0
+        conn.execute("UPDATE webhooks SET failures = failures + 1 WHERE workspace = ? AND id = ?",
+                     (workspace, hook_id))
+        row = conn.execute("SELECT failures FROM webhooks WHERE workspace = ? AND id = ?",
+                           (workspace, hook_id)).fetchone()
+    return row[0] if row else 0
+
+
+def disable(workspace, hook_id, reason, now=None):
+    """Turned off by the server (`reason`); True if it was on until now."""
+    now = time.time() if now is None else now
+    with _db() as conn:
+        return bool(conn.execute(
+            "UPDATE webhooks SET enabled = 0, disabled_reason = ?, disabled_at = ?, "
+            "updated_at = ? WHERE workspace = ? AND id = ? AND enabled = 1",
+            (reason, now, now, workspace, hook_id)).rowcount)
+
+
 def update(workspace, hook_id, **fields):
     if "events" in fields:
         fields["events"] = json.dumps(sorted(set(fields["events"])))
     if "enabled" in fields:
         fields["enabled"] = int(bool(fields["enabled"]))
+        if fields["enabled"]:          # on again (by an admin): a fresh start
+            fields.update(failures=0, disabled_reason=None, disabled_at=None)
     fields["updated_at"] = time.time()
     cols = ", ".join(f"{k} = ?" for k in fields)
     with _db() as conn:
@@ -125,6 +189,18 @@ def add_delivery(workspace, hook_id, event, event_id, payload, now=None):
                         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                      (delivery_id, hook_id, workspace, event, event_id, payload, now, now))
     return delivery_id
+
+
+def redeliver(workspace, delivery_id, now=None):
+    """Queue a delivery again, as a new delivery of the same event (same event id
+    and body, so a receiver that saw it can tell). Returns its id, or None if the
+    workspace has no such delivery."""
+    now = time.time() if now is None else now
+    old = delivery(workspace, delivery_id)
+    if not old:
+        return None
+    return add_delivery(workspace, old["webhook_id"], old["event"], old["event_id"],
+                        old["payload"], now)
 
 
 def delivery(workspace, delivery_id):

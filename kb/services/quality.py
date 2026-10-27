@@ -91,6 +91,21 @@ def _role(max_access):
     return "public" if max_access == "public" else "hr"
 
 
+def golden(case):
+    """A test-set case (insights_store.candidates) as a line of eval/golden/*.jsonl
+    has it (eval/harness.py reads both). A not-found question the weekly job
+    suggested is expected to stay "not found" (no sources) until the documents
+    cover it."""
+    not_found = case.get("origin") == "not_found"
+    return {"id": f"{'gap' if not_found else 'feedback'}-{case['id']}",
+            "question": case["question"], "role": case["role"],
+            "expect": "not_found" if not_found else "answer",
+            "sources": [] if not_found else [s.get("doc_key") or s.get("title")
+                                             for s in case["sources"]
+                                             if s.get("kind") != "general_knowledge"],
+            "notes": case["expected_answer"] or "", "origin": "feedback"}
+
+
 def suggest(ws, now=None):
     """Add the week's candidates (see the top). Returns {"feedback": n, "not_found": n}."""
     now = time.time() if now is None else now
@@ -111,7 +126,7 @@ def suggest(ws, now=None):
         added["feedback"] += insights_store.suggest_candidate(
             ws, f["message_id"], snap["question"], snap.get("answer"), snap.get("sources") or [],
             json.loads(f["reasons"] or "[]"), f["comment"], _role(level), level, "feedback",
-            now)
+            now, acl=snap.get("acl"))
     gaps = [g for g in insights_store.gaps(ws) if g["size"] >= insights.GAP_MIN_SIZE]
     rows = log_store.get_many(g["log_ids"][0] for g in gaps if g["log_ids"])
     for g in gaps[:MAX_PER_RUN]:
@@ -123,7 +138,7 @@ def suggest(ws, now=None):
         added["not_found"] += insights_store.suggest_candidate(
             ws, row["message_id"] or f"log:{row['id']}", row["question"], row.get("answer"),
             [], ["not_found"], f"{label}: {g['size']} similar questions weren't answered.",
-            _role(level), level, "not_found", now)
+            _role(level), level, "not_found", now, acl=g.get("acl"))
     return added
 
 

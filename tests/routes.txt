@@ -44,11 +44,11 @@ GET    /api/admin/audit/export export_audit Filters,require_admin,audited
 GET    /api/admin/audit/verify verify_audit require_admin
 GET    /api/admin/doc-rules list_rules require_hr
 GET    /api/admin/email-in email_in_settings require_hr
-GET    /api/admin/eval-cases list_eval_cases require_hr,current_role
+GET    /api/admin/eval-cases list_eval_cases require_hr,current_viewer
 GET    /api/admin/feedback list_feedback require_hr,current_viewer
 GET    /api/admin/groups list_groups require_admin
-GET    /api/admin/insights get_insights require_hr,current_role
-GET    /api/admin/insights/export export_insights require_hr,current_role,audited
+GET    /api/admin/insights get_insights require_hr,current_viewer
+GET    /api/admin/insights/export export_insights require_hr,current_viewer,audited
 GET    /api/admin/members list_members require_admin
 GET    /api/admin/members/invites list_invites require_admin
 GET    /api/admin/members/requests list_join_requests require_admin
@@ -177,6 +177,8 @@ POST   /api/admin/slack/install slack_install require_admin,audited
 POST   /api/admin/verified-answers create_answer require_hr,audited
 POST   /api/admin/verified-answers/{answer_id}/review review_answer require_hr,audited
 POST   /api/admin/webhooks add_webhook require_admin,audited
+POST   /api/admin/webhooks/deliveries/{delivery_id}/redeliver redeliver require_admin,audited
+POST   /api/admin/webhooks/{hook_id}/secret rotate_secret require_admin,audited
 POST   /api/admin/webhooks/{hook_id}/test test_webhook require_admin,audited
 POST   /api/admin/workspace/cancel-deletion cancel_workspace_deletion require_admin,audited
 POST   /api/admin/workspace/export export_workspace require_tenant_admin,audited

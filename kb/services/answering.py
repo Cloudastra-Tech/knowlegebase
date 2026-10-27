@@ -84,6 +84,7 @@ def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, sta
         on_event({"type": "answer", "text": row["answer"], "sources": row["sources"]})
     question_log.record(ws, user, role, surface, question, row["state"], answer=row["answer"],
                         trace=trace, sources=row["sources"], max_access=row["max_access"],
+                        acl=access.message_clauses(row),
                         latency_ms=int((time.monotonic() - started) * 1000),
                         message_id=turn["message_id"] if turn else None, cache_hit=hit.kind,
                         language=language.detect(question))

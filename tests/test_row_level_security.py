@@ -137,6 +137,35 @@ def test_an_api_key_request_runs_as_its_workspace(monkeypatch):
     assert None in seen and a in seen and set(seen) <= {None, a}
 
 
+def test_a_scim_request_runs_as_its_workspace(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import api
+    import db_pg
+    import scim_store
+    a, _ = two_workspaces()
+    import members_store
+    members_store.add_verified_domain(a, f"{a}.example")
+    _, token = scim_store.create_token(a, "admin")
+    seen = []
+    checkout = db_pg.Database.checkout
+
+    def spy(self, workspace):
+        seen.append(workspace)
+        return checkout(self, workspace)
+
+    monkeypatch.setattr(db_pg.Database, "checkout", spy)
+    r = TestClient(api.app).post(
+        "/scim/v2/Users", headers={"Authorization": f"Bearer {token}",
+                                   "Content-Type": "application/scim+json"},
+        json={"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+              "userName": f"new@{a}.example", "active": True})
+    assert r.status_code == 201, r.text
+    # The token and the across-workspaces email check as the platform; the rest
+    # (the member written, the audit log, the SCIM events) as the tenant.
+    assert None in seen and a in seen and set(seen) <= {None, a}
+
+
 def test_a_workspaces_job_runs_as_that_tenant(jobs_paused, monkeypatch):
     import db_pg
     from kb import jobs

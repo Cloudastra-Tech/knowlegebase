@@ -321,7 +321,8 @@ def test_the_nightly_rollup_is_exact_and_leaves_today_alone(docs_root):
     assert first["cost_usd"] == pytest.approx(0.00021)
     assert insights_store.cited(ws, "2026-10-20", "2026-10-21") == [
         {"doc_key": "public/handbook.txt", "title": "handbook.txt",
-         "provider": "Company documents", "url": None, "access": "public", "cited": 2}]
+         "provider": "Company documents", "url": None, "access": "public",
+         "acl": ["everyone"], "cited": 2}]
     assert insights.rollup(ws, now) == ["2026-10-20", "2026-10-21"]   # again: the same
     assert insights_store.days(ws, "2026-10-01", "2026-10-31")["2026-10-20"]["questions"] == 4
 
@@ -654,9 +655,8 @@ def test_only_admins_promote_and_only_answers_with_feedback(client, fresh_defaul
 def test_test_cases_built_from_restricted_answers_stay_with_hr(fresh_default):
     insights_store.add_candidate("default", "m1", "pay bands?", "…", None, [], [], None, "hr",
                                  "restricted", "ada")
-    from kb.routers import insights as router
-    from kb.services import conversations
+    from kb.services import conversations, quality
     cases = insights_store.candidates("default")
     assert [c["message_id"] for c in cases
             if conversations.visible_to("public", {"author": "assistant", **c})] == []
-    assert router._golden(cases[0])["role"] == "hr"
+    assert quality.golden(cases[0])["role"] == "hr"

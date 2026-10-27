@@ -687,7 +687,7 @@ def answer_in_personal_chat(app, ws, asker, p):
     return True
 
 
-@jobs.handler(JOB, max_attempts=1)
+@jobs.handler(JOB, max_attempts=1, interactive=True)   # someone waits
 def run(job):
     p = job.payload
     install = teams_store.get(job.workspace)

@@ -28,6 +28,7 @@ import os
 import time
 
 import db
+import embedding_cache
 import ingest
 import integrations_store
 import models
@@ -292,6 +293,13 @@ def drop_collection(job):
         return {"dropped": False}
     ingest.drop(name)
     return {"dropped": True}
+
+
+@jobs.periodic("embedding_cache_prune", lambda: 24 * 60 * 60)
+def prune_embedding_cache(job=None, now=None):
+    """Every workspace's cached vectors that no index run used for a while
+    (embedding_cache.py, EMBEDDING_CACHE_DAYS)."""
+    return {"deleted": embedding_cache.prune(now=now)}
 
 
 # ---- Status -----------------------------------------------------------------------

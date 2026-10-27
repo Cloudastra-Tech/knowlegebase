@@ -408,3 +408,124 @@ def test_old_deliveries_and_question_text_are_pruned(client, receiver):
     question_log_store.set_settings(w, "redacted", 7)
     webhooks.prune()
     assert webhooks_store.deliveries(w, hook["id"]) == []
+
+
+# ---- Rotating the secret, sending again, turned off when it keeps failing ------------------
+def _signed_by(secret, sent):
+    _, body, headers = sent           # received when it was sent (some are sent "later")
+    return webhooks.verify(secret, headers["X-KB-Timestamp"], body, headers["X-KB-Signature"],
+                           now=int(headers["X-KB-Timestamp"]))
+
+
+def test_a_rotated_secret_signs_beside_the_old_one_until_its_grace_ends(client, receiver):
+    w = new_workspace()
+    h = login(client, w)
+    made = add(client, h, ["member.added"])
+    old, hook_id = made["secret"], made["webhook"]["id"]
+    r = client.post(f"/api/admin/webhooks/{hook_id}/secret", headers=h,
+                    json={"grace_hours": 2})
+    assert r.status_code == 200, r.text
+    new = r.json()["secret"]
+    assert new != old and r.json()["webhook"]["secret_hint"] == new[-4:]
+    assert old not in json.dumps(client.get("/api/admin/webhooks", headers=h).json())
+    with db.connect() as conn:                  # both sealed, neither stored as it is
+        row = conn.execute("SELECT secret, previous_secret FROM webhooks WHERE id = ?",
+                           (hook_id,)).fetchone()
+    assert old.encode() not in bytes(row[1]) and new.encode() not in bytes(row[0])
+
+    webhooks.emit(w, "member.added", {"username": "x"})
+    deliver(w)
+    assert _signed_by(new, receiver[-1]) and _signed_by(old, receiver[-1])     # both, a while
+    assert receiver[-1][2]["X-KB-Signature"].count("v1=") == 2
+    webhooks.emit(w, "member.added", {"username": "y"}, now=time.time() + 3 * 3600)
+    deliver(w, time.time() + 3 * 3600)
+    assert _signed_by(new, receiver[-1]) and not _signed_by(old, receiver[-1])  # then new only
+    assert [e["action"] for e in audit_store.list_events(w)[0]][0] == "webhook.rotate_secret"
+
+    # No grace: the old one stops at once. A week at most; admins only.
+    r = client.post(f"/api/admin/webhooks/{hook_id}/secret", headers=h, json={"grace_hours": 0})
+    newest = r.json()["secret"]
+    webhooks.emit(w, "member.added", {"username": "z"})
+    deliver(w)
+    assert _signed_by(newest, receiver[-1]) and not _signed_by(new, receiver[-1])
+    assert client.post(f"/api/admin/webhooks/{hook_id}/secret", headers=h,
+                       json={"grace_hours": 24 * 8}).status_code == 422
+    assert client.post(f"/api/admin/webhooks/{hook_id}/secret",
+                       headers=login(client, w, "hr")).status_code == 403
+
+
+def test_a_delivery_can_be_sent_again(client, receiver):
+    w = new_workspace()
+    h = login(client, w)
+    hook = add(client, h, ["member.added"])["webhook"]
+    receiver.state["status"] = 503
+    start = time.time()
+    webhooks.emit(w, "member.added", {"username": "x"}, now=start)
+    while deliver(w, start + 25 * 3600)["pending"]:      # retried until it failed
+        start += 3600
+    (failed,) = webhooks_store.deliveries(w, hook["id"])
+    assert failed["status"] == "failed"
+
+    receiver.state["status"] = 200
+    r = client.post(f"/api/admin/webhooks/deliveries/{failed['id']}/redeliver", headers=h)
+    assert r.status_code == 200, r.text
+    again = r.json()
+    assert again["id"] != failed["id"] and again["status"] == "pending"
+    assert again["event_id"] == failed["event_id"] and "payload" in again
+    assert deliver(w)["delivered"] == 1
+    assert json.loads(receiver[-1][1])["id"] == failed["event_id"]   # the same event
+    assert receiver[-1][2]["X-KB-Delivery"] == again["id"]
+    assert client.post("/api/admin/webhooks/deliveries/nope/redeliver",
+                       headers=h).status_code == 404
+    other = new_workspace()                                 # another workspace's: not found
+    assert client.post(f"/api/admin/webhooks/deliveries/{failed['id']}/redeliver",
+                       headers=login(client, other)).status_code == 404
+
+
+def test_a_webhook_that_keeps_failing_is_turned_off_and_admins_told(client, receiver,
+                                                                    monkeypatch):
+    import mailer
+    sent = []
+    monkeypatch.setattr(mailer, "send", lambda to, template, **values: sent.append(
+        (to, values["title"])))
+    monkeypatch.setenv("WEBHOOK_DISABLE_AFTER", "3")
+    w = new_workspace()
+    h = login(client, w)
+    hook = add(client, h, ["member.added"])["webhook"]
+    receiver.state["status"] = 500
+    webhooks.emit(w, "member.added", {"username": "x"})
+    webhooks.emit(w, "member.added", {"username": "y"})
+    deliver(w)                                          # 2 failed attempts
+    assert webhooks_store.get(w, hook["id"])["failures"] == 2
+    webhooks.send_test(w, webhooks_store.get(w, hook["id"]))       # a test doesn't count
+    assert webhooks_store.get(w, hook["id"])["failures"] == 2
+    deliver(w, time.time() + 31)                        # the third: off
+    got = webhooks_store.get(w, hook["id"])
+    assert not got["enabled"] and got["disabled_reason"] == "failing" and got["disabled_at"]
+    assert {d["status"] for d in webhooks_store.deliveries(w, hook["id"])} == {"failed"}
+    assert sent == [(f"admin@{w}.example", f"A webhook was turned off in {w}")]
+    (event,) = [e for e in audit_store.list_events(w)[0] if e["action"] == "webhook.auto_disabled"]
+    assert event["actor_type"] == "system" and event["details"]["host"] == "hooks.example"
+    assert webhooks.emit(w, "member.added", {"username": "z"}) is None
+    r = client.post(f"/api/admin/webhooks/deliveries/{webhooks_store.deliveries(w, hook['id'])[0]['id']}"
+                    "/redeliver", headers=h)
+    assert r.status_code == 400                        # off: turn it on first
+
+    # An admin turns it on again: a fresh start.
+    r = client.patch(f"/api/admin/webhooks/{hook['id']}", headers=h, json={"enabled": True})
+    assert r.json()["enabled"] and r.json()["failures"] == 0 and r.json()["disabled_reason"] is None
+    receiver.state["status"] = 200
+    webhooks.emit(w, "member.added", {"username": "z"})
+    assert deliver(w)["delivered"] == 1
+
+
+def test_a_success_starts_the_count_of_failures_again(client, receiver, monkeypatch):
+    monkeypatch.setenv("WEBHOOK_DISABLE_AFTER", "3")
+    w = new_workspace()
+    hook = add(client, login(client, w), ["member.added"])["webhook"]
+    for status in (500, 500, 200, 500, 500):
+        receiver.state["status"] = status
+        webhooks.emit(w, "member.added", {"username": "x"})
+        deliver(w, time.time() + 10 * 3600)
+    got = webhooks_store.get(w, hook["id"])
+    assert got["enabled"] and got["failures"] == 2

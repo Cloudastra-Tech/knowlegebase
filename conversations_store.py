@@ -585,6 +585,19 @@ def revoke_share(workspace, created_by, sid):
             (time.time(), sid, workspace, created_by)).rowcount)
 
 
+def prune_shares(before):
+    """Delete every workspace's links revoked, or expired, before `before`: they
+    never work again, so only their rows were left. Returns {workspace: count}."""
+    with _lock, _db() as conn:
+        gone = {}
+        for r in conn.execute("SELECT workspace, COUNT(*) FROM shares WHERE revoked_at < ? OR "
+                              "expires_at < ? GROUP BY workspace", (before, before)).fetchall():
+            gone[r[0]] = r[1]
+        conn.execute("DELETE FROM shares WHERE revoked_at < ? OR expires_at < ?",
+                     (before, before))
+        return gone
+
+
 # ---- Feedback -------------------------------------------------------------------------
 REASONS = ("wrong", "wrong_source", "missing", "outdated", "refused", "unclear")
 

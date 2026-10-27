@@ -65,6 +65,42 @@ def rate_limit(request: Request, bucket):
            ((bucket, "*"), LIMITS[bucket] * ALL_ADDRESSES, message)])
 
 
+# FAILED attempts, per client address and minute, on endpoints that take a secret
+# with no sign-in in front of them (SCIM's bearer tokens, kb/routers/scim.py): an
+# address past its limit is refused (429) whatever it sends until the minute is
+# up, so tokens can't be guessed, and a provider with a valid token, calling from
+# its own addresses, is never slowed. RATE_LIMIT_<BUCKET>_FAILURES.
+FAILURE_LIMITS = {"scim": 10}
+
+
+def _failure_key(request, bucket):
+    return ("failed", bucket, request.client.host if request.client else "?")
+
+
+def refuse_after_failures(request, bucket):
+    """Raise 429 (with Retry-After) if this address has failed too often lately."""
+    if not rate_limits_on():
+        return
+    limit = env_int(f"RATE_LIMIT_{bucket.upper()}_FAILURES", FAILURE_LIMITS[bucket])
+    key, now = _failure_key(request, bucket), time.time()
+    with state.hits_lock:
+        recent = [t for t in state.hits.get(key, []) if t > now - 60]
+    if len(recent) >= limit:
+        wait = max(1, int(recent[-limit] + 60 - now + 0.999))
+        raise HTTPException(429, f"Too many failed attempts from your address. Wait {wait} "
+                                 f"second{'' if wait == 1 else 's'} and try again.",
+                            headers={"Retry-After": str(wait)})
+
+
+def count_failure(request, bucket):
+    """Note one failed attempt from this address (see refuse_after_failures)."""
+    if not rate_limits_on():
+        return
+    key, now = _failure_key(request, bucket), time.time()
+    with state.hits_lock:
+        state.hits[key] = [t for t in state.hits.get(key, []) if t > now - 60] + [now]
+
+
 def user_limit(user, bucket):
     """Per person and per workspace limits (USER_LIMITS) on something costly. First
     the workspace's own limits, whether rate limits are on or not (kb/quotas.py: its

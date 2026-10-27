@@ -52,7 +52,9 @@ from langchain_openai import OpenAIEmbeddings
 import access
 import chunk_context
 import chunking
+import embedding_cache
 import models
+import untrusted
 import vector_store
 
 # Load the secret OPENAI_API_KEY from the .env file into the program.
@@ -109,7 +111,7 @@ FINGERPRINT = fingerprint()
 # FINGERPRINT: an index whose chunks carry an older one is brought up to date by
 # update(), document by document, re-splitting (the ids come out the same) and
 # re-tagging, with no embedding call.
-CHUNK_META = 3
+CHUNK_META = 4               # 4: `injection`, the planted-instruction scan (untrusted.py)
 UPLOADS = "Company documents"     # the provider of files uploaded on the Documents screen
 # The sample documents a new workspace can try the assistant with (kb/services/onboarding.py)
 SAMPLES = "Sample documents"
@@ -316,7 +318,8 @@ def load_and_split(docs_folder, key, meta, namespace):
             label = (f"{title}{HEADING_SEPARATOR}{path}"
                      if CHUNK_CONTEXT == "headings" and title and path else title)
             header = [f"[{label}]"] if label and not body.startswith(label) else []
-            context = chunk_context.context_for(whole, body, summary_llm) if summary_llm else ""
+            context = (chunk_context.context_for(whole, body, summary_llm, namespace or "")
+                       if summary_llm else "")
             if context:               # for search only: never shown as the source's text
                 header.append(context)
             if piece.prefix:          # a table's header row, repeated
@@ -333,25 +336,34 @@ def load_and_split(docs_folder, key, meta, namespace):
                 passage["rows"] = piece.rows
             if context:
                 passage["chunk_context"] = context
+            # PLANTED INSTRUCTIONS (PL-34 part 3): text written to an AI, flagged
+            # for HR and admins (the Knowledge screen), never dropped. The id is
+            # the text's, so the same id always has the same flag.
+            planted = untrusted.planted_instructions(text)
+            if planted:
+                passage["injection"] = planted
             out.append((cid, text, _clean({**source.metadata, **meta, **passage})))
         stack = chunking.heading_stack(found, len(page_text), stack)
     return out
 
 
-def _embed_and_store(store, items, report):
+def _embed_and_store(store, items, report, workspace=None):
     """3 & 4. EMBED + STORE — turn chunks into vectors and save them.
     EMBED: the embedding model (OpenAI's, or the workspace's Bedrock one, models.py)
            reads each chunk and returns a list of ~1,000 numbers. Chunks
            with similar MEANING get similar numbers. That's the magic that lets
            us search by meaning instead of by exact keywords.
     STORE: Chroma saves these vectors (and each chunk's tags) on disk.
-    In batches, so a big document is many small calls, not one huge one."""
+    In batches, so a big document is many small calls, not one huge one. A chunk
+    whose exact text this model embedded before for the workspace isn't sent
+    again: its vector comes from the embedding cache (embedding_cache.py)."""
     embeddings = store.embeddings
     for start in range(0, len(items), BATCH):
         batch = items[start:start + BATCH]
         report(3, f"Embedding {len(items)} chunks" if len(items) <= BATCH
                else f"Embedding chunks {start + 1}-{start + len(batch)} of {len(items)}")
-        vectors = embeddings.embed_documents([text for _, text, _ in batch])
+        vectors = embedding_cache.embed_documents(embeddings, [text for _, text, _ in batch],
+                                                  workspace)
         store._collection.upsert(ids=[i for i, _, _ in batch], embeddings=vectors,
                                  documents=[text for _, text, _ in batch],
                                  metadatas=[meta for _, _, meta in batch])
@@ -413,7 +425,7 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
         except Exception:
             log.exception("Index: couldn't read %s", key)
             failed.append(key)
-    _embed_and_store(store, items, report)
+    _embed_and_store(store, items, report, namespace)
     report(4, "Done")
     n_restricted = sum(1 for _, _, m in items if m["access"] == "restricted")
     return {"documents": len(keys) - len(failed) - blocked, "chunks": len(items),
@@ -523,7 +535,7 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
 
     # New chunks first, then tags, then deletes: a run cut short in between
     # leaves extra chunks for the next run to remove, never missing ones.
-    _embed_and_store(store, adds, report)
+    _embed_and_store(store, adds, report, namespace)
     for start in range(0, len(retags), 1000):
         batch = retags[start:start + 1000]
         store._collection.update(ids=[i for i, _ in batch], metadatas=[m for _, m in batch])

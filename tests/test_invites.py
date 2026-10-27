@@ -92,6 +92,10 @@ def test_an_invite_is_emailed_accepted_once_and_signs_them_in(client, ws, outbox
                                 "workspace": ws, "role": "hr"}
     me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {r.json()['token']}"})
     assert me.json()["workspace"] == ws
+    # Accepting signed them in with a password: their last sign-in is now (seats,
+    # onboarding, the Members screen), as /api/auth/login's is.
+    import members_store
+    assert members_store.get("pat@contractor.example")["last_login_at"] > time.time() - 60
     login(client, "pat@contractor.example", "a-good-password")      # and with the password
 
     # Used: the link doesn't work again, and the invite has left the pending list.

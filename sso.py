@@ -15,7 +15,7 @@ That decision comes from members_store.py (the database; manage it with
     straight away (auto), asks an admin (request), or only with an invite or
     SCIM (invite_only); every sign-in that can add someone goes through admit()
   * anyone else is turned away — having an account at the provider is not enough
-  * it's checked again on every request (api.py), so changes apply straight away
+  * it's checked again on every request (kb/deps.py), so changes apply straight away
 
 Server settings (.env). A provider only shows on the login page once it's set:
     GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET     (the same OAuth client Google Drive uses)
@@ -388,7 +388,7 @@ def user_for_connection(conn, claims):
 # one-time code that the site swaps for the session with a POST.
 def issue_code(user, browser=None):
     """A one-time code for `user`, redeemable only by the browser that started the
-    sign-in (`browser`: the ID in its sign-in cookie; see api.py)."""
+    sign-in (`browser`: the ID in its sign-in cookie; see kb/services/sign_in.py)."""
     code = secrets.token_urlsafe(24)
     now = time.time()
     with _codes_lock:

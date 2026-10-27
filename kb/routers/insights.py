@@ -3,7 +3,9 @@ test-set candidates promoted from answer feedback.
 
 HR and admins (viewing the app as HR) read insights and feedback; only admins
 change the logging settings or the test set. Everyone signed in may read how
-their questions are logged (the chat says so)."""
+their questions are logged (the chat says so). What each reader is shown of
+questions, documents and test cases follows their groups (access.py), as the
+chat does: HR outside a group doesn't see what only that group may read."""
 
 import csv
 import io
@@ -16,8 +18,8 @@ from pydantic import BaseModel
 import insights_store
 import question_log_store
 from kb.audit import audited
-from kb.deps import current_role, current_user, current_viewer, require_admin, require_hr, ws_of
-from kb.services import conversations, insights, question_log
+from kb.deps import current_user, current_viewer, require_admin, require_hr, ws_of
+from kb.services import conversations, insights, quality, question_log
 
 router = APIRouter()
 
@@ -93,12 +95,12 @@ def _range(since, until):
 @router.get("/api/admin/insights")
 def get_insights(since: str | None = Query(None, alias="from", pattern=DAY),
                  until: str | None = Query(None, alias="to", pattern=DAY),
-                 user=Depends(require_hr), role=Depends(current_role)):
+                 user=Depends(require_hr), viewer=Depends(current_viewer)):
     """Usage, outcomes, latency, cost, sources, content gaps and connector health
     for the days from..to (UTC, inclusive; default the last 30). Aggregates only:
-    sample questions follow the retention mode and the viewer's role."""
+    sample questions follow the retention mode and what the viewer may read."""
     since, until = _range(since, until)
-    return insights.report(ws_of(user), role, since, until)
+    return insights.report(ws_of(user), viewer, since, until)
 
 
 def _cell(value):
@@ -116,13 +118,13 @@ def _when(value):
 def export_insights(table: str = Query(..., pattern="^(" + "|".join(TABLES) + ")$"),
                     since: str | None = Query(None, alias="from", pattern=DAY),
                     until: str | None = Query(None, alias="to", pattern=DAY),
-                    user=Depends(require_hr), role=Depends(current_role),
+                    user=Depends(require_hr), viewer=Depends(current_viewer),
                     audit=audited("insights.export")):
     """One of the report's tables as CSV (a cell that would start a formula gets a
     leading ')."""
     since, until = _range(since, until)
     ws = ws_of(user)
-    rows = insights.report(ws, role, since, until)[REPORT_KEYS.get(table, table)]
+    rows = insights.report(ws, viewer, since, until)[REPORT_KEYS.get(table, table)]
     audit.record("insights", table, {"from": since, "to": until}, user=user)
     columns = TABLES[table]
     out = io.StringIO()
@@ -137,32 +139,19 @@ def export_insights(table: str = Query(..., pattern="^(" + "|".join(TABLES) + ")
 
 
 # ---- Test-set candidates (chat.md C17) --------------------------------------------------
-def _golden(case):
-    """The case as a line of eval/golden/*.jsonl would have it. A not-found
-    question the weekly job suggested is expected to stay "not found" (no
-    sources) until the documents cover it."""
-    not_found = case.get("origin") == "not_found"
-    return {"id": f"{'gap' if not_found else 'feedback'}-{case['id']}",
-            "question": case["question"], "role": case["role"],
-            "expect": "not_found" if not_found else "answer",
-            "sources": [] if not_found else [s.get("doc_key") or s.get("title")
-                                             for s in case["sources"]
-                                             if s.get("kind") != "general_knowledge"],
-            "notes": case["expected_answer"] or "", "origin": "feedback"}
-
-
 def _case(c):
     return {**{k: c[k] for k in ("id", "message_id", "question", "answer", "expected_answer",
                                  "sources", "reasons", "comment", "role", "created_by",
                                  "created_at")},
-            "origin": c.get("origin") or "admin", "golden": _golden(c)}
+            "origin": c.get("origin") or "admin", "golden": quality.golden(c)}
 
 
 @router.get("/api/admin/eval-cases")
-def list_eval_cases(user=Depends(require_hr), role=Depends(current_role)):
-    """Answers promoted to the test set, newest first, as the viewer's role may see them."""
+def list_eval_cases(user=Depends(require_hr), viewer=Depends(current_viewer)):
+    """Answers promoted to the test set, newest first, that the viewer may read
+    (their groups: the answer's audience, as in the chat)."""
     return {"cases": [_case(c) for c in insights_store.candidates(ws_of(user))
-                      if conversations.visible_to(role, {"author": "assistant", **c})]}
+                      if conversations.visible_to(viewer, {"author": "assistant", **c})]}
 
 
 @router.post("/api/admin/eval-cases")
@@ -182,7 +171,8 @@ def add_eval_case(body: EvalCaseIn, user=Depends(require_admin),
     case = insights_store.add_candidate(
         ws, body.message_id, snap["question"], snap.get("answer"), expected,
         snap.get("sources") or [], feedback["reasons"], feedback["comment"],
-        "public" if access == "public" else "hr", access, user["username"])
+        "public" if access == "public" else "hr", access, user["username"],
+        acl=snap.get("acl"))
     audit.record("eval_case", str(case["id"]), {"message_id": body.message_id}, user=user)
     return _case(case)
 

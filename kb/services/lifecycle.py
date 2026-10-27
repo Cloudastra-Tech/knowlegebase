@@ -104,6 +104,16 @@ SETTINGS = (
      ("term", "definition", "synonyms", "created_by", "created_at")),
     ("source_rules", "SELECT {} FROM doc_rules WHERE workspace = ?",
      ("match_type", "match_value", "action", "weight", "created_by", "created_at")),
+    # Never a secret: not Teams' app_secret (nor app_key, the unguessable part of
+    # its messaging endpoint), not Bedrock's access_keys nor its external_id.
+    ("teams", "SELECT {} FROM teams_installs WHERE workspace = ?",
+     ("mode", "app_id", "app_tenant", "tenant_id", "status", "unknown_users",
+      "last_activity_at", "updated_by", "updated_at")),
+    ("email_in", "SELECT {} FROM email_in_settings WHERE workspace = ?",
+     ("enabled", "updated_by", "updated_at")),
+    ("model_provider", "SELECT {} FROM model_providers WHERE workspace = ?",
+     ("provider", "region", "auth", "role_arn", "chat_model", "fast_model", "embed_model",
+      "embed_dims", "tested_at", "updated_by", "updated_at")),
 )
 VERIFIED_COLUMNS = ("id", "title", "variants", "answer_md", "sources", "access", "owner",
                     "verified_by", "verified_at", "review_days", "status", "created_by",
@@ -144,8 +154,9 @@ def _settings(conn, ws):
     out = {}
     for part, sql, columns in SETTINGS:
         rows = _rows(conn, sql, columns, ws)
-        out[part] = rows[0] if part in ("workspace", "chat_settings", "api_settings", "slack",
-                                        "assistant") and rows else rows
+        out[part] = (rows[0] if part in ("workspace", "chat_settings", "api_settings", "slack",
+                                         "assistant", "teams", "email_in", "model_provider")
+                     and rows else rows)
     out["scim"] = {"tokens": conn.execute("SELECT COUNT(*) FROM scim_tokens WHERE workspace = ? "
                                           "AND revoked_at IS NULL", (ws,)).fetchone()[0],
                    "groups": [r[0] for r in conn.execute(

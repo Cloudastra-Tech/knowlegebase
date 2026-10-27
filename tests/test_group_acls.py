@@ -331,6 +331,59 @@ def test_knowledge_shows_who_can_see_each_item(org, env):  # noqa: F811
                                        headers=org.login("bob")).json()["items"][0]
 
 
+def test_insights_and_the_test_set_follow_the_readers_groups(org, env):  # noqa: F811
+    """#74's follow-up: Insights (cited documents, the question log's samples in
+    content gaps) and the test set are read by the principal model. HR outside
+    Finance sees none of what only Finance may read; once in it, they do."""
+    import groups_store
+    import insights_store
+    import question_log_store
+    from kb.services import insights, quality
+    _, mid, done = _ask(org, "alice", "What is the Q3 acquisition target of Finance?")
+    assert "Zephyrcorp" in done.answer
+    # The question log row carries the answer's audience, Finance's ACL among it.
+    (row,) = [r for r in question_log_store.rows(org.ws) if r["message_id"] == mid]
+    assert [access.group(org.group["id"])] in row["acl"], row["acl"]
+    # alice rates it down; the weekly job turns that into a test case, with its audience.
+    alice = org.login("alice")
+    assert env.client.put(f"/api/messages/{mid}/feedback", json={"rating": -1},
+                          headers=alice).status_code == 200
+    assert quality.suggest(org.ws)["feedback"] == 1
+    # A content gap built from that question (as compute_gaps saves one).
+    insights_store.save_gaps(org.ws, 0, [{
+        "label": "Acquisition targets", "size": insights.GAP_MIN_SIZE, "not_found": 0,
+        "general_knowledge": 0, "max_access": "restricted", "acl": row["acl"],
+        "log_ids": [row["id"]]}])
+
+    def seen(name):
+        h = org.login(name)
+        report = env.client.get("/api/admin/insights", headers=h).json()
+        cases = env.client.get("/api/admin/eval-cases", headers=h).json()["cases"]
+        exported = env.client.get("/api/admin/insights/export", params={"table": "sources"},
+                                  headers=h).text
+        return ({s["doc_key"] for s in report["top_sources"]},
+                [(g["label"], g["samples"]) for g in report["gaps"]],
+                [c["message_id"] for c in cases], "finance.txt" in exported)
+
+    sources, gaps, cases, exported = seen("hr")             # HR, in neither group
+    assert org.keys["finance"] not in sources and not exported
+    assert gaps == [(None, [])] and mid not in cases
+
+    # The answer read Finance's file and the eng group's (a small corpus): HR in
+    # both now (eng is an identity provider's group: from their sign-in).
+    import db
+    groups_store.set_members(org.ws, org.group["id"],
+                             [f"alice@{org.domain}", f"hr@{org.domain}"], "admin")
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE members SET groups = ?, group_source = 'oidc-test' "
+                     "WHERE username = ?", (json.dumps([f"eng@{org.domain}"]), f"hr@{org.domain}"))
+    conn.close()
+    sources, gaps, cases, exported = seen("hr")
+    assert org.keys["finance"] in sources and exported and mid in cases
+    assert gaps == [("Acquisition targets", ["What is the Q3 acquisition target of Finance?"])]
+
+
 # ---- Jira, Zendesk and GitHub under the source policy --------------------------------------------
 def _sourced(org, env, provider, items):  # noqa: F811
     """A `provider` connection under the source policy with these synced items
@@ -670,9 +723,6 @@ ROLE_ONLY = {
     "create_share": "makes a link; open_share checks every answer",
     "open_share": "works out the viewer's and the sharer's principals itself",
     "list_integrations": "the role decides the live Outline tool; no documents",
-    "get_insights": "HR / Admin counts by access level (follow-up: by ACL)",
-    "export_insights": "as get_insights",
-    "list_eval_cases": "HR / Admin; eval cases carry no ACL (follow-up)",
     "list_prompts": "saved prompts hold no documents; the role says who keeps the workspace's",
     "create_prompt": "as list_prompts",
     "update_prompt": "as list_prompts",

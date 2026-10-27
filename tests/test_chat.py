@@ -5,8 +5,12 @@ alongside the search), and stop when the asker goes away.
 
 OpenAI is the only thing faked: the agent model, the RAG model, the guards'
 classifier and the search index. The agent, its graph, the guards' rules, the
-RAG flow and the API are the real code. Each fake sleeps like a model would,
-so overlap shows up as wall-clock time.
+RAG flow and the API are the real code. Each fake sleeps like a model would.
+
+"Side by side" is proved without reading a clock: Fakes.together() makes calls
+wait for each other at a barrier, so they overlap whenever the code runs them at
+once, and fail (BrokenBarrierError) when it runs them one after the other, however
+loaded the machine is.
 """
 
 import asyncio
@@ -68,6 +72,7 @@ class FakeRetriever:
 
     def invoke(self, query, dense_query=None):
         start = time.monotonic()
+        self.fakes.meet("retrieve")
         time.sleep(self.fakes.delays["retrieve"])
         self.fakes.calls.add("retrieve", query, start)
         topic = _topic(query)
@@ -102,11 +107,13 @@ class FakeClassifier:
         start = time.monotonic()
         if prompt.startswith("You detect prompt-injection"):
             text = prompt.split('Text: "', 1)[1].rsplit('"', 1)[0]
+            self.fakes.meet("injection_check")
             time.sleep(self.fakes.delays["guard"])
             self.fakes.calls.add("injection_check", text, start)
             verdict = "BLOCK" if "configured with" in text else "ALLOW"
         elif prompt.startswith("You are an intent classifier"):
             text = prompt.split('Question: "', 1)[1].split('"', 1)[0]
+            self.fakes.meet("salary_check")
             time.sleep(self.fakes.delays["guard"])
             self.fakes.calls.add("salary_check", text, start)
             verdict = "BLOCK" if "earn" in text else "ALLOW"
@@ -152,6 +159,7 @@ class FakeAgentModel(BaseChatModel):
         pieces = re.findall(r"\S+\s*", text)
         start, sent = time.monotonic(), 0
         try:
+            self.fakes.meet("agent")
             for piece in pieces:
                 time.sleep(self.fakes.delays["agent"] / len(pieces))
                 chunk = ChatGenerationChunk(message=AIMessageChunk(content=piece))
@@ -169,6 +177,19 @@ class Fakes:
         self.calls = Calls()
         self.streamed = []            # (question, pieces sent, pieces in the answer)
         self.delays = {"guard": 0.2, "retrieve": 0.1, "helper": 0.05, "agent": 0.4}
+        self.barriers = {}            # call kind -> the threading.Barrier it waits at
+
+    def together(self, *kinds, parties=None):
+        """From now on, calls of these kinds wait for each other before they
+        finish: `parties` of them (one of each kind by default) must be running
+        at once, within 10 s, or each raises BrokenBarrierError."""
+        barrier = threading.Barrier(parties or len(kinds), timeout=10)
+        for kind in kinds:
+            self.barriers[kind] = barrier
+
+    def meet(self, kind):
+        if kind in self.barriers:
+            self.barriers[kind].wait()
 
 
 @pytest.fixture
@@ -211,15 +232,13 @@ def overlap(a, b):
 # ---- The agent --------------------------------------------------------------
 def test_one_agent_answers_two_questions_at_once(fakes):
     run = build_agent("public", outline=False)
-    start = time.monotonic()
     ask(run, "What is the refund policy?")
-    alone = time.monotonic() - start
 
-    (refund, leave), both = in_parallel(lambda: ask(run, "What is the refund policy?"),
-                                        lambda: ask(run, "How many leave days do we get?"))
+    # Side by side, not one after the other: both answers are being written at once.
+    fakes.together("agent", parties=2)
+    (refund, leave), _ = in_parallel(lambda: ask(run, "What is the refund policy?"),
+                                     lambda: ask(run, "How many leave days do we get?"))
 
-    # Side by side, not one after the other: two take about as long as one.
-    assert both < alone * 1.5, (both, alone)
     first, second = [c for c in fakes.calls.of("agent")][-2:]
     assert overlap(first, second)
     # ...and each keeps its own citations and answer.
@@ -244,7 +263,7 @@ def test_citations_do_not_cross_between_many_overlapping_questions(fakes):
 
 
 def test_guards_run_while_the_docs_are_searched(fakes):
-    fakes.delays.update(guard=0.3, retrieve=0.3)
+    fakes.together("injection_check", "salary_check", "retrieve")
     run = build_agent("public", outline=False)
     reply = ask(run, "What is the refund policy?")
 
@@ -297,8 +316,17 @@ def test_small_talk_is_still_checked_for_injection(fakes):
     assert fakes.calls.of("injection_check") and not fakes.calls.of("retrieve")
 
 
+def wait_for_the_stream(fakes, seconds=30):
+    """Until the agent's model has stopped (or finished) streaming."""
+    deadline = time.monotonic() + seconds
+    while not fakes.streamed and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+
 def test_a_cancelled_run_stops_streaming_the_answer(fakes):
-    fakes.delays["agent"] = 2.0
+    # Slow words (about 1 s each), so stopping after the first is plain in how
+    # many were sent, not in how long it took.
+    fakes.delays["agent"] = 10.0
     run = build_agent("public", outline=False)
     stop = threading.Event()
 
@@ -306,13 +334,9 @@ def test_a_cancelled_run_stops_streaming_the_answer(fakes):
         if event["type"] == "answer":
             stop.set()                    # the asker leaves after the first words
 
-    start = time.monotonic()
     with pytest.raises(Cancelled):
         run("What is the refund policy?", with_sources=True, on_event=on_event, cancel=stop)
-    assert time.monotonic() - start < 1.5
-    deadline = time.monotonic() + 5
-    while not fakes.streamed and time.monotonic() < deadline:
-        time.sleep(0.02)
+    wait_for_the_stream(fakes)
     ((_, sent, total),) = fakes.streamed
     assert sent < total
 
@@ -349,15 +373,13 @@ def stream(client, token, question):
 
 def test_two_people_in_one_workspace_and_role_are_answered_at_once(client, fakes):
     one, two = client.tokens
-    start = time.monotonic()
     stream(client, one, "What is the refund policy?")
-    alone = time.monotonic() - start
 
-    (refund, leave), both = in_parallel(
+    fakes.together("agent", parties=2)       # both answers are written at once
+    (refund, leave), _ = in_parallel(
         lambda: stream(client, one, "What is the refund policy?"),
         lambda: stream(client, two, "How many leave days do we get?"))
 
-    assert both < alone * 1.5, (both, alone)
     for events, title in ((refund, "refund.md"), (leave, "leave.md")):
         assert events[0] == {"type": "status", "text": "Checking your question"}
         assert events[-1]["type"] == "done"
@@ -375,7 +397,7 @@ def test_a_dropped_stream_stops_the_work(client, fakes):
     """The browser goes away after the first words: the agent stops."""
     import api
 
-    fakes.delays["agent"] = 3.0
+    fakes.delays["agent"] = 10.0                     # about 1 s a word
     received = []
 
     async def drive():
@@ -404,12 +426,42 @@ def test_a_dropped_stream_stops_the_work(client, fakes):
                              (b"x-role", b"public")]}
         await api.app(scope, receive, send)
 
-    start = time.monotonic()
     asyncio.run(drive())
     assert received[0]["status"] == 200
-    deadline = time.monotonic() + 5
-    while not fakes.streamed and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert time.monotonic() - start < 2.5           # well before the 3 s answer would end
+    wait_for_the_stream(fakes)
     ((_, sent, total),) = fakes.streamed
     assert sent < total
+
+
+# ---- A model provider that fails ------------------------------------------------------
+class FailingAgentModel(FakeAgentModel):
+    """The agent's model, down: OpenAI can't be reached."""
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        import httpx
+        import openai
+        raise openai.APIConnectionError(request=httpx.Request(
+            "POST", "https://api.openai.com/v1/chat/completions"))
+        yield                                          # a generator, like the real one
+
+
+def test_the_one_shot_chat_says_plainly_when_openai_fails(client, fakes, monkeypatch):
+    monkeypatch.setattr(agent, "ChatOpenAI", lambda **kwargs: FailingAgentModel(fakes=fakes))
+    r = client.post("/api/chat", json={"question": "What is the refund policy?"},
+                    headers={"Authorization": f"Bearer {client.tokens[0]}", "X-Role": "public"})
+    assert r.status_code == 502, r.text
+    assert r.json() == {"detail": "The assistant couldn't answer just now "
+                                  "(APIConnectionError). Please try again in a moment."}
+
+
+def test_the_one_shot_chat_says_plainly_when_there_is_no_openai_key(client, monkeypatch):
+    """The real OpenAI client, made without a key (its constructor raises)."""
+    from langchain_openai import ChatOpenAI
+    from kb import state
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.setattr(agent, "ChatOpenAI", ChatOpenAI)
+    state.agents.clear()
+    r = client.post("/api/chat", json={"question": "What is the refund policy?"},
+                    headers={"Authorization": f"Bearer {client.tokens[0]}", "X-Role": "public"})
+    assert r.status_code == 502, r.text
+    assert r.json()["detail"].startswith("The assistant couldn't answer just now (OpenAIError)")

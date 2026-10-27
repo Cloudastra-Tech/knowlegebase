@@ -14,8 +14,10 @@ Admin insights (platform.md PL-14) from the question log (question_log_store.py)
 PRIVACY (chat.md D3: no browsing of members' chats). The report is aggregates.
 Question text appears only as samples in content gaps, only as the workspace's
 retention mode kept it, never with who asked, and never when the answer read
-something the viewer's role can't see (visible()). Documents are listed only when
-the viewer may see them.
+something the viewer can't (readable(): the principal model, access.py, so HR
+outside a group doesn't see what only that group may read). Documents are listed
+only when the viewer may read them (doc_readable(): the document's ACL). Rows from
+before ACLs were logged (migration 0023) are judged by their access level.
 
 Days are UTC days (YYYY-MM-DD).
 """
@@ -28,6 +30,7 @@ from datetime import date, datetime, timedelta
 
 import numpy as np
 
+import access
 import docs_store
 import ingest
 import insights_store
@@ -95,6 +98,23 @@ def day_range(since_day, until_day):
 def visible(role, level):
     """Whether a viewer in `role` may see something read at access `level`."""
     return (level or "restricted") in ROLE_ACCESS.get(role, ["public"])
+
+
+def readable(viewer, row):
+    """May `viewer` (an access.Viewer, or a bare role) read a question log row (or a
+    content gap, or a test case): everything its answer read, as its `acl`
+    clauses say; a row from before those (acl None) by its max_access."""
+    return access.sees(viewer, {"acl": row.get("acl"), "sources": row.get("sources") or [],
+                                "max_access": row.get("max_access") or "restricted"})
+
+
+def doc_acl(d):
+    """A document's ACL as Insights recorded it, or its access level's."""
+    return d.get("acl") or access.level_acl(d.get("access") or "restricted")
+
+
+def doc_readable(viewer, d):
+    return access.can_see(viewer, doc_acl(d))
 
 
 # ---- Latency and cost ----------------------------------------------------------------------
@@ -174,27 +194,34 @@ def _parse_time(value):
 def current_docs(ws):
     """{doc_key: {title, provider, url, access, modified, since}} of everything the
     workspace's assistant can search, keyed as ingest.py keys documents."""
+    from kb.services import permissions
     root = workspaces.docs_root(ws)
     docs = {}
+    picked = permissions.doc_acls(ws)
     for d in docs_store.list_docs(root):
         mtime = os.path.getmtime(d["path"])
-        docs[f"{d['access']}/{d['name']}"] = {
+        key = f"{d['access']}/{d['name']}"
+        docs[key] = {
             "title": d["name"], "provider": UPLOADED, "url": None, "access": d["access"],
+            "acl": picked.get(key) or access.level_acl(d["access"]),
             "modified": mtime, "since": mtime}
     try:
         sync_store.import_manifests(ws)
     except Exception:
         log.exception("Insights: couldn't import connector manifests of workspace %s", ws)
     levels = integrations_store.chunk_access_levels(ws)
+    sourced = permissions.connector_acls(ws, details=True)
     connectors_dir = os.path.join(root, "connectors")
     for provider in sorted(os.listdir(connectors_dir)) if os.path.isdir(connectors_dir) else []:
         for item in sync_store.items(ws, provider).values():
             name = item.get("file_name")
             if not name or not os.path.isfile(os.path.join(connectors_dir, provider, name)):
                 continue
-            docs[f"connectors/{provider}/{name}"] = {
+            key = f"connectors/{provider}/{name}"
+            acl, _ = permissions.connection_acl(ws, provider, key, sourced, levels)
+            docs[key] = {
                 "title": item.get("title") or name, "provider": registry.label(provider),
-                "url": item.get("url"), "access": levels.get(provider, "restricted"),
+                "url": item.get("url"), "access": access.level_of_acl(acl), "acl": acl,
                 "modified": _parse_time(item.get("modified")), "since": None}
     return docs
 
@@ -245,7 +272,7 @@ class Resolver:
         if key:
             d = self.docs[key]
             return key, {"title": d["title"], "provider": d["provider"], "url": d.get("url"),
-                         "access": d["access"]}
+                         "access": d["access"], "acl": doc_acl(d)}
         # Not searchable any more, or read live (the Outline wiki): named as cited, at
         # the access level of the answer at least.
         level = source.get("access") or max_access
@@ -253,7 +280,8 @@ class Resolver:
             level = "restricted"
         return (f"{source.get('provider') or 'Unknown'}:{source.get('url') or source.get('title')}",
                 {"title": source.get("title"), "provider": source.get("provider"),
-                 "url": source.get("url"), "access": level})
+                 "url": source.get("url"), "access": level,
+                 "acl": source.get("acl") or access.level_acl(level)})
 
 
 # ---- Rollups --------------------------------------------------------------------------------
@@ -408,25 +436,32 @@ def _compute_gaps(ws, now=None, min_size=None):
             "general_knowledge": sum(m["outcome"] == "general_knowledge" for m in members),
             "max_access": "public" if all(m["max_access"] == "public" for m in members)
                           else "restricted",
+            # Every clause any of its questions' answers had: to read the cluster
+            # (its label), a viewer must be able to read each of them.
+            "acl": access.clauses([c for m in members for c in access.message_clauses(
+                {"acl": m.get("acl"), "sources": m.get("sources") or [],
+                 "max_access": m["max_access"]})]),
             "log_ids": [m["id"] for m in members]})
     insights_store.save_gaps(ws, since, clusters, now)
     return clusters
 
 
-def gaps_for(ws, role, mode):
-    """The latest clusters as a viewer in `role` may see them: a cluster built
-    partly from answers beyond the role keeps only its size; samples are only
-    questions whose answers the role may read, and only when text is logged."""
+def gaps_for(ws, viewer, mode):
+    """The latest clusters as `viewer` (an access.Viewer, or a bare role) may see
+    them: a cluster built partly from answers beyond them keeps only its size;
+    samples are only questions whose answers they may read (readable()), and only
+    when text is logged."""
     saved = [g for g in insights_store.gaps(ws) if g["size"] >= GAP_MIN_SIZE]
     rows = log_store.get_many(i for g in saved for i in g["log_ids"][:GAP_SAMPLES * 3])
     out = []
     for g in saved:
-        shown = visible(role, g["max_access"])
+        shown = (access.sees(viewer, g["acl"]) if g.get("acl") is not None
+                 else visible(access.role_of(viewer), g["max_access"]))
         samples = []
         if shown and mode != "metadata":
             for i in g["log_ids"]:
                 r = rows.get(i)
-                if r and r["question"] and visible(role, r["max_access"]):
+                if r and r["question"] and readable(viewer, r):
                     samples.append(r["question"])
                 if len(samples) == GAP_SAMPLES:
                     break
@@ -469,8 +504,9 @@ def _quality(ws, since_day, until_day):
     return quality.trend(ws, since_day, until_day)
 
 
-def report(ws, role, since_day, until_day, now=None):
-    """Everything the Insights screen shows for [since_day, until_day]."""
+def report(ws, viewer, since_day, until_day, now=None):
+    """Everything the Insights screen shows for [since_day, until_day], as `viewer`
+    (an access.Viewer, or a bare role) may read it."""
     now = time.time() if now is None else now
     current = today(now)
     docs = _docs(ws, now)
@@ -518,11 +554,15 @@ def report(ws, role, since_day, until_day, now=None):
     cited = {s["doc_key"]: s for s in insights_store.cited(ws, since_day, until_day)}
     for key, s in live_sources.items():
         entry = cited.setdefault(key, {"doc_key": key, **{k: s.get(k) for k in
-                                                          ("title", "provider", "url", "access")},
+                                                          ("title", "provider", "url", "access",
+                                                           "acl")},
                                        "cited": 0})
         entry["cited"] += s["cited"]
-    top = sorted((s for s in cited.values() if visible(role, s["access"])),
-                 key=lambda s: (-s["cited"], s["doc_key"]))
+    for key, s in cited.items():               # who may read it now, if it's still there
+        if key in docs:
+            s["acl"] = doc_acl(docs[key])
+    top = sorted(({k: v for k, v in s.items() if k != "acl"} for s in cited.values()
+                  if doc_readable(viewer, s)), key=lambda s: (-s["cited"], s["doc_key"]))
 
     ever = insights_store.ever_cited(ws) | set(live_sources)
     old = now - NEVER_CITED_DAYS * 86400
@@ -530,7 +570,7 @@ def report(ws, role, since_day, until_day, now=None):
                      "url": d["url"], "access": d["access"], "first_seen": d["first_seen"],
                      "modified": d["modified"]}
                     for k, d in docs.items() if d["first_seen"] < old and k not in ever
-                    and visible(role, d["access"])),
+                    and doc_readable(viewer, d)),
                    key=lambda d: (d["first_seen"], d["doc_key"]))
     stale_before = now - STALE_DAYS * 86400
     stale = sorted(({"doc_key": k, "title": d["title"], "provider": d["provider"],
@@ -538,7 +578,7 @@ def report(ws, role, since_day, until_day, now=None):
                      "cited": cited[k]["cited"]}
                     for k, d in docs.items() if d["modified"] and d["modified"] < stale_before
                     and k in cited and cited[k]["cited"] >= STALE_MIN_CITED
-                    and visible(role, d["access"])),
+                    and doc_readable(viewer, d)),
                    key=lambda d: (-d["cited"], d["doc_key"]))
 
     # Where the questions were asked: the web chat, the API, Slack, Teams, ...
@@ -555,7 +595,7 @@ def report(ws, role, since_day, until_day, now=None):
         "top_sources": top[:LIST_LIMIT],
         "never_cited": never[:LIST_LIMIT], "never_cited_count": len(never),
         "stale": stale[:LIST_LIMIT],
-        "gaps": gaps_for(ws, role, settings["mode"]),
+        "gaps": gaps_for(ws, viewer, settings["mode"]),
         "connectors": connector_health(ws),
         "quality": _quality(ws, since_day, until_day),
         "thresholds": {"never_cited_days": NEVER_CITED_DAYS, "stale_days": STALE_DAYS,
