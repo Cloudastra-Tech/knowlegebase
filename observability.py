@@ -7,6 +7,8 @@ log.error() line are sent, with:
 
     environment    APP_ENV (e.g. production, staging); default "production"
     release        SENTRY_RELEASE if set (e.g. the git SHA of the image)
+    tags           request_id (as in the X-Request-ID header and the log), or
+                   job_id and job_kind, and workspace (kb/logs.py)
 
 Questions, answers and documents are tenant data, and requests carry session
 tokens, so what leaves the server is cut down hard (see scrub()):
@@ -25,8 +27,24 @@ _SECRET_HEADERS = {"authorization", "proxy-authorization", "cookie", "set-cookie
                    "x-api-key", "x-auth-token", "cf-access-client-secret"}
 
 
+def tag(event):
+    """The request id (or the job's id and kind) and workspace the event happened
+    in, as tags: an event can be found from a log line, and the other way round."""
+    from kb import logs
+    fields = {k: v for k, v in logs.current().items() if k != "user"}
+    if fields:
+        tags = event.get("tags")
+        if not isinstance(tags, dict):
+            tags = event["tags"] = dict(tags or {})
+        for name, value in fields.items():
+            tags.setdefault(name, str(value))
+    return event
+
+
 def scrub(event, hint=None):
-    """Sentry's before_send: drop anything that could hold tenant data or secrets."""
+    """Sentry's before_send: drop anything that could hold tenant data or secrets,
+    and tag it with the request or job it came from."""
+    tag(event)
     request = event.get("request")
     if isinstance(request, dict):
         for key in ("data", "cookies", "query_string"):

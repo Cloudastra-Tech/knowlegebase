@@ -24,6 +24,7 @@ person's chat questions.
 """
 
 import asyncio
+import contextvars
 import json
 import os
 import threading
@@ -270,7 +271,8 @@ def _stream(run, finish, ids):
         finally:
             put(None)
 
-    threading.Thread(target=work, daemon=True).start()
+    # In its own thread, with the request's id and user on its log lines (kb/logs.py).
+    threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
 
     async def sse():
         try:

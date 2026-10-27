@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 import members_store
 import scim_store
 import sessions_store
+from kb import logs
 from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
 from kb.routers.admin_sign_in import GroupRule
@@ -85,6 +86,7 @@ def scim_token(request: Request, authorization: str = Header(default="")):
     if not found:
         raise ScimError(401, "A valid SCIM bearer token is required.")
     workspace, token_id = found
+    logs.bind(workspace=workspace)
     return {"workspace": workspace, "token_id": token_id,
             "base": public_url(request, "/scim/v2")}
 

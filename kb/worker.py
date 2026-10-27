@@ -17,9 +17,11 @@ import threading
 
 def main():
     import db
-    from kb import jobs
+    import observability
+    from kb import jobs, logs
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logs.configure()                      # LOG_FORMAT, as the API's (kb/logs.py)
+    observability.init_error_tracking()   # job failures to Sentry, tagged with the job
     db.connect().close()                  # migrate first, as the API does
     runner = jobs.start_in_process(force=True)
     log = logging.getLogger("uvicorn.error")
