@@ -207,7 +207,7 @@
     --glass-highlight: oklch(1 0 0 / 6%);
     --glass-shadow: 0 12px 40px -16px oklch(0 0 0 / 55%);
     /* ascii */
-    --ascii-ambient: oklch(0.93 0 0 / 7%); /* the app's background field */
+    --ascii-ambient: oklch(0.93 0 0 / 9%); /* the app's background field (the chat's is about the same) */
     --ascii-field: oklch(0.93 0 0 / 16%); /* the landing's field */
     --ascii-ink: oklch(0.93 0 0 / 85%);
     --ascii-signal: var(--signal);

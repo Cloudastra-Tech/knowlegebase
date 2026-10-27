@@ -168,7 +168,7 @@ export function OnboardingChecklist({ onAddProvider }: { onAddProvider: () => vo
       </ol>
       {(checklist.sample.available || checklist.sample.on) && (
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-          <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+          <p className="min-w-0 flex-1 basis-64 text-sm text-pretty text-muted-foreground">
             {checklist.sample.on
               ? "The sample HR handbook is in this workspace. Remove it before real colleagues ask."
               : "No documents yet? Try the assistant on a made-up HR handbook, and remove it in one click."}
