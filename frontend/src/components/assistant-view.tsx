@@ -37,8 +37,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { PiiSettings } from "@/components/pii-settings"
 import {
   assistant,
+  type AnswerCache,
   type AssistantChange,
   type AssistantSettings,
   type GlossaryEntry,
@@ -52,6 +54,12 @@ import { queries } from "@/lib/queries"
 // it the company's own terms. Saved changes apply to the next question.
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
+
+const CACHE: Record<AnswerCache, string> = {
+  off: "Off",
+  exact: "Same question",
+  semantic: "Similar questions",
+}
 
 const TONES: Record<Tone, string> = {
   default: "Default",
@@ -239,7 +247,48 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
             disabled={save.isPending}
             onChange={(on) => save.mutate({ adapt_verified: on })}
           />
+          <SwitchRow
+            id="as-cross-lingual"
+            label="Search across languages"
+            description="A question in another language than your documents is also searched translated into theirs. One small extra model call for those questions."
+            checked={settings.cross_lingual}
+            disabled={save.isPending}
+            onChange={(on) => save.mutate({ cross_lingual: on })}
+          />
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="as-cache">Reuse recent answers</FieldLabel>
+              <FieldDescription>
+                {settings.answer_cache_server
+                  ? "The same question from someone with exactly the same access is answered again from the last few minutes' answer, until your documents or these settings change. Never for follow-ups."
+                  : "Turned off on this server (ANSWER_CACHE)."}
+              </FieldDescription>
+            </FieldContent>
+            <Select
+              value={settings.answer_cache_server ? settings.answer_cache : "off"}
+              disabled={!settings.answer_cache_server || save.isPending}
+              onValueChange={(v) => save.mutate({ answer_cache: v as AnswerCache })}
+            >
+              <SelectTrigger id="as-cache" className="w-40 shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {settings.choices.answer_cache.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {CACHE[c] ?? c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
         </FieldGroup>
+      </Section>
+
+      <Section
+        title="Personal data"
+        description="What's masked in answers and in the question log, and which documents are flagged on the Knowledge screen for holding a lot of it."
+      >
+        <PiiSettings key={JSON.stringify(settings.pii_policy)} settings={settings} />
       </Section>
     </>
   )

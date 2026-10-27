@@ -89,12 +89,33 @@ export interface InsightsReport {
   stale: DocStat[]
   gaps: ContentGap[]
   connectors: ConnectorHealth[]
+  quality: QualityTrend
   thresholds: {
     never_cited_days: number
     stale_days: number
     stale_min_cited: number
     gap_min_size: number
   }
+}
+
+// The quality trend (kb/services/quality.py): per day, the share of questions answered,
+// the thumbs, faithfulness flags (a figure the answer's sources don't show) and answers
+// reused from the answer cache. A rate is null on a day with nothing to rate.
+export interface QualityDay {
+  day: string
+  questions: number
+  answered: number
+  answer_rate: number | null
+  thumbs_up: number
+  thumbs_down: number
+  thumbs_up_share: number | null
+  faithfulness_flags: number
+  cached: number
+}
+
+export interface QualityTrend {
+  daily: QualityDay[]
+  totals: Omit<QualityDay, "day">
 }
 
 export type Surface = "web" | "api" | "mcp" | "slack" | "teams" | "extension" | "email"
@@ -141,6 +162,8 @@ export interface EvalCase {
   role: "public" | "hr"
   created_by: string
   created_at: number
+  // admin: promoted by hand; feedback / not_found: suggested by the weekly job.
+  origin: "admin" | "feedback" | "not_found"
   golden: Record<string, unknown> // the case as a line of eval/golden/*.jsonl
 }
 

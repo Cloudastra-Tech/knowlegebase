@@ -71,6 +71,16 @@ const REPORT = {
     { id: 2, label: null, hidden: true, size: 3, not_found: 3, general_knowledge: 0, samples: [], computed_at: 1 },
   ],
   connectors: [],
+  quality: {
+    daily: [
+      { day: "2026-10-21", questions: 15, answered: 10, answer_rate: 0.6667, thumbs_up: 2,
+        thumbs_down: 1, thumbs_up_share: 0.6667, faithfulness_flags: 1, cached: 0 },
+      { day: "2026-10-22", questions: 25, answered: 20, answer_rate: 0.8, thumbs_up: 1,
+        thumbs_down: 0, thumbs_up_share: 1, faithfulness_flags: 0, cached: 4 },
+    ],
+    totals: { questions: 40, answered: 30, answer_rate: 0.7, thumbs_up: 3, thumbs_down: 1,
+              thumbs_up_share: 0.25, faithfulness_flags: 1, cached: 4 },
+  },
   thresholds: { never_cited_days: 30, stale_days: 180, stale_min_cited: 3, gap_min_size: 3 },
 }
 
@@ -88,6 +98,10 @@ describe("InsightsView", () => {
     expect(screen.getByText("Microsoft Teams")).toBeInTheDocument()
     expect(screen.getByText("3 questions · 66.7% answered")).toBeInTheDocument()
     expect(screen.getByText("Email")).toBeInTheDocument()
+    // The quality trend: answer rate, thumbs and faithfulness flags.
+    expect(screen.getByText("Quality trend")).toBeInTheDocument()
+    expect(screen.getByText("3 up · 1 down")).toBeInTheDocument()
+    expect(screen.getByText("Faithfulness flags")).toBeInTheDocument()
     expect(screen.getByText(/Only admins can change this/)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
   })

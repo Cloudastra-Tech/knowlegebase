@@ -306,7 +306,8 @@ holds the outcome (answered, not found, blocked + why, general knowledge, error,
 stopped), the tools and sources used, the highest access level the model read,
 the latency, and the tokens and model of every model call (a LangChain callback
 set for the run). Its **text** follows the workspace's setting, applied before it
-is written: `redacted` (the default: `safety.redact_pii`), `full`, or `metadata`
+is written: `redacted` (the default: the workspace's personal data policy for logs,
+`pii.py`), `full`, or `metadata`
 (none). Text is cleared after `question_log_days` (90 by default); deleting a chat
 clears what was logged of its words.
 
@@ -580,6 +581,33 @@ PL-31, PL-20). Who may read what is access.py's rule throughout, through
   only). Payloads carry IDs and a few fields, never document text.
 
 All six tables have a `workspace` column, so a workspace's purge deletes them.
+
+---
+
+## ♻️ Answer cache, languages, personal data and spend
+
+- **Answer cache** (`kb/services/answer_cache.py`, table `answer_cache`): `ask()`
+  looks a question up before running the agent. The key hashes the question with
+  a *partition*: the asker's **principal set and role** (a fingerprint), the index
+  version, the settings version, the verified answers' stamp, the space and the
+  release. So only someone with exactly the same access reuses an answer, and a
+  re-index or settings change makes every older one unreachable. Exact match by
+  default, semantic (embedding ≥ 0.95) when turned on; never for follow-ups, live
+  tools or not-found answers. Hits are logged (`question_log.cache_hit`) and shown
+  to admins as an `answer_cache` step.
+- **Languages** (`language.py`): a script + function-word detector, no model.
+  With the answer language on auto, a per-question `LANGUAGE` message goes right
+  after the fixed system prompt (the cached prefix stays the same); with
+  cross-lingual search on, a translated query joins the dense search only.
+- **Personal data** (`pii.py`): rule packs with checksums and a policy per
+  workspace for answers (own verified domains' emails kept), the question log and
+  the ingest scan (`kb/services/pii_scan.py`, table `doc_pii`, counts only), shown
+  as a flag on the Knowledge screen.
+- **Quality** (`kb/services/quality.py`): the Insights quality trend, and a weekly
+  job that suggests thumbs-down answers and not-found clusters as test cases.
+- **Abuse and spend** (`kb/services/abuse.py`, `kb/services/spend.py`): hourly
+  alerts in the operator console, `usage_daily`, and daily spend caps (soft:
+  email; hard: 429 on every surface, enforced in `rate_limit.user_limit`).
 
 ---
 

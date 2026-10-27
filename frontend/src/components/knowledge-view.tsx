@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-react"
+import { BookOpen, ExternalLink, FileText, Globe, Lock, Search, ShieldAlert } from "lucide-react"
 import { siGoogledrive, siNotion } from "simple-icons"
 
 import { WhoCanSeeBadges } from "@/components/access-picker"
@@ -48,6 +48,21 @@ function WhoCanSee({ item }: { item: KnowledgeItem }) {
         <span className="text-xs text-muted-foreground">{notes.join(" · ")}</span>
       )}
     </span>
+  )
+}
+
+// HR / Admin: a document the ingest scan found dense personal data in, so they can
+// restrict who sees it (the Assistant screen's personal data policy decides).
+function PiiBadge({ text }: { text: string }) {
+  const shown = text.charAt(0).toUpperCase() + text.slice(1)
+  return (
+    <Badge variant="outline" className="max-w-48 shrink-0 font-normal sm:max-w-64" title={shown}>
+      <ShieldAlert aria-hidden />
+      <span className="truncate">
+        <span className="sr-only">Personal data: </span>
+        {shown}
+      </span>
+    </Badge>
   )
 }
 
@@ -185,6 +200,7 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
                 )}
                 {/* Once a blocked document is out of the index, "In search" says so. */}
                 {i.rule && (i.rule.action !== "block" || i.chunks > 0) && <RuleBadge rule={i.rule} />}
+                {i.pii && <PiiBadge text={i.pii.text} />}
               </div>
               <span className="hidden text-muted-foreground md:block">{i.source}</span>
               <span

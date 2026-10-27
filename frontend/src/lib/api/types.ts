@@ -686,6 +686,9 @@ export interface KnowledgeItem {
   who?: WhoCanSee[]
   dropped?: number
   readable?: boolean
+  // HR / Admin: the personal data the ingest scan found, when the workspace's policy
+  // flags it ("contains 40 phone numbers"); null when it doesn't.
+  pii?: { counts: Record<string, number>; text: string } | null
 }
 
 export interface Doc {
