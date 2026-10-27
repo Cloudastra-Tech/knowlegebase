@@ -2,12 +2,93 @@ import * as React from "react"
 import { cn } from "cn"
 import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
-function HoverCard({ ...props }: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
-  return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
+// A preview is for a pointer resting on its trigger, so it stands down in two cases:
+// - the trigger was pressed: the person wants what it opens (the passage, the page). It
+//   stays closed until the pointer leaves the trigger.
+// - the trigger is behind a modal (a dialog or sheet hides the rest of the page with
+//   aria-hidden), as when the click just opened the source sheet.
+// Otherwise the open delay can run out over the sheet the click opened, and the card
+// pops up on top of it and takes the sheet's Escape.
+type CardContextValue = {
+  trigger: React.RefObject<HTMLElement | null>
+  press: () => void
+  release: () => void
+}
+const CardContext = React.createContext<CardContextValue | null>(null)
+
+function HoverCard({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
+  const [own, setOwn] = React.useState(defaultOpen)
+  const trigger = React.useRef<HTMLElement | null>(null)
+  const pressed = React.useRef(false)
+  const change = React.useCallback(
+    (next: boolean) => {
+      const hidden = trigger.current?.closest('[aria-hidden="true"]')
+      if (next && (pressed.current || hidden)) return
+      setOwn(next)
+      onOpenChange?.(next)
+    },
+    [onOpenChange]
+  )
+  const card = React.useMemo(
+    () => ({
+      trigger,
+      press: () => {
+        pressed.current = true
+        change(false)
+      },
+      release: () => {
+        pressed.current = false
+      },
+    }),
+    [change]
+  )
+  return (
+    <CardContext.Provider value={card}>
+      <HoverCardPrimitive.Root
+        data-slot="hover-card"
+        open={openProp ?? own}
+        onOpenChange={change}
+        {...props}
+      />
+    </CardContext.Provider>
+  )
 }
 
-function HoverCardTrigger({ ...props }: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
-  return <HoverCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
+function HoverCardTrigger({
+  ref,
+  onPointerDown,
+  onPointerLeave,
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
+  const card = React.useContext(CardContext)
+  const setRef = React.useCallback(
+    (el: HTMLAnchorElement | null) => {
+      if (card) card.trigger.current = el
+      if (typeof ref === "function") ref(el)
+      else if (ref) ref.current = el
+    },
+    [card, ref]
+  )
+  return (
+    <HoverCardPrimitive.Trigger
+      ref={setRef}
+      data-slot="hover-card-trigger"
+      onPointerDown={(event) => {
+        onPointerDown?.(event)
+        card?.press()
+      }}
+      onPointerLeave={(event) => {
+        onPointerLeave?.(event)
+        card?.release()
+      }}
+      {...props}
+    />
+  )
 }
 
 function HoverCardContent({
@@ -23,7 +104,7 @@ function HoverCardContent({
         align={align}
         sideOffset={sideOffset}
         className={cn(
-          "z-50 w-64 origin-(--radix-hover-card-content-transform-origin) rounded-lg bg-popover p-2.5 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "z-50 w-64 origin-(--radix-hover-card-content-transform-origin) rounded-lg glass-strong p-2.5 text-sm text-popover-foreground outline-hidden duration-(--dur-popover) ease-out-strong data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-97 data-closed:animate-out data-closed:duration-(--dur-popover-exit) data-closed:fade-out-0 data-closed:zoom-out-97",
           className,
         )}
         {...props}
