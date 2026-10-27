@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 import audit_store
 from kb.audit import audited
 from kb.deps import require_admin, ws_of
+from kb.services import billing
 
 router = APIRouter()
 
@@ -72,6 +73,7 @@ def export_audit(filters: Filters = Depends(),
     as hashed (so the chain can be checked from it); csv is for spreadsheets
     (a cell that would start a formula gets a leading ')."""
     ws = ws_of(user)
+    billing.require(ws, "audit_export")
     audit.record("audit", ws, {"format": format,
                                **{k: v for k, v in filters.kw.items() if v is not None}},
                  user=user)

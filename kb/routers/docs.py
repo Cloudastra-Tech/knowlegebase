@@ -21,6 +21,7 @@ import access as acl_check        # access.py (the routes have an `access` of th
 import docs_store
 import groups_store
 import workspaces
+from kb import quotas
 from kb.audit import audited
 from kb.deps import current_viewer, require_hr, ws_of
 from kb.rate_limit import user_limit
@@ -235,6 +236,12 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
         raise HTTPException(400, "Please choose at least one text, PDF, Word, PowerPoint, "
                                  "Excel, Markdown or HTML file.")
     root = workspaces.docs_root(ws)
+    new = [(name, f) for name, f in picked
+           if not os.path.exists(docs_store.doc_path(access, name, root))]
+    quotas.check(ws, "docs", user=user, files=len(new),
+                 bytes=sum(f.file.seek(0, os.SEEK_END) for _, f in picked))
+    for _, f in picked:
+        f.file.seek(0)
     for name, f in picked:
         existed = os.path.exists(docs_store.doc_path(access, name, root))
         docs_store.save_file(access, name, f.file, root)

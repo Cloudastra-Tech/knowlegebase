@@ -34,6 +34,37 @@ os.environ.update(APP_DB=os.path.join(_tmp, "app.db"),
                   SSO_CONFIG=os.path.join(_tmp, "sso.json"))
 
 
+if os.getenv("KB_TEST_PLAN"):
+    # tests/test_billing_off_or_on.py runs a slice of the suite again with BILLING=on
+    # and every workspace without a subscription on this plan, active: a workspace
+    # whose plan includes everything must work exactly as with billing off.
+    @pytest.fixture(autouse=True)
+    def on_a_paid_plan(monkeypatch):
+        import billing_store
+        stored = billing_store.subscription
+
+        def subscription(workspace):
+            return stored(workspace) or {
+                "workspace": workspace, "plan": os.environ["KB_TEST_PLAN"], "status": "active",
+                "trial_ends_at": None, "stripe_customer": None, "stripe_subscription": None,
+                "seats": 0, "current_period_end": None, "reminders": [],
+                "deletion_scheduled_at": None, "created_at": 0, "updated_at": 0}
+        monkeypatch.setattr(billing_store, "subscription", subscription)
+
+
+@pytest.fixture(autouse=True)
+def no_data_keys_kept_between_tests():
+    """secret_box keeps unwrapped data keys in memory for a minute. Tests that point
+    db.DB_PATH at a database of their own (test_members_store, test_migrations, ...)
+    would leave that database's keys cached for a workspace like "acme", and a test
+    that seals for acme in the next minute would use a key the shared database
+    doesn't have: unreadable once the cache expires. Drop them after every test."""
+    yield
+    import sys
+    if "secret_box" in sys.modules:
+        sys.modules["secret_box"].forget()
+
+
 @pytest.fixture
 def jobs_paused(monkeypatch):
     """No job runner in this process: jobs stay queued until the test runs them

@@ -31,6 +31,7 @@ import lifecycle_store
 import members_store
 import workspaces
 from kb import logs
+from kb.services import billing
 from kb.rate_limit import key_limit
 
 INVALID = "A valid API key is required: Authorization: Bearer kb_live_..."
@@ -105,6 +106,9 @@ def authenticate(authorization, surface, scope=None):
                                   "follow the person asking.")
     elif not settings["api_enabled"]:
         raise KeyRefused(403, "Your workspace's admins have turned the API off.")
+    if surface in ("api", "mcp") and key.get("client") != "extension" and \
+            not billing.entitlement(ws, surface):           # its plan (BILLING=on)
+        raise KeyRefused(402, billing.refusal(ws, surface))
 
     member = members_store.check_group_admin(members_store.get(key["created_by"]))
     alive = member and member["workspace"] == ws and not member["disabled"]

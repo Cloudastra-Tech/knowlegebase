@@ -20,6 +20,7 @@ import sessions_store
 import sso
 import workspaces
 from kb import logs, operators
+from kb.services import billing
 
 log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 # Kept with the session (for signing out at the provider), never sent to the browser.
@@ -58,6 +59,8 @@ def current_user(request: Request, authorization: str = Header(default="")):
             request.url.path.startswith(WHILE_DELETING):
         raise HTTPException(423, "This workspace is being deleted. Export it or cancel the "
                                  "deletion under Access > Data.")
+    # BILLING=on: an ended trial or a canceled plan reads, but changes nothing.
+    billing.check_writable(user["workspace"], request.method, request.url.path)
     if user.get("impersonator"):
         operators.audit_request(user, request)
     return user

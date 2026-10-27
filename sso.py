@@ -161,9 +161,9 @@ def connections_for_email(email):
 
 # ---- Who gets in -------------------------------------------------------------
 def identity(provider, claims):
-    """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
-    the account belongs to (None for other providers). Refuses addresses the
-    provider doesn't vouch for."""
+    """(email, name, org) from a VERIFIED ID token (Microsoft 365: what Graph said,
+    kb/services/m365.py). `org` is the Google Workspace the account belongs to
+    (None for other providers). Refuses addresses the provider doesn't vouch for."""
     org = None
     if provider == "google":
         email = (claims.get("email") or "").strip().lower()
@@ -182,6 +182,15 @@ def identity(provider, claims):
         # preferred_username is the UPN, which Entra only allows on the tenant's
         # verified domains. The `email` claim isn't verified, so it's never used.
         email = (claims.get("preferred_username") or "").strip().lower()
+    elif provider == "microsoft365":
+        # Any company's Microsoft 365 (kb/services/m365.py): Microsoft Graph said who
+        # they are (their UPN, which Entra allows only on its tenant's verified
+        # domains) and which domains their tenant has verified with Microsoft.
+        if claims.get("guest"):
+            raise NotAllowed("not_workspace")
+        email = (claims.get("email") or "").strip().lower()
+        if email.rpartition("@")[2] not in (claims.get("verified_domains") or ()):
+            raise NotAllowed("not_workspace")
     else:
         # Any other OpenID Connect provider: only an address it has verified.
         if str(claims.get("email_verified")).lower() != "true":

@@ -73,7 +73,7 @@ import slack_store
 import teams_store
 from kb import jobs, state
 from kb.rate_limit import inbound_limit, user_limit
-from kb.services import answering, conversations
+from kb.services import answering, billing, conversations
 from kb.services.slack import restricted_found
 
 log = logging.getLogger("uvicorn.error")
@@ -717,6 +717,7 @@ def ask(install, app, p):
         reply.say({"type": "message", "text": asker.refusal})
         return {"refused": True}
     try:
+        billing.require(ws, "teams")          # the workspace's plan includes Teams (BILLING=on)
         user_limit(asker.user(ws), "chat")
     except HTTPException as e:
         reply.say({"type": "message", "text": str(e.detail)})

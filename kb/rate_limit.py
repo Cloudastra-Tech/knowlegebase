@@ -11,7 +11,7 @@ import time
 
 from fastapi import HTTPException, Request
 
-from kb import state
+from kb import quotas, state
 from kb.deps import ws_of
 from kb.settings import env_int
 
@@ -66,12 +66,10 @@ def rate_limit(request: Request, bucket):
 
 
 def user_limit(user, bucket):
-    """Per person and per workspace limits (USER_LIMITS) on something costly. A
-    question is also refused when its workspace is past today's hard spend cap
-    (kb/services/spend.py), whether rate limits are on or not."""
-    if bucket == "chat":
-        from kb.services import spend
-        spend.enforce(ws_of(user))
+    """Per person and per workspace limits (USER_LIMITS) on something costly. First
+    the workspace's own limits, whether rate limits are on or not (kb/quotas.py: its
+    plan's, kb/services/billing.py; today's hard spend cap, kb/services/spend.py)."""
+    quotas.check(ws_of(user), bucket, user=user)
     if not rate_limits_on():
         return
     per_user, per_workspace = (env_int(f"RATE_LIMIT_{bucket.upper()}_{who}", default)

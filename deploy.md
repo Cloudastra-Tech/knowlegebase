@@ -1232,6 +1232,114 @@ and a plain sentence until midnight UTC. Spend is the question log's tokens at l
 prices, as Insights shows it. Alerts the tenant is told about are also an
 `abuse.alert` webhook event.
 
+## Sign-up, trials and billing
+
+### Sign-up methods
+
+`WORKSPACE_SIGNUP=on` lets a new company make its own workspace from the sign-in
+page. The founder proves the company owns its email domain first, in one of three
+ways, each offered once it's set up (`WORKSPACE_SIGNUP_METHODS` narrows them):
+
+- **Google Workspace**: the Google client (`GOOGLE_CLIENT_ID`); the account's `hd`
+  must be the email's domain.
+- **Microsoft 365**: see below.
+- **Email and DNS**: anyone else. The founder gets a link, opens it, and is shown a
+  TXT record (`_knowledge-assistant.<domain>`, `kb-verify=...`) to add at their DNS
+  host. No workspace exists until the record checks out; then it's made and the
+  founder sets a password. Personal mail domains (gmail.com, outlook.com, ...) are
+  refused, and one address can start at most 3 an hour. The link needs real email
+  (`MAIL_BACKEND`, above), not `console`, in production.
+
+`WORKSPACE_SIGNUP_CODES` still gates any of them (each code makes one workspace).
+Every new workspace starts with an onboarding checklist on its Access screen,
+worked out from its data (domain verified, documents connected, first index, first
+cited answer, 3 colleagues signed in), and an "ask your first question" screen with
+an optional sample HR handbook that its admin removes in one click.
+
+### Microsoft 365 sign-up
+
+1. Entra admin center → App registrations → New registration. Supported account
+   types: **Accounts in any organizational directory (multitenant)**. Redirect URI
+   (Web): `<PUBLIC_URL>/api/auth/m365/callback`.
+2. API permissions: Microsoft Graph, delegated **User.Read** (the default). No admin
+   consent is needed in most tenants.
+3. Certificates & secrets → New client secret. Set `M365_CLIENT_ID` (the
+   application ID) and `M365_CLIENT_SECRET`, and restart.
+
+The founder's user principal name must be on a domain their tenant has verified
+(Graph's `organization` resource); guests are refused. Members of a workspace made
+this way sign in with "Microsoft 365" on the sign-in page.
+
+### Billing (Stripe)
+
+Off unless `BILLING=on`, and test mode only: a live key (`sk_live_`, `rk_live_`) is
+refused unless `STRIPE_ALLOW_LIVE=on`. With billing off nothing is limited and the
+Plan & billing screen isn't shown.
+
+With it on:
+
+- A workspace that signs up gets a `TRIAL_DAYS` (default 14) trial of the Trial
+  plan, with a countdown banner and emails 7, 3 and 1 days before it ends. After
+  it the workspace is **read-only** (people sign in, read and export; nothing new
+  is asked, uploaded or changed). 30 days after the trial ended it's deleted
+  through the workspace lifecycle (its admins are told and can still cancel).
+  Operators extend a trial in the console (row menu, Extend trial; audited).
+- Workspaces made before billing, or by the operator, have no plan and are never
+  limited until an operator gives them one (Extend trial, then the owner picks a
+  plan). Give them a billing owner first (row menu, Billing owner).
+- Plans are rows in the `plans` table (seeded: Trial, Starter, Business,
+  Enterprise), each with limits (questions a month, documents, storage, connectors)
+  and features (own sign-in provider, SCIM, audit export, API, Slack, MCP, Teams).
+  A feature the plan lacks answers 402 with what the plan includes; a limit is
+  explained where it blocks (the chat says "Your plan's limit"). They compose with
+  the spend caps above: whichever is reached first refuses.
+- Seats are members not turned off who signed in or asked something in the last 30
+  days. Checkout charges for the seats in use when it starts.
+- Only a **billing owner** (the founder, and whoever an owner adds) starts Checkout
+  or opens the Customer Portal; other admins see the screen, support never changes
+  it.
+
+Stripe setup (in test mode):
+
+1. Products: one per plan sold, each with a monthly recurring per-unit price. Put
+   each price ID in `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_BUSINESS`,
+   `STRIPE_PRICE_ENTERPRISE` (a plan without one shows "Not on sale here yet").
+2. Developers → API keys: `STRIPE_SECRET_KEY=sk_test_...` (or a restricted key with
+   Checkout Sessions, Customer Portal and Customers write).
+3. Developers → Webhooks → Add endpoint `<PUBLIC_URL>/api/billing/webhook` with
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted` and
+   `invoice.payment_failed`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
+   Every event's signature is checked, and each is applied once.
+4. Settings → Billing → Customer portal: allow changing the plan (the same
+   prices), the quantity, the payment method and cancelling.
+5. Optional: `STRIPE_TAX=on` once Stripe Tax is set up.
+
+### Checking Stripe test mode by hand
+
+Not run live here (no Stripe account); the tests replay recorded fixtures
+(`tests/fixtures/stripe/`).
+
+1. `BILLING=on`, `WORKSPACE_SIGNUP=on` and the Stripe settings above; sign up a
+   workspace. The banner shows 14 days left; Plan & billing shows the Trial plan,
+   usage against its limits and 1 seat.
+2. As its founder, Choose Business: Stripe Checkout opens for 1 seat. Pay with
+   `4242 4242 4242 4242`, any future date and CVC. Back on Plan & billing, the plan
+   is Business, active, and the banner is gone (after the webhook arrives:
+   `stripe listen --forward-to <PUBLIC_URL>/api/billing/webhook` on a laptop).
+3. "Payment details and invoices" opens the Customer Portal; cancel the
+   subscription there. The workspace turns read-only (a 402 on asking, with the
+   reason).
+4. Pick a plan again, then pay with `4000 0000 0000 0341` (attaches, then fails)
+   at the next renewal (Stripe test clock): the status is past due, with a warning,
+   and questions still work.
+5. A second admin who isn't an owner sees the screen but can't choose a plan
+   (403). An owner adds them under Billing owners; now they can.
+6. `curl -X POST <PUBLIC_URL>/api/billing/webhook -d '{}'` answers 400 (no
+   signature); `stripe trigger checkout.session.completed` is accepted.
+7. In the operator console, extend an expired trial: the workspace is writable
+   again and its scheduled deletion is cancelled; both are in its audit log.
+
 ## Answer cache, languages and personal data
 
 - **Answer cache** (Assistant screen, "Reuse recent answers"): the same question from

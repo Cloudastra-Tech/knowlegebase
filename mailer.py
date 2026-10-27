@@ -96,6 +96,28 @@ TEMPLATES = {
         '<p style="color:#71717a;font-size:13px"><a href="{manage_link}">Manage your digests'
         '</a> &middot; <a href="{unsubscribe_link}">Unsubscribe from this digest</a></p>',
     ),
+    # Billing and the trial (kb/services/billing.py): to the owners and admins.
+    "billing_notice": (
+        "{title}",
+        "{body}\n\nPlan & billing: {link}\n",
+        "<p><strong>{title}</strong></p><p>{body}</p>"
+        '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
+        'background:#18181b;color:#fafafa;text-decoration:none">Open Plan &amp; billing</a></p>',
+    ),
+    # Sign-up with email and DNS (kb/services/signup.py): the founder confirms their address.
+    "signup_verify": (
+        "Confirm your email to create {workspace_name}",
+        "Someone (we hope you) asked to create the {workspace_name} workspace of the "
+        "Knowledge assistant for {domain}.\n\nConfirm your email and get the DNS record "
+        "that proves your company owns {domain}:\n{link}\n\n"
+        "The link expires on {expires}. If you didn't ask for this, ignore this email.\n",
+        "<p>Someone (we hope you) asked to create the <strong>{workspace_name}</strong> "
+        "workspace of the Knowledge assistant for {domain}.</p>"
+        '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
+        'background:#18181b;color:#fafafa;text-decoration:none">Confirm your email</a></p>'
+        '<p style="color:#71717a;font-size:13px">Or open this link: {link}<br>'
+        "It expires on {expires}. If you didn't ask for this, ignore this email.</p>",
+    ),
     "notice": (
         "{title}",
         "{body}\n",

@@ -68,11 +68,17 @@ const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ de
 const InviteAccept = lazy(() =>
   import("@/components/invite-accept").then((m) => ({ default: m.InviteAccept })),
 )
+const SignupVerify = lazy(() =>
+  import("@/components/signup-verify").then((m) => ({ default: m.SignupVerify })),
+)
 const DigestsView = lazy(() =>
   import("@/components/digests-view").then((m) => ({ default: m.DigestsView })),
 )
 const DigestUnsubscribe = lazy(() =>
   import("@/components/digest-unsubscribe").then((m) => ({ default: m.DigestUnsubscribe })),
+)
+const BillingView = lazy(() =>
+  import("@/components/billing-view").then((m) => ({ default: m.BillingView })),
 )
 const OperatorView = lazy(() =>
   import("@/components/operator-view").then((m) => ({ default: m.OperatorView })),
@@ -149,6 +155,27 @@ export function InvitePage() {
   )
 }
 
+// /signup/verify?token=: the link an email sign-up sent, then the domain's DNS record.
+// The new workspace's admin goes on to its Access screen, as after any sign-up.
+export function SignupVerifyPage() {
+  const { signedIn, setRole } = useAuth()
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  return (
+    <LazyPage fullScreen>
+      <LoginPage onBack={() => navigate("/")}>
+        <SignupVerify
+          token={params.get("token") ?? ""}
+          onCreated={(u, t) => {
+            signedIn(u, t)
+            setRole("hr")
+          }}
+        />
+      </LoginPage>
+    </LazyPage>
+  )
+}
+
 // /unsubscribe/:token: the one-click link in a digest email (no sign-in needed).
 export function UnsubscribePage() {
   const navigate = useNavigate()
@@ -210,6 +237,17 @@ export function Screen({ children }: { children: ReactNode }) {
     <div className="h-full overflow-y-auto">
       <LazyPage>{children}</LazyPage>
     </div>
+  )
+}
+
+// /billing: Plan & billing, only with BILLING=on, for admins and billing owners.
+export function BillingScreen() {
+  const user = useUser()
+  if (!user.billing?.can_view) return <Navigate to="/chat" replace />
+  return (
+    <Screen>
+      <BillingView />
+    </Screen>
   )
 }
 
@@ -440,7 +478,6 @@ export function AccessScreen({ tab }: { tab: AccessTab }) {
           asked.current = next
           navigate(`/admin/${next}`)
         }}
-        onOpenIntegrations={() => navigate("/integrations")}
       />
     </Screen>
   )

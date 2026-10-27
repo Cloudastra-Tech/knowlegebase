@@ -8,7 +8,8 @@ Insights prices them (insights.cost_of), against two caps:
            and the operators, once a day; questions go on
     hard   SPEND_HARD_USD_PER_DAY, or the workspace's own: past it, every surface
            refuses questions until midnight UTC with a 429 and a plain sentence
-           saying so (kb/rate_limit.user_limit calls enforce() for every question)
+           saying so (kb/rate_limit.user_limit checks kb/quotas.py, where enforce()
+           is registered, for every question)
 
 No cap is set by default: a server sets its own in the environment.
 """
@@ -22,6 +23,7 @@ from fastapi import HTTPException
 
 import abuse_store
 import db
+from kb import quotas
 
 log = logging.getLogger("uvicorn.error")
 
@@ -107,3 +109,10 @@ def enforce(ws, now=None):
                  f"(${s['cost_usd']:.2f} of ${s['hard_usd']:.2f}). Questions start again at "
                  f"midnight UTC, in {hours} h {minutes} min. Your admin can ask for a higher "
                  "limit.", headers={"Retry-After": str(wait)})
+
+
+@quotas.register
+def spend_cap(ws, what, user=None, **amounts):
+    """A question past today's hard cap is refused (kb/quotas.py)."""
+    if what == "chat":
+        enforce(ws)

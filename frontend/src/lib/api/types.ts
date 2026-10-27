@@ -1,5 +1,7 @@
 // The shapes the FastAPI backend (api.py) sends and takes.
 
+import type { BillingSummary } from "@/lib/api/billing"
+
 // The role the app is VIEWED as. An admin views it as "hr" (or "public").
 export type Role = "public" | "hr"
 // What an account may do: admin is hr, plus who may sign in.
@@ -18,6 +20,8 @@ export interface User {
   // GET /auth/me: where the workspace is in its life (being deleted: admins only, until then).
   workspace_status?: "active" | "suspended" | "deleting"
   deleting_at?: number | null
+  // With BILLING=on: the plan and trial (the banner); null with it off.
+  billing?: BillingSummary | null
 }
 
 export interface AuthOptions {
@@ -29,6 +33,20 @@ export interface AuthOptions {
   signup: boolean
   // ...with an invite code.
   signup_invite: boolean
+  // How a new company may prove its domain here (none when sign-up is off).
+  signup_methods?: SignupMethod[]
+}
+
+export type SignupMethod = "google" | "microsoft365" | "email"
+
+// An email sign-up waiting for its DNS record (POST /auth/signup/email/confirm).
+export interface PendingSignup {
+  workspace_name: string
+  email: string
+  domain: string
+  txt_name: string
+  txt_value: string
+  expires_at: number
 }
 
 // What the sign-in page's route pass shows for a work email's domain.
@@ -38,6 +56,7 @@ export interface SsoRoute {
     google: boolean // "Continue with Google Workspace" works for it
     password: boolean // its people may still use a password
     roles_from: string | null // the provider whose groups set roles; null: the admin
+    microsoft365?: boolean // "Continue with Microsoft 365" works for it
   } | null
   signup?: boolean // no workspace yet: can one be created here?
 }

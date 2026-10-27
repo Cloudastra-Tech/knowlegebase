@@ -5,6 +5,7 @@ import { apiKeysApi } from "@/lib/api/api-keys"
 import { assistantApi } from "@/lib/api/assistant"
 import { auditApi } from "@/lib/api/audit"
 import { authApi } from "@/lib/api/auth"
+import { billingApi } from "@/lib/api/billing"
 import { chatApi } from "@/lib/api/chat"
 import { digestsApi } from "@/lib/api/digests"
 import { docsApi } from "@/lib/api/docs"
@@ -15,6 +16,7 @@ import { groupsApi } from "@/lib/api/groups"
 import { insightsApi } from "@/lib/api/insights"
 import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
+import { onboardingApi } from "@/lib/api/onboarding"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 import { slackApi } from "@/lib/api/slack"
 import { spacesApi } from "@/lib/api/spaces"
@@ -36,13 +38,15 @@ export type * from "@/lib/api/spaces"
 export type * from "@/lib/api/digests"
 export type * from "@/lib/api/drafts"
 export type * from "@/lib/api/webhooks"
+export type * from "@/lib/api/billing"
+export type * from "@/lib/api/onboarding"
 export {
   ApiError,
   session,
   setForbiddenHandler,
   setUnauthorizedHandler,
 } from "@/lib/api/client"
-export { signupStartUrl, ssoStartUrl } from "@/lib/api/auth"
+export { m365StartUrl, signupStartUrl, ssoStartUrl } from "@/lib/api/auth"
 
 export const api = { ...authApi, ...chatApi, ...docsApi, ...integrationsApi }
 
@@ -81,3 +85,7 @@ export const digests = digestsApi
 export const drafts = draftsApi
 // Outbound webhooks (admin).
 export const webhooks = webhooksApi
+// Plan & billing (BILLING=on only): admins see it, billing owners change it.
+export const billing = billingApi
+// A new workspace's first steps: the checklist, first-run suggestions, sample documents.
+export const onboarding = onboardingApi
