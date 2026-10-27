@@ -1,6 +1,15 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { conversation, DESKTOP, PHONE, shot, signIn, TRIAL_OWNER, waitForAnswer } from "./helpers.ts"
+import {
+  conversation,
+  DESKTOP,
+  fitsWidth,
+  PHONE,
+  shot,
+  signIn,
+  TRIAL_OWNER,
+  waitForAnswer,
+} from "./helpers.ts"
 
 // A workspace just made at sign-up (Trial Co, tests/e2e/server.py): nothing uploaded,
 // nobody has asked anything. The checklist comes from the server, so it's the same in
@@ -23,9 +32,7 @@ test("at 390px: the first run and the checklist fit a phone", async ({ page }) =
   const list = await checklist(page)
   await expect(list.locator("[data-step=domain] [aria-label=Done]")).toBeVisible()
   await expect(list.locator("[data-step=source] [aria-label='To do']")).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  )
+  expect(await fitsWidth(page)).toBe(true)
   await shot(page, "onboarding-390")
 })
 

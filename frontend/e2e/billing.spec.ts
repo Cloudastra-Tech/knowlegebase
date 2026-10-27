@@ -4,6 +4,7 @@ import {
   ADMIN,
   conversation,
   DESKTOP,
+  fitsWidth,
   LAPSED_OWNER,
   PHONE,
   shot,
@@ -40,9 +41,7 @@ for (const [size, viewport] of [
       await expect(page.getByText("Questions this month")).toBeVisible()
       await expect(page.getByText("owner@trial.e2e.example")).toBeVisible()
       // Nothing on the page is wider than the screen.
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-      ).toBe(true)
+      expect(await fitsWidth(page)).toBe(true)
       await shot(page, `billing-${size}`)
 
       await page

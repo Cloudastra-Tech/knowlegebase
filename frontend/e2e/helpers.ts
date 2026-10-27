@@ -17,6 +17,12 @@ export async function shot(page: Page, name: string) {
   if (dir) await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true })
 }
 
+// Nothing on the page is wider than the screen (no sideways scrolling). A string, so
+// the e2e tsconfig needs no DOM types.
+export async function fitsWidth(page: Page) {
+  return page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+}
+
 export async function signIn(page: Page, account: { email: string; password: string }) {
   await page.goto("/login")
   await page.getByLabel("Username or email").fill(account.email)
