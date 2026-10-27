@@ -305,7 +305,8 @@ describe("the chat", () => {
     expect(await screen.findByText("Running:")).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Stop answering" }))
-    expect(await screen.findByText("Stopped:")).toBeInTheDocument()
+    // The trace's summary line and the step itself.
+    expect(await screen.findAllByText("Stopped:")).toHaveLength(2)
     expect(screen.queryByText("Running:")).not.toBeInTheDocument()
     // Said once, in the one polite status line; the focus goes to the stopped answer.
     expect(screen.getByRole("status")).toHaveTextContent("Answer stopped.")
@@ -352,7 +353,8 @@ describe("the chat", () => {
     renderApp("/chat/c1")
     await screen.findByText("Refunds are paid within thirty days.")
     const user = userEvent.setup()
-    await user.click(screen.getByText("2 steps"))
+    await user.click(screen.getByRole("button", { name: /Stopped/ }))
+    expect(screen.getByText("Stopped while reading a wiki page")).toBeInTheDocument()
     expect(screen.getByText("Done:")).toBeInTheDocument()
     expect(screen.getAllByText("Stopped:")).toHaveLength(2) // the summary, and the step
   })
