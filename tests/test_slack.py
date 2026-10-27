@@ -135,11 +135,11 @@ def test_a_request_not_signed_by_slack_now_is_refused(slack, tamper):
 def test_signature_check_is_slacks_documented_one():
     """v0=HMAC-SHA256(secret, "v0:<ts>:<body>"), within 5 minutes either way."""
     body, now = b"token=x&team_id=T1", 1_700_000_000
-    sig = signed(body, secret="8f742231b10e8888abcd99yyyzzz85a5", at=now)
+    sig = signed(body, secret="a-test-signing-secret", at=now)
     ok = slack_service.signature_ok
-    assert ok("8f742231b10e8888abcd99yyyzzz85a5", sig["X-Slack-Request-Timestamp"], body,
+    assert ok("a-test-signing-secret", sig["X-Slack-Request-Timestamp"], body,
               sig["X-Slack-Signature"], now=now + 299)
-    assert not ok("8f742231b10e8888abcd99yyyzzz85a5", sig["X-Slack-Request-Timestamp"], body,
+    assert not ok("a-test-signing-secret", sig["X-Slack-Request-Timestamp"], body,
                   sig["X-Slack-Signature"], now=now + 301)
     assert not ok("", sig["X-Slack-Request-Timestamp"], body, sig["X-Slack-Signature"], now=now)
     assert not ok("s", "not-a-number", body, sig["X-Slack-Signature"], now=now)
