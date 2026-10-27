@@ -1,6 +1,18 @@
 import { queryOptions } from "@tanstack/react-query"
 
-import { api, apiKeys, assistant, insights, session, signIn, slack, workspace } from "@/lib/api"
+import {
+  api,
+  apiKeys,
+  assistant,
+  digests,
+  drafts,
+  insights,
+  session,
+  signIn,
+  slack,
+  webhooks,
+  workspace,
+} from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
 // After a change, invalidate the key and the screens showing it load it again.
@@ -11,6 +23,18 @@ export const queries = {
   // What's searchable depends on the role the app is viewed as (the X-Role header).
   knowledge: () => queryOptions({ queryKey: ["knowledge", session.role], queryFn: api.knowledge }),
   docs: () => queryOptions({ queryKey: ["docs"], queryFn: api.listDocs }),
+  // Drafts the assistant wrote (HR).
+  drafts: () => queryOptions({ queryKey: ["drafts"], queryFn: drafts.list }),
+  draft: (id: string) => queryOptions({ queryKey: ["drafts", id], queryFn: () => drafts.get(id) }),
+  // My digests, and what I may follow.
+  digests: () => queryOptions({ queryKey: ["digests"], queryFn: digests.list }),
+  // The workspace's webhooks (admin), and one's deliveries.
+  webhooks: () => queryOptions({ queryKey: ["webhooks"], queryFn: webhooks.list }),
+  webhookDeliveries: (id: string) =>
+    queryOptions({
+      queryKey: ["webhooks", id, "deliveries"],
+      queryFn: () => webhooks.deliveries(id),
+    }),
   // The signed-in person's saved chats. An answer's visibility depends on the role
   // the app is viewed as, so it's part of the key.
   conversations: () =>

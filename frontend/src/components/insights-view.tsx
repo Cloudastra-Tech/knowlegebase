@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { format, subDays } from "date-fns"
-import { BadgeCheck, BarChart3, Download, Loader2 } from "lucide-react"
+import { BadgeCheck, BarChart3, Download, FilePen, Loader2 } from "lucide-react"
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 import { toast } from "sonner"
 
@@ -277,9 +277,11 @@ function ChartKey() {
 function Overview({
   canEdit,
   onAddVerified,
+  onDraftDoc,
 }: {
   canEdit: boolean
   onAddVerified?: (gapId: number) => void
+  onDraftDoc?: (gapId: number) => void
 }) {
   const [today] = useState(() => new Date())
   const [range, setRange] = useState<DateRange | undefined>(() => ({ from: subDays(today, 29), to: today }))
@@ -371,10 +373,20 @@ function Overview({
                     {g.size} questions · {g.not_found} not found · {g.general_knowledge} general knowledge
                   </span>
                 </div>
-                {!g.hidden && onAddVerified && (
-                  <Button variant="outline" size="sm" className="self-start" onClick={() => onAddVerified(g.id)}>
-                    <BadgeCheck data-icon="inline-start" /> Add a verified answer
-                  </Button>
+                {!g.hidden && (onAddVerified || onDraftDoc) && (
+                  <div className="flex flex-wrap gap-2">
+                    {onAddVerified && (
+                      <Button variant="outline" size="sm" onClick={() => onAddVerified(g.id)}>
+                        <BadgeCheck data-icon="inline-start" /> Add a verified answer
+                      </Button>
+                    )}
+                    {/* A draft for HR to review on the Documents screen; never published by itself. */}
+                    {onDraftDoc && (
+                      <Button variant="outline" size="sm" onClick={() => onDraftDoc(g.id)}>
+                        <FilePen data-icon="inline-start" /> Draft a doc
+                      </Button>
+                    )}
+                  </div>
                 )}
                 {g.samples.length > 0 && (
                   <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
@@ -509,11 +521,13 @@ export function InsightsView({
   canEdit,
   onTabChange,
   onAddVerified,
+  onDraftDoc,
 }: {
   tab: InsightsTab
   canEdit: boolean
   onTabChange: (tab: InsightsTab) => void
   onAddVerified?: (gapId: number) => void // a content gap: start a verified answer for it
+  onDraftDoc?: (gapId: number) => void // a content gap: have the assistant draft a doc
 }) {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -535,7 +549,7 @@ export function InsightsView({
       </div>
       <div className="mt-6">
         {tab === "overview" ? (
-          <Overview canEdit={canEdit} onAddVerified={onAddVerified} />
+          <Overview canEdit={canEdit} onAddVerified={onAddVerified} onDraftDoc={onDraftDoc} />
         ) : (
           <InsightsFeedback canEdit={canEdit} />
         )}

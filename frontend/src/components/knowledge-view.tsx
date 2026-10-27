@@ -4,6 +4,7 @@ import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-re
 import { siGoogledrive, siNotion } from "simple-icons"
 
 import { RuleActions, RuleBadge, RulesPanel } from "@/components/knowledge-rules"
+import { SummariseMenu } from "@/components/knowledge-summarise"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -33,8 +34,9 @@ function SourceIcon({ source }: { source: string }) {
 }
 
 // Everything the assistant can search in this workspace, in one list. HR and admins
-// also get each row's source rules (knowledge-rules.tsx).
-export function KnowledgeView() {
+// also get each row's source rules (knowledge-rules.tsx), and can have a source or
+// a folder summarised into a draft (knowledge-summarise.tsx).
+export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => void } = {}) {
   const { data, refetch } = useQuery(queries.knowledge())
   const items = data?.items ?? null
   const workspace = data?.workspace ?? ""
@@ -107,6 +109,9 @@ export function KnowledgeView() {
             ))}
           </TabsList>
         </Tabs>
+        {manage && items && (
+          <SummariseMenu items={items} source={source} onOpenDraft={onOpenDraft} />
+        )}
       </div>
 
       <div className="mt-4 overflow-hidden rounded-2xl border">
