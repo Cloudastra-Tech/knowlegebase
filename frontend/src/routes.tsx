@@ -19,6 +19,7 @@ import {
   InvitePage,
   JoinRequestedPage,
   KnowledgeScreen,
+  MyConnectionsScreen,
   OperatorScreen,
   PassageScreen,
   PromptsScreen,
@@ -42,6 +43,7 @@ import {
 //   /spaces, /spaces/:spaceId   their own space and team spaces (sources, members, files)
 //   /prompts           their saved prompts and the workspace's
 //   /digests           their own digests of what changed (by email or Slack)
+//   /connections       their own Gmail and Google Calendar (for them alone)
 //   /unsubscribe/:token  a digest email's one-click unsubscribe (signed in or not)
 //   /chat/:id          one of their saved conversations
 //   /s/:token          a chat or answer shared by someone in their workspace
@@ -104,6 +106,7 @@ export const routes: RouteObject[] = [
               { path: "spaces/:spaceId", Component: SpacesScreen },
               { path: "prompts", Component: PromptsScreen },
               { path: "digests", Component: DigestsScreen }, // everyone's own digests
+              { path: "connections", Component: MyConnectionsScreen }, // their own Gmail, Calendar
               { path: "billing", Component: BillingScreen },
               { path: "extension/connect", Component: ExtensionConnectScreen },
               {

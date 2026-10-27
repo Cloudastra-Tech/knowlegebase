@@ -4,6 +4,7 @@ import {
   BookMarked,
   BookOpen,
   Building2,
+  CalendarDays,
   ChevronRight,
   Cloud,
   FileSpreadsheet,
@@ -13,6 +14,7 @@ import {
   FolderGit2,
   FolderKanban,
   Globe,
+  Hash,
   HardDrive,
   Library,
   Loader2,
@@ -44,7 +46,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { api, type Container, type ConnectorOptions, type Integration } from "@/lib/api"
-import { TICKET_OPTIONS } from "@/lib/ticket-options"
+import { MEMBER_OPTIONS, TICKET_OPTIONS } from "@/lib/ticket-options"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -62,7 +64,9 @@ export function ContainerIcon({ item, className = "size-4" }: { item: Container;
   if (item.kind === "section") return <BookOpen className={cls} />
   if (item.kind === "repo") return <FolderGit2 className={cls} />
   if (item.kind === "team") return <Users className={cls} />
-  if (item.kind === "record_type") return <Tag className={cls} />
+  if (item.kind === "record_type" || item.kind === "label") return <Tag className={cls} />
+  if (item.kind === "channel") return <Hash className={cls} />
+  if (item.kind === "calendar") return <CalendarDays className={cls} />
   if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
   if (item.mimeType === "application/pdf") return <FileType className={cls} />
   return <FileText className={cls} />
@@ -199,6 +203,48 @@ const COPY: Record<
     empty: "No folders here.",
     all: "everything under the connection's prefix",
   },
+  asana: {
+    title: "Choose projects to sync",
+    description:
+      "Tick whole workspaces (every project in them, new ones included) or open one to tick single projects: their tasks with comments, and project briefs. Nothing is synced until you pick one.",
+    root: "Workspaces",
+    empty: "No projects this account can see.",
+  },
+  clickup: {
+    title: "Choose what to sync",
+    description:
+      "Tick a whole Workspace, or open it to tick Spaces, Folders or Lists: their tasks with comments, and the Docs inside them. Nothing is synced until you pick one.",
+    root: "Workspaces",
+    empty: "Nothing here.",
+  },
+  coda: {
+    title: "Choose docs to sync",
+    description:
+      "Tick the docs to sync: every page in them, as text. Only docs the connected account has opened are listed. Nothing is synced until you pick one.",
+    root: "Docs",
+    empty: "No docs this token can open.",
+  },
+  teams_messages: {
+    title: "Choose channels to sync",
+    description:
+      "Tick whole teams (every channel, new ones included) or open a team to tick single channels: their conversations, with replies. Chats are never read.",
+    root: "Teams",
+    empty: "No channels here.",
+  },
+  gmail: {
+    title: "Choose labels to sync",
+    description:
+      "Tick the labels whose conversations you want to ask about (the last six months). Only you can ask about them. Spam, trash and drafts are never synced.",
+    root: "Labels",
+    empty: "No labels here.",
+  },
+  google_calendar: {
+    title: "Choose calendars to sync",
+    description:
+      "Tick the calendars whose events you want to ask about: titles, times, places, attendees and descriptions. Only you can ask about them.",
+    root: "Calendars",
+    empty: "No calendars here.",
+  },
   outline: {
     title: "Choose collections to sync",
     description: "Tick the wiki collections to sync. Nothing is synced until you pick one.",
@@ -273,6 +319,7 @@ function TreePicker({
   }
   const codeToggles = item.id === "github"
   const tickets = TICKET_OPTIONS[item.id]
+  const members = MEMBER_OPTIONS[item.id]
   const anyCode = selected.some((s) => s.code)
 
   const parent = path.at(-1)?.id
@@ -280,8 +327,10 @@ function TreePicker({
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    api
-      .integrationContainers(item.id, parent)
+    ;(item.personal
+      ? api.myIntegrationContainers(item.id)
+      : api.integrationContainers(item.id, parent)
+    )
       .then(({ items }) => !cancelled && setListing({ parent, items }))
       .catch((err) => {
         toast.error(errorText(err))
@@ -290,7 +339,7 @@ function TreePicker({
     return () => {
       cancelled = true
     }
-  }, [open, parent, item.id])
+  }, [open, parent, item.id, item.personal])
 
   const isPicked = (f: Container) => selected.some((s) => s.id === f.id)
   // Already covered because a folder above it in the breadcrumb is picked.
@@ -317,7 +366,8 @@ function TreePicker({
         : codeToggles
           ? { code_extensions: extensions.split(",").map((e) => e.trim()).filter(Boolean) }
           : options
-      await api.setIntegrationContainers(item.id, selected, undefined, saved)
+      if (item.personal) await api.setMyIntegrationContainers(item.id, selected)
+      else await api.setIntegrationContainers(item.id, selected, undefined, saved)
       toast.success(
         selected.length
           ? `Syncing ${selected.length} item${selected.length === 1 ? "" : "s"}…`
@@ -455,6 +505,19 @@ function TreePicker({
               id={`${item.id}-tickets`}
               checked={!!options[tickets.key]}
               onCheckedChange={(v) => setOptions({ ...options, [tickets.key]: v })}
+            />
+          </Field>
+        )}
+        {members && options && (
+          <Field orientation="horizontal" className="rounded-xl border p-3">
+            <FieldContent>
+              <FieldLabel htmlFor={`${item.id}-members`}>{members.toggle}</FieldLabel>
+              <FieldDescription>{members.description}</FieldDescription>
+            </FieldContent>
+            <Switch
+              id={`${item.id}-members`}
+              checked={!!options.members}
+              onCheckedChange={(v) => setOptions({ ...options, members: v })}
             />
           </Field>
         )}

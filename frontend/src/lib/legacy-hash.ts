@@ -6,6 +6,7 @@
 //   /#join-requested          a sign-in that asked to join a workspace (no session)
 //   /#claim?error=...         a failed claim of a workspace (kb/services/joining.py)
 //   /#integrations?connected=google_drive&choose=1, ?error=...   back from a connector
+//   /#connections?connected=gmail&choose=1, ?error=...   back from a member's own one
 // legacyRedirect() says where each one lives now; routes.tsx redirects there.
 
 // The one-time code from /#sso, carried in the navigation's state rather than the
@@ -46,6 +47,8 @@ export function legacyRedirect(pathname: string, hash: string): LegacyRedirect |
     case "integrations":
       // Plain #integrations is the landing page's own section, not a redirect.
       return query ? { to: `/integrations${search}` } : null
+    case "connections":
+      return { to: `/connections${search}` }
     default:
       return null // #how, #features, ...: the landing page's sections
   }

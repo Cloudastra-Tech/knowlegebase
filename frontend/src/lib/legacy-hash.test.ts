@@ -13,6 +13,8 @@ describe("legacyRedirect", () => {
     ["#claim?error=claim_admin", "/claim?error=claim_admin"],
     ["#integrations?connected=google_drive&choose=1", "/integrations?connected=google_drive&choose=1"],
     ["#integrations?error=access_denied", "/integrations?error=access_denied"],
+    ["#connections?connected=gmail&choose=1", "/connections?connected=gmail&choose=1"],
+    ["#connections?error=missing_scope", "/connections?error=missing_scope"],
   ])("sends /%s to %s", (hash, to) => {
     expect(legacyRedirect("/", hash)?.to).toBe(to)
   })

@@ -94,6 +94,8 @@ export const queries = {
       meta: { silent: true },
     }),
   integrations: () => queryOptions({ queryKey: ["integrations"], queryFn: api.integrations }),
+  myIntegrations: () =>
+    queryOptions({ queryKey: ["my-integrations"], queryFn: api.myIntegrations }),
   // One connection's sync history and skipped items (the history sheet).
   integrationRuns: (provider: string) =>
     queryOptions({
