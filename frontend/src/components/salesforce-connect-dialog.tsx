@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDown, Loader2 } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 
 import { CodeBlock } from "@/components/api-keys-view"
 import { Button } from "@/components/ui/button"
@@ -155,8 +155,7 @@ export function SalesforceConnectDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Sign in with Salesforce
             </Button>
           </DialogFooter>

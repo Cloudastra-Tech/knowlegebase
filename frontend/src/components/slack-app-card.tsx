@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ExternalLink,
   Hash,
-  Loader2,
   Lock,
   Settings2,
   TriangleAlert,
@@ -25,7 +24,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
+import { Panel } from "@/components/glass/panel"
+import { StatusDot } from "@/components/glass/status-dot"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -44,7 +44,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { slack, type SlackApp, type SlackSettingsIn, type SlackStatus } from "@/lib/api"
 import { queries } from "@/lib/queries"
-import { timeAgo } from "@/lib/utils"
+import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -57,17 +57,15 @@ const STATUS: Record<SlackStatus, { label: string; tone: "on" | "bad" | "off" }>
 
 function StatusBadge({ status }: { status: SlackStatus }) {
   const { label, tone } = STATUS[status]
-  if (tone === "on")
-    return (
-      <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-        <span className="size-1.5 rounded-full bg-emerald-500" /> {label}
-      </Badge>
-    )
-  if (tone === "bad") return <Badge variant="destructive">{label}</Badge>
   return (
-    <Badge variant="outline" className="font-normal text-muted-foreground">
-      {label}
-    </Badge>
+    <StatusDot
+      status={tone === "on" ? "live" : tone === "bad" ? "error" : "off"}
+      label={label}
+      className={cn(
+        "shrink-0 whitespace-nowrap",
+        tone === "bad" ? "text-destructive" : tone === "off" && "text-muted-foreground",
+      )}
+    />
   )
 }
 
@@ -75,7 +73,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-medium">{value}</p>
+      <p className="truncate font-mono text-sm tabular-nums">{value}</p>
     </div>
   )
 }
@@ -234,8 +232,7 @@ function OwnAppDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Save app
             </Button>
           </DialogFooter>
@@ -398,7 +395,7 @@ export function SlackAppCard() {
 
   if (isError) return null // not for this role
   return (
-    <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
+    <Panel className="flex min-w-0 flex-col">
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
           <Hash className="size-5" />
@@ -481,7 +478,7 @@ export function SlackAppCard() {
                 </RadioGroup>
                 {app.mode === "custom" && app.client_id && (
                   <p className="mt-2 truncate text-xs text-muted-foreground">
-                    Client ID {app.client_id}
+                    Client ID <span className="font-mono">{app.client_id}</span>
                   </p>
                 )}
               </div>
@@ -500,9 +497,9 @@ export function SlackAppCard() {
                 <Button
                   size="sm"
                   onClick={install}
+                  loading={busy === "install"}
                   disabled={busy !== null || app.status === "not_configured"}
                 >
-                  {busy === "install" && <Loader2 className="animate-spin" />}
                   {app.status === "revoked" ? "Install again" : "Add to Slack"}
                 </Button>
               )}
@@ -561,6 +558,6 @@ export function SlackAppCard() {
           <OwnAppDialog app={app} open={ownOpen} onOpenChange={setOwnOpen} onSaved={update} />
         </div>
       )}
-    </div>
+    </Panel>
   )
 }

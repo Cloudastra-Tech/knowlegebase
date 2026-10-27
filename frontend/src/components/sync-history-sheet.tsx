@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { CircleAlert, CircleCheck, CirclePause, Loader2 } from "lucide-react"
-
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
 import {
   Sheet,
   SheetContent,
@@ -40,34 +40,45 @@ function counts(run: SyncRun, unit: string) {
   return parts.join(" · ") || `No ${unit} changed`
 }
 
-function RunRow({ run, unit }: { run: SyncRun; unit: string }) {
-  const icon =
-    run.status === "running" ? (
-      <Loader2 className="size-4 animate-spin text-muted-foreground" />
-    ) : run.status === "failed" ? (
-      <CircleAlert className="size-4 text-destructive" />
-    ) : run.status === "held" ? (
-      <CirclePause className="size-4 text-amber-600" />
-    ) : (
-      <CircleCheck className="size-4 text-emerald-600" />
-    )
+// A run's state as a mono glyph, coloured, with its word for assistive technology.
+const GLYPH: Record<Exclude<SyncRun["status"], "running">, { glyph: string; label: string; tone: string }> = {
+  failed: { glyph: "×", label: "Failed", tone: "text-destructive" },
+  held: { glyph: "!", label: "Held back", tone: "text-warning" },
+  done: { glyph: "✓", label: "Done", tone: "text-success" },
+}
+
+// One run on the timeline: "├─ ✓ 5 minutes ago  Changes only  3 s".
+function RunRow({ run, unit, last }: { run: SyncRun; unit: string; last: boolean }) {
+  const mark = run.status === "running" ? null : (GLYPH[run.status] ?? GLYPH.done)
   const seconds = run.finished_at ? Math.max(0, Math.round(run.finished_at - run.started_at)) : null
   return (
-    <li className="flex gap-3 py-3">
-      <span className="mt-0.5">{icon}</span>
+    <li className="flex gap-2 py-2.5">
+      <span aria-hidden className="font-mono text-sm leading-5 text-muted-foreground select-none">
+        {last ? "└─" : "├─"}
+      </span>
+      <span className="w-4 shrink-0 text-center font-mono text-sm leading-5">
+        {mark ? (
+          <>
+            <span aria-hidden className={mark.tone}>
+              {mark.glyph}
+            </span>
+            <span className="sr-only">{mark.label}</span>
+          </>
+        ) : (
+          <AsciiSpinner label="Running" className="text-signal" />
+        )}
+      </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-sm font-medium">{timeAgo(run.started_at)}</span>
-          <Badge variant="outline" className="font-normal text-muted-foreground">
-            {KIND[run.kind] ?? run.kind}
-          </Badge>
+          <span className="font-mono text-sm leading-5 tabular-nums">{timeAgo(run.started_at)}</span>
+          <Badge variant="mono">{KIND[run.kind] ?? run.kind}</Badge>
           {seconds !== null && run.kind !== "imported" && (
-            <span className="text-xs text-muted-foreground">{seconds} s</span>
+            <span className="font-mono text-xs text-muted-foreground tabular-nums">{seconds} s</span>
           )}
         </div>
         <p className="mt-0.5 text-sm text-muted-foreground">{counts(run, unit)}</p>
         {run.held_deletes > 0 && (
-          <p className="mt-1 text-sm text-amber-700 dark:text-amber-500">
+          <p className="mt-1 text-sm text-warning">
             {run.held_deletes} removals held back for an admin to confirm.
           </p>
         )}
@@ -117,18 +128,17 @@ export function SyncHistorySheet({
               <Skeleton className="h-12 w-full" />
             </div>
           ) : data.runs.length === 0 ? (
-            <p className="py-6 text-sm text-muted-foreground">No syncs yet.</p>
+            <AsciiEmptyState art="inbox" size="sm" title="No syncs yet." />
           ) : (
-            <ul className="divide-y">
-              {data.runs.map((run) => (
-                <RunRow key={run.id} run={run} unit={unit} />
+            <ul aria-label="Syncs" className="py-2">
+              {data.runs.map((run, i) => (
+                <RunRow key={run.id} run={run} unit={unit} last={i === data.runs.length - 1} />
               ))}
             </ul>
           )}
           {data && data.skipped.length > 0 && (
             <>
-              <Separator className="my-2" />
-              <p className="pt-2 text-sm font-medium">Not synced</p>
+              <AsciiDivider as="h3" label="Not synced" className="mt-2 pt-2" />
               <ul className="divide-y pb-4">
                 {data.skipped.map((s, i) => (
                   <li key={`${s.title}-${i}`} className="flex flex-col py-2">

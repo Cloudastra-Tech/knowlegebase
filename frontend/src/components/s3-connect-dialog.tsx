@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { toast } from "sonner"
-import { ChevronDown, Loader2 } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 
 import { CodeBlock } from "@/components/api-keys-view"
 import { Button } from "@/components/ui/button"
@@ -242,8 +242,7 @@ export function S3ConnectDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Connect
             </Button>
           </DialogFooter>

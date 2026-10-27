@@ -1,9 +1,10 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ChevronDown, Loader2, Lock, PanelRight, Unplug } from "lucide-react"
+import { ChevronDown, Lock, PanelRight, Unplug } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
+import { Panel } from "@/components/glass/panel"
+import { StatusDot } from "@/components/glass/status-dot"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -50,7 +51,7 @@ export function ExtensionCard() {
   }
 
   return (
-    <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
+    <Panel className="flex min-w-0 flex-col">
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
           <PanelRight className="size-5" />
@@ -63,13 +64,13 @@ export function ExtensionCard() {
         </div>
         {data &&
           (data.connected.length > 0 ? (
-            <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-              <span className="size-1.5 rounded-full bg-emerald-500" /> Connected
-            </Badge>
+            <StatusDot status="live" label="Connected" className="shrink-0 whitespace-nowrap" />
           ) : (
-            <Badge variant="outline" className="font-normal text-muted-foreground">
-              {data.configured ? "Not connected" : "Not set up"}
-            </Badge>
+            <StatusDot
+              status="off"
+              label={data.configured ? "Not connected" : "Not set up"}
+              className="shrink-0 whitespace-nowrap text-muted-foreground"
+            />
           ))}
       </div>
 
@@ -95,8 +96,9 @@ export function ExtensionCard() {
 
           {!data!.configured && (
             <p className="mt-3 text-sm text-muted-foreground">
-              Your server doesn't accept the extension yet: an admin sets EXTENSION_ORIGINS to the
-              extension's address (deploy.md).
+              Your server doesn't accept the extension yet: an admin sets{" "}
+              <code className="font-mono text-xs">EXTENSION_ORIGINS</code> to the extension's address
+              (deploy.md).
             </p>
           )}
           {data!.configured && !data!.api_enabled && (
@@ -123,13 +125,10 @@ export function ExtensionCard() {
                     variant="outline"
                     size="sm"
                     onClick={() => disconnect(k.id)}
+                    loading={removing === k.id}
                     disabled={removing !== null}
                   >
-                    {removing === k.id ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Unplug className="size-4" />
-                    )}
+                    {removing !== k.id && <Unplug className="size-4" />}
                     Disconnect
                   </Button>
                 </li>
@@ -154,6 +153,6 @@ export function ExtensionCard() {
           </Collapsible>
         </div>
       )}
-    </div>
+    </Panel>
   )
 }

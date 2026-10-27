@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ExternalLink, FilePen, Globe, Loader2, Lock, Save, Send, Trash2, TriangleAlert } from "lucide-react"
+import { ExternalLink, FilePen, Globe, Lock, Save, Send, Trash2, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,7 +54,7 @@ const STATUS: Record<Draft["status"], string> = {
 export function DraftStatusBadge({ draft }: { draft: Draft }) {
   return (
     <Badge variant={draft.status === "failed" ? "destructive" : "outline"} className="gap-1">
-      {draft.status === "generating" && <Loader2 className="size-3 animate-spin" />}
+      {draft.status === "generating" && <AsciiSpinner size="xs" label="" />}
       {STATUS[draft.status]}
     </Badge>
   )
@@ -80,7 +81,7 @@ export function DraftRow({
       <FilePen className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate font-medium">{draft.title}</span>
       {draft.status === "generating" ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        <AsciiSpinner size="xs" label="Writing" className="text-muted-foreground" />
       ) : draft.status === "failed" ? (
         <TriangleAlert className="size-3.5 shrink-0 text-destructive" />
       ) : draft.max_access === "restricted" ? (
@@ -169,8 +170,7 @@ function PublishDialog({ draft, onPublished }: { draft: Draft; onPublished: (key
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || !name.trim() || !acl.length}>
-              {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={saving} disabled={!name.trim() || !acl.length}>
               Publish
             </Button>
           </DialogFooter>
@@ -258,8 +258,8 @@ function LoadedDraft({
           </CardDescription>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={save} disabled={!dirty || saving}>
-            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+          <Button size="sm" variant="outline" onClick={save} loading={saving} disabled={!dirty}>
+            {!saving && <Save />}
             Save
           </Button>
           <PublishDialog
@@ -343,7 +343,7 @@ function LoadedDraft({
             <ol className="mt-1 flex flex-col gap-1 text-sm">
               {draft.sources.map((s, n) => (
                 <li key={s.doc_key} className="flex min-w-0 items-center gap-2">
-                  <span className="w-6 shrink-0 text-muted-foreground tabular-nums">[{n + 1}]</span>
+                  <span className="w-6 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">[{n + 1}]</span>
                   {s.url ? (
                     <a href={s.url} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1 hover:underline">
                       <span className="truncate">{s.title ?? s.doc_key}</span>

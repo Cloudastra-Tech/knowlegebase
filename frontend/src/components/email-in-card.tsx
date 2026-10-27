@@ -3,9 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Lock, Mail, TriangleAlert } from "lucide-react"
 
+import { Panel } from "@/components/glass/panel"
+import { StatusDot } from "@/components/glass/status-dot"
 import { CopyField } from "@/components/sign-in-provider-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -16,15 +17,13 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : "Somet
 
 function StatusBadge({ app }: { app: EmailIn }) {
   if (app.enabled && app.configured)
-    return (
-      <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-        <span className="size-1.5 rounded-full bg-emerald-500" /> On
-      </Badge>
-    )
+    return <StatusDot status="live" label="On" className="shrink-0 whitespace-nowrap" />
   return (
-    <Badge variant="outline" className="font-normal text-muted-foreground">
-      {app.configured ? "Off" : "Not set up"}
-    </Badge>
+    <StatusDot
+      status="off"
+      label={app.configured ? "Off" : "Not set up"}
+      className="shrink-0 whitespace-nowrap text-muted-foreground"
+    />
   )
 }
 
@@ -49,7 +48,7 @@ export function EmailInCard() {
 
   if (isError) return null // not for this role
   return (
-    <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
+    <Panel className="flex min-w-0 flex-col">
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
           <Mail className="size-5" />
@@ -80,9 +79,10 @@ export function EmailInCard() {
               <TriangleAlert />
               <AlertTitle>Not set up on this server</AlertTitle>
               <AlertDescription>
-                Whoever hosts the assistant sets the mail domain (EMAIL_IN_DOMAIN) and the inbound
-                webhook's credentials (EMAIL_IN_WEBHOOK_USER, EMAIL_IN_WEBHOOK_PASSWORD), then
-                points the provider's inbound webhook at {app.webhook_url}.
+                Whoever hosts the assistant sets the mail domain (<code className="font-mono">EMAIL_IN_DOMAIN</code>)
+                and the inbound webhook's credentials (<code className="font-mono">EMAIL_IN_WEBHOOK_USER</code>,{" "}
+                <code className="font-mono">EMAIL_IN_WEBHOOK_PASSWORD</code>), then points the provider's
+                inbound webhook at <code className="font-mono break-all">{app.webhook_url}</code>.
               </AlertDescription>
             </Alert>
           )}
@@ -109,6 +109,6 @@ export function EmailInCard() {
           </div>
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
