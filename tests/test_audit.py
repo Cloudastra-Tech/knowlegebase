@@ -76,7 +76,12 @@ def fakes(monkeypatch, tmp_path):
     import url_guard
     import workspaces
     from kb.services import drafts, indexing, sync, verified, webhooks
+    import models
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kwargs: None)
+    # Test connection reaches no AWS (tests/test_bedrock.py stubs it).
+    monkeypatch.setattr(models, "test_connection", lambda spec: {
+        "chat_model": spec.chat_model, "reply": "OK", "tokens": 3,
+        "embed_model": spec.embed_model, "dimensions": 1024})
     monkeypatch.setattr(verified, "embed", lambda texts: [[1.0, 0.0] for _ in texts])
     monkeypatch.setattr(indexing, "schedule_retag", lambda ws, provider: None)
     monkeypatch.setattr(sync, "start_sync", lambda ws, provider, **options: None)
@@ -314,6 +319,16 @@ CASES = [
     ("assistant.settings", None,
      lambda ws, _: ("PUT", "/api/admin/assistant",
                     {"json": {"tone": "formal", "instructions": "private note"}})),
+    ("model_provider.update", None,
+     lambda ws, _: ("PUT", "/api/admin/assistant/models",
+                    {"json": {"provider": "bedrock", "region": "eu-west-1", "auth": "keys",
+                              "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                              "secret_access_key": "s3cret-s3cret-s3cret-s3cret"}})),
+    ("model_provider.test", None,
+     lambda ws, _: ("POST", "/api/admin/assistant/models/test",
+                    {"json": {"region": "eu-west-1", "auth": "keys",
+                              "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                              "secret_access_key": "s3cret-s3cret-s3cret-s3cret"}})),
     ("glossary.create", None,
      lambda ws, _: ("POST", "/api/admin/glossary",
                     {"json": {"term": "OKR", "definition": "Objectives and key results."}})),

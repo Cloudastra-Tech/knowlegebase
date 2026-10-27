@@ -1236,7 +1236,8 @@ What a customer's data goes through, for a DPA or a security questionnaire:
 
 | Subprocessor | What it gets | Where | Notes |
 |---|---|---|---|
-| OpenAI (or Azure OpenAI) | Questions, the passages retrieved for them, documents when they are embedded or summarised | US (OpenAI); the chosen region (Azure) | API data isn't used for training; zero-data-retention or Azure in-region on request |
+| OpenAI (or Azure OpenAI) | Questions, the passages retrieved for them, documents when they are embedded or summarised | US (OpenAI); the chosen region (Azure) | API data isn't used for training; zero-data-retention or Azure in-region on request. **Not used** for a workspace on AWS Bedrock, nor at all with `MODEL_PROVIDER=bedrock` |
+| Amazon Web Services (Amazon Bedrock), when `MODEL_PROVIDER=bedrock` | The same as OpenAI above, instead of OpenAI | The AWS region set (`AWS_REGION`) | Bedrock doesn't store prompts or use them for training, and model providers don't see them ("AWS Bedrock" above). A workspace that brings its own AWS account is its own processor there: its data goes to ITS account, under its contract with AWS, and is not one of ours |
 | The hosting provider (the VPS) | Everything at rest: the database, documents, index, backups on the server | The server's region | Disk encryption; secrets additionally sealed per workspace |
 | The email provider (`MAIL_BACKEND`: SMTP relay, Resend or Postmark) | Recipients' addresses and the email's text: invites, removal and deletion notices | The provider's region | Only when email is turned on |
 | The off-site backup target (rclone / restic remote) | Encrypted backup archives (age); never the key | The bucket's region | Only when set up |
@@ -1434,6 +1435,220 @@ Not run live here (no Stripe account); the tests replay recorded fixtures
   It adds a spaCy model (about 600 MB) to the image, which is why it isn't in
   `requirements.txt`. If it isn't installed or fails, the rules alone apply (one
   warning in the log).
+
+## AWS Bedrock
+
+Every model the assistant uses can run on **Amazon Bedrock** instead of OpenAI: the
+chat model that writes answers, the FAST model (the guards' classifiers, follow-up
+rewriting, HyDE, titles, follow-ups, summaries, digests, insights labels, verified
+answer rewording, image attachments), the embeddings of the search index, and
+optionally the reranker. Documents and questions then stay in an AWS account and
+region of the company's choosing and never reach OpenAI (`models.py`). Two ways:
+
+- **The whole server** (a self-hosted deployment): `MODEL_PROVIDER=bedrock` in `.env`
+  with `AWS_REGION` and the server's own AWS credentials (an EC2 instance role, an
+  ECS task role, `AWS_PROFILE`, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`:
+  boto3's default chain).
+- **One workspace, in its own AWS account** ("Bring your own AWS"): an admin opens
+  **Assistant → Models**, picks *AWS Bedrock in your own AWS account*, and gives the
+  region and either a **role** the server assumes (preferred: no AWS secret is stored
+  here) or an IAM user's **access keys** (sealed under the workspace's key, never
+  shown again). Every change and every Test connection is in the audit log.
+
+How it calls Bedrock: chat through the **Converse API** (`ConverseStream` while an
+answer streams; langchain-aws `ChatBedrockConverse`, with tool calls), embeddings
+through **InvokeModel**. A workspace on Bedrock **fails closed**: if its models can't
+be reached (no region, a role that can't be assumed, model access missing) the
+question fails with the reason; nothing falls back to OpenAI. Hosted rerankers
+(Cohere's and Voyage's APIs) are skipped for a Bedrock workspace; `RERANKER=local`
+or `RERANKER=bedrock` (Bedrock's Rerank API) still apply.
+
+### Models
+
+| Job | Default | Notes |
+|---|---|---|
+| Chat (`BEDROCK_CHAT_MODEL`) | `amazon.nova-pro-v1:0` | Must support tool use: Amazon Nova does in both Converse and ConverseStream ([Nova tool use](https://docs.aws.amazon.com/nova/latest/userguide/tool-use.html); [tool use, client side](https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-client-side.html) lists the few models that reject tools when streaming: Llama, Mistral Large, Pixtral, Palmyra; no Nova or Claude model). On-demand by this id in us-east-1; elsewhere use an inference profile id such as `eu.amazon.nova-pro-v1:0`. |
+| Fast (`BEDROCK_FAST_MODEL`) | `amazon.nova-lite-v1:0` | On-demand in us-east-1, us-east-2 and us-west-2; `eu.` / `apac.` / `ca.` profiles elsewhere. `amazon.nova-micro-v1:0` is cheaper (text only). Run the leak and red-team suites before changing it: the guards' classifiers run on it. |
+| Embeddings (`BEDROCK_EMBED_MODEL`, `BEDROCK_EMBED_DIMENSIONS`) | `amazon.titan-embed-text-v2:0`, 1024 | Titan Text Embeddings V2: up to 8,192 tokens or 50,000 characters in; 1,024 (default), 512 or 256 numbers out, normalised by default ([Titan embeddings](https://docs.aws.amazon.com/bedrock/latest/userguide/titan-embedding-models.html), [request body](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-embed-text.html)). `cohere.embed-english-v3` / `cohere.embed-multilingual-v3` make 1,024 and take 512 tokens a text ([Cohere Embed v3](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-embed-v3.html)): fine with the 200-token chunks here. |
+| Rerank (`RERANKER=bedrock`, `BEDROCK_RERANK_MODEL`) | `cohere.rerank-v3-5:0` | Bedrock's Rerank API (`bedrock-agent-runtime`). `amazon.rerank-v1:0` isn't offered in us-east-1 ([supported regions](https://docs.aws.amazon.com/bedrock/latest/userguide/rerank-supported.html)). |
+
+Claude works too, e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`: Claude Haiku 4.5
+is called through a geo or global **inference profile** only ("The bare model ID isn't
+supported for on-demand throughput"), and Anthropic models need the one-time *First
+Time Use* form ([model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)).
+Claude Sonnet 4 reached end of life on 14 October 2026; check a model's card before
+picking it ([models at a glance](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html)).
+
+**Switching the embeddings re-embeds everything.** The embedding provider, model and
+size are part of the workspace's index fingerprint, so changing them (or moving
+between OpenAI and Bedrock) starts a shadow rebuild: the old index keeps answering
+until the new one is ready, then it switches (progress in the top bar). The screen
+asks for confirmation first. While an OpenAI-built index is being replaced by a
+Bedrock one (or the reverse), questions are searched by **keywords only**: they are
+never sent to the provider the workspace left.
+
+**Prompt caching.** `BEDROCK_PROMPT_CACHE=auto` (the default) marks the end of the
+system prompt (the agent's rules and tools, the same for every question) with a
+`cachePoint` for Amazon Nova and Anthropic Claude models; `on` for any model, `off` for
+none. A checkpoint needs at least 1,024 tokens on Nova and Claude Sonnet 4.5 (4,096 on
+Claude Haiku 4.5); cached tokens last 5 minutes and are reported as
+`cacheReadInputTokens`, which the question log keeps as `tokens_cached`
+([prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)).
+
+**Cost.** Insights prices Bedrock models from `kb/services/insights.py`
+`BEDROCK_PRICES` (on-demand, us-east-1, from [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/),
+October 2026; a `global.` profile at its own price). A model that isn't in the table
+has an **unknown** cost: its tokens are logged but not priced, and Insights names it
+instead of guessing. The question log records the provider and the model of every
+question.
+
+### Model access
+
+In commercial regions most models are enabled on first use: "Access to many Amazon
+Bedrock foundation models is enabled by default with the correct AWS Marketplace
+permissions", and a third-party model's subscription starts on its first call (up to
+15 minutes). The calling identity needs `aws-marketplace:Subscribe`,
+`aws-marketplace:Unsubscribe` and `aws-marketplace:ViewSubscriptions` for that first
+call of a third-party (e.g. Cohere, Anthropic) model, and Anthropic models need the
+First Time Use form, once per account. The console's **Model access** page applies to
+AWS GovCloud (US) only ([model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)).
+Amazon Nova and Titan need none of this.
+
+### IAM policy
+
+"To call `Converse`, you require permission for the `bedrock:InvokeModel` operation. To
+call `ConverseStream`, you require permission for the
+`bedrock:InvokeModelWithResponseStream` operation"
+([Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html));
+there is no separate Converse action. Embeddings are `bedrock:InvokeModel`. Attach
+this to the role (or user), with your region and models; the Assistant screen shows it
+filled in for the workspace's models:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "KnowledgeAssistantChat",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+      ]
+    },
+    {
+      "Sid": "KnowledgeAssistantEmbeddings",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel"],
+      "Resource": ["arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0"]
+    }
+  ]
+}
+```
+
+With an **inference profile** (`eu.amazon.nova-pro-v1:0`, `global.anthropic...`),
+allow the profile AND its foundation model in every region the profile routes to:
+"When you specify an inference profile in the `Resource` field in the first statement,
+you must also specify the foundation model in each Region associated with it"
+([prerequisites](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html)):
+
+```json
+"Resource": [
+  "arn:aws:bedrock:eu-central-1:111122223333:inference-profile/eu.amazon.nova-pro-v1:0",
+  "arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0"
+]
+```
+
+(AWS's own example narrows the foundation-model statement further with
+`"Condition": {"StringEquals": {"bedrock:InferenceProfileArn": "<the profile ARN>"}}`;
+a `global.` profile also needs `arn:aws:bedrock:::foundation-model/<model>`
+[global inference](https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html).)
+`RERANKER=bedrock` adds `bedrock:Rerank` (on `*`) and `bedrock:InvokeModel` on the
+rerank model ([rerank permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/rerank-prereq.html)).
+
+### Cross-account role (Bring your own AWS)
+
+The server assumes the customer's role with **STS AssumeRole**, passing the
+workspace's **ExternalId**. The ExternalId is generated by this app for each
+workspace and can't be chosen by the admin: that is what stops another customer from
+naming the same role and having the server assume it for them (the "confused deputy":
+"The `ExternalId` value must be unique among Example Corp's customers and controlled
+by Example Corp, not its customers", [IAM](https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html)).
+It isn't a secret. Sessions last an hour (`DurationSeconds` 3600, STS's default; the
+minimum is 900) and are named `knowledge-<workspace>` (what the customer's CloudTrail
+shows); they are refreshed shortly before they expire, not assumed per question
+([AssumeRole](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)).
+
+1. Set `BEDROCK_SERVER_PRINCIPAL` to the server's own AWS account id (or the ARN of
+   the role it runs as), so the screen shows the right trust policy. The server needs
+   AWS credentials of its own (an instance or task role) allowed to call
+   `sts:AssumeRole` on customers' roles.
+2. The customer creates a role in their account with this trust policy (the screen
+   shows it with the workspace's ExternalId filled in) and the IAM policy above:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": {"AWS": "arn:aws:iam::SERVER_ACCOUNT_ID:root"},
+       "Action": "sts:AssumeRole",
+       "Condition": {"StringEquals": {"sts:ExternalId": "kb-<the workspace's id>"}}
+     }]
+   }
+   ```
+
+3. The admin pastes the role ARN, presses **Test connection** (one tiny Converse call
+   to the chat model and one embedding, with what's typed, saved or not), then Save.
+
+Access keys instead: an IAM user with the IAM policy above, its keys pasted on the
+screen. They're sealed under the workspace's data key (`secret_box`), like other
+integration secrets, and deleted with the workspace.
+
+### Privacy
+
+AWS: "Amazon Bedrock doesn't store any text, images, or documents that you provide as
+content. The data is only used to generate the response"
+([Converse API reference](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html));
+"AWS and the third-party model providers will not use any inputs to or outputs from
+Amazon Bedrock to train Amazon Nova, Amazon Titan, or any third-party models"
+([Bedrock FAQ](https://aws.amazon.com/bedrock/faqs/)); model providers "don't have
+access to Amazon Bedrock logs or to customer prompts and completions"
+([data protection](https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html)).
+With a workspace on its own AWS account, Bedrock is the customer's own processor, not
+ours (see Subprocessors).
+
+### Checking Bedrock by hand (no AWS account here: not run live)
+
+The tests stub every AWS call (`tests/test_bedrock.py`: botocore Stubber for STS,
+Converse, InvokeModel and Rerank; a fake runtime for the end-to-end "no OpenAI call"
+test). With a real account, once:
+
+1. **Model access.** In the account and region you'll use (e.g. us-east-1), open the
+   Bedrock console's playground and send one message to Amazon Nova Pro and Nova Lite,
+   and one embedding to Titan Text Embeddings V2 (or call them with the AWS CLI). For
+   Claude, submit the First Time Use form first.
+2. **The IAM role.** Create the policy above for your models and region, and a role
+   with the trust policy the Assistant screen shows (the server's principal, the
+   workspace's ExternalId). In IAM's policy simulator, `bedrock:InvokeModel` and
+   `bedrock:InvokeModelWithResponseStream` on the model ARNs are *allowed*.
+3. **Test connection.** On Assistant → Models choose AWS Bedrock, the region, *A role
+   it assumes*, paste the role ARN, press Test connection: "Connected", the chat model
+   replied "OK", a 1024-number embedding. A wrong ExternalId in the trust policy gives
+   `AccessDenied` on AssumeRole; a model without access gives
+   `AccessDeniedException`; a base id where a profile is needed gives a
+   `ValidationException` naming inference profiles. CloudTrail shows `AssumeRole`
+   with the session name `knowledge-<workspace>` and the two Bedrock calls.
+4. **Save** (confirm the index rebuild): the top bar shows the rebuild; when it's
+   done, the audit log has `model_provider.update` with `reindex: true`.
+5. **Ask a question** in the chat: it streams; the steps show the search; the answer
+   cites the documents. Insights' question log row has provider `bedrock` and the
+   chat model's id; cost is priced (Nova) or listed as unknown. With the server's
+   `OPENAI_API_KEY` set to an invalid key, everything above still works: nothing
+   calls OpenAI.
+6. Switch the workspace back to the server default: confirm, the index is rebuilt
+   with OpenAI's embeddings, questions are answered by OpenAI again.
 
 ## Managing documents from the UI
 

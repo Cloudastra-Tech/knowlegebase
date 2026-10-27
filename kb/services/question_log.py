@@ -32,6 +32,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration
 from langchain_core.tracers.context import register_configure_hook
 
+import models
 import pii
 import question_log_store as store
 from agent import Cancelled
@@ -166,7 +167,7 @@ def _tools(trace):
 
 def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(), sources=(),
            max_access="restricted", latency_ms=None, usage=None, message_id=None,
-           cache_hit=None, unsupported=None, language=None):
+           cache_hit=None, unsupported=None, language=None, provider=None):
     """Write one row. Never raises: a question is never failed by its log. A
     question the documents couldn't answer is also a question.unanswered webhook,
     with its text only as the log keeps it (none in metadata mode)."""
@@ -185,12 +186,21 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
             tokens_out=usage.tokens_out if usage else None,
             tokens_cached=usage.tokens_cached if usage else None,
             model=usage.model if usage else None, cache_hit=cache_hit,
-            unsupported=unsupported, language=language)
+            unsupported=unsupported, language=language,
+            provider=provider or _provider(ws))
         if outcome == "not_found":
             webhooks.question_unanswered(ws, row_id, surface, kept)
         return row_id
     except Exception:
         log.exception("Question log: couldn't log a question in workspace %s", ws)
+        return None
+
+
+def _provider(ws):
+    """Who answers in the workspace now (models.py): openai or bedrock."""
+    try:
+        return models.for_workspace(ws).provider
+    except Exception:
         return None
 
 
@@ -224,6 +234,7 @@ def tracked(run, ws, user, role, surface, turn=None):
                 fields["max_access"] = conversations.max_access(levels)
             unsupported = out.get("unsupported")
             record(ws, user, role, surface, question, outcome, usage=usage,
+                   provider=getattr(run, "provider", None),
                    latency_ms=int((time.monotonic() - started) * 1000), message_id=message_id,
                    unsupported=None if unsupported is None else len(unsupported),
                    language=out.get("language"), **fields)

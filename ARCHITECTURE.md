@@ -24,6 +24,7 @@ If you can read this, you can explain the app to anyone.
 | **BM25** | Keyword search (exact words) | The index at the back of a book |
 | **RRF** | Merges keyword + meaning results | The judge that ranks both |
 | **OpenAI `gpt-4o-mini`** | Writes the final answer (ANSWER_MODEL; small jobs on FAST_MODEL, models.py) | The writer |
+| **AWS Bedrock** (optional) | Every model above instead of OpenAI, in the company's own AWS account: `MODEL_PROVIDER=bedrock`, or one workspace's "Bring your own AWS" (models.py, deploy.md "AWS Bedrock") | The in-house translator and writer |
 | **Guardrails AI** | Safety checks on input & output | The security guard |
 | **Permission filter** | Decides which docs you may search | The keycard / access control |
 

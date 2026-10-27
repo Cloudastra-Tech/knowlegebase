@@ -379,7 +379,15 @@ function Overview({
           value={count(t.tokens_in + t.tokens_out)}
           note={`${count(t.tokens_in)} in · ${count(t.tokens_out)} out`}
         />
-        <Tile label="Estimated cost" value={`$${t.cost_usd.toFixed(2)}`} note="At list prices per model" />
+        <Tile
+          label="Estimated cost"
+          value={`$${t.cost_usd.toFixed(2)}`}
+          note={
+            t.cost_unknown_models?.length
+              ? `Unknown for ${t.cost_unknown_models.join(", ")}`
+              : "At list prices per model"
+          }
+        />
       </div>
 
       <Panel

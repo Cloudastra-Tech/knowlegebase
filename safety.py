@@ -25,6 +25,7 @@ THE 3 PIECES OF GUARDRAILS:
 import logging
 import os
 import contextvars
+import threading
 import re
 
 from dotenv import load_dotenv
@@ -51,14 +52,25 @@ log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 # models.FAST_MODEL (gpt-4o-mini unless set).
 # We build it LAZILY (on first use) so importing this file never needs the key.
 # ----------------------------------------------------------------------------
+# One per provider and credentials (models.current(): the workspace whose question
+# it is), so a Bedrock workspace's guards run on its Bedrock FAST model.
 _intent_llm = None
+_intent_lock = threading.Lock()
 
 
 def _get_intent_llm():
     global _intent_llm
-    if _intent_llm is None:
-        _intent_llm = ChatOpenAI(model=models.fast_model(), temperature=0)
-    return _intent_llm
+    on = models.current()
+    key = (on.spec.cache_key(), on.fast_name)
+    with _intent_lock:
+        if not isinstance(_intent_llm, dict):     # None: nothing made yet
+            _intent_llm = {}
+        llm = _intent_llm.get(key)
+    if llm is None:
+        llm = on.fast(openai=ChatOpenAI, temperature=0)
+        with _intent_lock:
+            llm = _intent_llm.setdefault(key, llm)
+    return llm
 
 
 def _is_staff_salary_intent(question):

@@ -5,6 +5,9 @@ langchain==1.4.5           # the "glue" framework that connects all the steps
 langgraph==1.2.15          # builds the agent loop as a state graph (Phase 6)
 langchain-openai==1.7.1    # lets LangChain talk to OpenAI (embeddings + chat model)
 openai==2.54.0             # the official OpenAI client (used under the hood)
+langchain-aws==1.9.1       # AWS Bedrock as the model provider (models.py): ChatBedrockConverse + Bedrock embeddings
+boto3==1.43.118            # ...the AWS SDK it calls Bedrock and STS (AssumeRole) through
+botocore==1.43.118         # ...and boto3's core, pinned with it
 langchain-community==0.4.2 # extra loaders (e.g. reading PDFs / text files)
 langchain-chroma==1.1.0    # connects LangChain to the Chroma vector database
 chromadb==1.5.9            # the vector database itself (stores embeddings, runs search)

@@ -89,7 +89,9 @@ def _release():
             version = f.read().strip()
     except OSError:
         version = "?"
-    return f"{version}|{models.answer_model()}|{models.fast_model()}|{FORMAT}"
+    # The workspace's provider and models (models.scope): another provider or model
+    # answers differently, so its answers are kept apart.
+    return f"{version}|{models.current().release()}|{FORMAT}"
 
 
 def _hash(*parts):
@@ -150,9 +152,8 @@ def scope(ws, who, space=None):
 
 
 def _embed(text):
-    from langchain_openai import OpenAIEmbeddings
-    vector = np.asarray(OpenAIEmbeddings(model=ingest.EMBED_MODEL).embed_query(text),
-                        dtype=np.float32)
+    """The question's vector, by the workspace's embedding model (models.scope)."""
+    vector = np.asarray(models.current().embeddings().embed_query(text), dtype=np.float32)
     return vector / max(float(np.linalg.norm(vector)), 1e-12)
 
 

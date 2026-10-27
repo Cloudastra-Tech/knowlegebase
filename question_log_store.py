@@ -72,11 +72,12 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
         message_id=None, role="public", block_reason=None, sources=(), tools=(),
         max_access="restricted", latency_ms=None, tokens_in=None, tokens_out=None,
         model=None, at=None, tokens_cached=None, cache_hit=None, unsupported=None,
-        language=None):
+        language=None, provider=None):
     """Log one question. Text is stored as given: the caller has applied the mode.
     tokens_cached: how many of tokens_in OpenAI's prompt cache served (migration 0010).
     cache_hit: exact / semantic when the answer cache served it; unsupported: the
-    figures the faithfulness check didn't find; language: the question's (0019)."""
+    figures the faithfulness check didn't find; language: the question's (0019).
+    provider: openai / bedrock, who answered; model: the model that wrote most (0022)."""
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}")
     at = time.time() if at is None else at
@@ -85,12 +86,12 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
             """INSERT INTO question_log (workspace, at, day, user, surface, message_id, role,
                    text_mode, question, answer, outcome, block_reason, sources, tools,
                    max_access, latency_ms, tokens_in, tokens_out, model, tokens_cached,
-                   cache_hit, unsupported, language)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   cache_hit, unsupported, language, provider)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (workspace, at, day_of(at), user, surface, message_id, role, text_mode, question,
              answer, outcome, block_reason, json.dumps(list(sources)), json.dumps(list(tools)),
              max_access, latency_ms, tokens_in, tokens_out, model, tokens_cached, cache_hit,
-             unsupported, language)).lastrowid
+             unsupported, language, provider)).lastrowid
 
 
 def _row(r):
@@ -175,6 +176,22 @@ def known_workspaces():
 
 
 # ---- Embeddings (content gaps) ----------------------------------------------------------
+def models_used(workspace, since_day, until_day):
+    """The models that answered the workspace's questions in [since_day, until_day]."""
+    with _db() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT DISTINCT model FROM question_log WHERE workspace = ? AND day >= ? AND "
+            "day <= ? AND model IS NOT NULL ORDER BY model", (workspace, since_day, until_day))]
+
+
+def clear_embeddings(workspace):
+    """Forget the questions' vectors (the embedding model changed): Insights embeds
+    them again with the new one."""
+    with _lock, _db() as conn:
+        conn.execute("UPDATE question_log SET embedding = NULL WHERE workspace = ?",
+                     (workspace,))
+
+
 def embeddings(ids):
     """{id: bytes} of the rows among `ids` that have one."""
     ids = list(ids)

@@ -34,6 +34,9 @@ export interface InsightsTotals extends Record<Outcome, number> {
   tokens_in: number
   tokens_out: number
   cost_usd: number
+  // Models whose price isn't known (a Bedrock model not in the price table): their
+  // tokens aren't in cost_usd.
+  cost_unknown_models?: string[]
   latency_p50_ms: number | null
   latency_p95_ms: number | null
   rates: { answered: number; not_found: number; blocked: number; general_knowledge: number }

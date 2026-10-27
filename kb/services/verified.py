@@ -30,6 +30,7 @@ restricted since, or one whose group they aren't in, is respected at once),
 and unless it has expired.
 """
 
+import contextlib
 import logging
 import os
 import re
@@ -87,9 +88,13 @@ class Invalid(ValueError):
 
 
 def embed(texts):
-    """Embeddings of the texts, by the model the search index uses."""
-    from langchain_openai import OpenAIEmbeddings
-    return OpenAIEmbeddings(model=ingest.EMBED_MODEL).embed_documents(list(texts))
+    """Embeddings of the texts, by the workspace's embedding model (models.scope)."""
+    return models.current().embeddings().embed_documents(list(texts))
+
+
+def _embed_name():
+    """The embedding model stored vectors are tagged with: a change re-embeds them."""
+    return models.current().embed_name
 
 
 def _level(levels):
@@ -173,18 +178,21 @@ def _unit(rows):
     return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-12)
 
 
-def embed_answers(rows):
+def embed_answers(rows, ws=None):
     """Embed the title and variants of `rows` and store them. Returns {id: matrix}."""
     rows = list(rows)
     texts = [t for row in rows for t in _texts(row)]
     if not texts:
         return {}
-    vectors = embed(texts)
+    ws = ws or rows[0].get("workspace")
+    with models.scope_for(ws) if ws else contextlib.nullcontext():
+        vectors = embed(texts)
+        name = _embed_name()
     out, at = {}, 0
     for row in rows:
         n = len(_texts(row))
         matrix = _unit(vectors[at:at + n])
-        store.set_vectors(row["id"], [(i, t, ingest.EMBED_MODEL, matrix[i].tobytes())
+        store.set_vectors(row["id"], [(i, t, name, matrix[i].tobytes())
                                       for i, t in enumerate(_texts(row))])
         out[row["id"]] = matrix
         at += n
@@ -195,9 +203,11 @@ def vectors_for(ws, rows):
     """{answer id: unit vectors of its title and variants}, embedding the answers
     whose stored ones are missing or out of date first."""
     stamp = store.stamp(ws)
+    with models.scope_for(ws):
+        model = _embed_name()
     with _vectors_lock:
         cached = _vectors_cache.get(ws)
-    if cached and cached[0] == stamp and cached[1] == ingest.EMBED_MODEL:
+    if cached and cached[0] == stamp and cached[1] == model:
         have = cached[2]
     else:
         have = {}
@@ -205,14 +215,14 @@ def vectors_for(ws, rows):
         for row in store.list_for(ws):
             got = stored.get(row["id"]) or []
             if [t for _, t, _, _ in got] == _texts(row) and all(
-                    m == ingest.EMBED_MODEL for _, _, m, _ in got):
+                    m == model for _, _, m, _ in got):
                 have[row["id"]] = np.stack([np.frombuffer(b, dtype=np.float32) for *_, b in got])
     stale = [row for row in rows if row["id"] not in have]
     if stale:
-        have = {**have, **embed_answers(stale)}
+        have = {**have, **embed_answers(stale, ws)}
         stamp = store.stamp(ws)
     with _vectors_lock:
-        _vectors_cache[ws] = (stamp, ingest.EMBED_MODEL, have)
+        _vectors_cache[ws] = (stamp, model, have)
     return have
 
 
@@ -229,7 +239,7 @@ def adapt(answer, question):
     """The approved answer reworded for the question by the FAST model, or None when
     the rewording adds a figure or a link the approved one doesn't have."""
     from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(model=models.fast_model(), temperature=0)
+    llm = models.current().fast(openai=ChatOpenAI, temperature=0)
     reply = str(llm.invoke(ADAPT_PROMPT.format(
         answer=answer, question=spotlight(question, "user_question"))).content or "").strip()
     if not reply or len(reply) > 2 * len(answer) + 200:

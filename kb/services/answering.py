@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 import access
 import language
+import models
 import spaces_store
 from agent import Cancelled  # noqa: F401  (re-exported: a stopped run raises it)
 from kb.services import agents, answer_cache, conversations, question_log, spaces
@@ -92,6 +93,15 @@ def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, sta
 
 def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None,
         cache=True):
+    """_ask() with the workspace's models (models.scope): the answer cache's
+    embeddings and every model the answer needs are its provider's."""
+    with models.scope_for(ws):
+        return _ask(ws, user, role, question, surface=surface, turn=turn, on_event=on_event,
+                    cancel=cancel, out=out, cache=cache)
+
+
+def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None,
+         out=None, cache=True):
     """Answer `question` in workspace `ws` for `user` (a dict with "username") as
     `role` -> Answer. role: the asker as a viewer (access.Viewer: what they may
     see), or a bare role (its own principals: "public" is everyone's content

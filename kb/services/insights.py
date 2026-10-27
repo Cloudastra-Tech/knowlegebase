@@ -22,6 +22,7 @@ Days are UTC days (YYYY-MM-DD).
 
 import logging
 import os
+import re
 import time
 from datetime import date, datetime, timedelta
 
@@ -52,6 +53,21 @@ PRICES = {"gpt-4o-mini": (0.15, 0.60), "gpt-4o": (2.50, 10.00),
           "gpt-4.1-nano": (0.10, 0.40), "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1": (2.00, 8.00),
           "gpt-5-nano": (0.05, 0.40), "gpt-5-mini": (0.25, 2.00)}   # models.py can pick these
 DEFAULT_PRICE = PRICES["gpt-4o-mini"]
+# AWS Bedrock, USD per million tokens (in, out), on-demand list prices in us-east-1
+# (aws.amazon.com/bedrock/pricing, October 2026). An inference profile's geo prefix
+# (us., eu., apac., ...) prices as in-region; global. at its own (lower) price. A
+# Bedrock model that isn't here has an UNKNOWN cost (cost_of -> None), never
+# another model's price: Insights says so instead of guessing.
+BEDROCK_PRICES = {
+    "amazon.nova-micro-v1:0": (0.035, 0.14), "amazon.nova-lite-v1:0": (0.06, 0.24),
+    "amazon.nova-pro-v1:0": (0.80, 3.20),
+    "anthropic.claude-haiku-4-5-20251001-v1:0": (1.10, 5.50),
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0": (1.00, 5.00),
+    "anthropic.claude-sonnet-4-5-20250929-v1:0": (3.30, 16.50),
+    "global.anthropic.claude-sonnet-4-5-20250929-v1:0": (3.00, 15.00),
+    "amazon.titan-embed-text-v2:0": (0.02, 0.0),
+    "cohere.embed-english-v3": (0.10, 0.0), "cohere.embed-multilingual-v3": (0.10, 0.0)}
+_GEO = re.compile(r"^(us|eu|apac|ca|au|jp|in|us-gov)\.")
 UPLOADED = "Company documents"          # how agent.py cites an uploaded file
 
 NEVER_CITED_DAYS = env_int("INSIGHTS_NEVER_CITED_DAYS", 30)
@@ -116,8 +132,29 @@ def percentile(hist, p):
     return LATENCY_BUCKETS[-1]
 
 
+def is_bedrock(model):
+    """A Bedrock model id, inference profile id or ARN (amazon.nova-pro-v1:0,
+    us.anthropic..., arn:aws:bedrock:...): OpenAI's names have no dot-prefixed vendor."""
+    m = model or ""
+    return m.startswith("arn:aws") or bool(re.match(r"^([a-z-]+\.)?[a-z0-9-]+\.[a-z0-9]", m)
+                                           and ":" in m)
+
+
+def price_of(model):
+    """(in, out) USD per million tokens, or None when it's an unknown Bedrock model.
+    An unknown OpenAI model is priced as gpt-4o-mini, as before."""
+    if not is_bedrock(model):
+        return PRICES.get(model or "", DEFAULT_PRICE)
+    m = model.rsplit("/", 1)[-1]                   # an inference profile's ARN: its id
+    return BEDROCK_PRICES.get(m) or BEDROCK_PRICES.get(_GEO.sub("", m))
+
+
 def cost_of(model, tokens_in, tokens_out):
-    price_in, price_out = PRICES.get(model or "", DEFAULT_PRICE)
+    """USD for the tokens, or None when the model's price isn't known (price_of)."""
+    price = price_of(model)
+    if price is None:
+        return None
+    price_in, price_out = price
     return ((tokens_in or 0) * price_in + (tokens_out or 0) * price_out) / 1_000_000
 
 
@@ -230,7 +267,7 @@ def summarize(rows, resolve):
         totals[r["outcome"]] = totals.get(r["outcome"], 0) + 1
         totals["tokens_in"] += r["tokens_in"] or 0
         totals["tokens_out"] += r["tokens_out"] or 0
-        cost += cost_of(r["model"], r["tokens_in"], r["tokens_out"])
+        cost += cost_of(r["model"], r["tokens_in"], r["tokens_out"]) or 0.0
         if r["latency_ms"] is not None and r["outcome"] not in ("error", "stopped"):
             latencies.append(r["latency_ms"])
         if r["outcome"] == "blocked":
@@ -299,9 +336,8 @@ def cluster(vectors, min_similarity=GAP_SIMILARITY):
 
 
 def embed(texts):
-    """Embeddings of the questions (the same model the index uses)."""
-    from langchain_openai import OpenAIEmbeddings
-    return OpenAIEmbeddings(model="text-embedding-3-small").embed_documents(list(texts))
+    """Embeddings of the questions (the workspace's embedding model, models.scope)."""
+    return models.current().embeddings().embed_documents(list(texts))
 
 
 LABEL_PROMPT = (
@@ -314,8 +350,7 @@ LABEL_PROMPT = (
 
 def label(questions):
     """One cheap model call naming a cluster."""
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(model=models.fast_model(), temperature=0, max_tokens=30)
+    llm = models.current().fast(temperature=0, max_tokens=30)
     reply = llm.invoke(LABEL_PROMPT.format(questions="\n".join(f"- {q}" for q in questions)))
     return reply.content
 
@@ -328,7 +363,13 @@ def _clean_label(text):
 def compute_gaps(ws, now=None, min_size=None):
     """Cluster the last GAP_WINDOW_DAYS of not-found and general-knowledge questions
     and save the clusters of at least min_size. Nothing is clustered when the
-    workspace logs no text (metadata mode). Returns the clusters saved."""
+    workspace logs no text (metadata mode). Returns the clusters saved. The
+    questions are embedded and labelled by the workspace's own models."""
+    with models.scope_for(ws):
+        return _compute_gaps(ws, now, min_size)
+
+
+def _compute_gaps(ws, now=None, min_size=None):
     now = time.time() if now is None else now
     min_size = GAP_MIN_SIZE if min_size is None else min_size
     since = now - GAP_WINDOW_DAYS * 86400
@@ -464,6 +505,10 @@ def report(ws, role, since_day, until_day, now=None):
     totals.update(
         active_users=log_store.active_users(ws, since_day, until_day),
         cost_usd=round(cost, 6),
+        # Models whose price isn't known (a Bedrock model not in BEDROCK_PRICES):
+        # their tokens aren't in cost_usd, and the screen says so.
+        cost_unknown_models=[m for m in log_store.models_used(ws, since_day, until_day)
+                             if price_of(m) is None],
         latency_p50_ms=percentile(hist, 50), latency_p95_ms=percentile(hist, 95),
         rates={"answered": _rate(totals["answered"] + totals["partial"], questions),
                "not_found": _rate(totals["not_found"], questions),

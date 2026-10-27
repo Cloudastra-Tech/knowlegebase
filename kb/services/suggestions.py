@@ -53,7 +53,9 @@ FOLLOWUP_PROMPT = (
 
 
 def _llm():
-    return ChatOpenAI(model=models.fast_model(), temperature=0, timeout=TIMEOUT, max_retries=0)
+    """The FAST model of the workspace asking (models.scope)."""
+    return models.current().fast(openai=ChatOpenAI, temperature=0, timeout=TIMEOUT,
+                                 max_retries=0)
 
 
 def _mode(name, default, allowed):
