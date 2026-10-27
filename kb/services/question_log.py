@@ -32,6 +32,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration
 from langchain_core.tracers.context import register_configure_hook
 
+import access
 import models
 import pii
 import question_log_store as store
@@ -149,6 +150,16 @@ def _personal(doc_key):
     return len(parts) > 2 and parts[0] == "connectors" and "~" in parts[1]
 
 
+def personal_source(s):
+    """Is this cited source from a member's own Gmail or Calendar (a personal
+    connection, connectors/base.py)? By its doc_key when it has one; an answer's
+    sources usually don't, so also by its provider: only personal connections are
+    Gmail or Google Calendar."""
+    from connectors import registry
+    return _personal(s.get("doc_key")) or s.get("provider") in {
+        c.LABEL for c in registry.PERSONAL}
+
+
 def _sources(sources):
     """One entry per document (a passage-level list cites a document once per passage).
     A file the asker attached, or keeps in their space, is theirs alone: not logged,
@@ -156,7 +167,7 @@ def _sources(sources):
     asker's own Gmail or Calendar (a personal connection: connectors/base.py)."""
     out, seen = [], set()
     for s in sources or []:
-        if s.get("attachment") or _personal(s.get("doc_key")):
+        if s.get("attachment") or personal_source(s):
             continue
         entry = _source(s)
         key = entry.get("doc_id") or entry.get("doc_key") or (entry.get("provider"),
@@ -173,10 +184,12 @@ def _tools(trace):
 
 def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(), sources=(),
            max_access="restricted", latency_ms=None, usage=None, message_id=None,
-           cache_hit=None, unsupported=None, language=None, provider=None):
+           cache_hit=None, unsupported=None, language=None, provider=None, acl=None):
     """Write one row. Never raises: a question is never failed by its log. A
     question the documents couldn't answer is also a question.unanswered webhook,
-    with its text only as the log keeps it (none in metadata mode)."""
+    with its text only as the log keeps it (none in metadata mode). acl: the
+    answer's audience (access.py clauses), which Insights reads it by; None: by
+    max_access."""
     try:
         mode = store.settings(ws)["mode"]
         mask = assistant.pii_policy(ws).log if mode == "redacted" else None
@@ -193,7 +206,7 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
             tokens_cached=usage.tokens_cached if usage else None,
             model=usage.model if usage else None, cache_hit=cache_hit,
             unsupported=unsupported, language=language,
-            provider=provider or _provider(ws))
+            provider=provider or _provider(ws), acl=acl)
         if outcome == "not_found":
             webhooks.question_unanswered(ws, row_id, surface, kept)
         return row_id
@@ -216,6 +229,7 @@ def tracked(run, ws, user, role, surface, turn=None):
     the answer's message id and the access level of the history it was given."""
     message_id = turn["message_id"] if turn else None
     history_access = turn["history_access"] if turn else "public"
+    history_acl = (turn or {}).get("history_acl") or ()
 
     def logged(question, *args, **kwargs):
         out = kwargs.get("out")
@@ -235,9 +249,12 @@ def tracked(run, ws, user, role, surface, turn=None):
             # Stopped or failed: what the model read may include the Outline wiki.
             if "max_access" not in fields:
                 levels = [conversations.read_access(out, [], history_access)]
+                found = list(conversations.read_acl(out, [], history_acl))
                 if agents.outline_on(ws, role):
                     levels.append(agents.outline_access())
+                    found.append(access.level_acl(agents.outline_access()))
                 fields["max_access"] = conversations.max_access(levels)
+                fields["acl"] = access.clauses(found)
             unsupported = out.get("unsupported")
             record(ws, user, role, surface, question, outcome, usage=usage,
                    provider=getattr(run, "provider", None),
@@ -257,12 +274,16 @@ def tracked(run, ws, user, role, surface, turn=None):
         answer, trace = result[0], result[1]
         sources = result[2] if len(result) > 2 else []
         try:
-            outcome, sources, access = conversations.outcome(answer, trace, sources, out,
-                                                             history_access)
+            outcome, sources, level = conversations.outcome(answer, trace, sources, out,
+                                                            history_access)
+            # Its audience, as the saved answer's (access.message_clauses): what the
+            # model read and each source cited. Insights is read by it.
+            acl = access.message_clauses({"acl": conversations.read_acl(out, trace, history_acl),
+                                          "sources": sources})
         except Exception:
             log.exception("Question log: couldn't tell the outcome of an answer")
-            outcome, access = "answered", "restricted"
-        finish(outcome, answer=answer, trace=trace, sources=sources, max_access=access)
+            outcome, level, acl = "answered", "restricted", None
+        finish(outcome, answer=answer, trace=trace, sources=sources, max_access=level, acl=acl)
         return result
 
     return logged

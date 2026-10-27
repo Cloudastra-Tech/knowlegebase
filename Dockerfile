@@ -1,5 +1,5 @@
 # ---- Knowledge Assistant: production image (multi-stage, slim) ----
-# React site (frontend/) + FastAPI (api.py) in one container on port 8501.
+# React site (frontend/) + FastAPI (kb/; api.py builds the app) in one container on port 8501.
 
 # --- Stage 0: build the React site into static files (frontend/dist).
 FROM node:22-slim AS web
@@ -64,7 +64,7 @@ RUN --mount=type=secret,id=gr_token,required=false \
 # Copy the app (docs come along via the build context; chroma_db is gitignored
 # and gets rebuilt on first boot — see CMD).
 COPY . .
-# The built React site, served by api.py.
+# The built React site, served by the API (kb/site.py).
 COPY --from=web /web/dist ./frontend/dist
 
 # Which version this is (scripts/deploy.sh and the release workflow pass them):

@@ -22,7 +22,8 @@ an IdP that publishes its next key beside the current one (a rollover: Entra,
 Okta, ADFS and Keycloak all do) keeps working when it switches. Metadata added
 by URL is fetched again daily, or sooner if its validUntil / cacheDuration say
 so, and once more (at most every few minutes) when an answer's signature fails,
-before that answer is checked again; api.py does that. Metadata pasted or typed
+before that answer is checked again; kb/routers/saml.py does that (with
+kb/services/saml_refresh.py). Metadata pasted or typed
 by hand can't be refreshed: the admin screen warns before its certificate
 expires.
 

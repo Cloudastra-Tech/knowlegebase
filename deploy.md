@@ -372,7 +372,25 @@ stopped is picked up again about a minute later (when its lease runs out). A
 failed job is tried again after 30 s, 1 min, ... (3 tries for an index or a sync),
 then shows as failed: an index error in the top bar, a sync error on the
 Integrations page. Two jobs run at once (`JOB_WORKERS`), never two index runs of
-one workspace, and workspaces take turns.
+one workspace, and workspaces take turns. Slack and Teams answers (someone is
+waiting) go before any other job, and `JOB_INTERACTIVE_WORKERS` more threads
+(default 1) run only them, so a long re-index never holds an answer up.
+
+Chunks are embedded once: a vector is kept per workspace by the hash of the
+chunk's text and the embedding model (`embedding_cache`), so a rebuild, or an
+edit that leaves most of a document alone, embeds only text it hasn't seen.
+Vectors no index used for `EMBEDDING_CACHE_DAYS` (30) are deleted daily;
+`EMBEDDING_CACHE=off` turns it off. Each chunk is also scanned for text written
+to an AI ("ignore previous instructions", fake system messages, chat-template
+tokens): such documents are flagged on the Knowledge screen's API for HR and
+admins (`injection`), never dropped.
+
+Other upkeep jobs: `share_prune` (daily) deletes share links revoked or expired
+over `SHARE_KEEP_DAYS` (30) ago. A webhook whose last `WEBHOOK_DISABLE_AFTER`
+(50) delivery attempts all failed is turned off and the workspace's admins are
+emailed; its secret can be rotated (the old one keeps signing for up to a week)
+and any delivery sent again. SCIM answers an address that sent
+`RATE_LIMIT_SCIM_FAILURES` (10) wrong tokens in a minute with 429.
 
 Re-indexing is **incremental**: an upload, edit or delete embeds only that
 document's changed chunks, and changing who may ask about a connection's files

@@ -4,6 +4,12 @@ eval/harness.py  —  score RETRIEVAL on the golden set, with no OpenAI key.
     python -m eval.harness              print the scores
     python -m eval.harness --gate       ...and exit 1 on a leak or a drop below baseline.json
     python -m eval.harness --write-baseline     accept the current scores as the new baseline
+    python -m eval.harness --candidates WS      score the test cases admins promoted in
+                                                workspace WS (eval_candidates), over its
+                                                own documents (no baseline: --gate fails
+                                                only on a leak)
+    python -m eval.harness --export-candidates WS --json eval/golden/WS.jsonl
+                                                write them out in the golden format
 
 The corpus (eval/corpus/) is indexed by the app's own ingest.main and searched
 by the app's own rag.load_chain, so access tagging, chunking, BM25 and fusion
@@ -84,6 +90,29 @@ def load_golden(path=GOLDEN):
     if len({r["id"] for r in rows}) != len(rows):
         raise ValueError(f"{path}: duplicate ids")
     return rows
+
+
+def candidates_golden(workspace):
+    """The test cases promoted in a workspace (Insights > test set: answers rated
+    down, questions nobody could answer; insights_store.eval_candidates) as golden
+    rows (kb/services/quality.golden, what the admin screen shows), checked like
+    load_golden's. Its documents are the corpus they're scored over
+    (workspaces.docs_root)."""
+    import insights_store
+    from kb.services import quality
+    rows = [quality.golden(c) for c in insights_store.candidates(workspace)]
+    for row in rows:
+        row["sources"] = [s for s in row["sources"] if s]
+        if row["role"] not in ROLES or row["expect"] not in EXPECT:
+            raise ValueError(f"{workspace}: test case {row['id']}: bad role or expect")
+    return rows
+
+
+def write_golden(rows, path):
+    """Golden rows as eval/golden/*.jsonl has them, one JSON object per line."""
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _norm(text):
@@ -289,11 +318,17 @@ def gate(summary, leaks, baseline):
     return failures
 
 
-def run(golden_path=GOLDEN, corpus=CORPUS):
-    golden = load_golden(golden_path)
+def run(golden_path=GOLDEN, corpus=CORPUS, golden=None):
+    """Score `golden` (default: the rows of golden_path) over `corpus`. The leak
+    suite needs restricted documents: a corpus without them (a workspace's) skips
+    it, and says so (report["leaks_skipped"])."""
+    golden = load_golden(golden_path) if golden is None else golden
     with fixture_index(offline=True, corpus=corpus):
         report = retrieval_report(golden, corpus)
-        report["leaks"] = leak_report(golden, corpus)
+        if restricted_lines(corpus):
+            report["leaks"] = leak_report(golden, corpus)
+        else:
+            report["leaks"], report["leaks_skipped"] = [], True
     return report
 
 
@@ -304,9 +339,28 @@ def main(argv=None):
     parser.add_argument("--write-baseline", action="store_true",
                         help="save the current scores as eval/baseline.json")
     parser.add_argument("--json", help="also write the full report to this file")
+    parser.add_argument("--candidates", metavar="WORKSPACE",
+                        help="score the workspace's promoted test cases over its documents")
+    parser.add_argument("--export-candidates", metavar="WORKSPACE",
+                        help="write the workspace's promoted test cases as golden rows to "
+                             "--json (or print them), then stop")
     args = parser.parse_args(argv)
 
-    report = run()
+    if args.export_candidates:
+        rows = candidates_golden(args.export_candidates)
+        if args.json:
+            write_golden(rows, args.json)
+            print(f"Wrote {len(rows)} test case(s) to {args.json}")
+        else:
+            for row in rows:
+                print(json.dumps(row, ensure_ascii=False))
+        return
+    if args.candidates:
+        import workspaces
+        report = run(golden=candidates_golden(args.candidates),
+                     corpus=workspaces.docs_root(args.candidates))
+    else:
+        report = run()
     s = report["summary"]
     print(f"Retrieval on {s['n']} golden questions (offline embedding, top-k as the app uses):")
     for name in METRICS:
@@ -314,7 +368,8 @@ def main(argv=None):
     for item in report["items"]:
         if not item["hit"] or item["evidence_hit"] is False:
             print(f"  miss: {item['id']:<22} got {item['retrieved']}")
-    print(f"Leak suite: {len(report['leaks'])} leak(s)")
+    print("Leak suite: skipped (no restricted documents)" if report.get("leaks_skipped")
+          else f"Leak suite: {len(report['leaks'])} leak(s)")
     for leak in report["leaks"][:20]:
         print(f"  LEAK {leak['where']}: {leak['source']} <- {leak['query']!r}")
 
@@ -329,8 +384,9 @@ def main(argv=None):
             f.write("\n")
         print(f"Wrote {os.path.relpath(BASELINE)}")
     if args.gate:
+        # A workspace's own cases have no baseline: only a leak fails them.
         with open(BASELINE, encoding="utf-8") as f:
-            failures = gate(s, report["leaks"], json.load(f))
+            failures = gate(s, report["leaks"], {} if args.candidates else json.load(f))
         for failure in failures:
             print("FAIL", failure)
         if failures:

@@ -226,6 +226,38 @@ def test_an_account_in_another_workspace_cant_sign_in_here(env, provider):
     assert error_of(sso_callback(env, provider, "google", claims)) == "not_allowed"
 
 
+def test_a_password_sign_in_records_when_it_happened(env):
+    import time
+
+    import db
+    import members_store
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE members SET last_login_at = NULL WHERE username = 'boss'")
+    conn.close()
+    password_token(env, "boss")
+    assert members_store.get("boss")["last_login_at"] > time.time() - 60
+
+
+def test_settling_a_role_never_touches_another_workspaces_member(env):
+    """members_store._settle_role is scoped by workspace: called for the same
+    name in the wrong workspace, it changes nothing."""
+    import db
+    import members_store
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE members SET override_role = 'public' WHERE username = 'boss'")
+        members_store._settle_role(conn, "boss", "another-workspace")
+        assert members_store._member(conn.execute(
+            "SELECT * FROM members WHERE username = 'boss'").fetchone())["role"] == "admin"
+        members_store._settle_role(conn, "boss", "default")
+        assert members_store._member(conn.execute(
+            "SELECT * FROM members WHERE username = 'boss'").fetchone())["role"] == "public"
+        conn.execute("UPDATE members SET override_role = 'admin' WHERE username = 'boss'")
+        members_store._settle_role(conn, "boss", "default")
+    conn.close()
+
+
 def test_password_role_changes_apply_to_live_sessions(env):
     import auth
     token = password_token(env, "keeper")

@@ -29,8 +29,11 @@ def knowledge(user=Depends(current_user), role=Depends(current_role),
     principals, like search itself). HR and admins, who manage them, see every
     item's title, with WHO CAN SEE it (`who`: [{principal, kind, label}];
     `dropped`: grants at the source that matched no one here, left out),
-    whether they may search it themselves (`readable`), and the personal data the
-    ingest scan found in it when the policy flags it (`pii`: {counts, text})."""
+    whether they may search it themselves (`readable`), the personal data the
+    ingest scan found in it when the policy flags it (`pii`: {counts, text}), and
+    the chunks the ingest scan found text written to an AI in (`injection`:
+    {chunks, kinds}, untrusted.planted_instructions; None: none). Flagged, still
+    searchable: the answer path treats every passage as data anyway."""
     return listing(user, role, viewer, everything=role == "hr")
 
 
@@ -41,19 +44,28 @@ def listing(user, role, viewer, everything=False):
     root = workspaces.docs_root(ws)
     sync_store.import_manifests(ws)
 
-    # Chunks per file in the index (by file path), straight from Chroma.
-    chunks = {}
+    # Chunks per file in the index (by file path), straight from Chroma, and the
+    # ones the ingest scan flagged for planted instructions.
+    chunks, planted = {}, {}
     try:
         col = vector_store.existing(ingest.DB_FOLDER, indexing.current(ws)[0])
         for meta in col.get(include=["metadatas"])["metadatas"]:
             key = os.path.normcase(os.path.abspath(meta.get("source", "")))
             chunks[key] = chunks.get(key, 0) + 1
+            if meta.get("injection"):
+                found = planted.setdefault(key, {"chunks": 0, "kinds": set()})
+                found["chunks"] += 1
+                found["kinds"].update(meta["injection"])
     except Exception as e:                     # no index yet: everything shows 0
         if type(e).__name__ != "NotFoundError":
             log.exception("Knowledge: couldn't read the search index of workspace %s", ws)
 
     def indexed(path):
         return chunks.get(os.path.normcase(os.path.abspath(path)), 0)
+
+    def injection(path):
+        found = planted.get(os.path.normcase(os.path.abspath(path)))
+        return found and {"chunks": found["chunks"], "kinds": sorted(found["kinds"])}
 
     # SOURCE RULES (HR / Admin): which rule decides each document, for the row
     # actions. Keys, providers and folders are what a rule matches on.
@@ -64,7 +76,7 @@ def listing(user, role, viewer, everything=False):
     # in, under the workspace's policy (kb/services/pii_scan.py).
     flagged = pii_scan.flags(ws, assistant.pii_policy(ws)) if manage else {}
 
-    def place(key, provider, acl, dropped=0, folder=None):
+    def place(key, provider, acl, dropped=0, folder=None, path=None):
         out = {"doc_key": key, "provider": provider, "folder": folder,
                "access": access.level_of_acl(acl)}
         if rules is not None:
@@ -76,6 +88,7 @@ def listing(user, role, viewer, everything=False):
             out["dropped"] = dropped
             out["readable"] = access.can_see(viewer, acl)
             out["pii"] = flagged.get(key)
+            out["injection"] = injection(path) if path else None
         return out
 
     def shown(acl):
@@ -91,7 +104,8 @@ def listing(user, role, viewer, everything=False):
         items.append({"title": d["name"], "source": "Uploaded", "url": None,
                       "modified": os.path.getmtime(d["path"]),
                       "size": d["size"], "chunks": indexed(d["path"]),
-                      **place(key, assistant.UPLOADS, acl, folder=key.rsplit("/", 1)[0])})
+                      **place(key, assistant.UPLOADS, acl, folder=key.rsplit("/", 1)[0],
+                            path=d["path"])})
 
     # The sample documents a new workspace can try it with (kb/services/onboarding.py):
     # for everyone, and labelled as samples.
@@ -101,7 +115,7 @@ def listing(user, role, viewer, everything=False):
                       "url": None, "modified": os.path.getmtime(path),
                       "size": os.path.getsize(path), "chunks": indexed(path),
                       **place(key, ingest.SAMPLES, access.level_acl("public"),
-                              folder=onboarding.SAMPLE_FOLDER)})
+                              folder=onboarding.SAMPLE_FOLDER, path=path)})
 
     # Synced files: what source_items says each connector folder holds, and who
     # may see each as ingest.py tags it (its connection's policy).
@@ -126,7 +140,7 @@ def listing(user, role, viewer, everything=False):
                           "source": registry.label(provider),
                           "url": item.get("url"), "modified": item.get("modified"),
                           "size": os.path.getsize(path), "chunks": indexed(path),
-                          **place(key, provider, acl, dropped, item.get("parent_id"))})
+                          **place(key, provider, acl, dropped, item.get("parent_id"), path)})
 
     items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))
     out = {"workspace": ws, "items": items,

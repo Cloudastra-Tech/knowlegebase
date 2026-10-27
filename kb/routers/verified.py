@@ -65,7 +65,7 @@ def draft_answer(message_id: str | None = Query(default=None, pattern=r"^[A-Za-z
     if message_id:
         found = verified.draft_from_message(ws, user, viewer, message_id)
     elif gap_id is not None:
-        found = verified.draft_from_gap(ws, "hr", gap_id)
+        found = verified.draft_from_gap(ws, viewer, gap_id)
     else:
         raise HTTPException(400, "Say which answer or content gap to start from.")
     if not found:

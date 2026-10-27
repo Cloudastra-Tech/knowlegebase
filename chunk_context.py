@@ -12,7 +12,8 @@ only the document's own text (rag.passage_text).
 Off by default: it is one model call per chunk when an index is built. Each
 answer is cached in config/app.db (chunk_contexts) by a hash of the model, the
 document and the chunk, so a rebuild, or an update that leaves a chunk as it
-was, doesn't pay again. A failed call gives no context line for that chunk
+was, doesn't pay again. The cache is the workspace's own (migration 0024): under
+row-level security like its other rows, and deleted with it. A failed call gives no context line for that chunk
 (and isn't cached): indexing never fails because of it.
 """
 
@@ -47,21 +48,23 @@ def _key(model, document, chunk):
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _cached(key):
+def _cached(workspace, key):
     conn = db.connect()
     try:
-        row = conn.execute("SELECT context FROM chunk_contexts WHERE hash = ?", (key,)).fetchone()
+        row = conn.execute("SELECT context FROM chunk_contexts WHERE workspace = ? AND hash = ?",
+                           (workspace, key)).fetchone()
         return row["context"] if row else None
     finally:
         conn.close()
 
 
-def _save(key, model, context):
+def _save(workspace, key, model, context):
     conn = db.connect()
     try:
         with conn:
-            conn.execute("INSERT OR REPLACE INTO chunk_contexts (hash, model, context, created_at) "
-                         "VALUES (?, ?, ?, ?)", (key, model, context, time.time()))
+            conn.execute("INSERT OR REPLACE INTO chunk_contexts (workspace, hash, model, context, "
+                         "created_at) VALUES (?, ?, ?, ?, ?)",
+                         (workspace, key, model, context, time.time()))
     finally:
         conn.close()
 
@@ -71,13 +74,14 @@ def _llm():
     return models.current().fast(temperature=0, max_tokens=80)
 
 
-def context_for(document, chunk, llm=None):
-    """One sentence placing `chunk` in `document` ('' if the call failed)."""
+def context_for(document, chunk, llm=None, workspace=""):
+    """One sentence placing `chunk` in `document` ('' if the call failed), cached
+    in `workspace`'s chunk_contexts."""
     model = models.current().fast_name
     document = document[:DOC_CHARS]
     key = _key(model, document, chunk)
     try:
-        hit = _cached(key)
+        hit = _cached(workspace, key)
     except Exception:
         log.exception("Chunk context: couldn't read the cache")
         hit = None
@@ -93,7 +97,7 @@ def context_for(document, chunk, llm=None):
     context = " ".join(str(reply or "").split())[:MAX_CHARS]
     if context:
         try:
-            _save(key, model, context)
+            _save(workspace, key, model, context)
         except Exception:
             log.exception("Chunk context: couldn't write the cache")
     return context

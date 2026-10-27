@@ -1,8 +1,12 @@
 # knowlegebase
 
-RAG chat app: FastAPI API (`api.py`, port 8010) + React/shadcn site (`frontend/`, Vite proxies
-`/api` to 8010). Sign-in code is `auth.py`, `sso.py`, `saml_sp.py`, `members_store.py`.
-Architecture: `ARCHITECTURE.md`; ops: `deploy.md`.
+RAG chat app: FastAPI API (port 8010) + React/shadcn site (`frontend/`, Vite proxies `/api` to
+8010). The API lives in `kb/`: `kb/app.py` (`create_app()`), endpoints in `kb/routers/`, logic in
+`kb/services/`; `api.py` only builds the app for `uvicorn api:app`. Stores (`*_store.py`) and the
+RAG pipeline (`agent.py`, `rag.py`, `ingest.py`) stay at the top level. Sign-in code is `auth.py`,
+`sso.py`, `saml_sp.py`, `members_store.py`, `kb/routers/{auth,sso,saml}.py`.
+FastAPI's `/docs`, `/redoc` and `/openapi.json` are off unless `APP_ENV=dev|local` or
+`API_DOCS=on` (`kb/settings.py`). Architecture: `ARCHITECTURE.md`; ops: `deploy.md`.
 
 Branches: `main` is production. Feature work branches from `dev` and PRs go into `dev` (CI runs
 on both: `backend`, `frontend`, `e2e`, `docker`, `scan`); `dev` is promoted to `main` only when

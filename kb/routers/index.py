@@ -3,7 +3,7 @@ Admins also see the workspace's recent background jobs (GET /api/admin/jobs)."""
 
 import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from kb import jobs
 from kb.audit import audited
@@ -34,7 +34,9 @@ def reindex(full: bool = False, user=Depends(require_hr), role=Depends(current_r
     """Manual re-index (changes already re-index automatically): every document
     is checked and only what changed is embedded again. full=true rebuilds the
     whole index instead, beside the current one, which keeps answering until
-    the new one is done."""
+    the new one is done: admins only (it embeds everything again, which costs)."""
+    if full and user["role"] != "admin":
+        raise HTTPException(403, "Only admins can rebuild the whole index.")
     user_limit(user, "reindex")
     indexing.schedule_index(ws_of(user), full=full)
     audit.record("index", ws_of(user), {"full": full}, user=user)

@@ -42,8 +42,13 @@ DOCS_PAGES = ("/docs", "/redoc", "/openapi.json")
 
 
 @pytest.fixture
-def app_with(monkeypatch):
-    """A fresh app (api.py's is built once, at import) with these settings."""
+def app_with(monkeypatch, tmp_path):
+    """A fresh app (api.py's is built once, at import) with these settings, and
+    without the built site: whether frontend/dist exists (a build finishing while
+    the tests run) mustn't change which routes an app has."""
+    from kb import site
+    monkeypatch.setattr(site, "SITE", str(tmp_path / "no-site"))
+
     def make(**env):
         for name in ("API_DOCS", "APP_ENV"):
             monkeypatch.delenv(name, raising=False)
@@ -79,9 +84,11 @@ def test_the_api_pages_are_on_for_a_developer(app_with, env):
 
 
 def test_turning_the_api_pages_on_adds_only_them(app_with):
-    import api
+    # Two apps built now, the same way but for API_DOCS: not api.app, which was
+    # built at import, under whatever the environment and the disk were then.
+    without = app_with().app
     with_pages = app_with(API_DOCS="on").app
-    assert route_table(with_pages) == route_table(api.app)
+    assert route_table(with_pages) == route_table(without)
     extra = {c.path for c in iter_route_contexts(with_pages.routes)} - {
-        c.path for c in iter_route_contexts(api.app.routes)}
+        c.path for c in iter_route_contexts(without.routes)}
     assert extra == {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}

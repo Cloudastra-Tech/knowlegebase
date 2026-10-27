@@ -143,6 +143,11 @@ def populate(ws, root):
         conn.execute("INSERT INTO assistant_settings (workspace, assistant_name, updated_by) "
                      "VALUES (?, 'Ada', ?)", (ws, admin))
     members_store.log_event(ws, None, staff, "signed_in")
+    # Indexing's caches: the model-written chunk contexts and the embeddings.
+    import chunk_context
+    import embedding_cache
+    chunk_context._save(ws, f"ctx-{ws}", "gpt-4o-mini", "Where the leave policy says it.")
+    embedding_cache._put(ws, "fake-model", {f"hash-{ws}": [0.1, 0.2]}, (), now)
     docs = workspaces.docs_root(ws)
     os.makedirs(os.path.join(docs, "public"))
     with open(os.path.join(docs, "public", "handbook.txt"), "w") as f:
@@ -358,9 +363,12 @@ def test_purge_leaves_nothing_of_the_workspace(client, places, jobs_paused):
     assert purged["details"]["rows"]["members"] == 3 and purged["details"]["keys_shredded"] == 1
     assert not any(s in json.dumps(purged) for s in made["secrets"])
     assert audit_store.verify(audit_store.PLATFORM)["ok"]
-    # The workspace next door is untouched.
+    # The workspace next door is untouched (its indexing caches too).
+    import chunk_context
     import integrations_store
     assert integrations_store.secret(bystander, "notion") == {"access_token": kept["secrets"][0]}
+    assert chunk_context._cached(bystander, f"ctx-{bystander}") is not None
+    assert chunk_context._cached(ws, f"ctx-{ws}") is None
     assert lifecycle_store.status(bystander) == "active"
     assert client.get("/api/auth/me", headers=login(client, f"staff@{bystander}.example")
                       ).status_code == 200
@@ -383,6 +391,36 @@ def _teams_and_email(ws):
     email_in_store.set_enabled(ws, True, admin)
     email_in_store.first_time(f"<m-{ws}@mail.example>", ws, staff)
     return tenant, secret
+
+
+def test_the_export_has_teams_email_in_and_the_model_provider_but_no_secret(client, places,
+                                                                          jobs_paused):
+    import model_providers_store
+    ws = new_workspace()
+    tenant, secret = _teams_and_email(ws)
+    key_id, key_secret = "AKIAIOSFODNN7EXAMPLE", f"aws-SECRET-{ws}"
+    model_providers_store.save(ws, {"provider": "bedrock", "region": "eu-west-1",
+                                    "auth": "keys", "access_key_id": key_id,
+                                    "secret_access_key": key_secret}, f"admin@{ws}.example")
+    with db.connect() as conn:
+        external_id = conn.execute("SELECT external_id FROM model_providers WHERE workspace = ?",
+                                   (ws,)).fetchone()[0]
+        app_key = conn.execute("SELECT app_key FROM teams_installs WHERE workspace = ?",
+                               (ws,)).fetchone()[0]
+    h = login(client, f"admin@{ws}.example")
+    assert client.post("/api/admin/workspace/export", headers=h).status_code == 200
+    run_jobs("workspace_export")
+    (export,) = client.get("/api/admin/workspace", headers=h).json()["exports"]
+    r = client.get(f"/api/admin/workspace/exports/{export['id']}/download", headers=h)
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    settings = json.loads(z.read("settings.json"))
+    assert settings["teams"]["tenant_id"] == tenant and settings["teams"]["mode"] == "custom"
+    assert settings["email_in"]["enabled"] == 1
+    assert (settings["model_provider"]["provider"], settings["model_provider"]["region"],
+            settings["model_provider"]["auth"]) == ("bedrock", "eu-west-1", "keys")
+    everything = b"".join(z.read(n) for n in z.namelist())
+    for value in (secret, key_secret, key_id, external_id, app_key):
+        assert value and value.encode() not in everything, value
 
 
 def test_purge_disconnects_teams_and_turns_email_in_off(client, places, jobs_paused):

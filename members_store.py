@@ -106,7 +106,7 @@ _warned = {}                       # username -> when they were last kept as the
 
 
 def __getattr__(name):
-    if name == "DB_PATH":          # the database file, as api.py's readiness check reads it
+    if name == "DB_PATH":          # the database file, as /api/ready reads it (kb/routers/health.py)
         return db.DB_PATH
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -348,7 +348,7 @@ def create_workspace(name, domain, email, person_name, code=None):
                                              created_at, last_login_at)
                         VALUES (?, ?, ?, 'admin', ?, ?)""",
                      (email, slug, person_name or email.split("@")[0], now, now))
-        _settle_role(conn, email)
+        _settle_role(conn, email, slug)
     return slug
 
 
@@ -436,10 +436,12 @@ def _member(row):
     return m
 
 
-def _settle_role(conn, username):
-    """Recompute the effective role (see the top of this file)."""
+def _settle_role(conn, username, workspace):
+    """Recompute the effective role (see the top of this file) of `username` in
+    `workspace`: never someone of the same name in another workspace (an insert
+    that lost to one there, say)."""
     conn.execute("UPDATE members SET role = COALESCE(override_role, group_role, 'public') "
-                 "WHERE username = ?", (username,))
+                 "WHERE username = ? AND workspace = ?", (username, workspace))
 
 
 def get(username):
@@ -491,7 +493,7 @@ def set_password(username, name, password_hash, workspace, role=None):
                          (username, workspace, name, password_hash, role, time.time())).rowcount
         if not n:
             raise WrongWorkspace(f"{username} belongs to another workspace.")
-        _settle_role(conn, username)
+        _settle_role(conn, username, workspace)
 
 
 def set_role(username, role, workspace):
@@ -512,7 +514,7 @@ def set_role(username, role, workspace):
                           time.time())).rowcount
         if not n:
             raise WrongWorkspace(f"{username} belongs to another workspace.")
-        _settle_role(conn, username)
+        _settle_role(conn, username, workspace)
 
 
 def set_disabled(username, disabled, workspace):
@@ -573,7 +575,7 @@ def record_sso_login(username, name, workspace, groups=None, source=None):
             conn.execute("UPDATE members SET groups = ?, group_role = ?, group_source = ?, "
                          "groups_updated_at = ? WHERE username = ? AND workspace = ?",
                          (json.dumps(names[:100]), role, source, now, username, workspace))
-        _settle_role(conn, username)
+        _settle_role(conn, username, workspace)
         row = conn.execute("SELECT * FROM members WHERE username = ?", (username,)).fetchone()
     return _member(row) if row and row["workspace"] == workspace else None
 
@@ -698,7 +700,7 @@ def delete_connection(workspace, cid):
     return n > 0
 
 
-# ---- SAML: metadata fetched again from its URL (api.py) ----------------------------
+# ---- SAML: metadata fetched again from its URL (kb/services/saml_refresh.py) ------
 def saml_connections_from_urls():
     """Every SAML provider, in every workspace, whose metadata came from a URL."""
     with _db() as conn:
@@ -952,7 +954,7 @@ def apply_scim_groups(conn, workspace, usernames=None):
                      "groups_updated_at = ? WHERE username = ? AND workspace = ?",
                      (json.dumps(names[:100]), role_for_groups(rules, names) if rules else None,
                       SCIM_SOURCE, now, username, workspace))
-        _settle_role(conn, username)
+        _settle_role(conn, username, workspace)
 
 
 def _drop_other_sources(conn, workspace, source):
@@ -971,9 +973,9 @@ def _regroup(conn, cid, rules, workspace):
     for row in conn.execute("SELECT username, groups FROM members WHERE group_source = ? "
                             "AND workspace = ?", (cid, workspace)).fetchall():
         role = role_for_groups(rules, json.loads(row["groups"] or "[]")) if rules else None
-        conn.execute("UPDATE members SET group_role = ? WHERE username = ?",
-                     (role, row["username"]))
-        _settle_role(conn, row["username"])
+        conn.execute("UPDATE members SET group_role = ? WHERE username = ? AND workspace = ?",
+                     (role, row["username"], workspace))
+        _settle_role(conn, row["username"], workspace)
 
 
 # ---- Group-given admin expires --------------------------------------------------
@@ -1035,9 +1037,9 @@ def _expire_group_admins(conn, workspace, username=None):
         rules = conn.execute("SELECT group_name, role FROM group_role_rules "
                              "WHERE connection_id = ? AND role != 'admin'",
                              (row["group_source"],)).fetchall()
-        conn.execute("UPDATE members SET group_role = ? WHERE username = ?",
+        conn.execute("UPDATE members SET group_role = ? WHERE username = ? AND workspace = ?",
                      (role_for_groups(rules, json.loads(row["groups"] or "[]")),
-                      row["username"]))
-        _settle_role(conn, row["username"])
+                      row["username"], workspace))
+        _settle_role(conn, row["username"], workspace)
         expired = True
     return expired

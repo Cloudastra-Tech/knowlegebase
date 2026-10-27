@@ -82,7 +82,7 @@ def from_gap(body: GapIn, user=Depends(require_hr), viewer=Depends(current_viewe
              audit=audited("draft.from_gap")):
     """Draft a document for a content gap (Insights)."""
     ws = ws_of(user)
-    gap = drafts.find_gap(ws, viewer.role, body.gap_id)
+    gap = drafts.find_gap(ws, viewer, body.gap_id)
     if not gap:
         raise HTTPException(404, "No such content gap.")
     user_limit(user, "draft")
@@ -96,7 +96,7 @@ def from_question(body: QuestionIn, user=Depends(require_hr), viewer=Depends(cur
                   audit=audited("draft.from_question")):
     """Draft a document answering one unanswered question (Insights > Not found)."""
     ws = ws_of(user)
-    question = insights.find_not_found(ws, viewer.role, body.question_id)
+    question = insights.find_not_found(ws, viewer, body.question_id)
     if not question:
         raise HTTPException(404, "There's no such unanswered question, or its text isn't kept.")
     user_limit(user, "draft")

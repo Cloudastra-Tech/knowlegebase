@@ -29,7 +29,11 @@ THE RULES
   * No change may leave the workspace without an admin: members_store.NoAdminLeft,
     and nothing is changed.
   * Every query names the workspace: a token for one workspace can't see or
-    change another's members or groups.
+    change another's members or groups. On Postgres a SCIM request also runs as
+    its workspace's tenant (row-level security, kb/routers/scim.py), and only
+    two lookups see every workspace (db.platform): the token itself, and
+    whether an email is already a member somewhere else (_owner), since a
+    username is unique across workspaces.
 """
 
 import hashlib
@@ -71,6 +75,16 @@ def _hash(token):
 
 def _db():
     return members_store._db()
+
+
+def _owner(email):
+    """The workspace `email` is a member of, whichever it is, or None. Across
+    workspaces (db.platform): a username is unique in all of them, and under
+    row-level security another workspace's member is invisible otherwise."""
+    with members_store._platform_db() as everyone:
+        row = everyone.execute("SELECT workspace FROM members WHERE username = ?",
+                               (email,)).fetchone()
+    return row["workspace"] if row else None
 
 
 # ---- Tokens --------------------------------------------------------------------
@@ -248,10 +262,12 @@ def create_user(workspace, user):
     with members_store._lock, _db() as conn:
         invite = _check_email(conn, workspace, email)
         _check_user_name(conn, workspace, user["user_name"], email)
-        existing = conn.execute("SELECT * FROM members WHERE username = ?", (email,)).fetchone()
-        if existing and existing["workspace"] != workspace:
+        owner = _owner(email)
+        if owner and owner != workspace:
             raise Refused(409, f"{email} already belongs to another workspace.", "scim_taken",
                           "uniqueness")
+        existing = conn.execute("SELECT * FROM members WHERE username = ? AND workspace = ?",
+                                (email, workspace)).fetchone()
         if (existing and existing["scim_username"] is not None
                 and existing["scim_deleted_at"] is None):
             raise Refused(409, f"{email} has already been provisioned.", "scim_exists",
@@ -278,7 +294,7 @@ def create_user(workspace, user):
             if not existing:
                 conn.execute("UPDATE members SET override_role = ? WHERE username = ?",
                              (invite["role"], email))
-        members_store._settle_role(conn, email)
+        members_store._settle_role(conn, email, workspace)
         members_store._keep_an_admin(conn, workspace, before)   # taken over, inactive
         row = conn.execute("SELECT * FROM members WHERE username = ?", (email,)).fetchone()
         return _user(conn, row), bool(existing)
@@ -313,7 +329,7 @@ def update_user(workspace, scim_id, user):
         before = members_store._admins(conn, workspace)
         if new != old:
             _check_email(conn, workspace, new)
-            if conn.execute("SELECT 1 FROM members WHERE username = ?", (new,)).fetchone():
+            if _owner(new):                       # in this workspace or another
                 raise Refused(409, f"{new} already belongs to another member.", "scim_taken",
                               "uniqueness")
             _rename(conn, workspace, old, new)
@@ -357,24 +373,37 @@ def anonymise_due(days=None, now=None):
     """Anonymise every member SCIM deleted over `days` (default retention_days())
     ago, in every workspace: a new username that is no email, no name, no
     groups, no role. Their rows stay (so does the audit log, which can't be
-    changed). Returns [(workspace, new username, scim id)]."""
+    changed). Their open invites end with them: one to their address (it would
+    let them back in) and one they sent (nobody stands behind it now) is
+    revoked, and every invite of theirs, open or not, names the new username
+    instead of their email. Returns [(workspace, new username, scim id,
+    invites revoked)]."""
     days = retention_days() if days is None else days
     now = now or time.time()
     done = []
-    with members_store._lock, _db() as conn:
+    # Every workspace's (a job of no one workspace): as the platform.
+    with members_store._lock, members_store._platform_db() as conn:
         rows = conn.execute("SELECT * FROM members WHERE scim_deleted_at IS NOT NULL AND "
                             "anonymised_at IS NULL AND scim_deleted_at <= ?",
                             (now - days * 86400,)).fetchall()
         for row in rows:
             new = f"deleted-{row['scim_id'] or uuid.uuid4()}"
+            revoked = conn.execute(
+                "UPDATE invites SET revoked_at = ? WHERE workspace = ? AND (email = ? OR "
+                "invited_by = ?) AND accepted_at IS NULL AND revoked_at IS NULL",
+                (now, row["workspace"], row["username"], row["username"])).rowcount
+            conn.execute("UPDATE invites SET email = ? WHERE workspace = ? AND email = ?",
+                         (new, row["workspace"], row["username"]))
+            conn.execute("UPDATE invites SET invited_by = ? WHERE workspace = ? "
+                         "AND invited_by = ?", (new, row["workspace"], row["username"]))
             _rename(conn, row["workspace"], row["username"], new)
             conn.execute("UPDATE members SET name = 'Deleted user', password_hash = NULL, "
                          "groups = '[]', group_role = NULL, override_role = NULL, "
                          "group_source = NULL, scim_username = NULL, scim_external_id = NULL, "
                          "scim_profile = NULL, disabled = 1, anonymised_at = ? "
                          "WHERE username = ?", (now, new))
-            members_store._settle_role(conn, new)
-            done.append((row["workspace"], new, row["scim_id"]))
+            members_store._settle_role(conn, new, row["workspace"])
+            done.append((row["workspace"], new, row["scim_id"], revoked))
     return done
 
 

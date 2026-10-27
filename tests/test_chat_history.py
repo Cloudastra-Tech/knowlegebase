@@ -510,6 +510,19 @@ def test_links_expire_can_be_revoked_and_stop_with_sharing_off(client, workspace
     assert [e["target_id"] for e in events_of(ws, "share.revoke")] == [forever["id"]]
     assert len(events_of(ws, "share.create")) == 2
 
+    # Dead links' rows go with a daily job, SHARE_KEEP_DAYS (30) after they died;
+    # until then a dead link still says it expired or was revoked (410, not 404).
+    alive = share(client, staff, cid)
+    assert ws not in retention.prune_shares()
+    assert open_link(client, who["hr"], forever["token"]).status_code == 410
+    gone = retention.prune_shares(now=time.time() + 31 * 86400)
+    assert gone[ws] == 2                               # the expired one and the revoked one
+    for link in (day, forever):
+        assert conversations_store.share_by_token(link["token"]) is None
+    assert conversations_store.share_by_token(alive["token"]) is not None
+    jobs.load_handlers()
+    assert jobs.PERIODIC["share_prune"]() == 24 * 60 * 60
+
     live = share(client, staff, cid)
     client.put("/api/admin/chat-settings", json={"retention_days": 365, "sharing_enabled": False},
                headers=headers(client, admin))

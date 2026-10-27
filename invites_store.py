@@ -199,6 +199,6 @@ def _accept(where, value, name, password_hash):
                         VALUES (?, ?, ?, ?, ?, ?)""",
                      (row["email"], row["workspace"], name or row["email"].split("@")[0],
                       password_hash, row["role"], now))
-        members_store._settle_role(conn, row["email"])
+        members_store._settle_role(conn, row["email"], row["workspace"])
         accepted = conn.execute("SELECT * FROM invites WHERE id = ?", (row["id"],)).fetchone()
     return _invite(accepted)

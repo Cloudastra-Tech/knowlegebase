@@ -614,6 +614,110 @@ def test_a_deleted_user_is_anonymised_after_the_retention_window(tenant, monkeyp
     assert again["id"] != alice["id"] and not t.member(email)["disabled"]
 
 
+def test_wrong_tokens_from_one_address_are_refused_after_a_few(tenant, monkeypatch):
+    """Guessing tokens: after RATE_LIMIT_SCIM_FAILURES wrong ones a minute, the
+    address gets 429 (with Retry-After) whatever it sends, a right token too;
+    other addresses, and the provider's own, carry on."""
+    from kb import state
+    t = tenant
+    monkeypatch.setenv("RATE_LIMITS", "on")
+    monkeypatch.setenv("RATE_LIMIT_SCIM_FAILURES", "3")
+    monkeypatch.setattr(state, "hits", {})
+    for _ in range(3):
+        r = t.call("GET", "/scim/v2/Users", token="kbscim_wrong")
+        assert r.status_code == 401 and r.headers["www-authenticate"] == 'Bearer realm="scim"'
+    r = t.call("GET", "/scim/v2/Users", token="kbscim_wrong")
+    assert r.status_code == 429 and int(r.headers["retry-after"]) > 0
+    assert r.json()["status"] == "429"
+    assert t.call("GET", "/scim/v2/Users").status_code == 429       # even with the right one
+
+    from fastapi.testclient import TestClient
+    import api
+    elsewhere = TestClient(api.app, client=("203.0.113.9", 50000))
+    r = elsewhere.get("/scim/v2/Users", headers={"Authorization": f"Bearer {t.token}"})
+    assert r.status_code == 200, r.text
+
+    monkeypatch.setattr(state, "hits", {})                          # a minute later
+    assert t.call("GET", "/scim/v2/Users").status_code == 200
+
+
+def test_a_scim_request_runs_as_its_workspace(tenant, monkeypatch):
+    """Row-level security for SCIM (Postgres): once its token names the workspace,
+    the request's connections are that tenant's (db.tenant); only the token and
+    the across-workspaces email check are looked up as the platform."""
+    import db
+    t = tenant
+    seen = []
+    listed = scim_store.list_users
+
+    def spy(workspace, *args, **kwargs):
+        seen.append(db.tenant())
+        return listed(workspace, *args, **kwargs)
+    monkeypatch.setattr(scim_store, "list_users", spy)
+    assert t.call("GET", "/scim/v2/Users").status_code == 200
+    assert seen == [t.ws]
+
+    # An address that's a member of another workspace is still refused (409),
+    # though that workspace's rows are out of this request's sight. (An open
+    # invite to it here, from before, gets it past the domain check.)
+    other = Tenant(t.client, prefix="other")
+    conn = db.connect()
+    with conn:
+        conn.execute("INSERT INTO invites (token_hash, workspace, email, role, invited_by, "
+                     "created_at, expires_at) VALUES (?, ?, ?, 'public', ?, ?, ?)",
+                     (uuid.uuid4().hex, t.ws, other.admin, t.admin, time.time(),
+                      time.time() + 86400))
+    conn.close()
+    r = t.call("POST", "/scim/v2/Users", {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"], "userName": other.admin,
+        "emails": [{"value": other.admin, "primary": True}], "active": True})
+    assert r.status_code == 409, r.text
+    assert "another workspace" in r.json()["detail"]
+    assert t.member(other.admin)["workspace"] == other.ws
+    alice = _user(t, "alice")
+    r = t.call("PATCH", f"/scim/v2/Users/{alice['id']}", {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "replace", "path": "userName", "value": t.admin}]})
+    assert r.status_code == 409 and t.member(t.admin)["workspace"] == t.ws
+
+
+def test_anonymising_someone_revokes_their_open_invites(tenant, monkeypatch):
+    """Invites they sent (nobody stands behind them now) and any to their own
+    address (it would let them back in) stop working, and no invite row keeps
+    their email."""
+    import db
+    import invites_store
+    from kb.services import scim as service
+    t = tenant
+    alice = _user(t, "alice")
+    email = f"alice@{t.domain}"
+    sent, _ = invites_store.create(t.ws, f"new.hire@{t.domain}", "public", email)
+    kept, _ = invites_store.create(t.ws, f"other.hire@{t.domain}", "public", t.admin)
+    conn = db.connect()
+    with conn:                       # one to her own address, from before she joined
+        conn.execute("INSERT INTO invites (token_hash, workspace, email, role, invited_by, "
+                     "created_at, expires_at) VALUES (?, ?, ?, 'public', ?, ?, ?)",
+                     (uuid.uuid4().hex, t.ws, email, t.admin, time.time(),
+                      time.time() + 86400))
+    conn.close()
+    assert t.call("DELETE", f"/scim/v2/Users/{alice['id']}").status_code == 204
+    monkeypatch.setenv("SCIM_RETENTION_DAYS", "0")
+    service.anonymise()
+
+    conn = db.connect()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM invites WHERE workspace = ?", (t.ws,))]
+    conn.close()
+    assert email not in json.dumps(rows)
+    gone = f"deleted-{alice['id']}"
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[sent["id"]]["revoked_at"] and by_id[sent["id"]]["invited_by"] == gone
+    assert [r["revoked_at"] is not None for r in rows if r["email"] == gone] == [True]
+    assert by_id[kept["id"]]["revoked_at"] is None
+    assert [i["id"] for i in invites_store.list_open(t.ws)] == [kept["id"]]
+    (row,) = [e for e in t.audit() if e["action"] == "scim.user.anonymise"]
+    assert row["details"]["invites_revoked"] == 2
+
+
 def test_a_deleted_user_provisioned_again_inside_the_window_is_a_new_user(tenant):
     t = tenant
     alice = _user(t, "alice")
