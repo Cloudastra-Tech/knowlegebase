@@ -1,6 +1,6 @@
 """
 connectors/linear.py  —  sync a workspace's Linear teams (issues, projects and
-documents) into its index.
+documents, project updates) into its index.
 
 Read-only: OAuth 2 with the `read` scope, as the user who connects (actor=user),
 so only what that user can see in Linear is synced: a private team they aren't
@@ -13,24 +13,27 @@ What is synced (nothing until an admin picks TEAMS on the card):
   issues      title, key facts (team, status, assignee, project, labels),
               description and comments, as Markdown;
   projects    of those teams: their description and content (Markdown);
-  documents   attached to those teams, their projects, or their issues.
+  documents   attached to those teams, their projects, or their issues;
+  updates     project updates (status posts) of those projects, with health.
 Archived and trashed items are left out (and deleted when they become so).
 
 How a sync finds what changed: GraphQL, Relay pages (`first` / `after`,
 pageInfo.endCursor).
   FULL (first run, the picks changed, every RECONCILE seconds, asked for)
-      every issue of the picked teams, every project and document in scope;
+      every issue of the picked teams, every project, document and project
+      update in scope;
       anything known but not listed was archived, deleted or moved out and goes
       behind the mass-delete guard.
   INCREMENTAL
-      issues, projects and documents with `updatedAt` after the last run's
+      issues, projects, documents and project updates with `updatedAt` after
+      the last run's
       newest (less OVERLAP seconds), includeArchived so an archive or trash is
       seen and deleted.
 
 Permissions: Linear permissions are team-based. Each item's acl is the
 team's MEMBERS' emails (active users only), read once per run per team:
-{"via": "linear", "team": id, "users": [...]}; a project or document of
-several teams takes the union of the picked teams' members. Members of the
+{"via": "linear", "team": id, "users": [...]}; a project, project update or
+document of several teams takes the union of the picked teams' members. Members of the
 Linear organisation outside the team (who can read a public team's issues) are
 not listed: the source policy never lets in more people than the team.
 
@@ -57,7 +60,8 @@ API references (checked 2026-10-27):
   filtering       https://linear.app/developers/filtering (DateComparator gt, gte, ...)
   schema          https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql
                   (IssueFilter.updatedAt, includeArchived, Issue.trashed, Team.members,
-                  Project.content, Document.{content, project, team, issue})
+                  Project.content, Document.{content, project, team, issue},
+                  Query.projectUpdates, ProjectUpdate.{body, health, project})
   rate limits     https://linear.app/developers/rate-limiting (429 + Retry-After)
   private teams   https://linear.app/docs/private-teams
 """
@@ -116,7 +120,16 @@ DOCUMENTS = f"""query Documents($filter: DocumentFilter, $after: String, $archiv
             includeArchived: $archived) {{
     nodes {{ id title content url updatedAt archivedAt trashed
       team {{ id }} project {{ id }} issue {{ team {{ id }} }} }} {_PAGE_INFO} }} }}"""
+UPDATES = f"""query ProjectUpdates($filter: ProjectUpdateFilter, $after: String,
+                     $archived: Boolean) {{
+  projectUpdates(first: {PAGE}, after: $after, filter: $filter, orderBy: updatedAt,
+                 includeArchived: $archived) {{
+    nodes {{ id body health url createdAt updatedAt archivedAt user {{ name }}
+      project {{ id name teams {{ nodes {{ id }} }} }} }} {_PAGE_INFO} }} }}"""
 VIEWER = "query { viewer { name email organization { name urlKey } } }"
+
+
+_HEALTH = {"onTrack": "On track", "atRisk": "At risk", "offTrack": "Off track"}
 
 
 def _since(watermark):
@@ -131,7 +144,8 @@ def _since(watermark):
 class Linear(Connector):
     PROVIDER = PROVIDER
     LABEL = "Linear"
-    DESCRIPTION = "Issues with comments, projects and documents of the teams you pick"
+    DESCRIPTION = ("Issues with comments, projects, project updates and documents of the "
+                   "teams you pick")
     AUTH = "oauth"
     PICKER = "list"
     PICKER_REQUIRED = True
@@ -292,6 +306,7 @@ class Linear(Connector):
             ("issue", ISSUES, "issues", {"team": {"id": {"in": teams}}, **updated}),
             ("project", PROJECTS, "projects", updated or None),
             ("document", DOCUMENTS, "documents", updated or None),
+            ("update", UPDATES, "projectUpdates", updated or None),
         ]
         projects = {}                        # project id -> its picked teams
         for kind, query, field, flt in sources:
@@ -303,6 +318,9 @@ class Linear(Connector):
                     team_ids = [t["id"] for t in (node.get("teams") or {}).get("nodes") or []]
                     if set(team_ids) & picked:
                         projects[node["id"]] = team_ids
+                elif kind == "update":
+                    team_ids = [t["id"] for t in ((node.get("project") or {}).get("teams")
+                                                  or {}).get("nodes") or []]
                 else:
                     team_ids = [(node.get("team") or {}).get("id"),
                                 ((node.get("issue") or {}).get("team") or {}).get("id")]
@@ -348,6 +366,12 @@ class Linear(Connector):
         elif kind == "project":
             title, attrs = node.get("name") or "Untitled project", {}
             parent = acl["team"]
+        elif kind == "update":
+            project = (node.get("project") or {}).get("name") or "Untitled project"
+            title = f"{project}: update of {(node.get('createdAt') or '')[:10]}"
+            attrs = {"project": project, "author": (node.get("user") or {}).get("name"),
+                     "health": node.get("health")}
+            parent = acl["team"]
         else:
             title, attrs = node.get("title") or "Untitled document", {}
             parent = acl["team"]
@@ -366,6 +390,13 @@ class Linear(Connector):
             return Fetched("\n\n".join(p for p in parts if p.strip()), "text/markdown")
         if item.kind == "document":
             return Fetched(node.get("content") or "", "text/markdown")
+        if item.kind == "update":
+            a = item.attrs or {}
+            facts = [("Project", a.get("project")), ("Posted by", a.get("author")),
+                     ("Health", _HEALTH.get(a.get("health"), a.get("health"))),
+                     ("Posted", (node.get("createdAt") or "")[:10] or None)]
+            parts = ["\n".join(f"{k}: {v}" for k, v in facts if v), node.get("body") or ""]
+            return Fetched("\n\n".join(p for p in parts if p.strip()), "text/markdown")
         a = item.attrs or {}
         facts = [("Team", a.get("team")), ("Status", a.get("status")),
                  ("Assignee", a.get("assignee")), ("Created by", a.get("creator")),

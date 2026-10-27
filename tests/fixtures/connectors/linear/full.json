@@ -3,7 +3,7 @@
   "https://linear.app/developers/graphql (POST https://api.linear.app/graphql, errors[] with extensions)",
   "https://linear.app/developers/pagination (first/after, nodes, pageInfo { hasNextPage endCursor }, orderBy updatedAt)",
   "https://linear.app/developers/filtering (DateComparator gt)",
-  "https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql (Issue, Team.members, Project.content, Document, includeArchived, trashed, archivedAt)"
+  "https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql (Issue, Team.members, Project.content, Document, includeArchived, trashed, archivedAt, projectUpdates, ProjectUpdate.health)"
  ],
  "exchanges": [
   {
@@ -358,6 +358,83 @@
          },
          "project": null,
          "issue": null
+        }
+       ],
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "projectUpdates(",
+     "variables": {
+      "after": null,
+      "archived": false
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "projectUpdates": {
+       "nodes": [
+        {
+         "id": "upd-1",
+         "body": "Leave policy section drafted; **legal review** next.",
+         "health": "atRisk",
+         "url": "https://linear.app/acme/project/handbook/updates#upd-1",
+         "createdAt": "2026-10-08T09:00:00.000Z",
+         "updatedAt": "2026-10-08T09:00:00.000Z",
+         "archivedAt": null,
+         "user": {
+          "name": "Ann"
+         },
+         "project": {
+          "id": "proj-1",
+          "name": "Handbook",
+          "teams": {
+           "nodes": [
+            {
+             "id": "team-eng"
+            },
+            {
+             "id": "team-sales"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "id": "upd-2",
+         "body": "Venue booked.",
+         "health": "onTrack",
+         "url": "https://linear.app/acme/project/kickoff/updates#upd-2",
+         "createdAt": "2026-10-03T09:00:00.000Z",
+         "updatedAt": "2026-10-03T09:00:00.000Z",
+         "archivedAt": null,
+         "user": {
+          "name": "Sam"
+         },
+         "project": {
+          "id": "proj-2",
+          "name": "Sales kickoff",
+          "teams": {
+           "nodes": [
+            {
+             "id": "team-sales"
+            }
+           ]
+          }
+         }
         }
        ],
        "pageInfo": {

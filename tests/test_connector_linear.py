@@ -3,7 +3,8 @@ Linear against recorded HTTP (tests/fixtures/connectors/linear/, written from
 Linear's GraphQL schema and developer docs; an unrecorded request fails the
 test), through the real framework (kb/services/sync.py): the OAuth connect
 flow, the rotating refresh token (refreshed early, and on a 401), the team
-picker, Relay paging, issues / projects / documents as Markdown, the
+picker, Relay paging, issues / projects / documents / project updates as
+Markdown, the
 updatedAt watermark, archived and trashed items deleted, deletes behind the
 mass-delete guard, team membership into acl, 429s and typed errors.
 """
@@ -139,13 +140,14 @@ def test_the_picker_lists_every_page_of_teams(env, monkeypatch):
 
 
 # ---- syncing ---------------------------------------------------------------------------
-def test_a_full_sync_renders_issues_projects_and_documents_with_team_acls(env, monkeypatch):
+def test_a_full_sync_renders_issues_projects_documents_and_updates_with_team_acls(
+        env, monkeypatch):
     from kb.services import sync
     rec = Recorded(monkeypatch, "linear/full")
     connect(env)
     summary = sync.sync(env.ws, "linear")
     assert rec.unused() == []
-    assert (summary["mode"], summary["upserted"]) == ("full", 4)
+    assert (summary["mode"], summary["upserted"]) == ("full", 5)
     first = [c for c in rec.calls if "issues(" in c["json"]["query"]][0]
     assert first["json"]["variables"]["filter"] == {"team": {"id": {"in": ["team-eng"]}}}
     issue = item(env, "issue:iss-1")
@@ -165,6 +167,12 @@ def test_a_full_sync_renders_issues_projects_and_documents_with_team_acls(env, m
     assert item(env, "project:proj-2") is None            # another team's only
     assert "Deploy" in env.text("linear", item(env, "document:doc-1")["file_name"])
     assert item(env, "document:doc-2") is None
+    update = item(env, "update:upd-1")
+    assert update["title"] == "Handbook: update of 2026-10-08"
+    assert update["acl"]["teams"] == ["team-eng"]         # its project's picked team
+    text = env.text("linear", update["file_name"])
+    assert "Health: At risk" in text and "**legal review**" in text
+    assert item(env, "update:upd-2") is None              # another team's project
 
 
 def test_then_only_what_changed_since_the_watermark_and_archives_are_deleted(env,
@@ -183,9 +191,10 @@ def test_then_only_what_changed_since_the_watermark_and_archives_are_deleted(env
     issues = [c for c in rec.calls[before:] if "issues(" in c["json"]["query"]][0]
     assert issues["json"]["variables"]["filter"] == {
         "team": {"id": {"in": ["team-eng"]}}, "updatedAt": {"gt": "2026-10-10T09:58:00Z"}}
-    assert (summary["mode"], summary["upserted"], summary["deleted"]) == ("incremental", 2, 1)
+    assert (summary["mode"], summary["upserted"], summary["deleted"]) == ("incremental", 2, 2)
     assert "every 30 days" in env.text("linear", item(env, "issue:iss-1")["file_name"])
     assert item(env, "issue:iss-2") is None               # archived
+    assert item(env, "update:upd-1") is None              # archived
     assert "Test" in env.text("linear", item(env, "document:doc-1")["file_name"])
 
 
@@ -196,12 +205,12 @@ def test_a_reconcile_that_lists_nothing_is_held_for_an_admin(env, monkeypatch):
     sync.sync(env.ws, "linear")
     monkeypatch.setenv("CONNECTOR_MASS_DELETE_MIN", "2")
     empty = {"nodes": [], "pageInfo": {"hasNextPage": False}}
-    for name in ("issues", "projects", "documents"):
+    for name in ("issues", "projects", "documents", "projectUpdates"):
         gql(rec, {name: empty}, query=f"{name}(", repeat=True)
     summary = sync.sync(env.ws, "linear", full=True)
-    assert (summary["held_deletes"], summary["deleted"]) == (4, 0)
-    assert card(env)["held_deletes"] == 4
-    assert sync.sync(env.ws, "linear", full=True, confirm_deletes=True)["deleted"] == 4
+    assert (summary["held_deletes"], summary["deleted"]) == (5, 0)
+    assert card(env)["held_deletes"] == 5
+    assert sync.sync(env.ws, "linear", full=True, confirm_deletes=True)["deleted"] == 5
 
 
 def test_a_429_waits_for_retry_after_and_forbidden_is_typed(env, monkeypatch):

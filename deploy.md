@@ -498,8 +498,8 @@ articles and GitHub, which also refreshes captured permissions), to find deletio
   put its client id and secret in `LINEAR_CLIENT_ID` / `LINEAR_CLIENT_SECRET`.
   The sync asks for the `read` scope only, as the connecting user, so it sees
   what they see (a private team they aren't in never appears). Teams are picked
-  on the card; their issues (with comments), projects and documents sync as
-  Markdown. Access tokens last 24 hours; the refresh token rotates on every
+  on the card; their issues (with comments), projects, project updates and
+  documents sync as Markdown. Access tokens last 24 hours; the refresh token rotates on every
   refresh and is saved before it's used. Each item's acl is its team's members.
 - **Dropbox.** Create a *Scoped access* app with *Full Dropbox* access in the
   App Console (dropbox.com/developers/apps): scopes `account_info.read`,
@@ -598,8 +598,9 @@ by the provider (a tunnel on a laptop). Watch the API log for `Sync:` lines.
    shows *Syncing*, then a count of items. A private team you're **not** in is
    not in the picker.
 3. Ask about an issue's description and one of its comments: the answer cites
-   `ENG-123: …` linking to the issue. Ask about a project's content and a
-   document of one of its projects.
+   `ENG-123: …` linking to the issue. Ask about a project's content, its latest
+   project update (cited as `<project>: update of <date>`, with its health) and
+   a document of one of its projects.
 4. Edit an issue's description in Linear, *Sync now*: the history shows an
    incremental run with 1 upserted; the answer has the new text. Archive the
    issue and sync: 1 deleted.
