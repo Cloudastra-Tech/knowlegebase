@@ -666,8 +666,9 @@ app runs), the rest of `config/`, `docs/`, `data/` and the Chroma volume
 row counts. It needs only bash, tar and Docker on the host; the SQLite steps use
 the host's `python3`, or the app image's Python if there is none.
 
-**The encryption key is never in the archive.** `config/integrations.key` decrypts
-every workspace's OAuth tokens and SSO secrets in `app.db`; an archive holding both
+**The encryption key is never in the archive.** `config/integrations.key` (the KEK,
+see "The encryption key" below) opens every workspace's data keys, and through them
+its OAuth tokens and SSO secrets in `app.db`; an archive holding both
 would hand all of them to whoever gets a copy. The script copies the key to
 `KEY_BACKUP_DIR` (default `~/kb-integrations-key`, outside `BACKUP_DIR`, never
 synced off-site by it) and prints where it went. Also store the key once in the
@@ -731,6 +732,122 @@ docker compose up -d && curl -fsS http://localhost:8501/api/health/ready
 **Drill**: once a month, restore the latest off-site archive on another machine
 (or a throwaway folder), run the app against it and check `/api/health/ready`
 and a sign-in. A backup that was never restored is a hope, not a backup.
+
+## The encryption key (KEK) and each workspace's keys
+
+Secrets in `app.db` (integration tokens, SSO client secrets and SAML keys, the
+Slack app's secrets and bot token) are sealed with **envelope encryption**
+(`secret_box.py`):
+
+- **The server key (KEK)**: `INTEGRATIONS_KEY` (a Fernet key), or on a self-hosted
+  server `config/integrations.key`, made on first use. It only wraps the keys below.
+- **A data key per workspace** (`workspace_keys`), random, stored wrapped by the KEK.
+  Each secret is sealed under its own workspace's newest data key. Deleting a
+  workspace deletes its data keys: its secrets can never be opened again, from any
+  backup either (crypto-shredding).
+
+After the upgrade that brings this, the `secrets_reseal` job (queued at start)
+moves every existing secret under its workspace's data key; each one keeps working
+throughout, and the job can be stopped and run again. Data keys are rotated
+yearly by a job (`KEY_ROTATION_DAYS`, default 365; 0 turns it off); the old
+version is retired but still opens anything sealed under it.
+
+**Hosted mode** (`APP_ENV=production` and `HOSTED=1`, the multi-tenant service):
+the KEK must come from `INTEGRATIONS_KEY` (or a KMS, `KEK_PROVIDER=kms` with a
+client plugged into `secret_box.use_kek()`): no key file is made or read next to
+the database, and the server refuses to start without it.
+
+**Back the KEK up separately from the data.** Losing it loses every workspace's
+secrets (each provider and integration has to be set up again); keeping it with
+the database lets anyone with a copy of the backup read them. Keep it in the team
+password manager and in the secrets store the server reads it from, never in the
+backup archive (`scripts/backup.sh` keeps `config/integrations.key` apart, see
+above). To replace it:
+
+```bash
+# 1. both keys, the new one first: new secrets use it, both open
+INTEGRATIONS_KEY=<new>,<old>      # restart the app
+# 2. wrap every data key under the new one (and re-seal any old-format secret)
+venv/bin/python -c "from kb.services import keys; keys.schedule_rewrap()"
+# 3. once the secrets_rewrap job is done (the jobs table): drop the old key, restart
+INTEGRATIONS_KEY=<new>
+```
+
+## Workspace lifecycle, data requests and retention
+
+Admins have these under **Access > Data**:
+
+- **Export**: a ZIP of members (CSV), the audit log (JSON lines, exactly as hashed),
+  uploaded documents, chats still inside the chat retention, verified answers, and
+  the settings, never secrets (tokens, keys, client secrets, hashes). It's made by a
+  job under `EXPORT_DIR` (default `data/exports/<workspace>/`) and kept 24 hours.
+- **Delete the workspace**: typing its name schedules the purge 7 days later
+  (`WORKSPACE_DELETE_GRACE_DAYS`). Members are signed out at once and can't sign
+  in; admins can, only to export or cancel; the admins are emailed both ways. The
+  purge job then revokes each connector's tokens at the provider, uninstalls the
+  Slack app, revokes API keys and SCIM tokens, drops the search index collections,
+  deletes the documents and exports, destroys the workspace's data keys and deletes
+  every row of it. The operators' audit chain (`_platform`) keeps that it happened
+  (when, who asked, row counts), nothing else.
+- **Retention**: chats (30 / 90 days, a year, or until deleted), the question log
+  (its own settings, also on Insights) and the audit log: kept for good by default,
+  or 1, 2, 3 or 7 years. Old audit events are deleted from the start of the chain,
+  whose last deleted hash is kept (`audit_anchors`), so it still verifies.
+- **Cloudastra support**: the admin can let support in for 24 hours, 3 or 7 days.
+
+**Data requests (DSAR)**, under **Access > Members**, a member's menu:
+
+- **Download their data**: their member row, the questions they asked, their chats,
+  feedback, API keys, invites, and the audit events where they are the actor.
+- **Erase their data**: deletes their questions, chats, feedback, API keys, invites,
+  sessions, sign-in events and the member. Where their address names who made
+  something (a provider, an invite, a verified answer) it's replaced by a
+  pseudonym. **The audit log is not edited**: it's a hash chain, and keeps what
+  happened (a legal-obligation and legitimate-interest record). Their rows stay as
+  hashed, and every read, export and filter shows the pseudonym (and no IP or
+  browser) instead of them; the chain still verifies. `audit_pseudonyms` holds only
+  a hash of their address.
+
+### Subprocessors
+
+What a customer's data goes through, for a DPA or a security questionnaire:
+
+| Subprocessor | What it gets | Where | Notes |
+|---|---|---|---|
+| OpenAI (or Azure OpenAI) | Questions, the passages retrieved for them, documents when they are embedded or summarised | US (OpenAI); the chosen region (Azure) | API data isn't used for training; zero-data-retention or Azure in-region on request |
+| The hosting provider (the VPS) | Everything at rest: the database, documents, index, backups on the server | The server's region | Disk encryption; secrets additionally sealed per workspace |
+| The email provider (`MAIL_BACKEND`: SMTP relay, Resend or Postmark) | Recipients' addresses and the email's text: invites, removal and deletion notices | The provider's region | Only when email is turned on |
+| The off-site backup target (rclone / restic remote) | Encrypted backup archives (age); never the key | The bucket's region | Only when set up |
+| Sentry (`SENTRY_DSN`) | Error reports, scrubbed of request bodies | Sentry's region | Only when set up |
+| Slack, Google, Microsoft, Notion, Atlassian, Outline | What the workspace connects: its own data, fetched with its own tokens | The provider's | Chosen by the customer; revoked when disconnected or deleted |
+
+## The operator console
+
+Whoever runs the server for every workspace uses `/operator` (not a workspace's
+Access screen). Operators are kept apart from any workspace's members:
+
+```bash
+OPERATOR_EMAILS=ops@cloudastra.in,devarshi@cloudastra.in   # who may sign in there
+OPERATOR_SSO_PROVIDERS=google        # optional: which server-wide providers (default: all)
+OPERATOR_REQUIRE_MFA=on              # optional: the ID token's amr must show a second factor
+OPERATOR_SESSION_HOURS=4             # default 4
+```
+
+They sign in only through a server-wide single sign-on provider (`GOOGLE_CLIENT_ID`,
+...), never a password; enforce 2-step verification for them at the provider
+(Google Workspace / Entra ID) whether or not `OPERATOR_REQUIRE_MFA` is on. Removing
+an address from `OPERATOR_EMAILS` ends that operator's access at once.
+
+The console lists each workspace with its seats (members active in the last 30
+days), questions and model cost, last activity, connectors in error and index
+status, and can suspend or unsuspend it (everyone signed out; API keys, SCIM and
+Slack stop), re-run its index, reset its rate limits (this process's counters)
+and read its audit log. **Open as support** works only while the workspace's
+admin allows support: the operator then uses the workspace as an admin, for at
+most an hour at a time and never past the grant, can't delete it, export it,
+grant access or erase anyone, and every request they make is in its audit log
+with `actor_type=operator`. Every operator action is in the workspace's audit log
+and in the operators' own chain.
 
 ## Managing documents from the UI
 

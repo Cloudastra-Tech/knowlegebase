@@ -267,3 +267,20 @@ def test_readiness_checks_the_key_against_a_data_key(fresh, monkeypatch):
     monkeypatch.setenv("INTEGRATIONS_KEY", Fernet.generate_key().decode())
     with pytest.raises(health.NotReady):
         health.check_integrations_key(db.DB_PATH)
+
+
+def test_restore_checks_the_key_against_a_data_key(fresh, tmp_path):
+    """scripts/restore.sh's check-key: the key file opens the wrapped data keys."""
+    import importlib.util
+    import os
+    import integrations_store
+    spec = importlib.util.spec_from_file_location(
+        "sqlite_tool", os.path.join(os.path.dirname(__file__), "..", "scripts", "sqlite_tool.py"))
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    integrations_store.connect("acme", "notion", "Notion", {"t": "x"}, "admin")
+    right, wrong = tmp_path / "right.key", tmp_path / "wrong.key"
+    right.write_text(os.environ["INTEGRATIONS_KEY"])
+    wrong.write_text(Fernet.generate_key().decode())
+    assert tool.check_key(db.DB_PATH, str(right)) == 0
+    assert tool.check_key(db.DB_PATH, str(wrong)) == 1

@@ -161,6 +161,24 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PUT    /admin/slack/settings  {unknown_users, auto_answer, auto_answer_channels} (admin)
     POST   /slack/events | /slack/commands | /slack/interactions   (Slack's signature, not a
                                   session; /slack/apps/{app_key}/...: a customer's own app)
+  workspace.py  (the workspace's own admins; support opened as admin can't do the starred)
+    GET    /admin/workspace       its state, exports, support access, audit retention   (admin)
+    POST   /admin/workspace/export          * a ZIP, made by a job, kept 24 h             (admin)
+    GET    /admin/workspace/exports/{id}/download *                                      (admin)
+    DELETE /admin/workspace       * {confirm: its name}: purged after a grace period    (admin)
+    POST   /admin/workspace/cancel-deletion                                              (admin)
+    PUT    /admin/workspace/support-access * {hours}: let Cloudastra support in      (admin)
+    DELETE /admin/workspace/support-access   end it now                              (admin)
+    PUT    /admin/workspace/audit-retention * {days: 365.. | null}                     (admin)
+  dsar.py      (data requests about one member; not support)
+    GET    /admin/members/{username}/export  everything held about them, as JSON      (admin)
+    POST   /admin/members/{username}/erase   {confirm: their username}                (admin)
+  operator.py  (the platform operators, kb/operators.py: their own SSO sign-in and session)
+    GET    /operator/providers | /sso/{provider}/start | /callback   POST /operator/auth/exchange
+    GET    /operator/workspaces   every workspace: seats, usage, activity, connectors, index
+    POST   /operator/workspaces/{ws}/suspend | /unsuspend | /reindex | /reset-rate-limits
+    POST   /operator/workspaces/{ws}/support-session   open it as support (if its admin allows)
+    GET    /operator/workspaces/{ws}/audit | /operator/audit
 And /mcp (kb/mcp_server.py, outside /api): the MCP server, with personal API keys.
 
 Chat, uploads, re-index and sync now are rate-limited per person and per workspace
