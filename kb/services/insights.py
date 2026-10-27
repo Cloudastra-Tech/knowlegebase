@@ -71,6 +71,13 @@ BEDROCK_PRICES = {
     "amazon.titan-embed-text-v2:0": (0.02, 0.0),
     "cohere.embed-english-v3": (0.10, 0.0), "cohere.embed-multilingual-v3": (0.10, 0.0)}
 _GEO = re.compile(r"^(us|eu|apac|ca|au|jp|in|us-gov)\.")
+# Anthropic's API, USD per million tokens (in, out), list prices (October 2026). A
+# Claude model that isn't here has an UNKNOWN cost, as on Bedrock.
+ANTHROPIC_PRICES = {
+    "claude-haiku-5-5": (0.10, 0.50), "claude-haiku-4-5": (1.00, 5.00),
+    "claude-sonnet-5-5": (2.00, 10.00), "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-4-6": (3.00, 15.00), "claude-opus-5-5": (4.00, 20.00),
+    "claude-opus-5": (5.00, 25.00), "claude-opus-4-8": (5.00, 25.00)}
 UPLOADED = "Company documents"          # how agent.py cites an uploaded file
 
 NEVER_CITED_DAYS = env_int("INSIGHTS_NEVER_CITED_DAYS", 30)
@@ -162,7 +169,10 @@ def is_bedrock(model):
 
 def price_of(model):
     """(in, out) USD per million tokens, or None when it's an unknown Bedrock model.
-    An unknown OpenAI model is priced as gpt-4o-mini, as before."""
+    An unknown OpenAI model is priced as gpt-4o-mini, as before; an unknown Claude
+    model (Anthropic's API) is unknown."""
+    if (model or "").startswith("claude-"):
+        return ANTHROPIC_PRICES.get(model)
     if not is_bedrock(model):
         return PRICES.get(model or "", DEFAULT_PRICE)
     m = model.rsplit("/", 1)[-1]                   # an inference profile's ARN: its id

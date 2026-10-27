@@ -324,9 +324,15 @@ def main(argv=None):
                              "exit 1 if anything is exfiltrated")
     args = parser.parse_args(argv)
 
-    key = os.getenv("OPENAI_API_KEY") or ""
-    if not key or key.startswith("sk-test"):
-        sys.exit("evaluate.py calls OpenAI: set a real OPENAI_API_KEY (e.g. in .env).")
+    # The answers come from the server's providers (models.py: CHAT_PROVIDER,
+    # EMBED_PROVIDER, ...); the judge is OpenAI's (JUDGE_MODEL), the red team has none.
+    import models
+    needs = {models.REGISTRY[p].api_key_env for p in models.server_providers()}
+    needs |= set() if args.redteam else {"OPENAI_API_KEY"}
+    for name in sorted(n for n in needs if n):
+        key = os.getenv(name) or ""
+        if not key or key.startswith("sk-test"):
+            sys.exit(f"evaluate.py calls the models for real: set a real {name} (e.g. in .env).")
 
     if args.redteam:
         from eval import redteam
@@ -345,7 +351,6 @@ def main(argv=None):
 
     import faithfulness
     import ingest
-    import models
     import rag
     from agent import build_agent
 
@@ -391,8 +396,11 @@ def main(argv=None):
             "settings": {**{name: repr(getattr(rag, name, None))
                             for name in ("USE_HYDE", "MULTI_QUERY", "RERANKER",
                                          "RECENCY_BOOST")},
-                         "index": ingest.FINGERPRINT, "answer_model": models.answer_model(),
-                         "fast_model": models.fast_model(),
+                         "index": ingest.FINGERPRINT,
+                         "chat_provider": models.current().provider,
+                         "embed_provider": models.current().embed_provider,
+                         "answer_model": models.current().answer_name,
+                         "fast_model": models.current().fast_name,
                          "faithfulness": faithfulness.mode()},
         },
         "summary": summary,

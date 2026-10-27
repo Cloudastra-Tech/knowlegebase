@@ -1752,6 +1752,7 @@ offers:
 |---|---|---|---|---|---|
 | `openai` (default) | yes | yes | yes (`ATTACHMENT_VISION_MODEL`) | automatic | `OPENAI_API_KEY` |
 | `bedrock` | yes | yes | yes (the chat model) | `cachePoint` marker | the AWS credentials below |
+| `anthropic` | yes | **no** | yes (the chat model) | `cache_control` marker | `ANTHROPIC_API_KEY` |
 
 The server's providers, in `.env`:
 
@@ -1772,6 +1773,59 @@ workspace's key, never returned (only `api_keys_saved`) and never in the audit l
 provider chosen there must have the workspace's own key, never the server's. Keys of
 providers the workspace stops using are deleted. Only an embeddings change (provider,
 model or size) rebuilds the index; moving only the chat provider doesn't.
+
+## Anthropic
+
+Claude can write the answers and do the small jobs through Anthropic's own API
+(`langchain-anthropic` `ChatAnthropic`; streaming, tool calls, images, prompt caching).
+Claude has **no embeddings**, so the index needs another provider:
+
+```bash
+CHAT_PROVIDER=anthropic
+EMBED_PROVIDER=openai          # or bedrock (with AWS_REGION and the BEDROCK_EMBED_* below)
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...          # for the embeddings only
+```
+
+`MODEL_PROVIDER=anthropic` alone is refused (every model call fails, naming
+`EMBED_PROVIDER`): the server never sends documents to OpenAI unless told to. A
+workspace can instead choose Claude on **Assistant → Models** with its own Anthropic
+key (`chat_provider: anthropic`, `api_keys: {"anthropic": ...}`), keeping the
+server's embeddings, so its index isn't rebuilt.
+
+| Job | Setting | Default | Notes |
+|---|---|---|---|
+| Chat | `ANTHROPIC_CHAT_MODEL` | `claude-sonnet-5-5` | Claude Sonnet 5.5: $2 / $10 per million tokens in / out |
+| Fast | `ANTHROPIC_FAST_MODEL` | `claude-haiku-5-5` | Claude Haiku 5.5: $0.10 / $0.50. The guards' classifiers run on it: run the eval gate before relying on it (below) |
+| Fast effort | `ANTHROPIC_FAST_EFFORT` | the model's (`medium` on Haiku 5.5) | `low` makes the small jobs quicker; leave it empty for models without effort (Haiku 4.5) |
+| Prompt cache | `ANTHROPIC_PROMPT_CACHE` | `on` | A `cache_control` breakpoint after the agent's rules: the tool list renders before them, so one breakpoint caches both. Prefixes under the model's minimum (512 tokens on the 5.5 models, 4,096 on Haiku 4.5) aren't cached; cache reads are logged as `tokens_cached` |
+
+How it behaves:
+
+- **No temperature.** Current Claude models refuse sampling settings other than their own,
+  so the `temperature=0` the pipeline asks for isn't sent.
+- **Thinking stays on** (the models' adaptive default) and counts toward `max_tokens`, so
+  a call asking for fewer than 1,024 tokens (a label, a one-word classifier) is given
+  1,024. Thinking blocks are handed back to Claude inside the agent's tool loop, as the
+  API requires; the rest of the app sees plain text.
+- **Fails closed.** No key (neither the workspace's nor `ANTHROPIC_API_KEY`) fails every
+  model call with the reason. An API error reaches the chat as its class
+  (`AnthropicAuthenticationError`, `AnthropicRateLimitError`, `AnthropicOverloadedError`,
+  ...), a 502 on `POST /api/chat`; Test connection shows Anthropic's type and message,
+  with any key blanked out. Nothing falls back to another provider.
+- **Cost.** Insights prices Claude models from `ANTHROPIC_PRICES` (`kb/services/insights.py`,
+  list prices, October 2026); a Claude model that isn't listed has an unknown cost.
+
+**Before recommending it for production**, run the gate with a real key, since the
+guards' classifiers run on the FAST model:
+
+```bash
+CHAT_PROVIDER=anthropic EMBED_PROVIDER=openai python -m eval.harness --gate
+CHAT_PROVIDER=anthropic EMBED_PROVIDER=openai python evaluate.py --redteam
+```
+
+(`eval.harness` scores retrieval with offline embeddings and calls no chat model; the
+red team runs the agent and its guards on Claude.)
 
 ## AWS Bedrock
 
