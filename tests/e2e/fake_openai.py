@@ -94,6 +94,18 @@ def reply_for(body):
         return first.rsplit("Last question: ", 1)[1].split("\n\n", 1)[0]
     if first.startswith("Write a short, factual"):
         return "A guess."
+    # Digests and drafts (kb/services/summaries.py).
+    if first.startswith("You summarise one"):
+        title = re.search(r'title="([^"]*)"', first)
+        return f"A short summary of {title.group(1) if title else 'the document'}."
+    if first.startswith("You write an overview"):
+        refs = sorted(set(re.findall(r'ref="(\d+)"', first)), key=int)
+        cites = "".join(f"[{n}]" for n in refs[:3])
+        return ("Overview of the collection\nThese documents set out the company's policies "
+                f"{cites}.\n" + "\n".join(f"- Point from document {n} [{n}]." for n in refs))
+    if first.startswith("You draft a new"):
+        return ("Draft answer\nWhat the passages say [1].\n"
+                "TO CONFIRM: who owns this policy.")
     return "ok"
 
 
@@ -122,3 +134,11 @@ async def chat(req: Request):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+# A webhook receiver (kb/services/webhooks.py), for trying webhooks against this
+# server by hand: CONNECTOR_ALLOW_PRIVATE_HOSTS=127.0.0.1:<this port>.
+@app.post("/webhook-receiver")
+async def webhook_receiver(req: Request):
+    await req.body()
+    return {"ok": True}

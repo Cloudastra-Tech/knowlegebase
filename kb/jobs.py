@@ -438,8 +438,9 @@ def _wake_all():
 
 def load_handlers():
     """Import the modules that register handlers."""
-    from kb.services import (indexing, insights, keys, lifecycle, retention,  # noqa: F401
-                             saml_refresh, scim, slack, sync, verified)
+    from kb.services import (digests, drafts, indexing, insights, keys,  # noqa: F401
+                             lifecycle, retention, saml_refresh, scim, slack, sync, verified,
+                             webhooks)
 
 
 def kinds_here():

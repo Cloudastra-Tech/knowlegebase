@@ -229,6 +229,15 @@ def check_open(workspace, email):
         raise NotAllowed("workspace_closed")
 
 
+def _added(member, via):
+    """A member this sign-in just added (their row was made by it): the
+    member.added webhook (kb/services/webhooks.py)."""
+    if member.get("created_at") is not None and member["created_at"] == member.get(
+            "last_login_at"):
+        from kb.services import webhooks
+        webhooks.member_added(member["workspace"], member["username"], member["role"], via)
+
+
 def user_for(provider, claims):
     """The session user for someone the provider just signed in. Adds them as a
     member the first time."""
@@ -239,6 +248,7 @@ def user_for(provider, claims):
     member = members_store.record_sso_login(email, name, workspace) if workspace else None
     if not member:
         raise NotAllowed("not_allowed")
+    _added(member, provider)
     if member["disabled"]:
         raise NotAllowed("disabled")
     return {"username": email, "name": name, "provider": provider, "org": org,
@@ -335,6 +345,7 @@ def user_for_connection(conn, claims):
                                             source=conn["id"])
     if not member:
         raise NotAllowed("not_allowed")
+    _added(member, conn["protocol"])
     members_store.record_connection_login(conn["id"])
     return {"username": email, "name": name, "provider": conn["protocol"], "connection": conn["id"],
             "org": None, "workspace": conn["workspace"], "role": member["role"]}

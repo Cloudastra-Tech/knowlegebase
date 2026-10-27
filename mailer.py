@@ -80,6 +80,15 @@ TEMPLATES = {
         '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
         'background:#18181b;color:#fafafa;text-decoration:none">Review it</a></p>',
     ),
+    "digest": (
+        "{title}",
+        "{intro}\n\n{body}\n\nManage your digests: {manage_link}\n"
+        "Unsubscribe from this digest: {unsubscribe_link}\n",
+        "<p><strong>{title}</strong></p><p>{intro}</p>"
+        '<div style="white-space:pre-line">{body}</div>'
+        '<p style="color:#71717a;font-size:13px"><a href="{manage_link}">Manage your digests'
+        '</a> &middot; <a href="{unsubscribe_link}">Unsubscribe from this digest</a></p>',
+    ),
     "notice": (
         "{title}",
         "{body}\n",

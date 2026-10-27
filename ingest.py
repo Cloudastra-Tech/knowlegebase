@@ -124,13 +124,19 @@ def _store(collection):
                       collection_name=collection or "langchain")
 
 
+# Folders at the top of a docs folder that are never indexed: drafts the assistant
+# wrote wait there for review (drafts_store.py) until they're published.
+NOT_INDEXED = ("drafts",)
+
+
 def doc_files(docs_folder):
     """Every document under docs_folder, as its key: the path inside it, with /
     ('public/handbook.txt', 'connectors/notion/page1.txt'). Hidden files and
-    folders are left out."""
+    folders, and the NOT_INDEXED folders, are left out."""
     keys = []
     for root, dirs, files in os.walk(docs_folder):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        dirs[:] = [d for d in dirs if not d.startswith(".")
+                   and not (root == docs_folder and d in NOT_INDEXED)]
         for name in files:
             if name.endswith(EXTENSIONS) and not name.startswith("."):
                 rel = os.path.relpath(os.path.join(root, name), docs_folder)

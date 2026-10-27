@@ -30,7 +30,7 @@ from langchain_core.tracers.context import register_configure_hook
 
 import question_log_store as store
 from agent import Cancelled
-from kb.services import agents, conversations
+from kb.services import agents, conversations, webhooks
 from safety import redact_pii
 
 log = logging.getLogger("uvicorn.error")
@@ -155,12 +155,15 @@ def _tools(trace):
 
 def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(), sources=(),
            max_access="restricted", latency_ms=None, usage=None, message_id=None):
-    """Write one row. Never raises: a question is never failed by its log."""
+    """Write one row. Never raises: a question is never failed by its log. A
+    question the documents couldn't answer is also a question.unanswered webhook,
+    with its text only as the log keeps it (none in metadata mode)."""
     try:
         mode = store.settings(ws)["mode"]
-        return store.add(
+        kept = text_for(mode, question, QUESTION_CHARS)
+        row_id = store.add(
             ws, user["username"] if isinstance(user, dict) else user, surface, outcome,
-            text_mode=mode, question=text_for(mode, question, QUESTION_CHARS),
+            text_mode=mode, question=kept,
             answer=text_for(mode, answer, ANSWER_CHARS), message_id=message_id, role=role,
             block_reason=block_reason(answer) if outcome == "blocked" else None,
             sources=[] if outcome == "blocked" else _sources(sources), tools=_tools(trace),
@@ -169,6 +172,9 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
             tokens_out=usage.tokens_out if usage else None,
             tokens_cached=usage.tokens_cached if usage else None,
             model=usage.model if usage else None)
+        if outcome == "not_found":
+            webhooks.question_unanswered(ws, row_id, surface, kept)
+        return row_id
     except Exception:
         log.exception("Question log: couldn't log a question in workspace %s", ws)
         return None

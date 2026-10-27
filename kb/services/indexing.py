@@ -33,7 +33,7 @@ import integrations_store
 import sync_store
 import workspaces
 from kb import jobs
-from kb.services import assistant
+from kb.services import assistant, webhooks
 
 log = logging.getLogger("uvicorn.error")
 
@@ -147,11 +147,24 @@ def schedule_retag(ws, provider):
 @jobs.handler("index", max_attempts=3, merge=_merge)
 def run_index(job):
     try:
-        return index(job.workspace, full=job.payload.get("full"), docs=job.payload.get("docs"),
-                     progress=job.progress)
+        result = index(job.workspace, full=job.payload.get("full"),
+                       docs=job.payload.get("docs"), progress=job.progress)
     except Exception as e:        # kept as the job's error: the UI shows it
         log.exception("Index: re-indexing workspace %s failed", job.workspace)
         raise jobs.Retry(f"{type(e).__name__}: {e}")
+    _tell_webhooks(job.workspace, job.payload.get("docs"), result)
+    return result
+
+
+def _tell_webhooks(ws, docs, result):
+    """document.indexed (kb/services/webhooks.py): which documents, and counts only."""
+    counts = {k: result[k] for k in ("added", "changed", "removed", "embedded", "chunks")
+              if isinstance(result.get(k), int)}
+    if docs is not None and not docs:
+        return
+    webhooks.emit(ws, "document.indexed", {"mode": result.get("mode"),
+                                           "documents": None if docs is None else docs[:200],
+                                           "counts": counts})
 
 
 def index(ws, full=False, docs=None, progress=None):

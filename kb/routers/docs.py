@@ -1,5 +1,6 @@
 """Documents (HR / Admin): the workspace's uploaded files (docs_store.py). Every
-change queues a re-index of the documents it touched."""
+change queues a re-index of the documents it touched, and goes in the change feed
+digests are made from (kb/services/digests.py)."""
 
 import os
 
@@ -12,7 +13,7 @@ import workspaces
 from kb.audit import audited
 from kb.deps import require_hr, ws_of
 from kb.rate_limit import user_limit
-from kb.services import indexing
+from kb.services import digests, indexing
 from kb.settings import UPLOAD_MAX_FILE_MB, UPLOAD_MAX_REQUEST_MB, env_int
 
 router = APIRouter()
@@ -79,6 +80,7 @@ def create_doc(body: NewDocIn, user=Depends(require_hr), audit=audited("doc.crea
     docs_store.save(body.access, name, body.content.encode("utf-8"), root)
     audit.record("doc", f"{body.access}/{name}", {"size": len(body.content.encode("utf-8"))},
                  user=user)
+    digests.record(ws, f"{body.access}/{name}", "added", actor=user["username"])
     indexing.schedule_index(ws, docs=[f"{body.access}/{name}"])
     return {"access": body.access, "name": name}
 
@@ -93,6 +95,7 @@ def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr),
     docs_store.save(access, name, body.content.encode("utf-8"), workspaces.docs_root(ws))
     audit.record("doc", f"{access}/{name}", {"size": len(body.content.encode("utf-8"))},
                  user=user)
+    digests.record(ws, f"{access}/{name}", "modified", actor=user["username"])
     indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
@@ -102,6 +105,7 @@ def delete_doc(access: str, name: str, user=Depends(require_hr), audit=audited("
     ws = ws_of(user)
     os.remove(_existing_path(ws, access, name))
     audit.record("doc", f"{access}/{name}", user=user)
+    digests.record(ws, f"{access}/{name}", "removed", actor=user["username"])
     indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
@@ -142,8 +146,12 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
     if not picked:
         raise HTTPException(400, "Please choose at least one text, PDF, Word, PowerPoint, "
                                  "Excel, Markdown or HTML file.")
+    root = workspaces.docs_root(ws)
     for name, f in picked:
-        docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
+        existed = os.path.exists(docs_store.doc_path(access, name, root))
+        docs_store.save_file(access, name, f.file, root)
+        digests.record(ws, f"{access}/{name}", "modified" if existed else "added",
+                       actor=user["username"])
     audit.record("doc", access, {"files": [name for name, _ in picked]}, user=user)
     indexing.schedule_index(ws, docs=[f"{access}/{name}" for name, _ in picked])
     return {"saved": [name for name, _ in picked]}

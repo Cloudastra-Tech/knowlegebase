@@ -173,6 +173,29 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
   dsar.py      (data requests about one member; not support)
     GET    /admin/members/{username}/export  everything held about them, as JSON      (admin)
     POST   /admin/members/{username}/erase   {confirm: their username}                (admin)
+  digests.py   (everyone's own; the unsubscribe link needs no sign-in, its token is the proof)
+    GET    /digests               my digests, the sources I may follow, the channels on offer
+    POST   /digests               {frequency: daily|weekly, channel: email|slack, sources, folders}
+    PATCH  /digests/{id}          any of those, or {enabled}
+    DELETE /digests/{id}          unsubscribe
+    POST   /digests/{id}/send     send it now (the changes since the last one)
+    POST   /digests/unsubscribe | /digests/resubscribe   {token}: the email's one-click link
+  drafts.py    (HR / Admin: written by the assistant, never indexed until published)
+    GET    /drafts                drafts and what each was written from
+    GET    /drafts/{id}           one, with its text
+    POST   /drafts/summarise      {provider, folder?}: summarise a source or a folder
+    POST   /drafts/from-gap       {gap_id}: draft a doc for a content gap
+    PATCH  /drafts/{id}           {title, content}
+    POST   /drafts/{id}/publish   {access, name}: no lower than its sources' access; indexed
+    DELETE /drafts/{id}
+  webhooks.py  (admins)
+    GET    /admin/webhooks        the workspace's webhooks and the events on offer
+    POST   /admin/webhooks        {url, events, description} -> the secret, shown once
+    PATCH  /admin/webhooks/{id}   {url, events, description, enabled}
+    DELETE /admin/webhooks/{id}
+    POST   /admin/webhooks/{id}/test           send a webhook.test event now
+    GET    /admin/webhooks/{id}/deliveries     what was sent, and how it went
+    GET    /admin/webhooks/deliveries/{id}     one delivery with its body
   operator.py  (the platform operators, kb/operators.py: their own SSO sign-in and session)
     GET    /operator/providers | /sso/{provider}/start | /callback   POST /operator/auth/exchange
     GET    /operator/workspaces   every workspace: seats, usage, activity, connectors, index
