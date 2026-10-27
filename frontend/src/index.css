@@ -293,8 +293,12 @@
         --enter-scale: 1;
         --press-scale: 1;
     }
+    /* The primitives carry these behind a variant (data-open:animate-in), so the class
+       is spelled with a prefix: match it anywhere in the class list. */
     .animate-in,
-    .animate-out {
+    .animate-out,
+    [class*="animate-in"],
+    [class*="animate-out"] {
         --tw-enter-translate-x: 0 !important;
         --tw-enter-translate-y: 0 !important;
         --tw-enter-scale: 1 !important;

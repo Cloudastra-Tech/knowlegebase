@@ -1,0 +1,93 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { describe, expect, it, vi } from "vitest"
+
+import { Command, CommandDialog, CommandInput, CommandList } from "@/components/ui/command"
+import { Sidebar, SidebarProvider } from "@/components/ui/sidebar"
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+
+// The Signal Glass primitives (DESIGN.md, "Motion" and "Components"): what they promise
+// beyond the stock shadcn ones.
+
+describe("the command palette", () => {
+  it("opens and closes without animating, neither the dialog nor its overlay", () => {
+    render(
+      <CommandDialog open title="Search and go" description="Search your chats.">
+        <Command>
+          <CommandInput aria-label="Search" />
+          <CommandList />
+        </Command>
+      </CommandDialog>,
+    )
+    expect(screen.getByRole("dialog", { name: "Search and go" })).toBeInTheDocument()
+    for (const slot of ["dialog-content", "dialog-overlay"]) {
+      const el = document.querySelector(`[data-slot="${slot}"]`)
+      expect(el).not.toBeNull()
+      expect(el!.className).not.toMatch(/animate-in|animate-out/)
+    }
+  })
+})
+
+describe("the sidebar", () => {
+  it("toggles from the keyboard (⌘B) instantly, without the slide", () => {
+    render(
+      <SidebarProvider>
+        <Sidebar aria-label="Chat history" />
+      </SidebarProvider>,
+    )
+    const sidebar = document.querySelector('[data-slot="sidebar"]')!
+    expect(sidebar).toHaveAttribute("data-state", "expanded")
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true })
+    expect(sidebar).toHaveAttribute("data-state", "collapsed")
+    expect(document.documentElement).toHaveAttribute("data-instant")
+  })
+})
+
+describe("the glass tab rail", () => {
+  it("moves its thumb under the active tab, and the thumb isn't a tab", async () => {
+    // jsdom has no layout: the second tab sits 80px in, 60px wide.
+    vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === "Members" ? 80 : 0
+    })
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === "Members" ? 60 : 72
+    })
+    render(
+      <Tabs defaultValue="sign-in" panels={false}>
+        <TabsList variant="glass" aria-label="Access">
+          <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
+          <TabsTrigger value="members">Members</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    )
+    const list = screen.getByRole("tablist", { name: "Access" })
+    expect(screen.getAllByRole("tab")).toHaveLength(2)
+    expect(list.querySelector('[data-slot="tabs-thumb"]')).toHaveAttribute("aria-hidden", "true")
+    expect(list.style.getPropertyValue("--thumb-x")).toBe("0px")
+    expect(list.style.getPropertyValue("--thumb-w")).toBe("72px")
+
+    await userEvent.click(screen.getByRole("tab", { name: "Members" }))
+    await waitFor(() => expect(list.style.getPropertyValue("--thumb-x")).toBe("80px"))
+    expect(list.style.getPropertyValue("--thumb-w")).toBe("60px")
+  })
+})
+
+describe("a table cell", () => {
+  it("sets IDs and timestamps in mono when asked, without passing the prop to the DOM", () => {
+    render(
+      <Table>
+        <TableBody>
+          <TableRow>
+            <TableCell mono>kbscim_1a2b</TableCell>
+            <TableCell>Ada</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    )
+    const [id, name] = screen.getAllByRole("cell")
+    expect(id).toHaveAttribute("data-mono", "true")
+    expect(id).not.toHaveAttribute("mono")
+    expect(name).not.toHaveAttribute("data-mono")
+  })
+})
