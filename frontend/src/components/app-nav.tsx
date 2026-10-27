@@ -74,6 +74,7 @@ export function AppNav({ items, current }: { items: NavItem[]; current: string |
     )
   }
   const here = items.findIndex(open)
+  const hereLabel = here >= 0 ? items[here].label : "Menu"
   const overflow = items.slice(2)
   // More is needed up to lg with five screens or fewer, up to xl with more.
   const moreUntil = items.length <= 5 ? "lg:hidden" : "xl:hidden"
@@ -81,9 +82,13 @@ export function AppNav({ items, current }: { items: NavItem[]; current: string |
     <nav aria-label="Screens" className="flex h-full min-w-0 items-center gap-5 sm:gap-6">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="-ml-2 gap-1 px-2 font-normal sm:hidden">
-            {here >= 0 ? items[here].label : "Menu"}
-            <span className="sr-only">: switch screen</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`${hereLabel}, switch screen`}
+            className="-ml-2 gap-1 px-2 font-normal sm:hidden"
+          >
+            {hereLabel}
             <ChevronDown className="size-3.5 opacity-60" />
           </Button>
         </DropdownMenuTrigger>

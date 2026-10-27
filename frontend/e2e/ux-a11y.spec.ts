@@ -26,6 +26,7 @@ const SCREENS = [
   ["spaces", "/spaces"],
   ["prompts", "/prompts"],
   ["api-keys", "/api-keys"],
+  ["connections", "/connections"],
 ] as const
 
 async function serious(page: Page) {
@@ -84,7 +85,7 @@ test("an answer, and the phone menus, have no serious accessibility problems", a
   await page.evaluate("localStorage.clear()")
   await signIn(page, ADMIN)
   // The header's screens are one menu on a phone, named after the open screen.
-  await page.getByRole("button", { name: "Chat: switch screen" }).click()
+  await page.getByRole("button", { name: "Chat, switch screen" }).click()
   await page.getByRole("menuitem", { name: "Access" }).click()
   await expect(page).toHaveURL(/\/admin\/sign-in/)
   // The Access tabs are a picker.

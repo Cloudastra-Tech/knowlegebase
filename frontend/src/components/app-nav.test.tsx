@@ -30,7 +30,7 @@ function renderNav(items: NavItem[], current?: string) {
 describe("AppNav", () => {
   it("offers every screen in the phone menu, labelled with the open one", async () => {
     const nav = renderNav(ADMIN, "/admin/insights")
-    const menu = within(nav).getByRole("button", { name: /Insights: switch screen/ })
+    const menu = within(nav).getByRole("button", { name: "Insights, switch screen" })
     await userEvent.setup().click(menu)
     const items = screen.getAllByRole("menuitem").map((i) => i.textContent)
     expect(items).toEqual(ADMIN.map((i) => i.label))
