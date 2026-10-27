@@ -3,7 +3,9 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  // The theme on screen (main.tsx's ThemeProvider); outside one (the extension), the OS's.
+  const { forcedTheme, resolvedTheme } = useTheme()
+  const theme = forcedTheme ?? resolvedTheme ?? "system"
 
   return (
     <Sonner

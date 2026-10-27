@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 
-import { measureCell, runLoop } from "@/lib/ascii-loop"
+import { measureCell, runLoop, whenFontsReady } from "@/lib/ascii-loop"
 import { cn } from "@/lib/utils"
 
 // Moving ASCII art for the landing page: a rotating brain over a flowing field of
@@ -252,7 +252,15 @@ export function AsciiBrain({ className, framing = "hero" }: { className?: string
       loop.redraw()
     })
     ro.observe(el)
+    // Measured before Geist Mono arrived, the grid is the fallback font's: again once it has.
+    let live = true
+    whenFontsReady(inkPre).then(() => {
+      if (!live) return
+      resize()
+      loop.redraw()
+    })
     return () => {
+      live = false
       loop.stop()
       ro.disconnect()
       window.removeEventListener("pointermove", onMove)
@@ -296,7 +304,14 @@ export function AsciiField({ className }: { className?: string }) {
       loop.redraw()
     })
     ro.observe(el)
+    let live = true
+    whenFontsReady(out).then((measured) => {
+      if (!live) return
+      cell = measured
+      loop.redraw()
+    })
     return () => {
+      live = false
       loop.stop()
       ro.disconnect()
     }

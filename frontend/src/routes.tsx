@@ -65,6 +65,7 @@ import {
 //   /join-requested    a sign-in that asked to join (the workspace asks its admins first)
 //   /claim             claim a workspace nobody can administer (?error=... after a failed one)
 //   /operator          the platform operators' console (their own sign-in, not a member's)
+//   /__kit             the design system's kit (development only)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
   {
@@ -75,6 +76,15 @@ export const routes: RouteObject[] = [
       { path: "sso-test", Component: SsoTestDone },
       // Operators sign in apart from any workspace (kb/operators.py).
       { path: "operator", Component: OperatorScreen },
+      // The design system's kit (DESIGN.md), in development only: not in a build.
+      ...(import.meta.env.DEV
+        ? [
+            {
+              path: "__kit",
+              lazy: async () => ({ Component: (await import("@/components/ascii/kit-gallery")).KitGallery }),
+            },
+          ]
+        : []),
       {
         Component: AuthRoot,
         children: [
