@@ -105,7 +105,7 @@ export function Composer({
         onDragOver={(e) => onFiles && e.preventDefault()}
         onDrop={onDrop}
         className={cn(
-          "cursor-text rounded-3xl border border-border/70 bg-background py-2 pr-2 shadow-[0_2px_20px_-6px_rgba(0,0,0,0.12)] transition-all focus-within:border-foreground/25 focus-within:shadow-[0_4px_28px_-8px_rgba(0,0,0,0.2)]",
+          "cursor-text rounded-3xl border border-border/70 bg-background py-2 pr-2 shadow-[0_2px_20px_-6px_rgba(0,0,0,0.12)] transition-[border-color,box-shadow] duration-(--dur-hover) ease-hover focus-within:border-foreground/25 focus-within:shadow-[0_4px_28px_-8px_rgba(0,0,0,0.2)]",
           leading ? "pl-2" : "pl-5",
           over && "border-destructive/60 focus-within:border-destructive/60",
         )}

@@ -22,6 +22,8 @@ const badgeVariants = cva(
         mono: "border-border font-mono font-normal text-muted-foreground",
         // The signal: live, cited, done. A faint tint, lighter on Paper to keep 4.5:1.
         signal: "bg-signal/8 text-signal dark:bg-signal/12",
+        // Something to look at (a flag on a row): warning text on a warning hairline.
+        warning: "border-warning/40 font-mono font-normal text-warning",
       },
     },
     defaultVariants: {

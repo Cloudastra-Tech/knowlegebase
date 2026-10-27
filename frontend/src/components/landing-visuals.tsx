@@ -16,6 +16,8 @@ import {
   type SimpleIcon,
 } from "simple-icons"
 
+import "@/components/ascii/ascii.css"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { reducedMotion, subscribe } from "@/lib/ascii-loop"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
@@ -386,7 +388,7 @@ function ChatRun({ scene, playing, onDone }: { scene: DemoScene; playing: boolea
           </div>
           <div className="self-end rounded-2xl rounded-br-md bg-foreground px-4 py-2.5 text-sm text-background">
             {scene.question.slice(0, typed)}
-            {phase === "typing" && <span className="ml-0.5 animate-pulse">▌</span>}
+            {phase === "typing" && <span aria-hidden className="ascii-blink ml-0.5">▌</span>}
           </div>
           <div className="flex gap-3">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-signal/15 text-signal">
@@ -396,13 +398,13 @@ function ChatRun({ scene, playing, onDone }: { scene: DemoScene; playing: boolea
               {phase === "typing" && <span className="text-muted-foreground">…</span>}
               {phase === "reading" && (
                 <span className="flex items-center gap-2 text-muted-foreground">
-                  <Search className="size-3.5 animate-pulse" /> Reading {scene.docs.length} sources…
+                  <AsciiSpinner size="xs" label="" /> Reading {scene.docs.length} sources…
                 </span>
               )}
               {(phase === "answering" || cited) && (
                 <p>
                   {answerWords.slice(0, words).join(" ")}
-                  {phase === "answering" && <span className="ml-0.5 animate-pulse">▌</span>}
+                  {phase === "answering" && <span aria-hidden className="ascii-blink ml-0.5">▌</span>}
                 </p>
               )}
               <AnimatePresence>

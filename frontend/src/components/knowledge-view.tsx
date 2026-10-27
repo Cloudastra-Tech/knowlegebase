@@ -65,6 +65,20 @@ function WhoCanSee({ item }: { item: KnowledgeItem }) {
   )
 }
 
+// HR / Admin: the ingest scan found text written to an AI in this item (planted
+// instructions). It stays searchable, since answers treat every passage as data; the
+// flag is so someone looks at the source. The words are for screen readers and the
+// pointer's tooltip; the row shows a mono "!".
+function InjectionBadge({ chunks }: { chunks: number }) {
+  const label = `Instructions to an AI found in ${chunks} chunk${chunks === 1 ? "" : "s"}`
+  return (
+    <Badge variant="warning" title={label} className="px-1.5">
+      <span aria-hidden>!</span>
+      <span className="sr-only">{label}</span>
+    </Badge>
+  )
+}
+
 // Everything the assistant can search in this workspace, in one list. HR and admins
 // also get each row's source rules (knowledge-rules.tsx), and can have a source or
 // a folder summarised into a draft (knowledge-summarise.tsx).
@@ -209,6 +223,7 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
                 )}
                 {/* Once a blocked document is out of the index, "In search" says so. */}
                 {i.rule && (i.rule.action !== "block" || i.chunks > 0) && <RuleBadge rule={i.rule} />}
+                {i.injection && <InjectionBadge chunks={i.injection.chunks} />}
               </div>
               <span className="hidden text-muted-foreground md:block">{i.source}</span>
               <span

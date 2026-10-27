@@ -90,6 +90,7 @@ import { startersFrom } from "@/lib/chat-starters"
 import { usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { spaceLabel } from "@/lib/spaces"
+import { cn } from "@/lib/utils"
 
 // A saved conversation's messages as the chat shows them. `keys`: the React keys
 // messages already on screen have, by id, so they aren't drawn anew.
@@ -306,6 +307,11 @@ export function ChatView({ role }: { role: Role }) {
     setScroller({ urlId, key: live && scroller.urlId === null ? scroller.key : (urlId ?? "new") })
     setPinLast(true)
   }
+  // A chat opened from history is drawn as it is (history never animates): until the
+  // person scrolls it or asks in it, Jump to latest appears without its entrance.
+  const [touched, setTouched] = useState<string | null>(null)
+  const quiet = !live && touched !== scroller.key
+  const touch = () => quiet && setTouched(scroller.key)
 
   // Esc stops an answer being written, wherever the focus is.
   useEffect(() => {
@@ -735,7 +741,13 @@ export function ChatView({ role }: { role: Role }) {
             <MessageScrollerViewport
               ref={viewportRef}
               aria-label="Chat messages"
-              onPointerDown={(e) => e.target === e.currentTarget && letGo(e.currentTarget)}
+              onPointerDown={(e) => {
+                touch()
+                if (e.target === e.currentTarget) letGo(e.currentTarget)
+              }}
+              onWheel={touch}
+              onTouchMove={touch}
+              onKeyDown={touch}
               // Not focus from a portal (the passage sheet), which React bubbles through here.
               onFocus={(e) => e.currentTarget.contains(e.target) && letGo(e.currentTarget)}
               data-print="flow"
@@ -870,7 +882,10 @@ export function ChatView({ role }: { role: Role }) {
               behavior={reduced ? "auto" : "smooth"}
               onClick={() => viewportRef.current?.focus({ preventScroll: true })}
               data-print="hide"
-              className="rounded-full border-(--glass-border) bg-glass shadow-sm backdrop-blur-md hover:bg-muted data-[active=true]:duration-(--dur-jump) data-[active=true]:ease-out-strong data-[active=false]:duration-(--dur-jump-exit) data-[active=false]:ease-out-strong motion-reduce:data-[active=false]:translate-y-0 motion-reduce:data-[active=false]:scale-100 pointer-coarse:h-10"
+              className={cn(
+                "rounded-full border-(--glass-border) bg-glass shadow-sm backdrop-blur-md hover:bg-muted data-[active=true]:duration-(--dur-jump) data-[active=true]:ease-out-strong data-[active=false]:duration-(--dur-jump-exit) data-[active=false]:ease-out-strong motion-reduce:data-[active=false]:translate-y-0 motion-reduce:data-[active=false]:scale-100 pointer-coarse:h-10",
+                quiet && "transition-none",
+              )}
             >
               <ArrowDown data-icon="inline-start" />
               Jump to latest

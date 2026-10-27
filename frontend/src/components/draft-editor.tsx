@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ExternalLink, FilePen, Globe, Lock, Save, Send, Trash2, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
 import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import {
   AlertDialog,
@@ -33,7 +34,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import { drafts, type Draft } from "@/lib/api"
+import { ApiError, drafts, type Draft } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -187,13 +188,40 @@ export function DraftEditor({
 }: {
   id: string
   onPublished: (key: string) => void
-  onDeleted: () => void
+  onDeleted: () => void // also "close": the draft isn't there
 }) {
-  // While it's being written, look again every two seconds.
-  const { data: draft } = useQuery({
+  // While it's being written, look again every two seconds. A link to a draft that's
+  // gone (published, deleted, another workspace's) says so here rather than in a toast.
+  const { data: draft, error, refetch, isRefetching } = useQuery({
     ...queries.draft(id),
     refetchInterval: (q) => (q.state.data?.status === "generating" ? 2000 : false),
+    meta: { silent: true },
   })
+  if (error && !draft) {
+    const gone = error instanceof ApiError && error.status === 404
+    return (
+      <Card className="flex items-center justify-center p-6">
+        <AsciiEmptyState
+          art={gone ? "search" : "broken"}
+          title={gone ? "This draft isn't here." : "Couldn't load this draft."}
+          description={
+            gone ? "It may have been published or deleted. Pick another draft on the left." : error.message
+          }
+          action={
+            gone ? (
+              <Button size="sm" variant="outline" onClick={onDeleted}>
+                Back to the drafts
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" loading={isRefetching} onClick={() => void refetch()}>
+                Try again
+              </Button>
+            )
+          }
+        />
+      </Card>
+    )
+  }
   if (!draft) return <Skeleton className="h-96 rounded-2xl" />
   // A new status (written, failed) starts the editor again with the text as it is now;
   // after that, what's typed is kept while the draft is looked at again.

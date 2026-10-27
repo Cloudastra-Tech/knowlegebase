@@ -23,6 +23,27 @@ export async function fitsWidth(page: Page) {
   return page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 }
 
+// The boxes that scroll inside the page and are wider inside than they are: a
+// vertical scroller (a list, a sheet, the chat) that a child pushes sideways scrolls
+// both ways, which fitsWidth can't see (the page itself still fits). A box meant to
+// scroll sideways says so with an overflow-x-auto (or overflow-auto) class, as tables
+// and code blocks do, and isn't counted. Returns a short description of each.
+export async function overflowingScrollers(page: Page): Promise<string[]> {
+  return page.evaluate(`(() => {
+    const found = []
+    for (const el of document.querySelectorAll("body *")) {
+      const style = getComputedStyle(el)
+      if (!/auto|scroll/.test(style.overflowX)) continue
+      if (!el.clientWidth || el.scrollWidth <= el.clientWidth + 1) continue
+      const cls = typeof el.className === "string" ? el.className : ""
+      if (/(^|\\s)overflow-(x-)?(auto|scroll)(\\s|$)/.test(cls)) continue
+      const name = el.tagName.toLowerCase() + (el.dataset.slot ? "[data-slot=" + el.dataset.slot + "]" : "")
+      found.push(name + " " + el.scrollWidth + ">" + el.clientWidth + " " + cls.slice(0, 80))
+    }
+    return found
+  })()`)
+}
+
 export async function signIn(page: Page, account: { email: string; password: string }) {
   await page.goto("/login")
   await page.getByLabel("Username or email").fill(account.email)
