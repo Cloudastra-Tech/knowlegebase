@@ -73,10 +73,10 @@ def test_claude_answers_with_sonnet_and_haiku_does_the_small_jobs(on_claude, mon
     assert on_claude.calls[-1]["output_config"] == {"effort": "low"}
 
 
-def test_model_provider_anthropic_alone_asks_for_an_embeddings_provider(server_env, fake):
+def test_model_provider_anthropic_alone_embeds_locally_never_with_openai(server_env, fake):
     server_env.setenv("MODEL_PROVIDER", "anthropic")
-    with pytest.raises(models.ProviderError, match="EMBED_PROVIDER"):
-        models.current()
+    on = models.current()
+    assert (on.provider, on.embed_provider) == ("anthropic", "local")
     with pytest.raises(model_providers_store.Invalid, match="Anthropic has no embeddings"):
         model_providers_store.save(new_workspace(), {"embed_provider": "anthropic"}, "admin")
 

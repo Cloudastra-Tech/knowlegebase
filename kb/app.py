@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
 import db
+import models
 import observability
 import safety
 import secret_box
@@ -39,6 +40,7 @@ async def _lifespan(app):
     # Bring the database up to date now (db.py migrates on its first connection),
     # so a failing migration stops the start instead of the first request.
     db.connect().close()
+    models.log_server_providers()    # which providers, or why they can't be used
     # Re-indexing, connector syncs and the SAML metadata refresh run as jobs
     # (kb/jobs.py): here, unless JOBS_IN_PROCESS=off and `python -m kb.worker` does.
     jobs.start_in_process()

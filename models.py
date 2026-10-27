@@ -30,6 +30,9 @@ and how its models are made is its entry in REGISTRY (Provider, register()):
     anthropic  Claude through Anthropic's API (langchain-anthropic ChatAnthropic:
                streaming, tool calls, images): ANTHROPIC_CHAT_MODEL (Sonnet) and
                ANTHROPIC_FAST_MODEL (Haiku). Chat only: no embeddings.
+    local      embeddings only, on the server's CPU (fastembed, ONNX Runtime):
+               LOCAL_EMBED_MODEL, downloaded on first use into LOCAL_EMBED_CACHE.
+               What a chat provider without embeddings gets when none is set.
 
 CHAT AND EMBEDDINGS are chosen apart (Spec.provider, Spec.embed_provider), since
 not every provider has embeddings: "Claude for chat, OpenAI or Bedrock for the
@@ -98,6 +101,18 @@ EMBED_DIMENSIONS = {"amazon.titan-embed-text-v2:0": (1024, 512, 256),
                     "cohere.embed-english-v3": (1024,),
                     "cohere.embed-multilingual-v3": (1024,)}
 EMBED_CONCURRENCY = 4         # Titan embeds one text per call: this many at once
+
+# Local embeddings (deploy.md, "Local embeddings"): fastembed (ONNX Runtime, no
+# torch) on the server's CPU. The model is downloaded on first use into
+# LOCAL_EMBED_CACHE. Sizes of the models likely to be picked; another one's comes
+# from fastembed's own list.
+LOCAL_EMBED = "BAAI/bge-small-en-v1.5"
+LOCAL_EMBED_DIMENSIONS = {"BAAI/bge-small-en-v1.5": 384, "BAAI/bge-base-en-v1.5": 768,
+                          "BAAI/bge-large-en-v1.5": 1024,
+                          "sentence-transformers/all-MiniLM-L6-v2": 384,
+                          "intfloat/multilingual-e5-large": 1024}
+LOCAL_EMBED_THREADS = 2       # ONNX Runtime threads: indexing mustn't swamp a small server
+LOCAL_EMBED_BATCH = 32
 
 # Anthropic's defaults (deploy.md, "Anthropic"): the current Sonnet writes answers,
 # the current Haiku does the small jobs. Claude has no embeddings: an Anthropic
@@ -236,11 +251,29 @@ def server_providers():
     return chat, embed
 
 
+_said = set()
+
+
 def default_embeddings_for(chat):
-    """The embeddings provider a chat provider without embeddings gets when none is
-    set. None yet: the server must say (EMBED_PROVIDER)."""
-    raise ProviderError(f"{REGISTRY[chat].label} has no embeddings: set EMBED_PROVIDER "
-                        f"(one of: {', '.join(embedding_providers())}).")
+    """The embeddings provider a chat provider without embeddings (Anthropic) gets
+    when none is set: local, on the server's own CPU (LOCAL_EMBED_MODEL), so a
+    server with only an Anthropic key can search. Never OpenAI by default. Said
+    once in the log."""
+    if chat not in _said:
+        _said.add(chat)
+        log.info("Models: %s has no embeddings and EMBED_PROVIDER isn't set: the index "
+                 "uses local embeddings (%s, on this server's CPU).", REGISTRY[chat].label,
+                 _local_defaults()["embed_model"])
+    return "local"
+
+
+def log_server_providers():
+    """At startup: which providers the server's models are on (or why they can't be)."""
+    try:
+        chat, embed = server_providers()
+        log.info("Models: chat on %s, embeddings on %s.", chat, embed)
+    except ProviderError as e:
+        log.error("Models: %s", e)
 
 
 def server_region():
@@ -1054,6 +1087,89 @@ def anthropic_prompt_cache_on(model):
     return mode not in ("0", "off", "false", "no")
 
 
+def _local_cache_dir():
+    """LOCAL_EMBED_CACHE, else models/fastembed next to the database (the data
+    directory, a persisted volume in Docker), never inside the code."""
+    import db
+    return ((os.getenv("LOCAL_EMBED_CACHE") or "").strip()
+            or os.path.join(os.path.dirname(os.path.abspath(db.DB_PATH)), "models", "fastembed"))
+
+
+def _local_defaults():
+    model = (os.getenv("LOCAL_EMBED_MODEL") or "").strip() or LOCAL_EMBED
+    return {"chat_model": None, "fast_model": None, "embed_model": model,
+            "embed_dims": local_dimensions(model)}
+
+
+def local_dimensions(model):
+    """How many numbers `model` makes (the index records it), or None if unknown."""
+    if model in LOCAL_EMBED_DIMENSIONS:
+        return LOCAL_EMBED_DIMENSIONS[model]
+    try:
+        from fastembed import TextEmbedding
+        return next((m["dim"] for m in TextEmbedding.list_supported_models()
+                     if m["model"] == model), None)
+    except Exception:
+        return None
+
+
+def _fastembed():
+    """fastembed's TextEmbedding (tests replace it: no download in CI)."""
+    from fastembed import TextEmbedding
+    return TextEmbedding
+
+
+_local_models = {}
+_local_lock = threading.Lock()
+
+
+def _local_model(model, cache_dir, threads):
+    """One loaded model per (model, folder, threads), shared: loading it (and the
+    first download) happens once, under a lock."""
+    key = (model, cache_dir, threads)
+    with _local_lock:
+        found = _local_models.get(key)
+        if found is None:
+            os.makedirs(cache_dir, exist_ok=True)
+            try:
+                found = _fastembed()(model_name=model, cache_dir=cache_dir, threads=threads)
+            except Exception as e:
+                raise ProviderError(f"The local embedding model {model} couldn't be loaded "
+                                    f"({type(e).__name__}: {e}).") from e
+            _local_models[key] = found
+    return found
+
+
+class LocalEmbeddings:
+    """LangChain's Embeddings interface over fastembed, loading the model on the
+    first text (opening an index to read it needs none), BATCH texts at a time."""
+
+    def __init__(self, model, cache_dir, threads, batch_size):
+        self.model, self.cache_dir = model, cache_dir
+        self.threads, self.batch_size = threads, batch_size
+
+    def _loaded(self):
+        return _local_model(self.model, self.cache_dir, self.threads)
+
+    def embed_documents(self, texts):
+        texts = list(texts)
+        if not texts:
+            return []
+        return [v.tolist() for v in self._loaded().embed(texts, batch_size=self.batch_size)]
+
+    def embed_query(self, text):
+        return next(iter(self._loaded().query_embed(text))).tolist()
+
+
+def _local_make_embeddings(on, model, dims, openai=None):
+    return LocalEmbeddings(model, _local_cache_dir(),
+                           max(1, _env_int("LOCAL_EMBED_THREADS", LOCAL_EMBED_THREADS)),
+                           max(1, _env_int("LOCAL_EMBED_BATCH", LOCAL_EMBED_BATCH)))
+
+
+register(Provider(
+    name="local", label="Local (on this server)", make_embeddings=_local_make_embeddings,
+    defaults=_local_defaults))
 register(Provider(
     name="anthropic", label="Anthropic", make_chat=_anthropic_make_chat,
     defaults=_anthropic_defaults, vision=True, prompt_caching="marked", tool_calls=True,

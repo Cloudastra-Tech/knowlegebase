@@ -1753,6 +1753,7 @@ offers:
 | `openai` (default) | yes | yes | yes (`ATTACHMENT_VISION_MODEL`) | automatic | `OPENAI_API_KEY` |
 | `bedrock` | yes | yes | yes (the chat model) | `cachePoint` marker | the AWS credentials below |
 | `anthropic` | yes | **no** | yes (the chat model) | `cache_control` marker | `ANTHROPIC_API_KEY` |
+| `local` | no | yes (on this server's CPU) | - | - | none |
 
 The server's providers, in `.env`:
 
@@ -1760,9 +1761,9 @@ The server's providers, in `.env`:
 - `CHAT_PROVIDER` and `EMBED_PROVIDER` override one side each, e.g.
   `CHAT_PROVIDER=bedrock` with `EMBED_PROVIDER=openai`.
 - Without `EMBED_PROVIDER`, embeddings come from `MODEL_PROVIDER`, else from the chat
-  provider when it has them. A chat provider without embeddings and nothing else set
-  is an error naming `EMBED_PROVIDER`: the server never sends documents to OpenAI
-  because nobody said otherwise.
+  provider when it has them. A chat provider without embeddings (Anthropic) and nothing
+  else set gets **local** embeddings (said once in the log at startup): the server never
+  sends documents to OpenAI because nobody said otherwise.
 - A name that isn't known, or an embeddings provider without embeddings, is refused
   (every model call fails with the reason), never read as `openai`.
 
@@ -1782,14 +1783,14 @@ Claude has **no embeddings**, so the index needs another provider:
 
 ```bash
 CHAT_PROVIDER=anthropic
-EMBED_PROVIDER=openai          # or bedrock (with AWS_REGION and the BEDROCK_EMBED_* below)
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...          # for the embeddings only
+# EMBED_PROVIDER: unset or local = on this server's CPU; openai (with OPENAI_API_KEY,
+# for the embeddings only) or bedrock (with AWS_REGION and the BEDROCK_EMBED_* below)
 ```
 
-`MODEL_PROVIDER=anthropic` alone is refused (every model call fails, naming
-`EMBED_PROVIDER`): the server never sends documents to OpenAI unless told to. A
-workspace can instead choose Claude on **Assistant → Models** with its own Anthropic
+With only an Anthropic key, leave `EMBED_PROVIDER` unset (or set it to `local`): the
+index is embedded on the server's own CPU ("Local embeddings" below), never by OpenAI
+unless told to. A workspace can instead choose Claude on **Assistant → Models** with its own Anthropic
 key (`chat_provider: anthropic`, `api_keys: {"anthropic": ...}`), keeping the
 server's embeddings, so its index isn't rebuilt.
 
@@ -1826,6 +1827,42 @@ CHAT_PROVIDER=anthropic EMBED_PROVIDER=openai python evaluate.py --redteam
 
 (`eval.harness` scores retrieval with offline embeddings and calls no chat model; the
 red team runs the agent and its guards on Claude.)
+
+## Local embeddings
+
+`EMBED_PROVIDER=local` (or a workspace's *Local* embeddings) embeds documents and
+questions on the server itself with [fastembed](https://github.com/qdrant/fastembed)
+(ONNX Runtime, no torch, no GPU). Nothing leaves the server for the index. It's the
+default when the chat provider has no embeddings (Anthropic) and `EMBED_PROVIDER`
+isn't set.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `LOCAL_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | 384 numbers, English, 512 tokens in. About 67 MB to download. Any model in fastembed's list works (`BAAI/bge-base-en-v1.5`, 768; `intfloat/multilingual-e5-large`, 1,024, for other languages) |
+| `LOCAL_EMBED_THREADS` | `2` | ONNX Runtime threads, so indexing doesn't take every core of a small server |
+| `LOCAL_EMBED_BATCH` | `32` | Texts embedded per batch |
+| `LOCAL_EMBED_CACHE` | `config/models/fastembed` (next to `app.db`) | Where the model is downloaded on first use |
+
+**The model is downloaded on first use** (from Hugging Face) into `LOCAL_EMBED_CACHE`.
+Keep that folder on a persisted volume: the default sits in `config/`, which
+`docker-compose.yml` already mounts, so a new container doesn't download it again
+(`scripts/backup.sh` leaves `config/models` out of backups). To
+download it ahead of time (a server without internet access later, or a quicker first
+index):
+
+```bash
+docker compose exec knowledgebase python -c "import models; models.current().embeddings().embed_query('warm up')"
+# or, outside Docker, into a folder you then point LOCAL_EMBED_CACHE at:
+python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/srv/kb/models/fastembed')"
+```
+
+A model that can't be downloaded or loaded fails the index run and every meaning
+search with the reason (keywords still work); nothing falls back to another provider.
+On a laptop CPU, with 2 threads, `bge-small-en-v1.5` embedded 100 short chunks in
+about 1.5 s after a 10 s first load (download included). Switching to or from local
+embeddings rebuilds the index, like any embeddings change (384 numbers against
+OpenAI's 1,536). The offline eval gate (`python -m eval.harness --gate`) never loads
+it: it always indexes with its stand-in embeddings.
 
 ## AWS Bedrock
 
