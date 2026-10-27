@@ -129,12 +129,10 @@ def test_an_embeddings_provider_must_have_embeddings(server_env, chat_only):
 
 
 def test_a_chat_provider_without_embeddings_never_gets_openais_by_default(server_env, chat_only):
-    server_env.setenv("CHAT_PROVIDER", "chatonly")
-    with pytest.raises(models.ProviderError, match="EMBED_PROVIDER"):
-        models.server_providers()
+    server_env.setenv("CHAT_PROVIDER", "chatonly")              # local, on this server
+    assert models.server_providers() == ("chatonly", "local")
     server_env.setenv("MODEL_PROVIDER", "chatonly")
-    with pytest.raises(models.ProviderError, match="EMBED_PROVIDER"):
-        models.server_providers()
+    assert models.server_providers() == ("chatonly", "local")
     server_env.setenv("EMBED_PROVIDER", "openai")              # said out loud: fine
     assert models.server_providers() == ("chatonly", "openai")
 

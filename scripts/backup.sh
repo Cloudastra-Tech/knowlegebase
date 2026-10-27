@@ -135,7 +135,8 @@ count_files() { if [[ -d "$APP_DIR/$1" ]]; then find "$APP_DIR/$1" -type f | wc 
 } > "$stage/MANIFEST"
 rm "$stage/db.report"
 
-# 4. One archive. config/ minus the database files (copied above) and the key.
+# 4. One archive. config/ minus the database files (copied above), the key, and
+#    the downloaded local embedding model (config/models: downloaded again on use).
 say "writing the archive"
 archive="$BACKUP_DIR/$name.tar.gz"
 staged=(MANIFEST db)
@@ -145,7 +146,7 @@ for d in config docs data; do
     if [[ -d "$APP_DIR/$d" ]]; then members+=("$d"); fi
 done
 tar -czf "$archive.part" \
-    --exclude='config/integrations.key*' --exclude='config/app.db*' \
+    --exclude='config/integrations.key*' --exclude='config/app.db*' --exclude='config/models' \
     -C "$stage" "${staged[@]}" -C "$APP_DIR" "${members[@]}"
 if tar -tzf "$archive.part" | grep -q 'integrations\.key'; then
     rm -f "$archive.part"
