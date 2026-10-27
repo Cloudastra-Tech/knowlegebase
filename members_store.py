@@ -590,6 +590,7 @@ def create_connection(workspace, protocol, label, issuer, client_id, keys, metad
     {"client_secret"} for OpenID Connect, {"sp_key", "sp_cert"} for SAML.
     Returns the connection."""
     cid, now = cid or new_connection_id(), time.time()
+    sealed = secret_box.seal(keys, workspace)      # before the transaction (secret_box)
     with _lock, _db() as conn:
         _ensure_workspace(conn, workspace)
         conn.execute("""INSERT INTO sso_connections
@@ -597,7 +598,7 @@ def create_connection(workspace, protocol, label, issuer, client_id, keys, metad
                          created_by, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                      (cid, workspace, protocol, label, issuer, client_id,
-                      secret_box.seal(keys), json.dumps(metadata), created_by, now, now))
+                      sealed, json.dumps(metadata), created_by, now, now))
     return get_connection(cid)
 
 
@@ -614,7 +615,7 @@ def update_connection(workspace, cid, **fields):
     or None if the workspace has no such one."""
     if "keys" in fields:
         fields["secret"] = secret_box.seal({**(connection_keys(cid) or {}),
-                                            **fields.pop("keys")})
+                                            **fields.pop("keys")}, workspace)
     if "metadata" in fields:
         fields["metadata"] = json.dumps(fields["metadata"])
     for flag in ("enabled", "logout_at_idp"):
@@ -641,8 +642,9 @@ def get_connection(cid):
 def connection_keys(cid):
     """The connection's decrypted keys (see create_connection), or None."""
     with _db() as conn:
-        row = conn.execute("SELECT secret FROM sso_connections WHERE id = ?", (cid,)).fetchone()
-    return secret_box.unseal(row["secret"]) if row else None
+        row = conn.execute("SELECT secret, workspace FROM sso_connections WHERE id = ?",
+                           (cid,)).fetchone()
+    return secret_box.unseal(row["secret"], row["workspace"]) if row else None
 
 
 def list_connections(workspace, enabled_only=False):
