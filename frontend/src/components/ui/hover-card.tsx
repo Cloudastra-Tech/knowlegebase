@@ -2,11 +2,19 @@ import * as React from "react"
 import { cn } from "cn"
 import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
-// Pressing the trigger means the person wants what it opens (the passage, the page), not
-// its preview: the card closes, and doesn't open until the pointer has left the trigger.
-// Otherwise the open delay can run out after a click has opened a sheet, and the card
-// pops up over it and takes the sheet's Escape.
-const PressContext = React.createContext<{ press: () => void; release: () => void } | null>(null)
+// A preview is for a pointer resting on its trigger, so it stands down in two cases:
+// - the trigger was pressed: the person wants what it opens (the passage, the page). It
+//   stays closed until the pointer leaves the trigger.
+// - the trigger is behind a modal (a dialog or sheet hides the rest of the page with
+//   aria-hidden), as when the click just opened the source sheet.
+// Otherwise the open delay can run out over the sheet the click opened, and the card
+// pops up on top of it and takes the sheet's Escape.
+type CardContextValue = {
+  trigger: React.RefObject<HTMLElement | null>
+  press: () => void
+  release: () => void
+}
+const CardContext = React.createContext<CardContextValue | null>(null)
 
 function HoverCard({
   open: openProp,
@@ -15,17 +23,20 @@ function HoverCard({
   ...props
 }: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
   const [own, setOwn] = React.useState(defaultOpen)
+  const trigger = React.useRef<HTMLElement | null>(null)
   const pressed = React.useRef(false)
   const change = React.useCallback(
     (next: boolean) => {
-      if (next && pressed.current) return
+      const hidden = trigger.current?.closest('[aria-hidden="true"]')
+      if (next && (pressed.current || hidden)) return
       setOwn(next)
       onOpenChange?.(next)
     },
     [onOpenChange]
   )
-  const press = React.useMemo(
+  const card = React.useMemo(
     () => ({
+      trigger,
       press: () => {
         pressed.current = true
         change(false)
@@ -37,33 +48,43 @@ function HoverCard({
     [change]
   )
   return (
-    <PressContext.Provider value={press}>
+    <CardContext.Provider value={card}>
       <HoverCardPrimitive.Root
         data-slot="hover-card"
         open={openProp ?? own}
         onOpenChange={change}
         {...props}
       />
-    </PressContext.Provider>
+    </CardContext.Provider>
   )
 }
 
 function HoverCardTrigger({
+  ref,
   onPointerDown,
   onPointerLeave,
   ...props
 }: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
-  const press = React.useContext(PressContext)
+  const card = React.useContext(CardContext)
+  const setRef = React.useCallback(
+    (el: HTMLAnchorElement | null) => {
+      if (card) card.trigger.current = el
+      if (typeof ref === "function") ref(el)
+      else if (ref) ref.current = el
+    },
+    [card, ref]
+  )
   return (
     <HoverCardPrimitive.Trigger
+      ref={setRef}
       data-slot="hover-card-trigger"
       onPointerDown={(event) => {
         onPointerDown?.(event)
-        press?.press()
+        card?.press()
       }}
       onPointerLeave={(event) => {
         onPointerLeave?.(event)
-        press?.release()
+        card?.release()
       }}
       {...props}
     />

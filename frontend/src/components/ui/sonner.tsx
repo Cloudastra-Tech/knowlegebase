@@ -1,7 +1,8 @@
 import { cn } from "cn"
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
-import { Loader2Icon } from "lucide-react"
+
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 
 // A status glyph in mono, coloured with the status tokens; the toast's text stays the
 // foreground. aria-hidden: the message says it in words.
@@ -36,7 +37,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         warning: <Glyph char="!" className="text-warning" />,
         error: <Glyph char="×" className="text-destructive" />,
         loading: (
-          <Loader2Icon className="size-4 animate-spin text-muted-foreground" />
+          <AsciiSpinner label="" className="text-muted-foreground" />
         ),
       }}
       style={

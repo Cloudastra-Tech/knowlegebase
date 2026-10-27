@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
+import { Button } from "@/components/ui/button"
 import { Command, CommandDialog, CommandInput, CommandList } from "@/components/ui/command"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Sidebar, SidebarProvider } from "@/components/ui/sidebar"
@@ -89,11 +90,36 @@ describe("a hover card", () => {
     expect(await screen.findByText("The passage, previewed")).toBeInTheDocument()
   })
 
+  it("doesn't open for a trigger hidden behind a modal", async () => {
+    render(
+      <div aria-hidden="true">
+        <HoverCard openDelay={20}>
+          <HoverCardTrigger href="#s1">Source 1</HoverCardTrigger>
+          <HoverCardContent>The passage, previewed</HoverCardContent>
+        </HoverCard>
+      </div>,
+    )
+    await userEvent.hover(screen.getByText("Source 1"))
+    await new Promise((r) => setTimeout(r, 80))
+    expect(screen.queryByText("The passage, previewed")).not.toBeInTheDocument()
+  })
+
   it("stands down when its trigger is pressed, so it can't pop up over what the click opened", async () => {
     card()
     await userEvent.click(screen.getByText("Source 1"))
     await new Promise((r) => setTimeout(r, 80))
     expect(screen.queryByText("The passage, previewed")).not.toBeInTheDocument()
+  })
+})
+
+describe("a loading button", () => {
+  it("is busy and disabled, keeps its name, and shows the ASCII spinner silently", () => {
+    render(<Button loading>Saving…</Button>)
+    const button = screen.getByRole("button", { name: "Saving…" })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute("aria-busy", "true")
+    expect(button.querySelector('[data-slot="ascii-spinner"]')).not.toBeNull()
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
   })
 })
 
