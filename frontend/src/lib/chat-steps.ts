@@ -9,9 +9,11 @@
 import type { AnswerState, StepLine } from "@/lib/api"
 
 // One line of the trace. startedAt / ms are the browser's clock (performance.now()),
-// on answers written on this screen only: saved steps have no timing.
+// on answers written on this screen only: saved steps have no timing. `ended`: it
+// was still running when the answer was stopped or failed (chat-view.tsx endSteps).
 export interface LiveStep extends StepLine {
   done: boolean
+  ended?: "stopped" | "error"
   startedAt?: number
   ms?: number
 }
@@ -49,6 +51,7 @@ export function statusOf(
   { streaming = false, state }: { streaming?: boolean; state?: AnswerState } = {},
 ): StepStatus {
   const result = step.result
+  if (step.ended) return step.ended === "error" ? "error" : "cancelled"
   if (result === undefined) {
     // No step_end: still running, or the answer ended before it (Stop, a failure).
     if (streaming) return "running"

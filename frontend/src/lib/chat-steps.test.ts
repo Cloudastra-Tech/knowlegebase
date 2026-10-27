@@ -43,6 +43,9 @@ describe("statusOf", () => {
     // Stop marks every step done, without a result: still not a success.
     expect(statusOf({ ...open, done: true }, { state: "stopped" })).toBe("cancelled")
     expect(statusOf(open, { state: "error" })).toBe("error")
+    // The chat marks a step still running at the end as stopped or failed.
+    expect(statusOf({ ...open, done: true, ended: "stopped" })).toBe("cancelled")
+    expect(statusOf({ ...open, done: true, ended: "error" })).toBe("error")
   })
 })
 

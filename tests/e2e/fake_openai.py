@@ -14,7 +14,9 @@ the app talks to it through OPENAI_BASE_URL, so no key and no network are needed
         HyDE                              a fixed guess
         a question saying "calculate 2*3"  the calculator tool first, then the
                                           cited answer
-Streams when asked to, a word at a time.
+Streams when asked to, a word at a time. A question that says "in full detail" gets
+a long answer (the same sentences, in several paragraphs), streamed slowly, so the
+chat's scrolling can be watched while it's written (frontend/e2e/chat-scroll.spec.ts).
 
 FAKE_OPENAI_DELAY=<seconds>: answer that much slower, a word at a time (and the
 searches and checks a few times that), to watch the chat's steps and streaming by
@@ -141,6 +143,16 @@ def _chunk(model, delta, finish=None):
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}) + "\n\n"
 
 
+DETAIL = "in full detail"     # the question that makes a long, slow answer
+DETAIL_PARAGRAPHS = 10
+DETAIL_WORD_DELAY = 0.02      # seconds a word
+
+
+def in_detail(body):
+    return bool(body.get("tools")) and any(
+        m["role"] == "user" and DETAIL in text_of(m).lower() for m in body["messages"])
+
+
 @app.post("/v1/chat/completions")
 async def chat(req: Request):
     body = await req.json()
@@ -149,6 +161,9 @@ async def chat(req: Request):
     if expression:
         return await tool_call(model, "calculator", {"expression": expression}, body.get("stream"))
     text = reply_for(body)
+    slow = in_detail(body)
+    if slow:
+        text = "\n\n".join([text] * DETAIL_PARAGRAPHS)
     if not body.get("stream"):
         await asyncio.sleep(delay(4))               # the guards and the rewrite
         return JSONResponse({"id": "fake", "object": "chat.completion", "created": 0,
@@ -162,6 +177,8 @@ async def chat(req: Request):
         for word in re.findall(r"\S+\s*", text):
             await asyncio.sleep(delay())
             yield _chunk(model, {"role": "assistant", "content": word})
+            if slow:
+                await asyncio.sleep(DETAIL_WORD_DELAY)
         yield _chunk(model, {}, "stop")
         yield "data: [DONE]\n\n"
 
