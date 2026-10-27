@@ -283,7 +283,7 @@ describe("IntegrationsView", () => {
     expect(sent[1]).not.toHaveProperty("role_arn")
   }, 20_000) // a lot of typing
 
-  it("says why S3 can't follow sharing at the source", async () => {
+  it("says why S3 can't follow sharing at the source, and what an empty pick syncs", async () => {
     const items: Integration[] = [
       {
         ...base,
@@ -298,9 +298,21 @@ describe("IntegrationsView", () => {
         s3: { prefix: "", roles: false, read_policy: {} },
       },
     ]
-    mockApi({ "GET /api/integrations": { workspace: "acme", integrations: items } })
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "GET /api/integrations/s3/containers": {
+        items: [{ id: "handbook/", name: "handbook", kind: "folder", has_children: true }],
+        picked: [],
+      },
+    })
     render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
     expect(await screen.findByText(/no per-person sharing/)).toBeInTheDocument()
     expect(screen.queryByText(/As shared in Amazon S3/)).not.toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Narrow it down" }))
+    expect(await screen.findByRole("checkbox", { name: "Sync handbook" })).toBeInTheDocument()
+    expect(
+      screen.getByText("Nothing selected: everything under the connection's prefix is synced."),
+    ).toBeInTheDocument()
   })
 })

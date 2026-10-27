@@ -287,8 +287,9 @@ export function NewKeyDialog({
   )
 }
 
-// A block of text to copy: a command or a config file.
-export function CodeBlock({ label, code }: { label: string; code: string }) {
+// A block of text to copy: a command or a config file. `wrap` breaks a long
+// single token (an ID) across lines instead of scrolling it under the button.
+export function CodeBlock({ label, code, wrap }: { label: string; code: string; wrap?: boolean }) {
   const [copied, setCopied] = useState(false)
   async function copy() {
     try {
@@ -301,7 +302,12 @@ export function CodeBlock({ label, code }: { label: string; code: string }) {
   }
   return (
     <div className="relative min-w-0">
-      <pre className="max-h-64 overflow-auto rounded-lg bg-muted p-3 pr-10 font-mono text-xs leading-relaxed whitespace-pre">
+      <pre
+        className={cn(
+          "max-h-64 overflow-auto rounded-lg bg-muted p-3 pr-10 font-mono text-xs leading-relaxed",
+          wrap ? "break-all whitespace-pre-wrap" : "whitespace-pre",
+        )}
+      >
         {code}
       </pre>
       <Button

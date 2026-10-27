@@ -148,7 +148,7 @@ export function S3ConnectDialog({
                 </p>
                 <Field>
                   <FieldLabel>External ID</FieldLabel>
-                  <CodeBlock label="external ID" code={s3?.external_id ?? ""} />
+                  <CodeBlock label="external ID" code={s3?.external_id ?? ""} wrap />
                 </Field>
                 {s3?.trust_policy && (
                   <Field>

@@ -66,7 +66,11 @@ export function ContainerIcon({ item, className = "size-4" }: { item: Container;
 }
 
 // What the dialog says for each connector's picker.
-const COPY: Record<string, { title: string; description: string; root: string; empty: string }> = {
+// `all`: what an optional picker syncs with nothing ticked ("everything shared" otherwise).
+const COPY: Record<
+  string,
+  { title: string; description: string; root: string; empty: string; all?: string }
+> = {
   google_drive: {
     title: "Choose what to sync",
     description:
@@ -133,7 +137,7 @@ const COPY: Record<string, { title: string; description: string; root: string; e
   linear: {
     title: "Choose teams to sync",
     description:
-      "Tick the teams to sync: their issues with comments, and their projects and documents. Nothing is synced until you pick one.",
+      "Tick the teams to sync: their issues with comments, and their projects, project updates and documents. Nothing is synced until you pick one.",
     root: "Teams",
     empty: "No teams this account can see.",
   },
@@ -157,6 +161,7 @@ const COPY: Record<string, { title: string; description: string; root: string; e
       "Tick folders (prefixes) of the bucket to sync only those. With none ticked, everything under the connection's prefix is synced.",
     root: "Bucket",
     empty: "No folders here.",
+    all: "everything under the connection's prefix",
   },
   outline: {
     title: "Choose collections to sync",
@@ -281,7 +286,7 @@ function TreePicker({
           ? `Syncing ${selected.length} item${selected.length === 1 ? "" : "s"}…`
           : item.picker_required
             ? `Nothing selected. ${item.name} items were removed from search.`
-            : `Syncing everything shared with ${item.name}…`,
+            : `Syncing ${copy.all ?? `everything shared with ${item.name}`}…`,
       )
       onSaved()
       onOpenChange(false)
@@ -435,7 +440,12 @@ function TreePicker({
           </Field>
         )}
 
-        <PickedChips selected={selected} onRemove={toggle} required={!!item.picker_required} />
+        <PickedChips
+          selected={selected}
+          onRemove={toggle}
+          required={!!item.picker_required}
+          all={copy.all}
+        />
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -455,16 +465,18 @@ function PickedChips({
   selected,
   onRemove,
   required,
+  all = "everything shared",
 }: {
   selected: Container[]
   onRemove: (c: Container) => void
   required: boolean
+  all?: string
 }) {
   return (
     <div className="min-h-8">
       {selected.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {required ? "Nothing selected: nothing will be synced." : "Nothing selected: everything shared is synced."}
+          {required ? "Nothing selected: nothing will be synced." : `Nothing selected: ${all} is synced.`}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
