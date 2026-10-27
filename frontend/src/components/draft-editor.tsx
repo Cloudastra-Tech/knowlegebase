@@ -249,8 +249,8 @@ function LoadedDraft({
 
   return (
     <Card className="flex min-h-0 flex-col md:h-full">
-      <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1.5">
+      <CardHeader className="flex flex-col items-stretch gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <CardTitle className="truncate text-base">{draft.title}</CardTitle>
           <CardDescription className="flex flex-wrap items-center gap-2">
             <DraftStatusBadge draft={draft} />
@@ -328,7 +328,7 @@ function LoadedDraft({
               aria-label="Draft text"
               value={content ?? ""}
               onChange={(e) => setContent(e.target.value)}
-              className="h-[50svh] min-h-0 flex-1 resize-none overflow-y-auto font-mono text-sm field-sizing-fixed md:h-auto md:min-h-64"
+              className="h-[50svh] resize-none overflow-y-auto font-mono text-sm field-sizing-fixed md:h-auto md:min-h-64 md:flex-1"
             />
             {dirty && <p className="text-xs text-muted-foreground">Unsaved changes</p>}
           </>
