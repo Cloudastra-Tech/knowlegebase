@@ -200,7 +200,11 @@ def test_json_lines_carry_exceptions():
 
 def test_configure_replaces_uvicorns_access_log_and_is_idempotent():
     from kb import logs
+    root = logging.getLogger()
+    plain = logging.StreamHandler()            # as logging.basicConfig() adds
+    root.addHandler(plain)
     logs.configure("json")
+    assert plain not in root.handlers          # no line written twice
     logs.configure("json")
     root = logging.getLogger()
     assert len([h for h in root.handlers if getattr(h, "_kb", False)]) == 1
