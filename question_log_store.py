@@ -29,7 +29,7 @@ DEFAULT_MODE = "redacted"
 DEFAULT_DAYS = 90
 DAY_CHOICES = (30, 90, 180, 365)
 KEEP_DAYS = 400                 # a row's metadata (no text) is deleted after this
-SURFACES = ("web", "api", "slack", "mcp")
+SURFACES = ("web", "api", "slack", "mcp", "teams", "extension", "email")   # migration 0013
 
 _lock = threading.Lock()
 

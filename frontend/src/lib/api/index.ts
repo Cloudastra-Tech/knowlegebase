@@ -7,17 +7,23 @@ import { auditApi } from "@/lib/api/audit"
 import { authApi } from "@/lib/api/auth"
 import { chatApi } from "@/lib/api/chat"
 import { docsApi } from "@/lib/api/docs"
+import { emailInApi } from "@/lib/api/email-in"
+import { extensionApi } from "@/lib/api/extension"
 import { insightsApi } from "@/lib/api/insights"
 import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 import { slackApi } from "@/lib/api/slack"
+import { teamsApi } from "@/lib/api/teams"
 
 export * from "@/lib/api/types"
 export type * from "@/lib/api/insights"
 export type * from "@/lib/api/api-keys"
 export type * from "@/lib/api/assistant"
 export type * from "@/lib/api/slack"
+export type * from "@/lib/api/teams"
+export type * from "@/lib/api/email-in"
+export type * from "@/lib/api/extension"
 export {
   ApiError,
   session,
@@ -41,3 +47,9 @@ export const apiKeys = apiKeysApi
 export const assistant = assistantApi
 // The Slack app: install, its settings (admin), and what HR may see of it.
 export const slack = slackApi
+// The Teams bot: which bot, the Microsoft tenant it answers, its settings (admin).
+export const teams = teamsApi
+// Email-in: ask@<workspace>.<mail domain>, on or off (admin).
+export const emailIn = emailInApi
+// The browser extension: connecting it to your account.
+export const extension = extensionApi

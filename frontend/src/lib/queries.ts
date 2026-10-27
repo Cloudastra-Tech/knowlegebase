@@ -1,6 +1,17 @@
 import { queryOptions } from "@tanstack/react-query"
 
-import { api, apiKeys, assistant, insights, session, signIn, slack } from "@/lib/api"
+import {
+  api,
+  apiKeys,
+  assistant,
+  emailIn,
+  extension,
+  insights,
+  session,
+  signIn,
+  slack,
+  teams,
+} from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
 // After a change, invalidate the key and the screens showing it load it again.
@@ -92,6 +103,9 @@ export const queries = {
   verifiedAnswers: () =>
     queryOptions({ queryKey: ["verified-answers"], queryFn: assistant.verifiedAnswers }),
   slackApp: () => queryOptions({ queryKey: ["slack-app"], queryFn: slack.get }),
+  teamsApp: () => queryOptions({ queryKey: ["teams-app"], queryFn: teams.get }),
+  emailIn: () => queryOptions({ queryKey: ["email-in"], queryFn: emailIn.get }),
+  extension: () => queryOptions({ queryKey: ["extension"], queryFn: extension.get }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

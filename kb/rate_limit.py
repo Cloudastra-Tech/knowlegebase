@@ -119,3 +119,26 @@ def slack_limit(team_id, slack_user):
     except HTTPException:
         return False
     return True
+
+
+# Questions from Teams (kb/services/teams.py) and by email (kb/services/email_in.py),
+# per minute: (per person, per Teams tenant / workspace). RATE_LIMIT_TEAMS_USER,
+# RATE_LIMIT_TEAMS_SCOPE, RATE_LIMIT_EMAIL_USER, RATE_LIMIT_EMAIL_SCOPE. Over them a
+# request is acknowledged and dropped (an email isn't answered), so a flood can't
+# fill the job queue; an answered question also counts as one of its person's "chat".
+INBOUND_LIMITS = {"teams": (30, 600), "email": (5, 60)}
+
+
+def inbound_limit(kind, scope, who):
+    """True if one more request of `kind` ("teams", "email") from `who`, in `scope`
+    (a tenant, a workspace), may be taken in now."""
+    if not rate_limits_on():
+        return True
+    per_user, per_scope = (env_int(f"RATE_LIMIT_{kind.upper()}_{level}", default)
+                           for level, default in zip(("USER", "SCOPE"), INBOUND_LIMITS[kind]))
+    try:
+        _take([((kind, "user", scope, who), per_user, ""),
+               ((kind, "scope", scope), per_scope, "")])
+    except HTTPException:
+        return False
+    return True
