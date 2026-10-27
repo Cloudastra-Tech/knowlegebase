@@ -53,8 +53,11 @@ import { cn } from "@/lib/utils"
 const ChatView = lazy(() => import("@/components/chat-view").then((m) => ({ default: m.ChatView })))
 
 // The chat while another screen is open: out of sight and out of reach (inert), but
-// still laid out, so its transcript keeps its place for the way back.
-const CHAT_AWAY = "pointer-events-none invisible absolute inset-0 overflow-hidden"
+// still laid out, so its transcript keeps its place for the way back. Its ASCII field
+// is taken out of layout, so it rests (offscreen to its loop) and the screen's own
+// AppBackdrop is the only one drawing.
+const CHAT_AWAY =
+  "pointer-events-none invisible absolute inset-0 overflow-hidden [&_[data-slot=chat-backdrop]]:hidden"
 
 // The signed-in app: the navbar, and the screen at the current URL below it (routes.tsx).
 // Signed out, it sends people to the sign-in page, and back here once they're in.
@@ -142,9 +145,11 @@ export default function App() {
   return (
     <IndexStatusProvider>
     <div className="flex h-dvh flex-col" data-print="flow">
-      {/* The one ASCII field, fixed behind everything. It rests while anything scrolls
-          and under a dialog (lib/ascii-loop.ts); the chat's kb:thinking sends a ripple. */}
-      <AppBackdrop />
+      {/* One ASCII field on every screen, fixed behind everything; it rests while
+          anything scrolls and under a dialog (lib/ascii-loop.ts). Not on the chat, which
+          draws its own behind its column (ChatBackdrop: faint under the text, breathing,
+          a ripple per step and a glow from the composer while the assistant works). */}
+      {!onChat && <AppBackdrop />}
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts. */}
       <CommandPalette user={user} role={activeRole} chatAt={chatAt} />
       {/* Chrome-tier glass, the field blurred behind it. Nothing around it animates its
@@ -154,9 +159,11 @@ export default function App() {
         className="glass z-20 rounded-none border-x-0 border-t-0 pt-[env(safe-area-inset-top)]"
       >
         <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
-          <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
+          {/* Not on a phone: next to the screen menu ("Knowledge ⌄") or a member's tabs
+              it read "Knowledge Chat Knowledge". */}
+          <span className="hidden shrink-0 select-none text-sm font-semibold tracking-tight sm:inline">
             Knowledge
-            <span className="hidden font-normal text-muted-foreground sm:inline"> assistant</span>
+            <span className="font-normal text-muted-foreground"> assistant</span>
           </span>
 
           <AppNav items={navItems} current={current} />
@@ -296,10 +303,9 @@ export default function App() {
 
       <main className="relative min-h-0 flex-1" data-print="flow">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation, nor
-            where it was scrolled to (CHAT_AWAY). Its own background goes, so the field
-            shows in its gutters (masked to almost nothing under the column). */}
+            where it was scrolled to (CHAT_AWAY). */}
         <div
-          className={cn("h-full [&_[data-slot=sidebar-inset]]:bg-transparent", !under("/chat") && CHAT_AWAY)}
+          className={cn("h-full", !under("/chat") && CHAT_AWAY)}
           inert={!under("/chat")}
           data-print={under("/chat") ? "flow" : "hide"}
         >

@@ -207,11 +207,24 @@ describe("the app shell", () => {
     renderApp("/knowledge")
 
     expect(await screen.findByText("Knowledge base")).toBeInTheDocument()
-    expect(document.querySelectorAll('[data-slot="ascii-field"]')).toHaveLength(1)
+    // The app's field; the chat's own (ChatBackdrop) is taken out of layout while away.
+    const fields = [...document.querySelectorAll('[data-slot="ascii-field"]')]
+    expect(fields.filter((f) => !f.closest('[data-slot="chat-backdrop"]'))).toHaveLength(1)
     // Laid out (so its scroll position survives), but inert while Knowledge is open.
     const chat = document.querySelector("main > [inert]")
     expect(chat).not.toBeNull()
-    expect(chat).toHaveClass("invisible")
+    expect(chat).toHaveClass("invisible", "[&_[data-slot=chat-backdrop]]:hidden")
+  })
+
+  it("leaves the chat's own field as the only one on /chat", async () => {
+    session.setToken("tok-8")
+    mockApi({ ...SIGNED_IN, "GET /api/auth/me": ADMIN })
+    renderApp("/chat")
+
+    await waitFor(() => expect(document.querySelector('[data-slot="chat-backdrop"]')).not.toBeNull())
+    const fields = [...document.querySelectorAll('[data-slot="ascii-field"]')]
+    expect(fields).toHaveLength(1)
+    expect(fields[0].closest('[data-slot="chat-backdrop"]')).not.toBeNull()
   })
 
   it("brings a screen in by mouse, and at once from the keyboard (markInstant)", async () => {
