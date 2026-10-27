@@ -11,7 +11,7 @@ import time
 
 from fastapi import HTTPException, Request
 
-from kb import state
+from kb import quotas, state
 from kb.deps import ws_of
 from kb.settings import env_int
 
@@ -66,7 +66,9 @@ def rate_limit(request: Request, bucket):
 
 
 def user_limit(user, bucket):
-    """Per person and per workspace limits (USER_LIMITS) on something costly."""
+    """Per person and per workspace limits (USER_LIMITS) on something costly. First
+    the workspace's own limits (kb/quotas.py: its plan's, spend caps)."""
+    quotas.check(ws_of(user), bucket, user=user)
     if not rate_limits_on():
         return
     per_user, per_workspace = (env_int(f"RATE_LIMIT_{bucket.upper()}_{who}", default)

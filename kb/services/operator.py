@@ -2,8 +2,10 @@
 What the operator console shows of every workspace (platform.md PL-18), from
 the tables the app already keeps: no content, only counts and states.
 
-    plan            a placeholder until billing (PL-16) exists
-    seats           members active in the last 30 days (signed in, or asked)
+    plan            its plan and trial (kb/services/billing.py), whether or not
+                    BILLING is on: None for a workspace billing doesn't apply to
+    seats           members not turned off who were active in the last 30 days
+                    (signed in, or asked: billing.seats)
     usage           questions, tokens and model cost in the last 30 days
     last_activity   the latest sign-in, question or change by a person
     connectors      how many, and the ones in error (provider and error code)
@@ -13,11 +15,12 @@ the tables the app already keeps: no content, only counts and states.
 
 import time
 
+import billing_store
 import db
 import lifecycle_store
-from kb.services import indexing
+from kb.services import billing, indexing
 
-SEAT_DAYS = 30
+SEAT_DAYS = billing.SEAT_DAYS
 
 
 def overview(now=None):
@@ -34,11 +37,7 @@ def overview(now=None):
         out = []
         for w in rows:
             ws = w["slug"]
-            seats = one("""SELECT COUNT(*) FROM (
-                               SELECT username FROM members WHERE workspace = ?
-                                  AND last_login_at >= ? AND disabled = 0
-                               UNION SELECT user FROM question_log WHERE workspace = ? AND at >= ?)""",
-                        ws, since, ws, since)
+            seats = billing.seats(ws, now)
             usage = conn.execute("SELECT COALESCE(SUM(questions), 0), COALESCE(SUM(tokens_in), 0) "
                                  "+ COALESCE(SUM(tokens_out), 0), COALESCE(SUM(cost_usd), 0) "
                                  "FROM insights_daily WHERE workspace = ? AND day >= ?",
@@ -55,7 +54,8 @@ def overview(now=None):
             st = lifecycle_store.state(ws)
             index = indexing.index_status(ws)
             out.append({
-                "slug": ws, "name": w["name"], "created_at": w["created_at"], "plan": None,
+                "slug": ws, "name": w["name"], "created_at": w["created_at"],
+                "plan": _plan(ws, now),
                 "members": one("SELECT COUNT(*) FROM members WHERE workspace = ?", ws),
                 "seats": seats,
                 "usage": {"questions": max(questions, usage[0]), "tokens": usage[1],
@@ -72,3 +72,18 @@ def overview(now=None):
     finally:
         conn.close()
     return out
+
+
+def _plan(ws, now):
+    """{"id", "name", "status", "trial_ends_at", "trial_expired", "seats_paid", "owners"},
+    or None when the workspace has no subscription."""
+    sub = billing_store.subscription(ws)
+    if not sub:
+        return None
+    plan = billing_store.plan(sub["plan"]) or {}
+    ends = sub["trial_ends_at"]
+    return {"id": sub["plan"], "name": plan.get("name") or sub["plan"], "status": sub["status"],
+            "trial_ends_at": ends,
+            "trial_expired": sub["status"] == "trialing" and ends is not None and ends <= now,
+            "seats_paid": sub["seats"],
+            "owners": [o["username"] for o in billing_store.owners(ws)]}

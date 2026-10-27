@@ -19,6 +19,7 @@ from kb import state
 from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
 from kb.rate_limit import rate_limit
+from kb.services import billing
 from kb.services.saml_refresh import next_refresh, read_idp
 from kb.services.sign_in import explained, new_sso_test
 
@@ -279,6 +280,7 @@ def _changed(fields):
 @router.post("/api/admin/sign-in/connections")
 def add_connection(body: ConnectionIn, request: Request, user=Depends(require_admin),
                    audit=audited("connection.create")):
+    billing.require(ws_of(user), "sso_oidc_saml")
     try:
         issuer = sso_setup.normalize_issuer(body.issuer)
         metadata = sso_setup.oidc_metadata(issuer)
@@ -333,6 +335,7 @@ def edit_connection(cid: str, body: ConnectionPatch, request: Request,
 @router.post("/api/admin/sign-in/saml-connections")
 def add_saml_connection(body: SamlConnectionIn, request: Request, user=Depends(require_admin),
                         audit=audited("connection.create")):
+    billing.require(ws_of(user), "sso_oidc_saml")
     if not (body.label or "").strip():
         raise HTTPException(400, "Give the sign-in button a name.")
     entity_id, settings, status = _saml_settings(body)

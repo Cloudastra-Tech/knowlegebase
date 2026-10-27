@@ -43,7 +43,7 @@ import lifecycle_store
 import slack_store
 from kb.audit import audited
 from kb.deps import public_url, require_admin, require_hr, ws_of
-from kb.services import slack
+from kb.services import billing, slack
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -101,6 +101,7 @@ def set_slack_app(body: AppIn, request: Request, user=Depends(require_admin),
     made from slack/manifest.yml in their Slack. Its secrets are sealed; a
     different app ends the install of the one before."""
     ws = ws_of(user)
+    billing.require(ws, "slack")
     if body.mode == "central":
         if not slack.central_app():
             raise HTTPException(400, "This server has no Slack app of its own yet "
@@ -138,6 +139,7 @@ def slack_install(request: Request, user=Depends(require_admin),
                   audit=audited("slack.install_start")):
     """{url} of Slack's consent screen, to install the app in a Slack workspace."""
     ws = ws_of(user)
+    billing.require(ws, "slack")
     install = slack_store.get(ws)
     app = slack.app_of(install)
     if not app:

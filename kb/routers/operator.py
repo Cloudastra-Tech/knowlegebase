@@ -12,6 +12,8 @@ chain (audit_store.PLATFORM).
     GET  /api/operator/workspaces           every workspace, with seats and usage
     POST /api/operator/workspaces/{ws}/suspend {reason} | /unsuspend
     POST /api/operator/workspaces/{ws}/reindex | /reset-rate-limits
+    POST /api/operator/workspaces/{ws}/extend-trial {days}  more trial (billing.py)
+    POST /api/operator/workspaces/{ws}/billing-owner {email}  who owns its billing
     POST /api/operator/workspaces/{ws}/support-session  -> a one-time code (only while
                                             the workspace's admin allows support)
     GET  /api/operator/workspaces/{ws}/audit   its audit log
@@ -28,6 +30,7 @@ from pydantic import BaseModel, Field
 
 import api_keys_store
 import audit_store
+import billing_store
 import db
 import lifecycle_store
 import members_store
@@ -38,7 +41,7 @@ from kb import operators, rate_limit
 from kb.audit import audited, client_ip
 from kb.deps import public_url
 from kb.operators import require_operator
-from kb.services import indexing
+from kb.services import billing, indexing
 from kb.services import operator as console
 from kb.services.sign_in import BROWSER_KEY, ProviderFailed, code_for, mark_browser, \
     provider_answer
@@ -210,6 +213,39 @@ def operator_reset_rate_limits(ws: str, operator=Depends(require_operator),
     n = rate_limit.reset_workspace(ws, people, keys)
     _record(audit, operator, ws, {"counters": n})
     return {"ok": True, "counters": n}
+
+
+class ExtendTrialIn(BaseModel):
+    days: int = Field(ge=1, le=90)
+
+
+@router.post("/api/operator/workspaces/{ws}/extend-trial")
+def operator_extend_trial(ws: str, body: ExtendTrialIn, operator=Depends(require_operator),
+                          audit=audited("operator.extend_trial")):
+    """More trial for a workspace: from its end, or from now if it has ended (which
+    lifts read-only, and cancels the deletion an expired trial asked for)."""
+    ws = _workspace(ws)
+    ends = billing.extend_trial(ws, body.days)
+    _record(audit, operator, ws, {"days": body.days, "trial_ends_at": ends})
+    return {"ok": True, "trial_ends_at": ends}
+
+
+class OwnerIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+@router.post("/api/operator/workspaces/{ws}/billing-owner")
+def operator_billing_owner(ws: str, body: OwnerIn, operator=Depends(require_operator),
+                           audit=audited("operator.billing_owner")):
+    """Make a member the owner of the workspace's billing (a workspace made before
+    billing, or whose owner left)."""
+    ws = _workspace(ws)
+    member = members_store.get(body.email)
+    if not member or member["workspace"] != ws or member["disabled"]:
+        raise HTTPException(404, "That person isn't a member of this workspace.")
+    billing_store.add_owner(ws, member["username"], operator["username"])
+    _record(audit, operator, ws, {"owner": member["username"]})
+    return {"ok": True}
 
 
 @router.post("/api/operator/workspaces/{ws}/support-session")

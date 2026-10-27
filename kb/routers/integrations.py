@@ -42,6 +42,7 @@ import workspaces
 import kb.audit
 import kb.state  # as kb.state: the callback's `state` parameter would hide it
 from connectors import base, registry
+from kb import quotas
 from kb.audit import audited
 from kb.deps import current_role, current_user, public_url, require_hr, ws_of
 from kb.rate_limit import user_limit
@@ -171,6 +172,7 @@ class ConnectIn(BaseModel):
 def integration_connect(provider: str, request: Request, body: ConnectIn | None = None,
                         user=Depends(require_hr), audit=audited("integration.connect_start")):
     c = _connector(provider)
+    quotas.check(ws_of(user), "connector", user=user, provider=provider)   # the plan's limit
     if not c.can_sign_in():
         raise HTTPException(400, f"{c.LABEL} is connected with a form, not a sign-in.")
     if not c.configured():
@@ -256,6 +258,7 @@ def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr),
     c = _connector(provider)
     if c.AUTH == "oauth":
         raise HTTPException(400, f"{c.LABEL} is connected by signing in to it.")
+    quotas.check(ws_of(user), "connector", user=user, provider=provider)   # the plan's limit
     user_limit(user, "sync")
     ws = ws_of(user)
     try:

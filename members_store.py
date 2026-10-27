@@ -565,6 +565,13 @@ def record_sso_login(username, name, workspace, groups=None, source=None):
     return _member(row) if row and row["workspace"] == workspace else None
 
 
+def touch_login(username):
+    """A password sign-in: when they last signed in (seats, onboarding)."""
+    with _lock, _db() as conn:
+        conn.execute("UPDATE members SET last_login_at = ? WHERE username = ?",
+                     (time.time(), username.strip().lower()))
+
+
 def role_for_groups(rules, groups):
     """The highest role the rules give these groups, or None if none matches."""
     have = {g.strip().lower() for g in groups}
