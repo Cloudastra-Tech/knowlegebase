@@ -2,12 +2,72 @@ import * as React from "react"
 import { cn } from "cn"
 import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
-function HoverCard({ ...props }: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
-  return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
+// Pressing the trigger means the person wants what it opens (the passage, the page), not
+// its preview: the card closes, and doesn't open until the pointer has left the trigger.
+// Otherwise the open delay can run out after a click has opened a sheet, and the card
+// pops up over it and takes the sheet's Escape.
+const PressContext = React.createContext<{ press: () => void; release: () => void } | null>(null)
+
+function HoverCard({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
+  const [own, setOwn] = React.useState(defaultOpen)
+  const pressed = React.useRef(false)
+  const change = React.useCallback(
+    (next: boolean) => {
+      if (next && pressed.current) return
+      setOwn(next)
+      onOpenChange?.(next)
+    },
+    [onOpenChange]
+  )
+  const press = React.useMemo(
+    () => ({
+      press: () => {
+        pressed.current = true
+        change(false)
+      },
+      release: () => {
+        pressed.current = false
+      },
+    }),
+    [change]
+  )
+  return (
+    <PressContext.Provider value={press}>
+      <HoverCardPrimitive.Root
+        data-slot="hover-card"
+        open={openProp ?? own}
+        onOpenChange={change}
+        {...props}
+      />
+    </PressContext.Provider>
+  )
 }
 
-function HoverCardTrigger({ ...props }: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
-  return <HoverCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
+function HoverCardTrigger({
+  onPointerDown,
+  onPointerLeave,
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
+  const press = React.useContext(PressContext)
+  return (
+    <HoverCardPrimitive.Trigger
+      data-slot="hover-card-trigger"
+      onPointerDown={(event) => {
+        onPointerDown?.(event)
+        press?.press()
+      }}
+      onPointerLeave={(event) => {
+        onPointerLeave?.(event)
+        press?.release()
+      }}
+      {...props}
+    />
+  )
 }
 
 function HoverCardContent({

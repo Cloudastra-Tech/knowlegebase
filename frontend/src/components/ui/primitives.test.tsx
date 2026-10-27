@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
 import { Command, CommandDialog, CommandInput, CommandList } from "@/components/ui/command"
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Sidebar, SidebarProvider } from "@/components/ui/sidebar"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -70,6 +71,29 @@ describe("the glass tab rail", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Members" }))
     await waitFor(() => expect(list.style.getPropertyValue("--thumb-x")).toBe("80px"))
     expect(list.style.getPropertyValue("--thumb-w")).toBe("60px")
+  })
+})
+
+describe("a hover card", () => {
+  const card = () =>
+    render(
+      <HoverCard openDelay={20}>
+        <HoverCardTrigger href="#s1">Source 1</HoverCardTrigger>
+        <HoverCardContent>The passage, previewed</HoverCardContent>
+      </HoverCard>,
+    )
+
+  it("previews on hover", async () => {
+    card()
+    await userEvent.hover(screen.getByText("Source 1"))
+    expect(await screen.findByText("The passage, previewed")).toBeInTheDocument()
+  })
+
+  it("stands down when its trigger is pressed, so it can't pop up over what the click opened", async () => {
+    card()
+    await userEvent.click(screen.getByText("Source 1"))
+    await new Promise((r) => setTimeout(r, 80))
+    expect(screen.queryByText("The passage, previewed")).not.toBeInTheDocument()
   })
 })
 
