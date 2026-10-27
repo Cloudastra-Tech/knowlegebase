@@ -26,10 +26,10 @@ PURGE (job "workspace_purge", queued by the hourly "workspace_purge_due"):
        the Slack app uninstalled (its bot token revoked)
     2. API keys and SCIM tokens revoked
     3. its search index collections dropped, its documents and exports deleted
-    4. every row of it deleted (FK cascades, and each table with a workspace
-       column), sessions of its members included
-    5. its data keys deleted: anything still sealed under them, in a backup say,
+    4. its data keys deleted: anything still sealed under them, in a backup say,
        can never be opened (crypto-shredding, secret_box.shred)
+    5. every row of it deleted (FK cascades, and each table with a workspace
+       column), sessions of its members included
 The operators' chain keeps a record that it was purged: when, who asked, how
 many rows, never the content.
 """
@@ -480,8 +480,8 @@ def purge(ws):
     dropped = _drop_collections(ws)
     for folder in workspace_dirs(ws):
         shutil.rmtree(folder, ignore_errors=True)
+    shredded = secret_box.shred(ws)       # nothing needs its secrets any more
     rows = _delete_rows(ws)
-    shredded = secret_box.shred(ws)
     _forget_in_memory(ws)
     result = {"name": name, "requested_by": st["delete_requested_by"],
               "requested_at": st["delete_requested_at"], "revoked": revoked,

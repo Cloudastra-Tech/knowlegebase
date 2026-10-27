@@ -16,7 +16,7 @@ import lifecycle_store
 import members_store
 import sessions_store
 import sso
-from kb import state
+from kb import operators, state
 from kb.audit import audited
 from kb.deps import current_user, public_url, public_user
 from kb.rate_limit import rate_limit
@@ -70,8 +70,11 @@ async def login(body: LoginIn, request: Request):
     member = await run_in_threadpool(auth.check_password, body.username, body.password)
     if member and not auth.sso_required(member):
         failed_logins.pop(key, None)
-        user = {"username": member["username"], "name": member["name"],
-                **auth.access_for(member["username"])}
+        access = auth.access_for(member["username"])
+        if not access:                         # suspended, or being deleted (lifecycle_store)
+            raise HTTPException(403, "Your workspace is suspended or being deleted. Ask your "
+                                     "admin.")
+        user = {"username": member["username"], "name": member["name"], **access}
         token = secrets.token_urlsafe(32)
         sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
         members_store.log_event(user["workspace"], "password", user["username"], "signed_in")
@@ -109,7 +112,10 @@ def sso_exchange(body: CodeIn, request: Request):
     if not user or user.get("operator"):        # an operator's code: /api/operator/...
         raise HTTPException(401, "That sign-in expired. Please sign in again.")
     token = secrets.token_urlsafe(32)
-    sessions_store.create(token, user, SESSION_SECONDS)
+    # Support opened by an operator lasts an hour at most, and never past the grant.
+    seconds = (operators.support_seconds(user["workspace"]) if user.get("impersonator")
+               else SESSION_SECONDS)
+    sessions_store.create(token, user, seconds)
     return {"token": token, "user": public_user(user)}
 
 
