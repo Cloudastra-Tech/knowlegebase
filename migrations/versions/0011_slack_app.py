@@ -19,6 +19,8 @@ nothing that exists is changed.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0011"
 down_revision = "0010"
 branch_labels = None
@@ -66,12 +68,12 @@ TABLES = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in TABLES:
         conn.exec_driver_sql(statement)
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("slack_threads", "slack_events", "slack_installs"):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")

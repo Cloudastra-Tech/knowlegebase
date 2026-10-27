@@ -1,12 +1,31 @@
-"""Middleware on every request: a cap on the request body, security headers, and
-CORS for the public API from the browser extension only."""
+"""Middleware on every request: a cap on the request body, security headers,
+CORS for the public API from the browser extension only, and the request's
+tenant scope (db.py)."""
 
 import json
+
+import db
 
 from fastapi import HTTPException
 from fastapi.responses import Response
 
 from kb.settings import UPLOAD_MAX_REQUEST_MB, env_int
+
+
+class TenantScope:
+    """Each request in a db.tenant_scope() of its own: once current_user (kb/deps.py)
+    knows the workspace, the request's connections are that tenant's (row-level
+    security on Postgres). Until then, and for a request that never signs in,
+    they are the platform's."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        with db.tenant_scope():
+            return await self.app(scope, receive, send)
 
 
 class BodyLimit:

@@ -17,6 +17,8 @@ nothing that exists is changed.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0009"
 down_revision = "0008"
 branch_labels = None
@@ -53,12 +55,12 @@ TABLES = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in TABLES:
         conn.exec_driver_sql(statement)
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     conn.exec_driver_sql("DROP TABLE IF EXISTS api_settings")
     conn.exec_driver_sql("DROP TABLE IF EXISTS api_keys")

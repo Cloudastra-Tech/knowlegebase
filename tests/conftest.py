@@ -30,6 +30,100 @@ os.environ.update(APP_DB=os.path.join(_tmp, "app.db"),
                   USERS_FILE=os.path.join(_tmp, "users.json"),
                   SSO_CONFIG=os.path.join(_tmp, "sso.json"))
 
+# THE POSTGRES LEG (db.py, platform.md PL-04). TEST_DATABASE_URL names a Postgres
+# server the tests may make databases on (CI's service container): the run gets a
+# new, empty database of its own there, dropped at the end, as DATABASE_URL. A
+# DATABASE_URL already set (a real one, from a shell) is never used by tests.
+os.environ.pop("DATABASE_URL", None)
+POSTGRES = bool(os.getenv("TEST_DATABASE_URL"))
+if POSTGRES:
+    import uuid
+
+    import psycopg
+
+    _server = os.environ["TEST_DATABASE_URL"]
+    _name = f"kb_test_{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(_server, autocommit=True) as _admin:
+        _admin.execute(f'CREATE DATABASE "{_name}"')
+    _base, _, _query = _server.partition("?")
+    os.environ["DATABASE_URL"] = (_base.rsplit("/", 1)[0] + "/" + _name
+                                  + (f"?{_query}" if _query else ""))
+
+    def _drop_database():
+        import db_pg
+        db_pg.close_all()
+        with psycopg.connect(_server, autocommit=True) as admin:
+            admin.execute(f'DROP DATABASE IF EXISTS "{_name}" WITH (FORCE)')
+
+    atexit.register(_drop_database)
+
+
+_template = None
+
+
+def fresh_database(monkeypatch, tmp_path):
+    """Point the app at an empty database of the test's own: a new SQLite file, or
+    on the Postgres leg a new database (copied from an empty, migrated template),
+    dropped afterwards. Returns a function that drops it (the fixture's teardown)."""
+    import db
+    monkeypatch.setattr(db, "_migrated", set())
+    if not POSTGRES:
+        monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "app.db"))
+        return lambda: None
+    import psycopg
+
+    import db_pg
+    global _template
+    base = os.environ["DATABASE_URL"].rsplit("/", 1)[0]
+    if _template is None:
+        _template = f"{_name}_template"
+        with psycopg.connect(_server, autocommit=True) as admin:
+            admin.execute(f'CREATE DATABASE "{_template}"')
+        db.migrate(url=f"{base}/{_template}")
+        db_pg.database(f"{base}/{_template}").close()
+        atexit.register(_drop, _template)
+    name = f"{_name}_{len(os.listdir(tmp_path))}_{os.urandom(3).hex()}"
+    with psycopg.connect(_server, autocommit=True) as admin:
+        admin.execute(f'CREATE DATABASE "{name}" TEMPLATE "{_template}"')
+    url = f"{base}/{name}"
+    monkeypatch.setattr(db, "DATABASE_URL", url)
+
+    def drop():
+        db_pg.database(url).close()
+        _drop(name)
+    return drop
+
+
+@pytest.fixture
+def fresh_db(monkeypatch, tmp_path):
+    """An empty database of the test's own, on either backend (fresh_database)."""
+    drop = fresh_database(monkeypatch, tmp_path)
+    yield
+    drop()
+
+
+def _drop(name):
+    import psycopg
+    with psycopg.connect(_server, autocommit=True) as admin:
+        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "sqlite_only(reason): about the SQLite file itself (its migrations from "
+                   "pre-Alembic copies, WAL, PRAGMAs, the backup tool); skipped on the "
+                   "Postgres leg")
+
+
+def pytest_collection_modifyitems(config, items):
+    if not POSTGRES:
+        return
+    for item in items:
+        marker = item.get_closest_marker("sqlite_only")
+        if marker:
+            reason = marker.kwargs.get("reason") or (marker.args[0] if marker.args else "")
+            item.add_marker(pytest.mark.skip(reason=f"SQLite only: {reason}"))
+
 
 @pytest.fixture
 def jobs_paused(monkeypatch):

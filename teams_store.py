@@ -120,7 +120,7 @@ def set_custom_app(workspace, app_id, app_tenant, client_secret, user):
             conn.execute(
                 "UPDATE teams_installs SET mode = 'custom', app_id = ?, app_tenant = ?, "
                 "app_secret = ?, tenant_id = ?, app_key = COALESCE(app_key, ?), "
-                "status = CASE WHEN ? THEN status ELSE 'configured' END, "
+                "status = CASE WHEN ? = 1 THEN status ELSE 'configured' END, "
                 "updated_by = ?, updated_at = ? WHERE workspace = ?",
                 (app_id, app_tenant, sealed,
                  app_tenant, secrets.token_urlsafe(18), int(same), user, time.time(),
@@ -143,7 +143,7 @@ def use_central_app(workspace, tenant_id, user):
             conn.execute(
                 "UPDATE teams_installs SET mode = 'central', app_id = NULL, app_tenant = NULL, "
                 "app_secret = NULL, app_key = NULL, tenant_id = ?, "
-                "status = CASE WHEN ? THEN status ELSE 'configured' END, "
+                "status = CASE WHEN ? = 1 THEN status ELSE 'configured' END, "
                 "updated_by = ?, updated_at = ? WHERE workspace = ?",
                 (tenant_id, int(same), user, time.time(), workspace))
         except sqlite3.IntegrityError:

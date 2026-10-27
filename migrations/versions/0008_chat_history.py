@@ -23,6 +23,8 @@ import json
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0008"
 down_revision = "0007"
 branch_labels = None
@@ -67,7 +69,7 @@ SCHEMA = (
 
 
 def _has_column(conn, table, column):
-    return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
+    return dialect.has_column(conn, table, column)
 
 
 def _answer_access(max_access, sources):
@@ -102,16 +104,64 @@ def _fill_search(conn):
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     if not _has_column(conn, "messages", "followups"):    # adopted again by legacy.py
         conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN followups TEXT NOT NULL DEFAULT '[]'")
+    postgres = dialect.postgres(conn)
     for statement in SCHEMA:
+        if postgres and "USING fts5" in statement:
+            for pg_statement in PG_SEARCH:
+                dialect.native(conn).exec_driver_sql(pg_statement)
+            continue
         conn.exec_driver_sql(statement)
     _fill_search(conn)
 
 
+# conversation_search on Postgres: the same columns in a plain table, the body
+# as a tsvector (GIN-indexed) under the text search configuration kb_search,
+# which does what FTS5's 'porter unicode61' does: words lower-cased, accents
+# dropped (when the unaccent extension can be made), English stems, and no
+# stopwords. conversations_store.search queries it with prefix terms, ranks with
+# ts_rank and cuts snippets with ts_headline.
+PG_SEARCH = (
+    """DO $$ BEGIN
+           CREATE EXTENSION IF NOT EXISTS unaccent;
+       EXCEPTION WHEN OTHERS THEN
+           RAISE NOTICE 'unaccent unavailable: chat search keeps accents';
+       END $$""",
+    """DO $$ BEGIN
+           IF NOT EXISTS (SELECT 1 FROM pg_ts_dict WHERE dictname = 'kb_english_stem') THEN
+               CREATE TEXT SEARCH DICTIONARY kb_english_stem
+                   (TEMPLATE = snowball, Language = english);
+           END IF;
+           IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'kb_search') THEN
+               CREATE TEXT SEARCH CONFIGURATION kb_search (COPY = simple);
+               IF EXISTS (SELECT 1 FROM pg_ts_dict WHERE dictname = 'unaccent') THEN
+                   ALTER TEXT SEARCH CONFIGURATION kb_search ALTER MAPPING FOR
+                       asciiword, asciihword, hword_asciipart, word, hword, hword_part
+                       WITH unaccent, kb_english_stem;
+               ELSE
+                   ALTER TEXT SEARCH CONFIGURATION kb_search ALTER MAPPING FOR
+                       asciiword, asciihword, hword_asciipart, word, hword, hword_part
+                       WITH kb_english_stem;
+               END IF;
+           END IF;
+       END $$""",
+    """CREATE TABLE IF NOT EXISTS conversation_search (
+        body            TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        message_id      TEXT,
+        access          TEXT NOT NULL,
+        tsv             tsvector GENERATED ALWAYS AS (to_tsvector('kb_search', body)) STORED)""",
+    "CREATE INDEX IF NOT EXISTS conversation_search_tsv ON conversation_search USING gin (tsv)",
+    "CREATE INDEX IF NOT EXISTS conversation_search_by_conversation "
+    "ON conversation_search (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS conversation_search_by_message ON conversation_search (message_id)",
+)
+
+
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("shares", "chat_settings", "conversation_search", "conversation_folders"):
         conn.exec_driver_sql(f"DROP TABLE {table}")
     with op.batch_alter_table("messages") as batch:

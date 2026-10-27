@@ -29,7 +29,6 @@ import numpy as np
 import regex      # Unicode-aware regular expressions (\p{L} = any letter, any script)
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.retrievers import BM25Retriever   # keyword search
@@ -38,6 +37,7 @@ import access
 import ingest
 import models
 import rerankers
+import vector_store
 from ingest import CHROMA_LOCK
 from safety import check_question, check_answer  # our Guardrails-AI safety layer
 from untrusted import RULE, spotlight
@@ -219,8 +219,7 @@ def load_chain(role="public", collection=None, version=None):
     # Re-open the vector database we built in ingest.py.
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     with CHROMA_LOCK:
-        vectorstore = Chroma(persist_directory=DB_FOLDER, embedding_function=embeddings,
-                             collection_name=collection or "langchain")
+        vectorstore = vector_store.store(collection or "langchain", embeddings, DB_FOLDER)
 
     # With a reranker, both searches bring a larger pool for it to choose from.
     reranker = RERANKER

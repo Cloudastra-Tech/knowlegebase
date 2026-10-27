@@ -25,6 +25,8 @@ deletes its rows like any other table's.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0017"
 down_revision = "0016"
 branch_labels = None
@@ -130,13 +132,13 @@ TABLES = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in TABLES:
         conn.exec_driver_sql(statement)
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("webhook_deliveries", "webhooks", "drafts", "doc_summaries",
                   "digest_subscriptions", "doc_changes"):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")

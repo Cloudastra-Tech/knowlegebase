@@ -5,8 +5,10 @@ GET /api/health only says the process is up (Docker's HEALTHCHECK uses it, so
 it must stay cheap and never fail because of a store). This deeper check is for
 a deploy gate or an uptime monitor: it touches each thing a request needs.
 
-    database           config/app.db opens read-only and answers a query
-    search_index       the Chroma folder exists and its store opens
+    database           config/app.db opens read-only and answers a query (on
+                       Postgres, DATABASE_URL answers one)
+    search_index       the Chroma folder exists and its store opens (pgvector:
+                       its table answers)
     integrations_key   the encryption key loads, and opens a workspace's data key
                        (or an old-format stored secret): a changed
                        INTEGRATIONS_KEY breaks every SSO provider and
@@ -26,6 +28,7 @@ import sqlite3
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
+import db
 import secret_box
 
 log = logging.getLogger("uvicorn.error")
@@ -40,6 +43,9 @@ class NotReady(Exception):
 
 
 def _read_only(db_path):
+    if db.is_postgres():               # a pooled connection; nothing here writes
+        import db_pg
+        return db_pg.database(db.DATABASE_URL).connect()
     if not os.path.isfile(db_path):
         raise NotReady("no database file")
     uri = pathlib.Path(os.path.abspath(db_path)).as_uri() + "?mode=ro"
@@ -51,23 +57,30 @@ def _read_only(db_path):
 def check_database(db_path):
     conn = _read_only(db_path)
     try:
-        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        conn.execute("SELECT 1" if db.is_postgres() else
+                     "SELECT count(*) FROM sqlite_master").fetchone()
     finally:
         conn.close()
 
 
 def check_search_index(folder):
+    import vector_store
+    if vector_store.backend() == "pgvector":
+        try:
+            vector_store.check(folder)       # the table answers (VECTOR_STORE=pgvector)
+        except vector_store.NotFoundError as e:
+            raise NotReady(str(e)) from None
+        return
     if not os.path.isdir(folder):
         raise NotReady("no search index folder (run ingest.py)")
-    import chromadb
     # Same default settings as GET /api/knowledge, so Chroma reuses one client per folder.
-    chromadb.PersistentClient(path=folder).count_collections()
+    vector_store.check(folder)
 
 
 def _stored_secret(db_path):
     """(kind, blob): a wrapped data key ("wrapped"), else any one value sealed by
     the server key itself ("legacy"), else (None, None)."""
-    if not os.path.isfile(db_path):
+    if not db.is_postgres() and not os.path.isfile(db_path):
         return None, None
     conn = _read_only(db_path)
     try:

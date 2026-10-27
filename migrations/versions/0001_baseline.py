@@ -12,6 +12,8 @@ A database from before this is brought here by migrations/legacy.py instead.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0001"
 down_revision = None
 branch_labels = None
@@ -134,7 +136,7 @@ SCHEMA = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)       # as written: no bind-parameter parsing
 

@@ -13,6 +13,7 @@ import sqlite3
 from fastapi import Depends, Header, HTTPException, Request
 
 import auth
+import db
 import groups_store
 import lifecycle_store
 import members_store
@@ -54,6 +55,7 @@ def current_user(request: Request, authorization: str = Header(default="")):
         raise HTTPException(401, "Please sign in.")
     user = {**user, **access}
     logs.bind_user(user)               # the request's log lines say whose it is (not the email)
+    db.set_tenant(ws_of(user))         # its connections from now on: this workspace's rows
     if lifecycle_store.status(user["workspace"]) == lifecycle_store.DELETING and not \
             request.url.path.startswith(WHILE_DELETING):
         raise HTTPException(423, "This workspace is being deleted. Export it or cancel the "

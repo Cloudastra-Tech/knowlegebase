@@ -669,6 +669,69 @@ database is. Back up first (`scripts/backup.sh`): there's no automatic way down.
    pre-Alembic fixture in `tests/fixtures/legacy_dbs/` to the newest migration and
    checks every row survives and the schema matches a new database's. Add a test
    for your data change there.
+6. It must also run on **Postgres** (below). Take the connection with
+   `conn = dialect.bind()` (`from migrations import dialect`), not `op.get_bind()`:
+   on SQLite it is the same connection and your SQL runs exactly as written; on
+   Postgres each statement is translated (`db_pg.translate`: types,
+   `AUTOINCREMENT`, `INSERT OR IGNORE`, `user`, `?`). `dialect.has_column` /
+   `dialect.columns` replace `PRAGMA table_info`. What has no translation (FTS5, a
+   trigger, a table copied to change a CHECK: `dialect.replace_check` does that in
+   place) gets an `if dialect.postgres(conn):` branch with Postgres's own SQL
+   through `dialect.native(conn)` — see 0006, 0007, 0008 and 0015. CI runs every
+   migration on both (the `backend (postgres)` job).
+
+## 🐘 Postgres, row-level security and pgvector
+
+SQLite stays the default. Set `DATABASE_URL=postgresql://...` and `db.connect()`
+returns a Postgres connection instead (`db_pg.py`, psycopg 3, pooled): the stores
+keep their SQL, because the connection behaves like `sqlite3`'s — `?` parameters,
+`row["name"]` rows, `lastrowid` (an `INSERT` gets `RETURNING id`), `rowcount`,
+the same transaction rules (a write opens a transaction, `with conn:` ends it, a
+failed statement inside one is undone alone), and psycopg's errors raised as
+`sqlite3.IntegrityError` and friends. SQLite-only SQL is translated where there
+is an exact equivalent (`INSERT OR IGNORE` → `ON CONFLICT DO NOTHING`, `IS` →
+`IS NOT DISTINCT FROM`, scalar `MIN`/`MAX` → `LEAST`/`GREATEST`, `LIKE` →
+`ILIKE`, `COLLATE NOCASE` → an ICU case-insensitive collation) and refused by
+name otherwise (`PRAGMA`, `sqlite_master`, `UPDATE OR REPLACE`, FTS5, `json_*`,
+`strftime`...). Where the semantics differ, the code has a branch
+(`db.is_postgres()`):
+
+| SQLite | Postgres |
+|---|---|
+| FTS5 chat search (`conversation_search`, porter + unicode61) | a `tsvector` column (GIN) under the `kb_search` text search configuration: unaccent + English stems, no stopwords; prefix terms, `ts_rank`, `ts_headline`; the same access filter |
+| `BEGIN IMMEDIATE` (one writer) | `BEGIN` + a transaction-level advisory lock |
+| job claims under `BEGIN IMMEDIATE` | `SELECT ... FOR UPDATE SKIP LOCKED`, the lane by `pg_try_advisory_xact_lock` and checked again (`kb/jobs.py`) |
+| the `question_log_forget_message` trigger | the same as a PL/pgSQL trigger function |
+| `ORDER BY created_at, rowid` (messages) | a real `rowid` identity column on `messages` |
+| `shown_actor()` (a Python function in SQL, audit filter) | the matching actors computed in Python |
+| `sqlite_master` / `PRAGMA table_info` | `db.tables(conn)` (information_schema) |
+
+**Row-level security** (platform.md PL-04 step 3). Each request runs in a
+`db.tenant_scope()` (`kb/middleware.py`); `current_user` names its workspace
+(`db.set_tenant`), and so does the job runner for a workspace's job. On Postgres,
+connections opened after that run as the tenant role (`kb_tenant`) with
+`app.workspace` set, and every tenant table has a policy `workspace =
+current_setting('app.workspace')` (`workspaces` by slug; `messages`,
+`conversation_search`, `scim_group_members`... through their parent row), made by
+`migrations/postgres.py` after every upgrade, so a new table is covered too. A
+tenant connection without the setting sees nothing. The platform — sign-in before
+the workspace is known, jobs of no workspace, the operator, migrations — runs as
+the login role, which owns the tables and so bypasses the policies;
+`db.platform()` is the way out for a check that is across workspaces by nature.
+`DB_RLS=off` turns it off. On SQLite these are no-ops: isolation stays in the code.
+
+**Search index.** `VECTOR_STORE=chroma` (default) or `pgvector`. `vector_store.py`
+is the one place that knows: `ingest._store()` and `rag.load_chain()` get a
+LangChain store from it, and the rest (`_collection.get/upsert/update/delete`,
+listing and dropping collections, the health check) goes through it. pgvector
+keeps every collection's chunks in one table, `kb_chunks` (text, JSONB metadata,
+the ACL as `text[]` with a GIN index, an untyped `vector` with an HNSW index per
+size), row-level secured by workspace; Chroma's `where` filters are translated,
+the ACL's `$or` of `$contains` into `acl && ARRAY[principals]`. `DB_FOLDER` is a
+namespace in that table, so a throwaway index (eval, tests) stays apart.
+
+**Moving a server over**: `python -m tools.migrate_sqlite_to_pg` (deploy.md,
+"Moving to Postgres").
 
 ---
 

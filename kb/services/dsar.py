@@ -133,9 +133,17 @@ def erase_member(ws, username):
         shared = [r[0] for r in conn.execute(
             "SELECT DISTINCT doc_key FROM doc_acl WHERE workspace = ? AND principal_type = 'user' "
             "AND lower(principal) = ?", (ws, u)).fetchall()]
-        run("document_access", "UPDATE OR REPLACE doc_acl SET principal = ? WHERE workspace = ? "
-                               "AND principal_type = 'user' AND lower(principal) = ?",
-            pseudonym, ws, u)
+        # (Moved as SQLite's UPDATE OR REPLACE would, on either database: a grant the
+        # pseudonym already has for a document is kept, once.)
+        grants = conn.execute("SELECT doc_key, created_by, created_at FROM doc_acl WHERE "
+                              "workspace = ? AND principal_type = 'user' AND "
+                              "lower(principal) = ?", (ws, u)).fetchall()
+        run("document_access", "DELETE FROM doc_acl WHERE workspace = ? AND "
+                               "principal_type = 'user' AND lower(principal) = ?", ws, u)
+        for g in grants:
+            conn.execute("INSERT OR IGNORE INTO doc_acl (workspace, doc_key, principal_type, "
+                         "principal, created_by, created_at) VALUES (?, ?, 'user', ?, ?, ?)",
+                         (ws, g["doc_key"], pseudonym, g["created_by"], g["created_at"]))
         # SPACES: their own space and every file they attached or kept (cascade:
         # the files' text), their saved prompts, their place in team spaces.
         run("files", "DELETE FROM attachments WHERE workspace = ? AND owner = ?", ws, u)
@@ -148,11 +156,9 @@ def erase_member(ws, username):
         run("api_keys", "DELETE FROM api_keys WHERE workspace = ? AND created_by = ?", ws, u)
         run("sessions", "DELETE FROM sessions WHERE username = ?", u)
         run("member", "DELETE FROM members WHERE username = ? AND workspace = ?", u, ws)
-        for table in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE "
-                                                  "type = 'table'").fetchall()]:
-            if table.startswith("sqlite_") or table.startswith("conversation_search"):
+        for table, columns in db.tables(conn).items():
+            if table.startswith("conversation_search"):
                 continue
-            columns = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')}
             where = "workspace = ?" if "workspace" in columns else "slug = ?" \
                 if table == "workspaces" else None
             if where is None:

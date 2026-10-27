@@ -24,6 +24,8 @@ rows are kept as they are:
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0006"
 down_revision = "0005"
 branch_labels = None
@@ -87,20 +89,31 @@ EVENTS = """CREATE TABLE sso_events (
         at            REAL NOT NULL,
         ref           TEXT                 -- shown to the person it failed for
         )"""
+CHECK = ("outcome IN ('signed_in', 'refused', 'failed', 'test', 'warning', 'updated', "
+         "'attention', 'scim')")
 EVENT_COLUMNS = "id, workspace, connection_id, email, outcome, reason, at, ref"
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
+    if dialect.postgres(conn):
+        # COLLATE NOCASE (scim_groups_by_name, and the stores' ORDER BY ... COLLATE
+        # NOCASE): case-insensitive, as SQLite's.
+        dialect.native(conn).exec_driver_sql(
+            "CREATE COLLATION IF NOT EXISTS nocase "
+            "(provider = icu, locale = 'und-u-ks-level2', deterministic = false)")
     for statement in TABLES:
         conn.exec_driver_sql(statement)
-    have = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(members)")}
+    have = set(dialect.columns(conn, "members"))
     for name, kind in MEMBER_COLUMNS:
         if name not in have:
             conn.exec_driver_sql(f"ALTER TABLE members ADD COLUMN {name} {kind}")
     conn.exec_driver_sql("""CREATE UNIQUE INDEX IF NOT EXISTS members_by_scim_id
                             ON members(scim_id) WHERE scim_id IS NOT NULL""")
 
+    if dialect.postgres(conn):                 # its CHECK changes in place
+        dialect.replace_check(conn, "sso_events", "outcome", CHECK)
+        return
     conn.exec_driver_sql("ALTER TABLE sso_events RENAME TO sso_events_old")
     conn.exec_driver_sql(EVENTS)
     conn.exec_driver_sql(f"INSERT INTO sso_events ({EVENT_COLUMNS}) "

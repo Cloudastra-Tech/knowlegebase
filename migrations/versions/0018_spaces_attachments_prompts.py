@@ -34,6 +34,8 @@ Every table has a `workspace` column, so deleting a workspace deletes them
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0018"
 down_revision = "0017"
 branch_labels = None
@@ -119,12 +121,12 @@ TABLES = ("prompt_templates", "attachment_chunks", "attachments", "space_sources
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in TABLES:
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")

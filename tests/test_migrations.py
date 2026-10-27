@@ -18,6 +18,11 @@ import db
 import members_store
 from migrations import legacy
 
+# All about the SQLite file: config/app.db's from before Alembic, WAL, PRAGMAs, the
+# alembic command line on APP_DB. The Postgres leg's migrations are checked by
+# tests/test_postgres_migrations.py (and every other test there runs on them).
+pytestmark = pytest.mark.sqlite_only("the SQLite file's own migrations")
+
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
 HEAD = "0018"                                  # the newest migration

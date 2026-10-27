@@ -39,6 +39,8 @@ CHECK as it is (it accepts everything the old one did).
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0015"
 down_revision = "0013"   # 0014 is the group ACLs' (in flight): re-point to the newest at merge
 branch_labels = None
@@ -122,11 +124,14 @@ NEW_TABLES = ("teams_installs", "teams_activities", "teams_users", "teams_thread
 
 
 def _has_column(conn, table, column):
-    return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
+    return dialect.has_column(conn, table, column)
 
 
 def _widen_question_log(conn):
     """Copy question_log into a table whose CHECK allows the new surfaces."""
+    if dialect.postgres(conn):                 # its CHECK changes in place
+        dialect.replace_check(conn, "question_log", "surface", NEW_CHECK)
+        return
     row = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type = 'table' AND "
                                "name = 'question_log'").fetchone()
     if not row or OLD_CHECK not in row[0]:
@@ -147,7 +152,7 @@ def _widen_question_log(conn):
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     _widen_question_log(conn)
     if not _has_column(conn, "api_keys", "client"):
         conn.exec_driver_sql("ALTER TABLE api_keys ADD COLUMN client TEXT")
@@ -156,7 +161,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in reversed(NEW_TABLES):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
     if _has_column(conn, "api_keys", "client"):

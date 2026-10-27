@@ -782,9 +782,9 @@ def _log_event(conn, workspace, cid, email, outcome, reason=None, ref=None):
                   time.time()))
     # SCIM's events are kept apart: a big first sync mustn't push out the sign-ins.
     scim = int(outcome == "scim")
-    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND (outcome = 'scim') = ?
+    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND (outcome = 'scim') = (? = 1)
                     AND id NOT IN (SELECT id FROM sso_events
-                                   WHERE workspace = ? AND (outcome = 'scim') = ?
+                                   WHERE workspace = ? AND (outcome = 'scim') = (? = 1)
                                    ORDER BY id DESC LIMIT ?)""",
                  (workspace, scim, workspace, scim, EVENTS_KEPT))
 
@@ -794,7 +794,7 @@ def recent_events(workspace, limit=50, scim=False):
     with _db() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT connection_id, email, outcome, reason, ref, at FROM sso_events "
-            "WHERE workspace = ? AND (outcome = 'scim') = ? ORDER BY id DESC LIMIT ?",
+            "WHERE workspace = ? AND (outcome = 'scim') = (? = 1) ORDER BY id DESC LIMIT ?",
             (workspace, int(scim), limit))]
 
 
