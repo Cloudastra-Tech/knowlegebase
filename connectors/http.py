@@ -116,12 +116,15 @@ def safe_url(url):
 
 def retry_after(response):
     """Retry-After in seconds (it may be a number or an HTTP date), or None.
-    Without one, Atlassian's X-RateLimit-Reset (an ISO 8601 time,
-    https://developer.atlassian.com/cloud/confluence/rate-limiting/) on a 429."""
+    Without one, X-RateLimit-Reset on a rate-limited answer: Atlassian sends an
+    ISO 8601 time (https://developer.atlassian.com/cloud/confluence/rate-limiting/),
+    GitHub UTC epoch seconds (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)."""
     value = (response.headers.get("Retry-After") or "").strip()
     if not value:
         reset = (response.headers.get("X-RateLimit-Reset") or "").strip()
-        if reset and response.status_code == 429:
+        if reset and (response.status_code == 429 or _github_rate_limited(response)):
+            if reset.isdigit():
+                return max(0.0, int(reset) - time.time())
             try:
                 when = datetime.datetime.fromisoformat(reset.replace("Z", "+00:00"))
                 return max(0.0, when.timestamp() - time.time())
@@ -146,6 +149,15 @@ def _google_rate_limited(response):
     except ValueError:
         return False
     return any(e.get("reason") in ("rateLimitExceeded", "userRateLimitExceeded") for e in errors)
+
+
+def _github_rate_limited(response):
+    """GitHub answers both its primary and secondary rate limits with 403 or 429:
+    the primary one with x-ratelimit-remaining: 0, a secondary one often with a
+    retry-after (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)."""
+    h = response.headers
+    return response.status_code == 403 and (
+        (h.get("X-RateLimit-Remaining") or "").strip() == "0" or bool(h.get("Retry-After")))
 
 
 def _backoff(attempt):
@@ -184,7 +196,8 @@ def request(method, url, *, bucket=None, rate=None, burst=1, retries=RETRIES, gu
         status = r.status_code
         if status in ok:
             return r
-        limited = status in (429, 529) or (status == 403 and _google_rate_limited(r))
+        limited = status in (429, 529) or (status == 403 and (_google_rate_limited(r)
+                                                            or _github_rate_limited(r)))
         if limited or (status >= 500 and status != 501):
             wait = retry_after(r)
             wait = _backoff(attempt) if wait is None else wait

@@ -1,0 +1,366 @@
+{
+ "_source": [
+  "https://dac-static.atlassian.com/cloud/jira/platform/swagger-v3.v3.json (GET /rest/api/3/search/jql: SearchAndReconcileResults {issues, nextPageToken (absent on the last page), isLast}; GET /rest/api/3/issue/{issueIdOrKey}/comment: PageOfComments {comments, startAt, maxResults, total}; GET /rest/api/3/project/{projectKeyOrId}/permissionscheme?expand=permissions: PermissionScheme {id, name, permissions: [PermissionGrant {id, holder {type, parameter, value}, permission}]})",
+  "https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/ (Atlassian Document Format nodes: doc, paragraph, heading, codeBlock, table/tableRow/tableHeader/tableCell, bulletList/listItem, mention, text marks code/link)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/search/jql",
+    "params": {
+     "jql~": "updated >= \"2026-10-11 18:50\" ORDER BY updated ASC"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "issues": [
+      {
+       "expand": "",
+       "id": "10001",
+       "key": "ENG-1",
+       "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/issue/10001",
+       "fields": {
+        "summary": "Deploys fail on Fridays",
+        "status": {
+         "name": "Done",
+         "id": "3"
+        },
+        "issuetype": {
+         "name": "Bug",
+         "id": "1"
+        },
+        "priority": {
+         "name": "High",
+         "id": "2"
+        },
+        "assignee": {
+         "accountId": "acc-ann",
+         "displayName": "Ann Lee",
+         "active": true,
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/user?accountId=acc-ann"
+        },
+        "reporter": {
+         "accountId": "acc-bob",
+         "displayName": "Bob Ray",
+         "active": true,
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/user?accountId=acc-bob"
+        },
+        "labels": [
+         "deploys"
+        ],
+        "created": "2024-01-01T09:00:00.000+0000",
+        "updated": "2026-10-10T10:00:00.000+0000",
+        "project": {
+         "id": "10000",
+         "key": "ENG",
+         "name": "Engineering",
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/project/10000"
+        },
+        "security": null,
+        "description": {
+         "type": "doc",
+         "version": 1,
+         "content": [
+          {
+           "type": "heading",
+           "attrs": {
+            "level": 2
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "What happens"
+            }
+           ]
+          },
+          {
+           "type": "paragraph",
+           "content": [
+            {
+             "type": "text",
+             "text": "The "
+            },
+            {
+             "type": "text",
+             "text": "deploy",
+             "marks": [
+              {
+               "type": "code"
+              }
+             ]
+            },
+            {
+             "type": "text",
+             "text": " job times out; see "
+            },
+            {
+             "type": "text",
+             "text": "the runbook",
+             "marks": [
+              {
+               "type": "link",
+               "attrs": {
+                "href": "https://wiki.acme.com/run"
+               }
+              }
+             ]
+            },
+            {
+             "type": "text",
+             "text": ". Ping "
+            },
+            {
+             "type": "mention",
+             "attrs": {
+              "id": "acc-bob",
+              "text": "@Bob"
+             }
+            }
+           ]
+          },
+          {
+           "type": "codeBlock",
+           "attrs": {
+            "language": "bash"
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "make deploy ENV=prod\nmake verify"
+            }
+           ]
+          },
+          {
+           "type": "table",
+           "content": [
+            {
+             "type": "tableRow",
+             "content": [
+              {
+               "type": "tableHeader",
+               "content": [
+                {
+                 "type": "paragraph",
+                 "content": [
+                  {
+                   "type": "text",
+                   "text": "Day"
+                  }
+                 ]
+                }
+               ]
+              },
+              {
+               "type": "tableHeader",
+               "content": [
+                {
+                 "type": "paragraph",
+                 "content": [
+                  {
+                   "type": "text",
+                   "text": "Result"
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "type": "tableRow",
+             "content": [
+              {
+               "type": "tableCell",
+               "content": [
+                {
+                 "type": "paragraph",
+                 "content": [
+                  {
+                   "type": "text",
+                   "text": "Friday"
+                  }
+                 ]
+                }
+               ]
+              },
+              {
+               "type": "tableCell",
+               "content": [
+                {
+                 "type": "paragraph",
+                 "content": [
+                  {
+                   "type": "text",
+                   "text": "fails"
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "type": "bulletList",
+           "content": [
+            {
+             "type": "listItem",
+             "content": [
+              {
+               "type": "paragraph",
+               "content": [
+                {
+                 "type": "text",
+                 "text": "retry once"
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "type": "listItem",
+             "content": [
+              {
+               "type": "paragraph",
+               "content": [
+                {
+                 "type": "text",
+                 "text": "then page on-call"
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "type": "mediaSingle",
+           "content": [
+            {
+             "type": "media",
+             "attrs": {
+              "id": "x",
+              "type": "file"
+             }
+            }
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "expand": "",
+       "id": "10002",
+       "key": "ENG-2",
+       "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/issue/10002",
+       "fields": {
+        "summary": "Payroll export",
+        "status": {
+         "name": "Done",
+         "id": "3"
+        },
+        "issuetype": {
+         "name": "Bug",
+         "id": "1"
+        },
+        "priority": {
+         "name": "High",
+         "id": "2"
+        },
+        "assignee": {
+         "accountId": "acc-ann",
+         "displayName": "Ann Lee",
+         "active": true,
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/user?accountId=acc-ann"
+        },
+        "reporter": {
+         "accountId": "acc-bob",
+         "displayName": "Bob Ray",
+         "active": true,
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/user?accountId=acc-bob"
+        },
+        "labels": [],
+        "created": "2024-01-01T09:00:00.000+0000",
+        "updated": "2026-10-20T11:00:00.000+0000",
+        "project": {
+         "id": "10000",
+         "key": "ENG",
+         "name": "Engineering",
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/project/10000"
+        },
+        "security": {
+         "id": "10100",
+         "name": "HR only",
+         "description": "",
+         "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/securitylevel/10100"
+        },
+        "description": {
+         "type": "doc",
+         "version": 1,
+         "content": [
+          {
+           "type": "paragraph",
+           "content": [
+            {
+             "type": "text",
+             "text": "Export the payroll every month, on the 25th."
+            }
+           ]
+          }
+         ]
+        }
+       }
+      }
+     ],
+     "isLast": true
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/issue/10002/comment"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "startAt": 0,
+     "maxResults": 100,
+     "total": 1,
+     "comments": [
+      {
+       "id": "20003",
+       "author": {
+        "accountId": "acc-ann",
+        "displayName": "Ann Lee",
+        "active": true,
+        "self": "https://api.atlassian.com/ex/jira/cloud-j1/rest/api/3/user?accountId=acc-ann"
+       },
+       "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+         {
+          "type": "paragraph",
+          "content": [
+           {
+            "type": "text",
+            "text": "Moved to the 25th."
+           }
+          ]
+         }
+        ]
+       },
+       "created": "2026-10-20T11:00:00.000+0000",
+       "updated": "2026-10-20T11:00:00.000+0000"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

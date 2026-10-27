@@ -234,14 +234,29 @@ class Connector:
     SETUP_ENV = ""                 # env vars an oauth connector needs on the server
     NOTE = ""                      # a line the card shows before connecting, if any
     ACL = False                    # captures source permissions
+    CALLBACK = ""                  # the callback path's provider, if it isn't this one
+                                   # (Atlassian apps have one callback URL: Jira uses
+                                   # Confluence's)
 
     def configured(self):
         """Can a workspace connect it on this server?"""
         return True
 
+    def can_sign_in(self):
+        """Can it be connected by signing in to the provider (POST .../connect)? A
+        form connector may offer that too (Zendesk, when the server has an OAuth
+        client)."""
+        return self.AUTH == "oauth"
+
     # auth (oauth)
     def auth_url(self, redirect_uri, state):
         raise NotImplementedError
+
+    def connect_start(self, redirect_uri, state, form):
+        """Where Connect sends the browser, and data the callback hands back to
+        finish_connect as `step` (None: nothing). `form`: what the admin typed
+        before signing in (Zendesk: their subdomain); FormError if it's wrong."""
+        return self.auth_url(redirect_uri, state), None
 
     def finish_connect(self, workspace, code, redirect_uri, user):
         """Save the connection; may raise NextStep (a connector that needs it also
@@ -270,6 +285,16 @@ class Connector:
                 entry["mimeType"] = str(p["mimeType"])[:100]
             out.append(entry)
         return out
+
+    def check_options(self, options, settings):
+        """The connection's own options an admin saved with the picker, cleaned:
+        {setting: value} to store (Zendesk: sync tickets; GitHub: code file
+        types). Raises FormError for a value that can't be used."""
+        return {}
+
+    def options_of(self, settings):
+        """The options the card and the picker show, from the settings."""
+        return {}
 
     def list_containers(self, ctx, parent=None):
         """What can be picked under `parent` (None: the top level):
