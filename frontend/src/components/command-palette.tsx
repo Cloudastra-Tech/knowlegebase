@@ -36,6 +36,7 @@ import {
   TOGGLE_SIDEBAR,
 } from "@/lib/chat-events"
 import { splitSnippet } from "@/lib/chat-history"
+import { markInstantNav } from "@/lib/instant-nav"
 import { queries } from "@/lib/queries"
 
 const SHORTCUTS: { keys: string[]; label: string }[] = [
@@ -54,7 +55,8 @@ const isMod = (e: KeyboardEvent) => e.metaKey || e.ctrlKey
 // ⌘K / Ctrl+K: search your chats (the same search as the sidebar, so an answer your
 // role can't read now is never found), start a new one, or jump to a screen (C27).
 // Also the app-wide shortcuts: ⌘⇧O new chat, ⌘/ the shortcuts list.
-export function CommandPalette({ user, role }: { user: User; role: Role }) {
+// chatAt: the conversation the chat was last at ("Go to Chat" goes back to it).
+export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; role: Role; chatAt?: string }) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [help, setHelp] = useState(false)
@@ -76,6 +78,7 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
         setOpen((o) => !o)
       } else if (isMod(e) && e.shiftKey && key === "o") {
         e.preventDefault()
+        markInstantNav()
         navigate("/chat")
         tell(FOCUS_COMPOSER)
       } else if (isMod(e) && key === "/") {
@@ -87,14 +90,17 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
     return () => window.removeEventListener("keydown", onKey)
   }, [navigate])
 
+  // Whatever the palette does lands at once: no screen entrance, no sliding nav line.
+  // It's used a hundred times a day, from the keyboard (lib/instant-nav.ts).
   function run(fn: () => void) {
     setOpen(false)
     setQuery("")
+    markInstantNav()
     fn()
   }
 
   const screens = [
-    { to: "/chat", label: "Chat", icon: MessageSquare },
+    { to: chatAt, label: "Chat", icon: MessageSquare },
     { to: "/knowledge", label: "Knowledge", icon: BookOpen },
     { to: "/spaces", label: "Spaces", icon: Layers },
     { to: "/prompts", label: "My prompts", icon: MessageSquareText },
@@ -146,7 +152,7 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
               })}>
                 <SquarePen />
                 New chat
-                <CommandShortcut>{MOD}⇧O</CommandShortcut>
+                <CommandShortcut className="font-mono tracking-normal">{MOD}⇧O</CommandShortcut>
               </CommandItem>
               <CommandItem value="action-toggle-history" onSelect={() => run(() => {
                 navigate("/chat")
@@ -154,12 +160,12 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
               })}>
                 <PanelLeft />
                 Show or hide chat history
-                <CommandShortcut>{MOD}B</CommandShortcut>
+                <CommandShortcut className="font-mono tracking-normal">{MOD}B</CommandShortcut>
               </CommandItem>
               <CommandItem value="action-shortcuts" onSelect={() => run(() => setHelp(true))}>
                 <Keyboard />
                 Keyboard shortcuts
-                <CommandShortcut>{MOD}/</CommandShortcut>
+                <CommandShortcut className="font-mono tracking-normal">{MOD}/</CommandShortcut>
               </CommandItem>
             </CommandGroup>
           )}

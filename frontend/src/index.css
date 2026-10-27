@@ -325,6 +325,34 @@
     transition: none !important;
 }
 
+/* Screens arriving (screens.tsx, Screen, by mouse only): the content rises --enter-y
+   and fades in, 200ms, no exit. The rise is a transform, which leaves a blurred surface
+   inside alone; the fade is opacity, which would make its element the backdrop root of
+   any glass within (the blur then sees nothing behind it, and pops in when the fade
+   ends). So it fades only what holds no blurred surface: a child of the screen as a
+   whole, else that child's own children, and a glass surface's insides. With reduced
+   motion --enter-y is 0: only the fade is left. */
+@keyframes screen-rise {
+    from {
+        transform: translateY(var(--enter-y));
+    }
+}
+@keyframes screen-fade {
+    from {
+        opacity: 0;
+    }
+}
+[data-screen][data-enter] {
+    animation: screen-rise var(--dur-screen) var(--ease-out-strong);
+}
+[data-screen][data-enter] > :not(:has(.glass, .glass-strong, [class*="backdrop-blur"])),
+[data-screen][data-enter]
+    > :has(.glass, .glass-strong, [class*="backdrop-blur"])
+    > :not(.glass, .glass-strong, [class*="backdrop-blur"], :has(.glass, .glass-strong, [class*="backdrop-blur"])),
+[data-screen][data-enter] :is(.glass, .glass-strong) > * {
+    animation: screen-fade var(--dur-screen) var(--ease-out-strong);
+}
+
 /* Printing a conversation (the chat's "Print", C25): the conversation alone, on paper
    that grows with it. Screen chrome carries data-print="hide"; the boxes that scroll
    on screen carry data-print="flow", so the whole chat lands on the page, not just

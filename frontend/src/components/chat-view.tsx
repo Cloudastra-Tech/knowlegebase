@@ -215,8 +215,13 @@ export function ChatView({ role }: { role: Role }) {
   const location = useLocation()
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const urlId = useMatch("/chat/:conversationId")?.params.conversationId ?? null
+  const atId = useMatch("/chat/:conversationId")?.params.conversationId ?? null
   const onChat = location.pathname === "/chat" || location.pathname.startsWith("/chat/")
+  // On another screen (App keeps the chat mounted), it's still the conversation it was
+  // showing: the transcript and where it was scrolled to are there on the way back.
+  const [keptId, setKeptId] = useState(atId)
+  if (onChat && keptId !== atId) setKeptId(atId)
+  const urlId = onChat ? atId : keptId
   const [session, setSession] = useState<Session | null>(null)
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
@@ -275,8 +280,8 @@ export function ChatView({ role }: { role: Role }) {
 
   // A conversation that isn't there (deleted, someone else's): back to a new chat.
   useEffect(() => {
-    if (saved.isError && !live) navigate("/chat", { replace: true })
-  }, [saved.isError, live, navigate])
+    if (saved.isError && !live && onChat) navigate("/chat", { replace: true })
+  }, [saved.isError, live, onChat, navigate])
 
   // /chat?q=...: a question to ask, filled in (a shared answer's "Ask it yourself").
   // Taken once per navigation (its location key), while rendering; then the

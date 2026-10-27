@@ -1,6 +1,8 @@
-import { Check, Loader2, TriangleAlert } from "lucide-react"
+import { Check, TriangleAlert } from "lucide-react"
 import { Link } from "react-router"
 
+import { AsciiProgress } from "@/components/ascii/ascii-progress"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { indexProblem } from "@/lib/index-reasons"
 import { useIndexStatus } from "@/lib/index-status-context"
@@ -26,6 +28,10 @@ function IndexProblemStatus({ admin }: { admin: boolean }) {
       </PopoverTrigger>
       <PopoverContent align="end" collisionPadding={16} className="w-80 max-w-[calc(100vw-2rem)]">
         <p className="font-medium">{problem.sentence}</p>
+        {/* How far the run got before it stopped (four steps: read, split, embed, done). */}
+        {status && status.total > 0 && status.step > 0 && (
+          <AsciiProgress value={status.step} max={status.total} cells={8} label="How far indexing got" />
+        )}
         {admin ? (
           <>
             {status?.error && (
@@ -60,7 +66,7 @@ export function IndexStatusText({ admin = false }: { admin?: boolean }) {
   if (status.status === "indexing") {
     return (
       <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 shrink-0 animate-spin" />
+        <AsciiSpinner label="" size="xs" />
         <span className="hidden max-w-56 truncate sm:inline lg:max-w-72">
           Indexing · {status.message}
           {status.pending && " (more changes queued)"}
@@ -72,7 +78,7 @@ export function IndexStatusText({ admin = false }: { admin?: boolean }) {
   if (justFinished) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-muted-foreground animate-in fade-in">
-        <Check className="size-3.5 text-emerald-600" />
+        <Check className="size-3.5 text-success" aria-hidden />
         <span className="hidden sm:inline">
           Index up to date
           {status.summary && ` · ${status.summary.documents} docs, ${status.summary.chunks} chunks`}
@@ -83,7 +89,8 @@ export function IndexStatusText({ admin = false }: { admin?: boolean }) {
   return null
 }
 
-// Thin bar along the bottom edge of the navbar.
+// Thin signal-mint bar along the bottom edge of the navbar. It grows with scaleX, not
+// width (no layout per step), and fades once the index is up to date.
 export function IndexProgressBar() {
   const { status, justFinished } = useIndexStatus()
   const indexing = status?.status === "indexing"
@@ -93,17 +100,18 @@ export function IndexProgressBar() {
 
   return (
     <div
+      aria-hidden
       className={cn(
-        "pointer-events-none absolute inset-x-0 -bottom-px h-0.5 overflow-hidden transition-opacity duration-700",
+        "pointer-events-none absolute inset-x-0 -bottom-px h-0.5 overflow-hidden transition-opacity duration-(--dur-reveal) ease-out-strong",
         visible ? "opacity-100" : "opacity-0",
       )}
     >
       <div
         className={cn(
-          "h-full transition-[width] duration-500 ease-out",
-          status?.status === "error" ? "bg-destructive" : "bg-foreground",
+          "h-full origin-left transition-transform duration-(--dur-reveal) ease-out-strong motion-reduce:transition-none",
+          status?.status === "error" ? "bg-destructive" : "bg-signal",
         )}
-        style={{ width: `${pct}%` }}
+        style={{ transform: `scaleX(${pct / 100})` }}
       />
     </div>
   )

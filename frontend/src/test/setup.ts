@@ -31,6 +31,9 @@ window.matchMedia = (query: string) =>
     removeListener() {},
     dispatchEvent: () => false,
   }) as MediaQueryList
+// The app's background field draws on a canvas (AppBackdrop): no 2D context here, so
+// it draws nothing, quietly (jsdom would print "not implemented" for every screen).
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
 window.scrollTo = () => {}
 Element.prototype.scrollIntoView = () => {}
 Element.prototype.scrollTo = () => {}

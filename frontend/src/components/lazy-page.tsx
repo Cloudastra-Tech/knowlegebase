@@ -1,18 +1,20 @@
 import { Component, Suspense, type ReactNode } from "react"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiLoader } from "@/components/ascii/ascii-loader"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 
-// A page whose code is downloaded on demand (React.lazy): a skeleton while it
-// loads, and a way out if the download fails — e.g. the site was redeployed
-// while this tab was open, so the old file is gone.
+// A page whose code is downloaded on demand (React.lazy): a mono "loading…" while it
+// loads (AsciiLoader keeps data-slot="skeleton", which the e2e specs wait to see
+// gone), and a way out if the download fails — e.g. the site was redeployed while
+// this tab was open, so the old file is gone.
 export function LazyPage({ children, fullScreen = false }: { children: ReactNode; fullScreen?: boolean }) {
   return (
     <PageErrorBoundary fullScreen={fullScreen}>
       <Suspense
         fallback={
           <Centered fullScreen={fullScreen}>
-            <Skeleton className="h-10 w-48" />
+            <AsciiLoader />
           </Centered>
         }
       >
@@ -50,12 +52,16 @@ class PageErrorBoundary extends Component<
     if (!this.state.failed) return this.props.children
     return (
       <Centered fullScreen={this.props.fullScreen}>
-        <p className="text-sm text-muted-foreground">
-          This page couldn't load. The site may have just been updated.
-        </p>
-        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
-          Reload
-        </Button>
+        <AsciiEmptyState
+          art="broken"
+          title="This page couldn't load"
+          description="The site may have just been updated."
+          action={
+            <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+              Reload
+            </Button>
+          }
+        />
       </Centered>
     )
   }

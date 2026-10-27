@@ -11,12 +11,14 @@ import {
 import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 
+import { AsciiThinking } from "@/components/ascii/ascii-thinking"
 import type { InsightsTab } from "@/components/insights-view"
 import { LazyPage } from "@/components/lazy-page"
 import type { AccessTab } from "@/components/sign-in-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, drafts, type User } from "@/lib/api"
 import { useActiveRole, useAuth, useUser } from "@/lib/auth-context"
+import { isInstant } from "@/lib/instant-nav"
 import { legacyRedirect, type SsoReturn } from "@/lib/legacy-hash"
 import { queries } from "@/lib/queries"
 
@@ -254,7 +256,7 @@ export function SsoReturnPage() {
 
   return (
     <div className="flex min-h-svh items-center justify-center">
-      <Skeleton className="h-10 w-48" />
+      <AsciiThinking status="Signing you in" />
     </div>
   )
 }
@@ -267,10 +269,20 @@ export function HrOnly({ admin = false }: { admin?: boolean }) {
   return <Outlet />
 }
 
+// Every screen but the chat: a box that scrolls, and the screen in it. Arriving by
+// mouse, its content rises 6px and fades in (200ms, index.css "Screens arriving"),
+// once its code has loaded; there's no exit. From the keyboard (the command palette,
+// a shortcut: lib/instant-nav.ts) it's simply there. Decided as the screen mounts,
+// so it holds even when the code arrives later.
 export function Screen({ children }: { children: ReactNode }) {
+  const [enter] = useState(() => !isInstant())
   return (
     <div className="h-full overflow-y-auto" data-print="flow">
-      <LazyPage>{children}</LazyPage>
+      <LazyPage>
+        <div data-screen data-enter={enter || undefined} className="h-full" data-print="flow">
+          {children}
+        </div>
+      </LazyPage>
     </div>
   )
 }

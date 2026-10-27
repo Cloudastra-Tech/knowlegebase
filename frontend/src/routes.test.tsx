@@ -199,3 +199,49 @@ describe("roles", () => {
     expect(screen.queryByRole("link", { name: "Documents" })).not.toBeInTheDocument()
   })
 })
+
+describe("the app shell", () => {
+  it("draws one background field, and keeps the chat mounted but out of reach elsewhere", async () => {
+    session.setToken("tok-6")
+    mockApi({ ...SIGNED_IN, "GET /api/auth/me": ADMIN })
+    renderApp("/knowledge")
+
+    expect(await screen.findByText("Knowledge base")).toBeInTheDocument()
+    // The app's field; the chat's own (ChatBackdrop) is taken out of layout while away.
+    const fields = [...document.querySelectorAll('[data-slot="ascii-field"]')]
+    expect(fields.filter((f) => !f.closest('[data-slot="chat-backdrop"]'))).toHaveLength(1)
+    // Laid out (so its scroll position survives), but inert while Knowledge is open.
+    const chat = document.querySelector("main > [inert]")
+    expect(chat).not.toBeNull()
+    expect(chat).toHaveClass("invisible", "[&_[data-slot=chat-backdrop]]:hidden")
+  })
+
+  it("leaves the chat's own field as the only one on /chat", async () => {
+    session.setToken("tok-8")
+    mockApi({ ...SIGNED_IN, "GET /api/auth/me": ADMIN })
+    renderApp("/chat")
+
+    await waitFor(() => expect(document.querySelector('[data-slot="chat-backdrop"]')).not.toBeNull())
+    const fields = [...document.querySelectorAll('[data-slot="ascii-field"]')]
+    expect(fields).toHaveLength(1)
+    expect(fields[0].closest('[data-slot="chat-backdrop"]')).not.toBeNull()
+  })
+
+  it("brings a screen in by mouse, and at once from the keyboard (markInstant)", async () => {
+    session.setToken("tok-7")
+    mockApi({ ...SIGNED_IN, "GET /api/auth/me": ADMIN })
+    const router = renderApp("/knowledge")
+
+    expect(await screen.findByText("Knowledge base")).toBeInTheDocument()
+    expect(document.querySelector("[data-screen]")).toHaveAttribute("data-enter")
+
+    document.documentElement.dataset.instant = "" // what markInstant() sets, for two frames
+    try {
+      await router.navigate("/integrations")
+      expect(await screen.findByText("Integrations", { selector: "h2" })).toBeInTheDocument()
+      expect(document.querySelector("[data-screen]")).not.toHaveAttribute("data-enter")
+    } finally {
+      delete document.documentElement.dataset.instant
+    }
+  })
+})
