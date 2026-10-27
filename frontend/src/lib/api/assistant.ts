@@ -1,0 +1,173 @@
+// The workspace's assistant and its content controls: verified answers
+// (/api/admin/verified-answers, HR and admins), source rules (/api/admin/doc-rules,
+// HR and admins), and the assistant's settings and glossary (/api/admin/assistant,
+// /api/admin/glossary, admins). Members read the assistant's name (/api/assistant).
+
+import { json, request, seg } from "@/lib/api/client"
+import type { Access, KnowledgeItem } from "@/lib/api/types"
+
+// ---- Verified answers ----
+export type VerifiedStatus = "current" | "due" | "expired"
+
+export interface VerifiedSource {
+  doc_key: string
+  title: string
+  provider: string | null
+  access: Access | null
+  url: string | null
+  missing?: boolean // no longer in the search index
+}
+
+export interface VerifiedAnswer {
+  id: string
+  title: string
+  variants: string[]
+  answer_md: string
+  sources: VerifiedSource[]
+  access: Access
+  min_access: Access // it was made from something this restricted: never lower
+  owner: string
+  owner_name: string
+  verified_by: string
+  verified_by_name: string
+  verified_at: number
+  review_days: number
+  due_at: number
+  status: VerifiedStatus
+  from_message: string | null
+  from_gap: number | null
+  created_by: string
+  created_at: number
+  updated_at: number
+}
+
+export interface VerifiedList {
+  answers: VerifiedAnswer[]
+  owners: { username: string; name: string }[]
+  review_days: number[]
+  default_review_days: number
+  notice_days: number
+}
+
+// What the editor sends; a draft (from a chat answer or a content gap) has the same shape.
+export interface VerifiedInput {
+  title: string
+  variants: string[]
+  answer_md: string
+  sources: string[] // document keys
+  access: Access
+  owner?: string
+  review_days?: number
+  from_message?: string | null
+  from_gap?: number | null
+}
+
+export interface VerifiedDraft extends VerifiedInput {
+  min_access: Access
+}
+
+// ---- Source rules ----
+export type RuleMatch = NonNullable<KnowledgeItem["rule"]>["match_type"]
+export type RuleAction = NonNullable<KnowledgeItem["rule"]>["action"]
+
+export interface DocRule {
+  id: number
+  match_type: RuleMatch
+  match_value: string
+  action: RuleAction
+  weight: number
+  created_by?: string
+  created_at?: number
+  updated_at?: number
+}
+
+export interface RuleWeights {
+  boost: { min: number; max: number; default: number }
+  demote: { min: number; max: number; default: number }
+}
+
+// ---- Assistant settings ----
+export type Tone = "default" | "friendly" | "formal" | "concise" | "detailed"
+
+export interface GlossaryEntry {
+  id: number
+  term: string
+  definition: string
+  synonyms: string[]
+  created_by: string
+  updated_at: number
+}
+
+export interface AssistantSettings {
+  assistant_name: string | null
+  tone: Tone
+  instructions: string
+  language: string // "auto" or a language from choices.languages
+  allow_wikipedia: boolean // as applied: the server's switch is a ceiling
+  allow_currency: boolean
+  allow_wikipedia_server: boolean
+  allow_currency_server: boolean
+  show_steps: boolean
+  adapt_verified: boolean
+  updated_by: string | null
+  updated_at: number | null
+  choices: { tones: Tone[]; languages: string[] }
+  limits: { name: number; instructions: number; term: number; definition: number; synonyms: number }
+  glossary: GlossaryEntry[]
+}
+
+export type AssistantChange = Partial<
+  Pick<
+    AssistantSettings,
+    | "assistant_name"
+    | "tone"
+    | "instructions"
+    | "language"
+    | "allow_wikipedia"
+    | "allow_currency"
+    | "show_steps"
+    | "adapt_verified"
+  >
+>
+
+export interface GlossaryInput {
+  term: string
+  definition: string
+  synonyms: string[]
+}
+
+export const assistantApi = {
+  // Everyone: the chat's greeting and whether members see the steps panel.
+  info: () => request<{ assistant_name: string | null; show_steps: boolean }>("/assistant"),
+
+  verifiedAnswers: () => request<VerifiedList>("/admin/verified-answers"),
+  verifiedDraft: (from: { messageId?: string; gapId?: number }) => {
+    const q = new URLSearchParams()
+    if (from.messageId) q.set("message_id", from.messageId)
+    if (from.gapId !== undefined) q.set("gap_id", String(from.gapId))
+    return request<VerifiedDraft>(`/admin/verified-answers/draft?${q.toString()}`)
+  },
+  createVerified: (body: VerifiedInput) =>
+    request<VerifiedAnswer>("/admin/verified-answers", json("POST", body)),
+  updateVerified: (id: string, body: Partial<VerifiedInput>) =>
+    request<VerifiedAnswer>(`/admin/verified-answers/${seg(id)}`, json("PATCH", body)),
+  reviewVerified: (id: string) =>
+    request<VerifiedAnswer>(`/admin/verified-answers/${seg(id)}/review`, json("POST")),
+  deleteVerified: (id: string) =>
+    request<{ ok: true }>(`/admin/verified-answers/${seg(id)}`, json("DELETE")),
+
+  docRules: () => request<{ rules: DocRule[]; weights: RuleWeights }>("/admin/doc-rules"),
+  addDocRule: (rule: { match_type: RuleMatch; match_value: string; action: RuleAction; weight?: number }) =>
+    request<DocRule>("/admin/doc-rules", json("POST", rule)),
+  changeDocRule: (id: number, action: RuleAction, weight?: number) =>
+    request<DocRule>(`/admin/doc-rules/${id}`, json("PATCH", { action, weight })),
+  deleteDocRule: (id: number) => request<{ ok: true }>(`/admin/doc-rules/${id}`, json("DELETE")),
+
+  settings: () => request<AssistantSettings>("/admin/assistant"),
+  saveSettings: (change: AssistantChange) =>
+    request<AssistantSettings>("/admin/assistant", json("PUT", change)),
+  addTerm: (entry: GlossaryInput) => request<GlossaryEntry>("/admin/glossary", json("POST", entry)),
+  updateTerm: (id: number, entry: GlossaryInput) =>
+    request<GlossaryEntry>(`/admin/glossary/${id}`, json("PATCH", entry)),
+  deleteTerm: (id: number) => request<{ ok: true }>(`/admin/glossary/${id}`, json("DELETE")),
+}

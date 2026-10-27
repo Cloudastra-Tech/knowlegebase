@@ -12,7 +12,7 @@ import sync_store
 import workspaces
 from connectors import registry
 from kb.deps import current_role, current_user, ws_of
-from kb.services import agents, indexing
+from kb.services import agents, assistant, indexing
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -43,13 +43,27 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
     def indexed(path):
         return chunks.get(os.path.normcase(os.path.abspath(path)), 0)
 
+    # SOURCE RULES (HR / Admin): which rule decides each document, for the row
+    # actions. Keys, providers and folders are what a rule matches on.
+    rules = assistant.rules(ws) if role == "hr" else None
+
+    def place(key, provider, folder=None):
+        out = {"doc_key": key, "provider": provider, "folder": folder}
+        if rules is not None:
+            rule = rules.rule_for(key, provider)
+            out["rule"] = rule and {k: rule[k] for k in ("id", "match_type", "match_value",
+                                                         "action", "weight")}
+        return out
+
     items = []
     for d in docs_store.list_docs(root):
         if role != "hr" and d["access"] == "restricted":
             continue
+        key = os.path.relpath(d["path"], root).replace(os.sep, "/")
         items.append({"title": d["name"], "source": "Uploaded", "access": d["access"],
                       "url": None, "modified": os.path.getmtime(d["path"]),
-                      "size": d["size"], "chunks": indexed(d["path"])})
+                      "size": d["size"], "chunks": indexed(d["path"]),
+                      **place(key, assistant.UPLOADS, key.rsplit("/", 1)[0])})
 
     # Synced files: what source_items says each connector folder holds.
     levels = integrations_store.chunk_access_levels(ws)
@@ -67,8 +81,13 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
             items.append({"title": item.get("title") or name,
                           "source": registry.label(provider), "access": access,
                           "url": item.get("url"), "modified": item.get("modified"),
-                          "size": os.path.getsize(path), "chunks": indexed(path)})
+                          "size": os.path.getsize(path), "chunks": indexed(path),
+                          **place(f"connectors/{provider}/{name}", provider,
+                                  item.get("parent_id"))})
 
     items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))
-    return {"workspace": ws, "items": items,
-            "outline": agents.outline_on(ws, role)}         # searched live, so not listed here
+    out = {"workspace": ws, "items": items,
+           "outline": agents.outline_on(ws, role)}          # searched live, so not listed here
+    if rules is not None:
+        out["rules"] = rules.rules
+    return out

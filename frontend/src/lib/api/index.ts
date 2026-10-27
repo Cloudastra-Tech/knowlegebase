@@ -2,6 +2,7 @@
 // keep the shape they had when this was one file.
 
 import { apiKeysApi } from "@/lib/api/api-keys"
+import { assistantApi } from "@/lib/api/assistant"
 import { auditApi } from "@/lib/api/audit"
 import { authApi } from "@/lib/api/auth"
 import { chatApi } from "@/lib/api/chat"
@@ -14,6 +15,7 @@ import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 export * from "@/lib/api/types"
 export type * from "@/lib/api/insights"
 export type * from "@/lib/api/api-keys"
+export type * from "@/lib/api/assistant"
 export {
   ApiError,
   session,
@@ -32,3 +34,6 @@ export const insights = insightsApi
 
 // API keys for the public API and the MCP server: one's own, and the workspace's (admin).
 export const apiKeys = apiKeysApi
+
+// The assistant's content controls: verified answers, source rules, settings, glossary.
+export const assistant = assistantApi

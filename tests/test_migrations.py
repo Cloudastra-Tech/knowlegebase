@@ -20,7 +20,7 @@ from migrations import legacy
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
-HEAD = "0010"                                    # the newest migration
+HEAD = "0011"                                    # the newest migration
 # The tables SQLite keeps behind an FTS5 table.
 FTS_SHADOWS = ("data", "idx", "content", "docsize", "config")
 # Made by migrations after the baseline.
@@ -30,7 +30,8 @@ NEWER_TABLES = {"jobs", "search_indexes", "conversations", "messages", "message_
                 "question_log", "insights_daily", "source_stats", "insights_docs", "content_gaps",
                 "eval_candidates", "conversation_folders", "chat_settings", "shares",
                 "conversation_search", *(f"conversation_search_{shadow}" for shadow in FTS_SHADOWS),
-                "api_keys", "api_settings", "chunk_contexts"}
+                "api_keys", "api_settings", "chunk_contexts", "verified_answers",
+                "verified_answer_vectors", "doc_rules", "assistant_settings", "glossary"}
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
           ("workspaces", "role_source"), ("sessions", "username"), ("sessions", "workspace")}

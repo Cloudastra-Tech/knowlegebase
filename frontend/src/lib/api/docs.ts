@@ -2,6 +2,7 @@
 // /api/index/status, /api/knowledge).
 
 import { ApiError, docPath, request, session } from "@/lib/api/client"
+import type { DocRule } from "@/lib/api/assistant"
 import type { Access, Doc, IndexStatus, KnowledgeItem, UploadLimits } from "@/lib/api/types"
 
 export const docsApi = {
@@ -24,8 +25,11 @@ export const docsApi = {
   reindex: () => request<IndexStatus>("/reindex", { method: "POST" }),
   indexStatus: () => request<IndexStatus>("/index/status"),
 
+  // rules: the workspace's source rules, for HR / Admin only.
   knowledge: () =>
-    request<{ workspace: string; items: KnowledgeItem[]; outline: boolean }>("/knowledge"),
+    request<{ workspace: string; items: KnowledgeItem[]; outline: boolean; rules?: DocRule[] }>(
+      "/knowledge",
+    ),
 
   // PDFs need the auth header, so fetch them as a blob instead of a plain link.
   async downloadDoc(d: Doc) {

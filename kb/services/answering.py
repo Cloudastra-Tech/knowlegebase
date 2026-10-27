@@ -45,6 +45,7 @@ class Answer:
     max_access: str         # public / restricted: everything the model read for it
     trace: list = field(default_factory=list)   # the tools it used, with their input and output
     standalone: str | None = None               # the question as searched, when it differs
+    verified: dict | None = None                # served from a verified answer: {id, title, by, at}
 
 
 def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None):
@@ -76,4 +77,5 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
         raise Failed(type(e).__name__) from e
     standalone = out.get("standalone")
     return Answer(answer, sources, state, access, trace,
-                  standalone if standalone not in (None, question) else None)
+                  standalone if standalone not in (None, question) else None,
+                  out.get("verified"))

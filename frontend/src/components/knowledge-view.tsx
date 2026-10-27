@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-react"
 import { siGoogledrive, siNotion } from "simple-icons"
 
+import { RuleActions, RuleBadge, RulesPanel } from "@/components/knowledge-rules"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -10,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { type KnowledgeItem } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
 import { queries } from "@/lib/queries"
+import { cn } from "@/lib/utils"
 
 function when(modified: KnowledgeItem["modified"]) {
   if (!modified) return "—"
@@ -30,12 +32,15 @@ function SourceIcon({ source }: { source: string }) {
   return <FileText className="size-4 shrink-0 text-muted-foreground" />
 }
 
-// Everything the assistant can search in this workspace, in one list.
+// Everything the assistant can search in this workspace, in one list. HR and admins
+// also get each row's source rules (knowledge-rules.tsx).
 export function KnowledgeView() {
   const { data, refetch } = useQuery(queries.knowledge())
   const items = data?.items ?? null
   const workspace = data?.workspace ?? ""
   const outline = data?.outline ?? false
+  const rules = data?.rules ?? null // HR / Admin only
+  const manage = rules !== null
   const [query, setQuery] = useState("")
   const [source, setSource] = useState("all")
   const { status: indexStatus } = useIndexStatus()
@@ -105,12 +110,18 @@ export function KnowledgeView() {
       </div>
 
       <div className="mt-4 overflow-hidden rounded-2xl border">
-        <div className="hidden grid-cols-[1fr_140px_100px_110px_110px] gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-medium text-muted-foreground md:grid">
+        <div
+          className={cn(
+            "hidden gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-medium text-muted-foreground md:grid",
+            manage ? "grid-cols-[1fr_140px_100px_110px_110px_32px]" : "grid-cols-[1fr_140px_100px_110px_110px]",
+          )}
+        >
           <span>Name</span>
           <span>Source</span>
           <span>Access</span>
           <span>Updated</span>
           <span className="text-right">In search</span>
+          {manage && <span className="sr-only">Source rules</span>}
         </div>
 
         {items === null ? (
@@ -127,7 +138,12 @@ export function KnowledgeView() {
           visible.map((i) => (
             <div
               key={`${i.source}/${i.title}/${i.url ?? ""}`}
-              className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 border-b px-4 py-3 text-sm last:border-b-0 md:grid-cols-[1fr_140px_100px_110px_110px]"
+              className={cn(
+                "grid items-center gap-x-4 gap-y-1 border-b px-4 py-3 text-sm last:border-b-0",
+                manage
+                  ? "grid-cols-[1fr_auto_auto] gap-x-2 md:grid-cols-[1fr_140px_100px_110px_110px_32px] md:gap-x-4"
+                  : "grid-cols-[1fr_auto] md:grid-cols-[1fr_140px_100px_110px_110px]",
+              )}
             >
               <div className="flex min-w-0 items-center gap-2.5">
                 <SourceIcon source={i.source} />
@@ -144,6 +160,7 @@ export function KnowledgeView() {
                 ) : (
                   <span className="truncate font-medium">{i.title}</span>
                 )}
+                {i.rule && <RuleBadge rule={i.rule} />}
               </div>
               <span className="hidden text-muted-foreground md:block">{i.source}</span>
               <span className="hidden md:block">
@@ -165,14 +182,17 @@ export function KnowledgeView() {
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="font-normal text-muted-foreground">
-                    Not indexed
+                    {i.rule?.action === "block" ? "Blocked" : "Not indexed"}
                   </Badge>
                 )}
               </span>
+              {manage && <RuleActions item={i} rules={rules} />}
             </div>
           ))
         )}
       </div>
+
+      {manage && items && <RulesPanel rules={rules} items={items} />}
 
       {outline && (
         <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
