@@ -236,6 +236,127 @@ describe("the chat", () => {
     await waitFor(() => expect(print).toHaveBeenCalled())
   })
 
+  it("pins the question just asked: it is the scroller's one anchor", async () => {
+    session.setToken("tok")
+    let asked = false
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": () =>
+        asked
+          ? {
+              ...SAVED,
+              messages: [
+                ...SAVED.messages,
+                { ...SAVED.messages[0], id: "q2", parent_id: "a1", content: "How long?" },
+                { ...SAVED.messages[1], id: "a2", parent_id: "q2", content: "Thirty days.", sources: [] },
+              ],
+            }
+          : SAVED,
+      "POST /api/chat/stream": () => {
+        asked = true
+        return sse(
+          { type: "conversation", id: "c1", title: SAVED.title, user_message_id: "q2", message_id: "a2", new_conversation: false },
+          { type: "done", answer: "Thirty days.", sources: [], steps: [], state: "answered", message_id: "a2" },
+        )
+      },
+    })
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+    // A saved chat opens at its last question.
+    const anchors = () => [...document.querySelectorAll('[data-scroll-anchor="true"]')]
+    expect(anchors().map((a) => a.textContent)).toEqual(["What is the refund policy?"])
+
+    const user = userEvent.setup()
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "How long?{Enter}")
+    expect(await screen.findByText("Thirty days.")).toBeInTheDocument()
+    expect(anchors().map((a) => a.textContent)).toEqual(["How long?"])
+    expect(screen.getByRole("region", { name: "Chat messages" })).toContainElement(
+      screen.getByRole("log", { name: "Conversation" }),
+    )
+  })
+
+  it("marks a step still running when an answer is stopped as stopped, not done", async () => {
+    session.setToken("tok")
+    const encode = (e: object) => new TextEncoder().encode(`data: ${JSON.stringify(e)}\n\n`)
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": SAVED,
+      // Streams a step, then waits until the request is aborted (Stop).
+      "POST /api/chat/stream": (_body: unknown, init: RequestInit) =>
+        new Response(
+          new ReadableStream({
+            start(stream) {
+              stream.enqueue(encode({ type: "conversation", id: "c1", title: SAVED.title, user_message_id: "q2", message_id: "a2", new_conversation: false }))
+              stream.enqueue(encode({ type: "step_start", id: "s9", tool: "search_docs", label: "Searching company docs" }))
+              init.signal?.addEventListener("abort", () =>
+                stream.error(new DOMException("Aborted", "AbortError")),
+              )
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+    })
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+    const user = userEvent.setup()
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "How long?{Enter}")
+    expect(await screen.findByText("Running:")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Stop answering" }))
+    expect(await screen.findByText("Stopped:")).toBeInTheDocument()
+    expect(screen.queryByText("Running:")).not.toBeInTheDocument()
+    // Said once, in the one polite status line; the focus goes to the stopped answer.
+    expect(screen.getByRole("status")).toHaveTextContent("Answer stopped.")
+    await waitFor(() => expect(document.activeElement).toHaveTextContent("Stopped"))
+  })
+
+  it("marks a step still running when an answer fails as failed, not done", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "POST /api/conversations": { id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1 },
+      "POST /api/chat/stream": () =>
+        sse(
+          { type: "conversation", id: "c9", title: "Hi", user_message_id: "q9", message_id: "a9", new_conversation: false },
+          { type: "step_start", id: "s1", tool: "search_docs", label: "Searching company docs" },
+          { type: "error", message: "The model is unavailable." },
+        ),
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    await user.type(await screen.findByRole("textbox", { name: "Your question" }), "How many leave days?{Enter}")
+    expect(await screen.findByText("The model is unavailable.")).toBeInTheDocument()
+    expect(screen.getByText("Failed:")).toBeInTheDocument()
+    expect(screen.queryByText("Done:")).not.toBeInTheDocument()
+    expect(screen.getByRole("status")).toHaveTextContent("Couldn't answer.")
+  })
+
+  it("shows a saved stopped answer's unfinished step as stopped", async () => {
+    session.setToken("tok")
+    const stopped = {
+      ...SAVED.messages[1],
+      state: "stopped",
+      steps: [
+        { id: "s1", label: "Searching company docs", result: "found 1 relevant document" },
+        { id: "s2", label: "Reading a wiki page" },
+      ],
+    }
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": { ...SAVED, messages: [SAVED.messages[0], stopped] },
+    })
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+    const user = userEvent.setup()
+    await user.click(screen.getByText("2 steps"))
+    expect(screen.getByText("Done:")).toBeInTheDocument()
+    expect(screen.getAllByText("Stopped:")).toHaveLength(2) // the summary, and the step
+  })
+
   it("goes back to a new chat when the conversation isn't there", async () => {
     session.setToken("tok")
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })

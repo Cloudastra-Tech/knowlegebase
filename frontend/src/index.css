@@ -146,8 +146,15 @@
     --dur-screen: 200ms;
     --dur-swap: 150ms;
     --dur-reveal: 240ms;
+    /* the chat: Jump to latest in and out, a step line, the steps folding, a chip resolving */
+    --dur-jump: 150ms;
+    --dur-jump-exit: 100ms;
+    --dur-step: 180ms;
+    --dur-collapse: 250ms;
+    --dur-pop: 160ms;
     --stagger: 40ms;
     --stagger-max: 6;
+    --stagger-sources: 30ms;
     --enter-y: 6px;
     --enter-scale: 0.97;
     --press-scale: 0.97;
@@ -398,6 +405,14 @@
     min-height: 0 !important;
     max-height: none !important;
     overflow: visible !important;
+  }
+  /* The chat's scroller (components/ui/message-scroller): every row drawn, and no
+     room kept below the last question for its answer to grow into. */
+  [data-slot="message-scroller-item"] {
+    content-visibility: visible !important;
+  }
+  [data-message-scroller-spacer] {
+    display: none !important;
   }
 }
 
