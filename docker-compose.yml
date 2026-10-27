@@ -1,19 +1,34 @@
 # Run the app with: docker compose up --build
 # Reads secrets from your local .env (OPENAI_API_KEY, OUTLINE_*, CF_ACCESS_*).
+# Production adds docker-compose.guardrails.yml (the Guardrails Hub build secret);
+# see deploy.md, step 4.
 services:
   knowledgebase:
-    build: .
-    image: cloudastra-knowledgebase
+    build:
+      context: .
+      args:                  # shown at /api/health (scripts/deploy.sh sets them)
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-unknown}
+    # One tag per commit (scripts/deploy.sh sets IMAGE_TAG), so going back to the
+    # previous version needs no rebuild; :latest is whatever was deployed last.
+    image: cloudastra-knowledgebase:${IMAGE_TAG:-latest}
     ports:
       - "8501:8501"          # host:container  ->  open http://localhost:8501
     env_file:
       - .env                  # never committed; supplies all API keys
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}   # one JSON object per log line (kb/logs.py)
     volumes:
       - chroma_data:/app/chroma_db   # persist the vector DB across restarts
       - ./docs:/app/docs             # docs edited in the UI live on the host (survive rebuilds)
       - ./config:/app/config         # login accounts, integrations DB + encryption key (never in the image)
       - ./data:/app/data             # per-workspace documents and synced connector files
     restart: unless-stopped
+    logging:                 # rotate the container log (Docker keeps it forever by default)
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   chroma_data:

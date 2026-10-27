@@ -1,0 +1,222 @@
+{
+ "_source": [
+  "https://docs.dropboxapi.com/dropbox-api/api-reference/user-endpoints/files/list-folder (entries .tag file|folder|deleted, cursor, has_more; /continue)",
+  "https://github.com/dropbox/dropbox-api-spec files.stone (FileMetadata: id, name, path_lower, path_display, rev, size, server_modified, content_hash, is_downloadable, sharing_info.parent_shared_folder_id; DeletedMetadata has no id)",
+  "https://docs.dropboxapi.com/dropbox-api/api-reference/user-endpoints/sharing/list-folder-members (users, groups, invitees, cursor; access_type .tag)",
+  "https://docs.dropboxapi.com/dropbox-api/api-reference/user-endpoints/files/download (Dropbox-API-Arg)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.dropboxapi.com/2/files/list_folder/continue",
+    "json": {
+     "cursor": "cur-2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       ".tag": "deleted",
+       "name": "Onboarding.txt",
+       "path_lower": "/handbook/onboarding.txt",
+       "path_display": "/Handbook/Onboarding.txt"
+      },
+      {
+       ".tag": "deleted",
+       "name": "Private",
+       "path_lower": "/handbook/private",
+       "path_display": "/Handbook/Private"
+      },
+      {
+       ".tag": "file",
+       "id": "id:b",
+       "name": "Expenses.pdf",
+       "path_lower": "/handbook/archive/expenses.pdf",
+       "path_display": "/Handbook/Archive/Expenses.pdf",
+       "rev": "r1",
+       "size": 100,
+       "server_modified": "2026-10-01T10:00:00Z",
+       "client_modified": "2026-10-01T10:00:00Z",
+       "content_hash": "hr1",
+       "is_downloadable": true
+      },
+      {
+       ".tag": "file",
+       "id": "id:a",
+       "name": "Leave.md",
+       "path_lower": "/handbook/leave.md",
+       "path_display": "/Handbook/Leave.md",
+       "rev": "r2",
+       "size": 100,
+       "server_modified": "2026-10-01T10:00:00Z",
+       "client_modified": "2026-10-01T10:00:00Z",
+       "content_hash": "hr2",
+       "is_downloadable": true,
+       "sharing_info": {
+        "read_only": false,
+        "parent_shared_folder_id": "sf-1",
+        "modified_by": "dbid:ann"
+       }
+      }
+     ],
+     "cursor": "cur-3",
+     "has_more": false
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.dropboxapi.com/2/sharing/list_folder_members",
+    "json": {
+     "shared_folder_id": "sf-1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "users": [
+      {
+       "access_type": {
+        ".tag": "owner"
+       },
+       "is_inherited": false,
+       "user": {
+        "account_id": "dbid:ann",
+        "email": "Ann@Acme.example",
+        "display_name": "Ann",
+        "same_team": true
+       }
+      },
+      {
+       "access_type": {
+        ".tag": "editor"
+       },
+       "is_inherited": false,
+       "user": {
+        "account_id": "dbid:bob",
+        "email": "bob@acme.example",
+        "display_name": "Bob",
+        "same_team": true
+       }
+      },
+      {
+       "access_type": {
+        ".tag": "traverse"
+       },
+       "is_inherited": true,
+       "user": {
+        "account_id": "dbid:carol",
+        "email": "carol@acme.example",
+        "display_name": "Carol",
+        "same_team": true
+       }
+      }
+     ],
+     "groups": [
+      {
+       "access_type": {
+        ".tag": "viewer"
+       },
+       "group": {
+        "group_name": "Engineering",
+        "group_id": "g:1",
+        "group_external_id": "eng@acme.example",
+        "group_management_type": {
+         ".tag": "company_managed"
+        },
+        "group_type": {
+         ".tag": "team"
+        },
+        "is_member": true,
+        "is_owner": false,
+        "same_team": true
+       }
+      },
+      {
+       "access_type": {
+        ".tag": "viewer"
+       },
+       "group": {
+        "group_name": "Ad hoc",
+        "group_id": "g:2",
+        "group_management_type": {
+         ".tag": "user_managed"
+        },
+        "group_type": {
+         ".tag": "user_managed"
+        },
+        "is_member": false,
+        "is_owner": false,
+        "same_team": true
+       }
+      }
+     ],
+     "invitees": [
+      {
+       "access_type": {
+        ".tag": "viewer"
+       },
+       "invitee": {
+        ".tag": "email",
+        "email": "new@acme.example"
+       }
+      }
+     ],
+     "cursor": "m-1"
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.dropboxapi.com/2/sharing/list_folder_members/continue",
+    "json": {
+     "cursor": "m-1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "users": [
+      {
+       "access_type": {
+        ".tag": "viewer"
+       },
+       "is_inherited": false,
+       "user": {
+        "account_id": "dbid:dave",
+        "email": "dave@acme.example",
+        "display_name": "Dave",
+        "same_team": true
+       }
+      }
+     ],
+     "groups": [],
+     "invitees": []
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://content.dropboxapi.com/2/files/download",
+    "headers": {
+     "Dropbox-API-Arg": "{\"path\": \"id:a\"}"
+    }
+   },
+   "response": {
+    "status": 200,
+    "text": "# Leave\n\nEveryone gets 28 days.",
+    "headers": {
+     "Dropbox-API-Result": "{\"id\": \"id:a\"}"
+    }
+   }
+  }
+ ]
+}

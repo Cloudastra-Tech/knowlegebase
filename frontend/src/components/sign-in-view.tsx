@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   ChevronDown,
-  Circle,
+  ExternalLink,
   Globe,
   KeyRound,
   Loader2,
@@ -17,8 +17,13 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { ActivityView } from "@/components/activity-view"
+import { ApiAccessView } from "@/components/api-access-view"
+import { GroupsView } from "@/components/groups-view"
 import { MembersView } from "@/components/members-view"
-import { GroupRulesDialog } from "@/components/sign-in-group-rules"
+import { OnboardingChecklist } from "@/components/onboarding-checklist"
+import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
+import { JoiningPolicy } from "@/components/sign-in-joining"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -54,17 +59,29 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import { WebhooksView } from "@/components/webhooks-view"
+import { WorkspaceDataView } from "@/components/workspace-data-view"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   signIn,
   type ProviderHealth,
+  type ScimSettings,
+  type ScimToken,
   type SignInConnection,
   type SignInDomain,
   type SignInEvent,
   type SignInSettings,
   type SsoTestResult,
 } from "@/lib/api"
+import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -84,6 +101,9 @@ function clockTime(epoch: number) {
 }
 
 const PROTOCOL = { oidc: "OpenID Connect", saml: "SAML" } as const
+// Where roles come from: one provider, or SCIM provisioning (SignInSettings.role_source).
+type RoleSourceRef = { id: string; label: string }
+const SCIM_SOURCE: RoleSourceRef = { id: "scim", label: "SCIM provisioning" }
 
 function Section({
   title,
@@ -221,7 +241,8 @@ function GroupAdminExpiry({
         <p className="text-sm text-muted-foreground">
           Their groups are only checked when they sign in, so admin from groups that haven't been
           sent in a while drops to what the rest of their groups give. Roles you set on the
-          Members tab don't expire, and the last admin always keeps it.
+          Members tab don't expire, nor does admin from groups SCIM pushes, and the last admin
+          always keeps it.
         </p>
         {on && (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
@@ -424,7 +445,7 @@ function ProviderRow({
   onChange,
 }: {
   conn: SignInConnection
-  roleSource: SignInConnection | null
+  roleSource: RoleSourceRef | null
   onEdit: () => void
   onTest: () => void
   onRoles: () => void
@@ -776,6 +797,10 @@ function TestDialog({
                   {state.result.role_source === "groups" && " (from their groups)"}
                   {state.result.role_source === "override" && " (set by an admin)"}
                   {state.result.new_member ? ", as a new member." : "."}
+                  {state.result.new_member && state.result.join_policy === "request" &&
+                    " Under your joining policy they'd first ask to join, and wait for an admin."}
+                  {state.result.new_member && state.result.join_policy === "invite_only" &&
+                    " Under your joining policy they'd need an invite first."}
                   {state.result.sets_roles === false &&
                     " This provider doesn't set roles: signing in through it leaves theirs as it is."}
                   {state.result.groups && (
@@ -842,60 +867,373 @@ const OUTCOME: Record<SignInEvent["outcome"], { label: string; className: string
   warning: { label: "Warning", className: "text-amber-700 dark:text-amber-400" },
   updated: { label: "Updated", className: "text-muted-foreground" },
   attention: { label: "Needs a look", className: "text-amber-700 dark:text-amber-400" },
+  scim: { label: "SCIM", className: "text-sky-700 dark:text-sky-400" },
 }
+// A SCIM request that was turned away (it has a fix: sso_errors.py).
+const SCIM_REFUSED = { label: "Refused", className: "text-destructive" }
 // A provider's own metadata changed (or couldn't be fetched): nobody signed in.
 const ABOUT_PROVIDER: SignInEvent["outcome"][] = ["updated", "attention"]
 
-function Events({ events }: { events: SignInEvent[] }) {
-  if (!events.length)
-    return (
-      <p className="text-sm text-muted-foreground">
-        Nobody has signed in through your providers yet.
-      </p>
-    )
+function Events({
+  events,
+  empty = "Nobody has signed in through your providers yet.",
+}: {
+  events: SignInEvent[]
+  empty?: string
+}) {
+  if (!events.length) return <p className="text-sm text-muted-foreground">{empty}</p>
   return (
     <div className="divide-y rounded-xl border">
-      {events.map((e, i) => (
-        <div key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2.5 text-sm">
-          <span className={cn("w-24 shrink-0 font-medium", OUTCOME[e.outcome].className)}>
-            {OUTCOME[e.outcome].label}
-          </span>
-          {!ABOUT_PROVIDER.includes(e.outcome) && (
-            <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
-          )}
-          <span className="text-muted-foreground">
-            {ABOUT_PROVIDER.includes(e.outcome) ? "" : "via "}
-            {e.connection ?? "a deleted provider"}
-          </span>
-          <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
-          {(e.reason || e.ref) && (
-            <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
-              <p>
-                {explain(e)}
-                {e.ref && (
-                  <span className="ml-2 font-mono whitespace-nowrap select-all">Ref {e.ref}</span>
+      {events.map((e, i) => {
+        const look = e.outcome === "scim" && e.fix ? SCIM_REFUSED : OUTCOME[e.outcome]
+        return (
+          <div key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2.5 text-sm">
+            <span className={cn("w-24 shrink-0 font-medium", look.className)}>{look.label}</span>
+            {!ABOUT_PROVIDER.includes(e.outcome) && (
+              <span className="min-w-0 truncate">{e.email ?? "unknown"}</span>
+            )}
+            <span className="text-muted-foreground">
+              {ABOUT_PROVIDER.includes(e.outcome) ? "" : "via "}
+              {e.connection ?? "a deleted provider"}
+            </span>
+            <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
+            {(e.reason || e.ref) && (
+              <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
+                <p>
+                  {explain(e)}
+                  {e.ref && (
+                    <span className="ml-2 font-mono whitespace-nowrap select-all">Ref {e.ref}</span>
+                  )}
+                </p>
+                {e.fix && (e.outcome === "failed" || e.outcome === "scim") && (
+                  <p className="mt-0.5">{e.fix}</p>
                 )}
-              </p>
-              {e.fix && e.outcome === "failed" && <p className="mt-0.5">{e.fix}</p>}
-            </div>
-          )}
-        </div>
-      ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
 
+// ---- Provisioning (SCIM) ---------------------------------------------------------------
+const OKTA_DOCS = "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_scim.htm"
+const OKTA_GUIDE = "https://developer.okta.com/docs/guides/scim-provisioning-integration-connect/main/"
+const ENTRA_DOCS =
+  "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/configure-automatic-user-provisioning-portal"
+const ENTRA_SCIM =
+  "https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups"
+
+function DocLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+    >
+      {children} <ExternalLink className="size-3" />
+    </a>
+  )
+}
+
+function SetupNotes({ baseUrl }: { baseUrl: string }) {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+        Setup notes for Okta and Microsoft Entra ID
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-3 grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
+        <div className="grid gap-2 rounded-lg bg-muted/40 p-3">
+          <p className="font-medium">Okta</p>
+          <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              In your app integration's General tab, set Provisioning to SCIM, then open the
+              Provisioning tab.
+            </li>
+            <li>
+              SCIM connector base URL: <span className="break-all font-mono text-xs">{baseUrl}</span>.
+              Unique identifier field: <span className="font-mono text-xs">userName</span>.
+            </li>
+            <li>
+              Actions: Push New Users, Push Profile Updates and Push Groups. Authentication mode:
+              HTTP Header, with a token from here as the Bearer token. Test the connection.
+            </li>
+            <li>
+              Under To App, turn on Create Users, Update User Attributes and Deactivate Users.
+              Assign people, then push the groups that should set roles.
+            </li>
+          </ol>
+          <p className="flex flex-wrap gap-x-3">
+            <DocLink href={OKTA_DOCS}>Okta: add SCIM provisioning</DocLink>
+            <DocLink href={OKTA_GUIDE}>Okta SCIM guide</DocLink>
+          </p>
+        </div>
+        <div className="grid gap-2 rounded-lg bg-muted/40 p-3">
+          <p className="font-medium">Microsoft Entra ID</p>
+          <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              Enterprise applications: open your app (or add a non-gallery one), then
+              Provisioning, and set the mode to Automatic.
+            </li>
+            <li>
+              Tenant URL: <span className="break-all font-mono text-xs">{baseUrl}</span>. Secret
+              token: a token from here. Test Connection.
+            </li>
+            <li>
+              Mappings: keep userName and emails[type eq "work"].value; the work email is what
+              people sign in with, so it must be on a verified domain.
+            </li>
+            <li>
+              Assign users and groups to the app, then start provisioning. Entra syncs about every
+              40 minutes.
+            </li>
+          </ol>
+          <p className="flex flex-wrap gap-x-3">
+            <DocLink href={ENTRA_DOCS}>Entra: automatic provisioning</DocLink>
+            <DocLink href={ENTRA_SCIM}>Entra SCIM reference</DocLink>
+          </p>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function TokenRow({ token, onRevoke }: { token: ScimToken; onRevoke: () => void }) {
+  const [confirm, setConfirm] = useState(false)
+  const revoked = token.revoked_at !== null
+  return (
+    <div className={cn("flex flex-wrap items-center gap-3 rounded-xl border p-3", revoked && "opacity-60")}>
+      <KeyRound className="size-4 text-muted-foreground" />
+      <div className="min-w-0 flex-1 basis-48">
+        <p className="text-sm">
+          <span className="font-mono">kbscim_…{token.hint}</span>{" "}
+          <OnBadge on={!revoked} onLabel="Active" offLabel="Revoked" />
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          Made by {token.created_by} {timeAgo(token.created_at)} ·{" "}
+          {token.last_used_at ? `last used ${timeAgo(token.last_used_at)}` : "never used"}
+        </p>
+      </div>
+      {!revoked && (
+        <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
+          Revoke
+        </Button>
+      )}
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this token?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your identity provider can't provision with it any more, from its next request.
+              Members it added stay as they are.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={onRevoke}>Revoke</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+// The token is only ever shown here, once: the server keeps a hash of it.
+function NewTokenDialog({ token, onClose }: { token: string | null; onClose: () => void }) {
+  return (
+    <Dialog open={!!token} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Your new SCIM token</DialogTitle>
+          <DialogDescription>
+            Paste it into your identity provider as the bearer token (Okta) or secret token
+            (Entra ID).
+          </DialogDescription>
+        </DialogHeader>
+        <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+          <TriangleAlert />
+          <AlertTitle>Copy it now</AlertTitle>
+          <AlertDescription className="text-amber-900/90 dark:text-amber-200/90">
+            It won't be shown again. If it's lost, make a new one and revoke this one.
+          </AlertDescription>
+        </Alert>
+        {token && <CopyField label="Token" value={token} />}
+        <DialogFooter>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Provisioning({
+  roleSource,
+  onRoles,
+}: {
+  roleSource: RoleSourceRef | null
+  onRoles: (rules: ScimSettings["group_rules"]) => void
+}) {
+  const queryClient = useQueryClient()
+  const scim = useQuery(queries.scimSettings()).data ?? null
+  const [creating, setCreating] = useState(false)
+  const [shown, setShown] = useState<string | null>(null)
+
+  const load = () => {
+    void queryClient.invalidateQueries({ queryKey: queries.scimSettings().queryKey })
+  }
+
+  async function create() {
+    setCreating(true)
+    try {
+      const made = await signIn.createScimToken()
+      setShown(made.token)
+      load()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function revoke(token: ScimToken) {
+    try {
+      await signIn.revokeScimToken(token.id)
+      toast.success(`Revoked the token ending ${token.hint}.`)
+      load()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  const active = scim?.tokens.filter((t) => t.revoked_at === null) ?? []
+  const isSource = roleSource?.id === SCIM_SOURCE.id
+  const rules = scim?.group_rules.map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`).join(", ")
+
+  return (
+    <Section
+      title="Provisioning (SCIM)"
+      description="Your identity provider adds people, updates them, and turns them off here as soon as it does there."
+      action={
+        <Button size="sm" onClick={create} disabled={creating || !scim || active.length >= scim.max_tokens}>
+          {creating ? <Loader2 className="animate-spin" /> : <Plus />}
+          New token
+        </Button>
+      }
+    >
+      {!scim ? (
+        <Skeleton className="h-32 rounded-xl" />
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          <CopyField label="SCIM base URL (Okta) / Tenant URL (Entra ID)" value={scim.base_url} />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <RefreshCw className="size-3.5" />
+              {scim.last_sync_at ? `Last sync ${timeAgo(scim.last_sync_at)}` : "No sync yet"}
+            </span>
+            <span>
+              {scim.users} {scim.users === 1 ? "person" : "people"} and {scim.groups}{" "}
+              {scim.groups === 1 ? "group" : "groups"} provisioned
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2">
+            {scim.tokens.map((t) => (
+              <TokenRow key={t.id} token={t} onRevoke={() => revoke(t)} />
+            ))}
+            {!scim.tokens.length && (
+              <p className="text-sm text-muted-foreground">
+                No token yet. Make one, then give it and the URL above to your identity provider.
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-start gap-3 rounded-xl border p-3">
+            <div className="min-w-0 flex-1 basis-56">
+              <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                Roles from SCIM groups
+                {isSource && (
+                  <Badge variant="secondary" className="font-normal">
+                    Role source
+                  </Badge>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {isSource
+                  ? `Groups your provider pushes set roles, as they change: ${rules}`
+                  : rules
+                    ? `Not used: roles come from ${roleSource?.label ?? "nowhere"} (${rules})`
+                    : roleSource
+                      ? `Roles come from ${roleSource.label}. Give SCIM's groups rules to switch to them.`
+                      : "Groups don't set roles yet. Give them rules to make SCIM the role source."}
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => onRoles(scim.group_rules)}>
+              Roles from groups
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Only emails on your verified domains, or ones you've invited, can be provisioned.
+            Turning someone off signs them out everywhere at once; deleting them also anonymises
+            their name and email after {scim.retention_days} days. The last admin can't be
+            removed.
+          </p>
+          <SetupNotes baseUrl={scim.base_url} />
+
+          <div className="grid grid-cols-1 gap-2">
+            <p className="text-sm font-medium">Recent SCIM events</p>
+            <Events events={scim.events} empty="Your identity provider hasn't changed anything yet." />
+          </div>
+        </div>
+      )}
+      <NewTokenDialog token={shown} onClose={() => setShown(null)} />
+    </Section>
+  )
+}
+
 // ---- The screen ----------------------------------------------------------------------
+export type AccessTab =
+  | "sign-in"
+  | "members"
+  | "groups"
+  | "activity"
+  | "api"
+  | "webhooks"
+  | "data"
+
+const ACCESS_TABS: [AccessTab, string][] = [
+  ["sign-in", "Sign-in"],
+  ["members", "Members"],
+  ["groups", "Groups"],
+  ["activity", "Activity"],
+  ["api", "API & MCP"],
+  ["webhooks", "Webhooks"],
+  ["data", "Data"],
+]
+
+// The Activity tab's "Sign-ins": the same events as the sign-in settings show.
+function SignInActivity() {
+  const settings = useQuery(queries.signInSettings()).data
+  if (!settings) return <Skeleton className="h-48 rounded-2xl" />
+  return <Events events={settings.events} />
+}
+
 export function SignInView({
   workspace,
   me,
-  onOpenIntegrations,
+  tab,
+  onTabChange,
 }: {
   workspace: string
   me: string
-  onOpenIntegrations?: () => void
+  tab: AccessTab // each tab has its own URL (routes.tsx)
+  onTabChange: (tab: AccessTab) => void
 }) {
-  const [tab, setTab] = useState<"sign-in" | "members">("sign-in")
+  // Requests to join waiting for an admin: counted on the Members tab.
+  const waiting = useQuery(queries.joinRequests()).data?.requests.length ?? 0
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -906,144 +1244,80 @@ export function SignInView({
           </h2>
           <p className="text-sm text-muted-foreground">
             Who can sign in to the <span className="font-medium text-foreground">{workspace}</span>{" "}
-            workspace, and as what.
+            workspace, as what, and what they may see.
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+        {/* Seven tabs don't fit a phone: there it's a picker instead of a sideways scroll. */}
+        <Select value={tab} onValueChange={(v) => onTabChange(v as AccessTab)}>
+          <SelectTrigger aria-label="Access section" className="w-full sm:hidden">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ACCESS_TABS.map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+                {value === "members" && waiting > 0 && ` (${waiting} waiting to join)`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Tabs
+          panels={false}
+          value={tab}
+          onValueChange={(v) => onTabChange(v as AccessTab)}
+          className="hidden max-w-full sm:flex"
+        >
           <TabsList>
-            <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
-            <TabsTrigger value="members">Members</TabsTrigger>
+            {ACCESS_TABS.map(([value, label]) => (
+              <TabsTrigger key={value} value={value}>
+                {label}
+                {value === "members" && waiting > 0 && (
+                  <Badge
+                    className="h-5 min-w-5 rounded-full px-1.5 tabular-nums"
+                    aria-label={`${waiting} waiting to join`}
+                  >
+                    {waiting}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </Tabs>
       </div>
       <div className="mt-6">
         {tab === "sign-in" ? (
-          <SignInSettingsView workspace={workspace} onOpenIntegrations={onOpenIntegrations} />
-        ) : (
+          <SignInSettingsView />
+        ) : tab === "members" ? (
           <MembersView me={me} />
+        ) : tab === "groups" ? (
+          <GroupsView />
+        ) : tab === "api" ? (
+          <ApiAccessView />
+        ) : tab === "webhooks" ? (
+          <WebhooksView />
+        ) : tab === "data" ? (
+          <WorkspaceDataView />
+        ) : (
+          <ActivityView signIns={<SignInActivity />} />
         )}
       </div>
     </div>
   )
 }
 
-// ---- Getting started ---------------------------------------------------------------
-// A new workspace (made at sign-up) has a verified domain and one admin. Until it
-// has a provider of its own, show what's left; it can also be put away.
-function GettingStarted({
-  settings,
-  workspace,
-  onAddProvider,
-  onOpenIntegrations,
-}: {
-  settings: SignInSettings
-  workspace: string
-  onAddProvider: () => void
-  onOpenIntegrations?: () => void
-}) {
-  const key = `kb-setup-done:${workspace}`
-  const [hidden, setHidden] = useState(() => {
-    try {
-      return localStorage.getItem(key) === "1"
-    } catch {
-      return false
-    }
-  })
-  const domains = settings.domains.filter((d) => d.verified).map((d) => d.domain)
-  if (hidden || settings.connections.length) return null
-
-  function hide() {
-    try {
-      localStorage.setItem(key, "1")
-    } catch {
-      // private window: it just comes back next time
-    }
-    setHidden(true)
-  }
-
-  const steps: { done: boolean; title: string; body: string; action?: React.ReactNode }[] = [
-    {
-      done: domains.length > 0,
-      title: domains.length ? `${domains.join(", ")} is verified` : "Verify your email domain",
-      body: domains.length
-        ? "Colleagues with an email on it can sign in with Continue with Google Workspace now."
-        : "Add it under Email domains below, then add the DNS record it shows.",
-    },
-    {
-      done: false,
-      title: "Add your company's identity provider",
-      body: "Optional. If you use Okta, Microsoft Entra ID or any SAML provider, add it so access follows your directory.",
-      action: (
-        <Button size="sm" variant="outline" onClick={onAddProvider}>
-          <Plus data-icon="inline-start" /> Add provider
-        </Button>
-      ),
-    },
-    {
-      done: false,
-      title: "Connect your documents",
-      body: "Google Drive, Notion, or files you upload: what your colleagues' questions are answered from.",
-      action: onOpenIntegrations && (
-        <Button size="sm" variant="outline" onClick={onOpenIntegrations}>
-          Open Integrations <ArrowRight data-icon="inline-end" />
-        </Button>
-      ),
-    },
-  ]
-
-  return (
-    <Section
-      title="Set up your workspace"
-      description="Your workspace is ready. Three things make it useful for everyone."
-      action={
-        <Button size="sm" variant="ghost" onClick={hide}>
-          Done
-        </Button>
-      }
-    >
-      <ol className="flex flex-col gap-4">
-        {steps.map((s) => (
-          <li key={s.title} className="flex flex-wrap items-start gap-3">
-            {s.done ? (
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Done" />
-            ) : (
-              <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="To do" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{s.title}</p>
-              <p className="text-sm text-muted-foreground">{s.body}</p>
-            </div>
-            {s.action}
-          </li>
-        ))}
-      </ol>
-    </Section>
-  )
-}
-
-function SignInSettingsView({
-  workspace,
-  onOpenIntegrations,
-}: {
-  workspace: string
-  onOpenIntegrations?: () => void
-}) {
-  const [settings, setSettings] = useState<SignInSettings | null>(null)
+function SignInSettingsView() {
+  const queryClient = useQueryClient()
+  const settings = useQuery(queries.signInSettings()).data ?? null
   const [editing, setEditing] = useState<SignInConnection | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [testing, setTesting] = useState<SignInConnection | null>(null)
   const [testWindow, setTestWindow] = useState<Window | null>(null)
-  const [roles, setRoles] = useState<SignInConnection | null>(null)
+  const [roles, setRoles] = useState<RulesTarget | null>(null)
   const [opened, setOpened] = useState(0)     // remounts the dialogs, fresh, on each open
 
   const load = useCallback(() => {
-    signIn
-      .get()
-      .then(setSettings)
-      .catch((err) => toast.error(errorText(err)))
-  }, [])
-
-  useEffect(load, [load])
+    void queryClient.invalidateQueries({ queryKey: queries.signInSettings().queryKey })
+  }, [queryClient])
 
   function openDialog(conn: SignInConnection | null) {
     setEditing(conn)
@@ -1051,7 +1325,7 @@ function SignInSettingsView({
     setDialogOpen(true)
   }
 
-  function openRoles(conn: SignInConnection) {
+  function openRoles(conn: RulesTarget) {
     setOpened((n) => n + 1)
     setRoles(conn)
   }
@@ -1079,7 +1353,10 @@ function SignInSettingsView({
   }
 
   const verified = settings?.domains.some((d) => d.verified) ?? false
-  const roleSource = settings?.connections.find((c) => c.id === settings.role_source) ?? null
+  const roleSource: RoleSourceRef | null =
+    settings?.role_source === SCIM_SOURCE.id
+      ? SCIM_SOURCE
+      : (settings?.connections.find((c) => c.id === settings.role_source) ?? null)
 
   return (
     <div>
@@ -1090,12 +1367,7 @@ function SignInSettingsView({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          <GettingStarted
-            settings={settings}
-            workspace={workspace}
-            onAddProvider={() => openDialog(null)}
-            onOpenIntegrations={onOpenIntegrations}
-          />
+          <OnboardingChecklist onAddProvider={() => openDialog(null)} />
           <Section title="Sign-in rules" description="How people in this workspace sign in.">
             <div className="grid grid-cols-1 gap-5">
               <SignInRules settings={settings} onChange={load} />
@@ -1105,6 +1377,13 @@ function SignInSettingsView({
                 onChange={load}
               />
             </div>
+          </Section>
+
+          <Section
+            title="Who can join"
+            description="When someone signs in for the first time with an email on a verified domain. People you invite, or provision with SCIM, always get in."
+          >
+            <JoiningPolicy settings={settings} onChange={load} />
           </Section>
 
           <Section
@@ -1154,6 +1433,13 @@ function SignInSettingsView({
             </div>
           </Section>
 
+          <Provisioning
+            roleSource={roleSource}
+            onRoles={(rules) =>
+              openRoles({ ...SCIM_SOURCE, protocol: "scim", group_claim: null, group_rules: rules })
+            }
+          />
+
           <Section
             title="Recent sign-ins"
             description="Through your providers, and changes they made by themselves, newest first."
@@ -1179,6 +1465,7 @@ function SignInSettingsView({
         onSaved={() => {
           setRoles(null)
           load()
+          void queryClient.invalidateQueries({ queryKey: queries.scimSettings().queryKey })
         }}
       />
     </div>

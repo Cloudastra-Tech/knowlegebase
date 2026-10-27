@@ -9,11 +9,11 @@ answer at the callback (the claims of a verified ID token). The rest is real.
 import json
 import re
 import socket
-import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+import join_store
 import url_guard
 
 ISSUER = "https://idp.acme.example/realms/acme"
@@ -210,7 +210,7 @@ def test_a_provider_is_checked_and_its_secret_kept_encrypted(client, acme, provi
     assert conn["id"] in [c["id"] for c in listed]
     assert "s3cret-value" not in json.dumps(listed)
     import members_store
-    with sqlite3.connect(members_store.DB_PATH) as db:
+    with __import__("db").connect() as db:
         raw, metadata = db.execute("SELECT secret, metadata FROM sso_connections WHERE id = ?",
                                    (conn["id"],)).fetchone()
     assert b"s3cret-value" not in raw
@@ -272,6 +272,7 @@ def acme_sso(client, acme):
     import members_store
     import sso_setup
     members_store.add_verified_domain("acme", "acme.example")
+    join_store.set_workspace_policy("acme", "auto")   # people join at their first sign-in
     return members_store.create_connection("acme", "oidc", "Acme SSO", ISSUER, "kb",
                                            {"client_secret": "s3cret-value"},
                                            {k: DOC[k] for k in sso_setup.METADATA_KEYS
@@ -343,6 +344,7 @@ def test_a_workspace_provider_signs_people_in_to_that_workspace(client, idp, acm
 def test_a_workspace_provider_cant_vouch_for_anyone_else(client, idp, acme_sso, claims, error):
     import members_store
     members_store.add_verified_domain("globex", "globex.example")
+    join_store.set_workspace_policy("globex", "auto")   # people join at their first sign-in
     assert error_of(callback(client, idp, acme_sso, claims)) == error
 
 
@@ -623,6 +625,7 @@ def test_sso_can_only_be_required_once_someone_could_sign_in(client):
     r = client.put("/api/admin/sign-in/policy", headers=lonely, json={"require_sso": True})
     assert r.status_code == 400 and "Verify a domain" in r.json()["detail"]
     members_store.add_verified_domain("lonely", "lonely.example")
+    join_store.set_workspace_policy("lonely", "auto")   # people join at their first sign-in
     r = client.put("/api/admin/sign-in/policy", headers=lonely, json={"require_sso": True})
     assert r.status_code == 400 and "provider" in r.json()["detail"]
 
@@ -669,11 +672,11 @@ def test_signing_out_can_sign_out_at_the_provider_too(client, acme, monkeypatch)
 
 
 def test_the_public_sign_in_endpoints_are_rate_limited(client, monkeypatch):
-    import api
+    from kb import rate_limit, state
     monkeypatch.setenv("RATE_LIMITS", "on")
-    monkeypatch.setattr(api, "_hits", {})
+    monkeypatch.setattr(state, "hits", {})
     codes = [client.post("/api/auth/sso/discover", json={"email": "x@acme.example"}).status_code
-             for _ in range(api.LIMITS["discover"] + 1)]
+             for _ in range(rate_limit.LIMITS["discover"] + 1)]
     assert codes[-2] == 200 and codes[-1] == 429
 
 
@@ -705,10 +708,10 @@ def test_a_sign_in_code_only_works_in_the_browser_that_started_it(client, acme_s
 
 
 def test_an_expired_test_never_turns_into_a_real_sign_in(client, acme, acme_sso, monkeypatch):
-    import api
+    from kb import state
     import members_store
     ticket, location = start_test(client, acme, acme_sso)
-    api._sso_tests[ticket]["expires"] = 0               # e.g. a slow MFA prompt
+    state.sso_tests[ticket]["expires"] = 0               # e.g. a slow MFA prompt
     fake_answer(monkeypatch, {"email": "slow@acme.example", "email_verified": True})
     r = client.get(f"/api/auth/sso/c/{acme_sso['id']}/callback?code=x&state={state_of(location)}")
     assert r.headers["location"] == "/#sso-test"
@@ -742,6 +745,7 @@ def test_an_admin_cant_lock_themselves_or_everyone_out(client, monkeypatch):
     members_store.set_password("solo-admin", "Solo", auth.hash_password("correct-horse"),
                                "solo", "admin")
     members_store.add_verified_domain("solo", "solo.example")
+    join_store.set_workspace_policy("solo", "auto")   # people join at their first sign-in
     conn = members_store.create_connection(
         "solo", "oidc", "Solo SSO", ISSUER, "kb", {"client_secret": "s"},
         {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
@@ -926,6 +930,7 @@ def workspace_with_providers(slug, *labels, password_admin=True):
         members_store.set_password(f"{slug}-admin", "Admin", auth.hash_password("correct-horse"),
                                    slug, "admin")
     members_store.add_verified_domain(slug, f"{slug}.example")
+    join_store.set_workspace_policy(slug, "auto")   # people join at their first sign-in
     return [members_store.create_connection(
         slug, "oidc", label, ISSUER, "kb", {"client_secret": "s"},
         {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test") for label in labels]
@@ -939,7 +944,7 @@ def put_rules(client, headers, conn, rules, **extra):
 def groups_were_sent(username, days_ago):
     import time
     import members_store
-    with sqlite3.connect(members_store.DB_PATH) as db:
+    with __import__("db").connect() as db:
         db.execute("UPDATE members SET groups_updated_at = ? WHERE username = ?",
                    (time.time() - days_ago * 86400, username))
 
@@ -1023,7 +1028,7 @@ def test_group_given_admin_expires_without_a_sign_in_through_the_role_source(cli
     cy = {"email": "cy@aging.example", "email_verified": True, "groups": ["kb-admins", "staff"]}
     headers = session_for(client, idp, source, cy)
     session_for(client, idp, source, {**cy, "email": "di@aging.example"})
-    members_store.set_role("di@aging.example", "hr")                 # an override
+    members_store.set_role("di@aging.example", "hr", "aging")               # an override
     groups_were_sent("cy@aging.example", days_ago=29)
     groups_were_sent("di@aging.example", days_ago=40)
     assert me(client, headers)["role"] == "admin"                    # 30 days by default

@@ -1,0 +1,28 @@
+Cloudastra Academy — Course Catalog 2026
+
+PE-101 Prompt Engineering Foundations:
+A 4-week evening course on writing clear prompts, giving examples and checking AI output.
+Two live classes a week (Tuesday and Thursday, 7pm to 9pm IST). Price: 4500 rupees.
+No prerequisites. Ends with a graded capstone project.
+
+PY-110 Python for No-Coders:
+An 8-week beginner course for people who have never written code. Covers variables, loops,
+reading spreadsheets with pandas and calling an AI API from a script. Price: 7000 rupees.
+Learners need a laptop with at least 8 GB of RAM.
+
+ACC-210 AI for Accounting Teams:
+A 6-week course for accountants and finance staff: automating invoice matching, drafting
+reconciliation notes and reviewing ledgers with AI assistants. Price: 9500 rupees.
+Learners should be comfortable with Excel. Taught in partnership with chartered accountants.
+
+DS-300 Applied Data Science:
+A 12-week weekend course on statistics, machine learning with scikit-learn and model
+evaluation. Price: 18000 rupees. Prerequisite: PY-110 or equivalent Python experience.
+
+Certificates:
+Every course ends with a digital certificate, issued within 7 days of passing the final
+assessment. Certificates carry a verification code that employers can check on our website.
+
+Batches and seats:
+New batches start on the first Monday of each month. Each batch is capped at 30 learners.
+Group discounts of 15% apply to companies enrolling 5 or more employees in the same course.

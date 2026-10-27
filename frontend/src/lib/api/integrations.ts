@@ -1,0 +1,71 @@
+// Connected sources: Google Drive, Notion, Outline, websites, ... (/api/integrations).
+// Every connector has the same endpoints; `provider` is its id in the registry.
+
+import { json, request, seg } from "@/lib/api/client"
+import type {
+  ConnectorAccess,
+  ConnectorOptions,
+  Container,
+  Integration,
+  IntegrationSetup,
+  PermissionPolicy,
+  SkippedItem,
+  SyncRun,
+} from "@/lib/api/types"
+
+export const integrationsApi = {
+  integrations: () =>
+    request<{ workspace: string; integrations: Integration[] }>("/integrations"),
+  // Sign-in connectors: the provider's consent screen to send the browser to
+  // (`url`: what it needs first, like Zendesk's subdomain or Intercom's region;
+  // `app`: Salesforce's External Client App, when the server has none of its own).
+  connectIntegration: (
+    provider: string,
+    url?: string,
+    app?: { client_id: string; client_secret: string },
+  ) =>
+    request<{ url: string }>(
+      `/integrations/${seg(provider)}/connect`,
+      url === undefined && !app ? { method: "POST" } : json("POST", { url: url ?? "", ...app }),
+    ),
+  // Token / address connectors: the form, checked and saved by the server.
+  setupIntegration: (provider: string, form: IntegrationSetup) =>
+    request<{ ok: boolean; account: string; choose: boolean }>(
+      `/integrations/${seg(provider)}/setup`,
+      json("POST", form),
+    ),
+  syncIntegration: (provider: string, opts: { full?: boolean; confirm_deletes?: boolean } = {}) =>
+    request<{ ok: boolean }>(`/integrations/${seg(provider)}/sync`, json("POST", opts)),
+  disconnectIntegration: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${seg(provider)}`, { method: "DELETE" }),
+  setIntegrationAccess: (provider: string, access: ConnectorAccess) =>
+    request<{ access: ConnectorAccess }>(
+      `/integrations/${seg(provider)}/access`,
+      json("PUT", { access }),
+    ),
+  setIntegrationPolicy: (provider: string, policy: PermissionPolicy) =>
+    request<{ policy: PermissionPolicy }>(
+      `/integrations/${seg(provider)}/policy`,
+      json("PUT", { policy }),
+    ),
+  // Read every item's permissions at the source again, then re-tag (no re-embedding).
+  syncIntegrationPermissions: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${seg(provider)}/permissions/sync`, json("POST")),
+  // What can be picked (inside `parent`, for a tree), and what is picked now.
+  integrationContainers: (provider: string, parent?: string) =>
+    request<{ items: Container[]; picked: Container[] }>(
+      `/integrations/${seg(provider)}/containers${parent ? `?parent=${seg(parent)}` : ""}`,
+    ),
+  setIntegrationContainers: (
+    provider: string,
+    containers: Container[],
+    limits?: { max_pages?: number; max_depth?: number },
+    options?: ConnectorOptions,
+  ) =>
+    request<{ containers: Container[] }>(
+      `/integrations/${seg(provider)}/containers`,
+      json("PUT", { containers, ...limits, ...(options ? { options } : {}) }),
+    ),
+  integrationRuns: (provider: string) =>
+    request<{ runs: SyncRun[]; skipped: SkippedItem[] }>(`/integrations/${seg(provider)}/runs`),
+}

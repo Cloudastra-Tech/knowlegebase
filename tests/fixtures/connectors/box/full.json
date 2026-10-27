@@ -1,0 +1,393 @@
+{
+ "_source": [
+  "https://developer.box.com/reference/get-folders-id-items/ (usemarker, marker, next_marker, limit, fields; entries file|folder|web_link)",
+  "https://developer.box.com/reference/resources/file/ (id, type, name, etag, sha1, size, modified_at, path_collection{total_count, entries[{type,id,name}]}, shared_link{access}, owned_by{login}, parent, item_status)",
+  "https://developer.box.com/reference/get-events/ (stream_position=now, stream_type=changes, chunk_size, next_stream_position, entries[{event_id, event_type, source}])",
+  "https://developer.box.com/reference/get-folders-id-collaborations/ (entries[{accessible_by{type,id,login}, status accepted|pending|rejected, role}], next_marker)",
+  "https://developer.box.com/reference/get-files-id-content/"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/events",
+    "params": {
+     "stream_position": "now",
+     "stream_type": "changes"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "chunk_size": 0,
+     "next_stream_position": "1000",
+     "entries": []
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/folders/111/items",
+    "params": {
+     "usemarker": "true"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       "type": "folder",
+       "id": "222",
+       "name": "Policies",
+       "etag": "1",
+       "path_collection": {
+        "total_count": 2,
+        "entries": [
+         {
+          "type": "folder",
+          "id": "0",
+          "name": "All Files"
+         },
+         {
+          "type": "folder",
+          "id": "111",
+          "name": "Handbook"
+         }
+        ]
+       },
+       "shared_link": {
+        "access": "company"
+       }
+      },
+      {
+       "type": "file",
+       "id": "501",
+       "name": "Leave.md",
+       "etag": "0",
+       "sha1": "s1",
+       "size": 100,
+       "modified_at": "2026-10-01T10:00:00-07:00",
+       "path_collection": {
+        "total_count": 2,
+        "entries": [
+         {
+          "type": "folder",
+          "id": "0",
+          "name": "All Files"
+         },
+         {
+          "type": "folder",
+          "id": "111",
+          "name": "Handbook"
+         }
+        ]
+       },
+       "shared_link": null,
+       "owned_by": {
+        "type": "user",
+        "id": "11",
+        "name": "Ann",
+        "login": "Ann@Acme.example"
+       },
+       "parent": {
+        "type": "folder",
+        "id": "111"
+       },
+       "item_status": "active"
+      }
+     ],
+     "limit": 1000,
+     "next_marker": "mk1"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/folders/111/items",
+    "params": {
+     "marker": "mk1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       "type": "file",
+       "id": "502",
+       "name": "Scan.pdf",
+       "etag": "0",
+       "sha1": "s2",
+       "size": 31457280,
+       "modified_at": "2026-10-01T10:00:00-07:00",
+       "path_collection": {
+        "total_count": 2,
+        "entries": [
+         {
+          "type": "folder",
+          "id": "0",
+          "name": "All Files"
+         },
+         {
+          "type": "folder",
+          "id": "111",
+          "name": "Handbook"
+         }
+        ]
+       },
+       "shared_link": null,
+       "owned_by": {
+        "type": "user",
+        "id": "11",
+        "name": "Ann",
+        "login": "Ann@Acme.example"
+       },
+       "parent": {
+        "type": "folder",
+        "id": "111"
+       },
+       "item_status": "active"
+      },
+      {
+       "type": "file",
+       "id": "503",
+       "name": "logo.png",
+       "etag": "0",
+       "sha1": "s3",
+       "size": 100,
+       "modified_at": "2026-10-01T10:00:00-07:00",
+       "path_collection": {
+        "total_count": 2,
+        "entries": [
+         {
+          "type": "folder",
+          "id": "0",
+          "name": "All Files"
+         },
+         {
+          "type": "folder",
+          "id": "111",
+          "name": "Handbook"
+         }
+        ]
+       },
+       "shared_link": null,
+       "owned_by": {
+        "type": "user",
+        "id": "11",
+        "name": "Ann",
+        "login": "Ann@Acme.example"
+       },
+       "parent": {
+        "type": "folder",
+        "id": "111"
+       },
+       "item_status": "active"
+      },
+      {
+       "type": "web_link",
+       "id": "9",
+       "name": "Intranet"
+      }
+     ],
+     "limit": 1000,
+     "next_marker": null
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/folders/222/items",
+    "params": {
+     "usemarker": "true"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       "type": "file",
+       "id": "504",
+       "name": "Expenses.pdf",
+       "etag": "0",
+       "sha1": "s4",
+       "size": 100,
+       "modified_at": "2026-10-01T10:00:00-07:00",
+       "path_collection": {
+        "total_count": 3,
+        "entries": [
+         {
+          "type": "folder",
+          "id": "0",
+          "name": "All Files"
+         },
+         {
+          "type": "folder",
+          "id": "111",
+          "name": "Handbook"
+         },
+         {
+          "type": "folder",
+          "id": "222",
+          "name": "Policies"
+         }
+        ]
+       },
+       "shared_link": null,
+       "owned_by": {
+        "type": "user",
+        "id": "11",
+        "name": "Ann",
+        "login": "Ann@Acme.example"
+       },
+       "parent": {
+        "type": "folder",
+        "id": "222"
+       },
+       "item_status": "active"
+      }
+     ],
+     "limit": 1000,
+     "next_marker": null
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/folders/111/collaborations",
+    "params": {}
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       "type": "collaboration",
+       "id": "c-bob@acme.example",
+       "role": "viewer",
+       "status": "accepted",
+       "accessible_by": {
+        "type": "user",
+        "id": "bob@acme.example",
+        "name": "bob@acme.example",
+        "login": "bob@acme.example"
+       }
+      },
+      {
+       "type": "collaboration",
+       "id": "c-eve@else.example",
+       "role": "viewer",
+       "status": "pending",
+       "accessible_by": {
+        "type": "user",
+        "id": "eve@else.example",
+        "name": "eve@else.example",
+        "login": "eve@else.example"
+       }
+      },
+      {
+       "type": "collaboration",
+       "id": "c-77",
+       "role": "viewer",
+       "status": "accepted",
+       "accessible_by": {
+        "type": "group",
+        "id": "77",
+        "name": "Finance"
+       }
+      }
+     ],
+     "limit": 1000,
+     "next_marker": null
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/files/501/collaborations",
+    "params": {}
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       "type": "collaboration",
+       "id": "c-carol@acme.example",
+       "role": "viewer",
+       "status": "accepted",
+       "accessible_by": {
+        "type": "user",
+        "id": "carol@acme.example",
+        "name": "carol@acme.example",
+        "login": "carol@acme.example"
+       }
+      }
+     ],
+     "next_marker": null
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/folders/222/collaborations",
+    "params": {}
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": [
+      {
+       "type": "collaboration",
+       "id": "c-dave@acme.example",
+       "role": "viewer",
+       "status": "accepted",
+       "accessible_by": {
+        "type": "user",
+        "id": "dave@acme.example",
+        "name": "dave@acme.example",
+        "login": "dave@acme.example"
+       }
+      }
+     ],
+     "next_marker": null
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/files/504/collaborations",
+    "params": {}
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "entries": []
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.box.com/2.0/files/501/content"
+   },
+   "response": {
+    "status": 200,
+    "text": "# Leave\n\nEveryone gets 25 days."
+   }
+  }
+ ]
+}

@@ -1,0 +1,20 @@
+{
+ "hosts": {"docs.example.com": "93.184.216.34"},
+ "exchanges": [
+  {"request": {"method": "GET", "url": "https://docs.example.com/robots.txt"},
+   "response": {"status": 200, "text": "User-agent: *\nDisallow: /private\n"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/",
+               "headers": {"If-None-Match": "\"home-v1\""}},
+   "response": {"status": 304}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/pricing"},
+   "response": {"status": 200, "headers": {"Content-Type": "text/html"},
+                "text": "<html><head><title>Pricing</title></head><body><p>Plans start at 10 dollars.</p></body></html>"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/guide"},
+   "response": {"status": 301, "headers": {"Location": "/guide/"}}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/guide/",
+               "headers": {"If-Modified-Since": "Mon, 26 Oct 2026 10:00:00 GMT"}},
+   "response": {"status": 410}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/missing"},
+   "response": {"status": 404}}
+ ]
+}

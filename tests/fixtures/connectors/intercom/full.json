@@ -1,0 +1,207 @@
+{
+ "_source": [
+  "https://github.com/intercom/Intercom-OpenAPI/blob/main/descriptions/2.14/api.intercom.io.yaml (article_list_item, collection, help_center, conversation, conversation_part)",
+  "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/articles/listarticles (GET /articles: per_page up to 250, newest updated_at first; pages.page / total_pages)",
+  "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/help-center/listallcollections"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.eu.intercom.io/help_center/collections",
+    "params": {
+     "page": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "list",
+     "total_count": 3,
+     "pages": {
+      "type": "pages",
+      "page": 1,
+      "per_page": 250,
+      "total_pages": 1
+     },
+     "data": [
+      {
+       "id": "31",
+       "workspace_id": "abc123",
+       "name": "Getting started",
+       "parent_id": null,
+       "help_center_id": 1,
+       "url": "https://help.acme.com/en/collections/31"
+      },
+      {
+       "id": "32",
+       "workspace_id": "abc123",
+       "name": "Billing",
+       "parent_id": "31",
+       "help_center_id": 1,
+       "url": "https://help.acme.com/en/collections/32"
+      },
+      {
+       "id": "41",
+       "workspace_id": "abc123",
+       "name": "Partners",
+       "parent_id": null,
+       "help_center_id": 2,
+       "url": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.eu.intercom.io/help_center/help_centers"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "list",
+     "data": [
+      {
+       "id": "1",
+       "workspace_id": "abc123",
+       "identifier": "acme",
+       "display_name": "Acme Help",
+       "website_turned_on": true,
+       "url": "https://help.acme.com"
+      },
+      {
+       "id": "2",
+       "workspace_id": "abc123",
+       "identifier": "partners",
+       "display_name": "Partner portal",
+       "website_turned_on": false,
+       "url": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.eu.intercom.io/articles",
+    "params": {
+     "page": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "list",
+     "total_count": 4,
+     "pages": {
+      "type": "pages",
+      "page": 1,
+      "per_page": 250,
+      "total_pages": 2
+     },
+     "data": [
+      {
+       "type": "article",
+       "id": "703",
+       "workspace_id": "abc123",
+       "title": "Pay by bank transfer",
+       "description": "",
+       "body": "<h2>Bank transfer</h2><p>Use the IBAN on your invoice.</p>",
+       "author_id": 991,
+       "state": "published",
+       "created_at": 1790000000,
+       "updated_at": 1790003000,
+       "url": "https://help.acme.com/en/articles/703-x",
+       "parent_id": 32,
+       "parent_ids": [
+        32
+       ],
+       "parent_type": "collection"
+      },
+      {
+       "type": "article",
+       "id": "702",
+       "workspace_id": "abc123",
+       "title": "Draft: crypto payments",
+       "description": "",
+       "body": "<p>Text.</p>",
+       "author_id": 991,
+       "state": "draft",
+       "created_at": 1790000000,
+       "updated_at": 1790002000,
+       "url": null,
+       "parent_id": 32,
+       "parent_ids": [
+        32
+       ],
+       "parent_type": "collection"
+      },
+      {
+       "type": "article",
+       "id": "701",
+       "workspace_id": "abc123",
+       "title": "Welcome to Acme",
+       "description": "",
+       "body": "<p>Text.</p>",
+       "author_id": 991,
+       "state": "published",
+       "created_at": 1790000000,
+       "updated_at": 1790001000,
+       "url": "https://help.acme.com/en/articles/701-x",
+       "parent_id": 31,
+       "parent_ids": [
+        31
+       ],
+       "parent_type": "collection"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.eu.intercom.io/articles",
+    "params": {
+     "page": "2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "list",
+     "total_count": 4,
+     "pages": {
+      "type": "pages",
+      "page": 2,
+      "per_page": 250,
+      "total_pages": 2
+     },
+     "data": [
+      {
+       "type": "article",
+       "id": "700",
+       "workspace_id": "abc123",
+       "title": "Partner pricing",
+       "description": "",
+       "body": "<p>Text.</p>",
+       "author_id": 991,
+       "state": "published",
+       "created_at": 1790000000,
+       "updated_at": 1790000500,
+       "url": "https://help.acme.com/en/articles/700-x",
+       "parent_id": 41,
+       "parent_ids": [
+        41
+       ],
+       "parent_type": "collection"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

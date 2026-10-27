@@ -1,0 +1,236 @@
+{
+ "_source": [
+  "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_query.htm (totalSize, done, nextRecordsUrl, records)",
+  "https://developer.salesforce.com/docs/atlas.en-us.sfFieldRef.meta/sfFieldRef/salesforce_field_reference_Knowledge__kav.htm (Knowledge__kav: KnowledgeArticleId, ArticleNumber, Title, UrlName, Summary, Language, PublishStatus, IsVisibleInApp/Pkb/Csp/Prm, LastPublishedDate, SystemModstamp)",
+  "Describe: GET /services/data/vXX.X/sobjects/{object}/describe (fields[].name/type/extraTypeInfo, childRelationships[].relationshipName)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/sobjects/Knowledge__kav/describe"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "name": "Knowledge__kav",
+     "fields": [
+      {
+       "name": "Id",
+       "type": "id",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "KnowledgeArticleId",
+       "type": "reference",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "ArticleNumber",
+       "type": "string",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "Title",
+       "type": "string",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "UrlName",
+       "type": "string",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "Summary",
+       "type": "textarea",
+       "extraTypeInfo": "plaintextarea"
+      },
+      {
+       "name": "Language",
+       "type": "picklist",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "PublishStatus",
+       "type": "picklist",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "LastPublishedDate",
+       "type": "datetime",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "SystemModstamp",
+       "type": "datetime",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "IsVisibleInApp",
+       "type": "boolean",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "IsVisibleInPkb",
+       "type": "boolean",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "IsVisibleInCsp",
+       "type": "boolean",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "RecordTypeId",
+       "type": "reference",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "Answer__c",
+       "type": "textarea",
+       "extraTypeInfo": "richtextarea"
+      },
+      {
+       "name": "Internal_Notes__c",
+       "type": "textarea",
+       "extraTypeInfo": "plaintextarea"
+      }
+     ],
+     "childRelationships": [
+      {
+       "relationshipName": "DataCategorySelections",
+       "childSObject": "Knowledge__DataCategorySelection"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/query",
+    "params": {
+     "q~": "WHERE PublishStatus = 'Online' ORDER BY SystemModstamp"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "totalSize": 3,
+     "done": false,
+     "nextRecordsUrl": "/services/data/v62.0/query/01gxx0000002fQBAAY-2000",
+     "records": [
+      {
+       "attributes": {
+        "type": "Knowledge__kav",
+        "url": "/services/data/v62.0/sobjects/Knowledge__kav/ka0V1"
+       },
+       "Id": "ka0V1",
+       "KnowledgeArticleId": "kA0000000000001AAA",
+       "ArticleNumber": "00001AAA",
+       "Title": "Reset your password",
+       "UrlName": "reset-your-password",
+       "Language": "en_US",
+       "PublishStatus": "Online",
+       "LastPublishedDate": "2026-10-01T09:00:00.000+0000",
+       "SystemModstamp": "2026-10-01T09:00:00.000+0000",
+       "IsVisibleInApp": true,
+       "IsVisibleInPkb": true,
+       "IsVisibleInCsp": true,
+       "RecordTypeId": "012000000000001AAA",
+       "Summary": "Summary of Reset your password.",
+       "Answer__c": "<p>Use <b>Forgot password</b> on the sign-in page.</p>",
+       "Internal_Notes__c": "never synced",
+       "DataCategorySelections": null
+      },
+      {
+       "attributes": {
+        "type": "Knowledge__kav",
+        "url": "/services/data/v62.0/sobjects/Knowledge__kav/ka0V2"
+       },
+       "Id": "ka0V2",
+       "KnowledgeArticleId": "kA0000000000002AAA",
+       "ArticleNumber": "00002AAA",
+       "Title": "Refund override",
+       "UrlName": "refund-override",
+       "Language": "en_US",
+       "PublishStatus": "Online",
+       "LastPublishedDate": "2026-10-02T09:00:00.000+0000",
+       "SystemModstamp": "2026-10-02T09:00:00.000+0000",
+       "IsVisibleInApp": true,
+       "IsVisibleInPkb": false,
+       "IsVisibleInCsp": false,
+       "RecordTypeId": "012000000000001AAA",
+       "Summary": "Summary of Refund override.",
+       "Answer__c": "<p>The override code is ORCA-7.</p>",
+       "Internal_Notes__c": "never synced",
+       "DataCategorySelections": {
+        "totalSize": 1,
+        "done": true,
+        "records": [
+         {
+          "attributes": {
+           "type": "Knowledge__DataCategorySelection"
+          },
+          "DataCategoryGroupName": "Products",
+          "DataCategoryName": "Billing"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/query/01gxx0000002fQBAAY-2000"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "totalSize": 3,
+     "done": true,
+     "records": [
+      {
+       "attributes": {
+        "type": "Knowledge__kav",
+        "url": "/services/data/v62.0/sobjects/Knowledge__kav/ka0V3"
+       },
+       "Id": "ka0V3",
+       "KnowledgeArticleId": "kA0000000000001AAA",
+       "ArticleNumber": "00001AAA",
+       "Title": "Restablecer la contraseña",
+       "UrlName": "restablecer-la-contraseña",
+       "Language": "es",
+       "PublishStatus": "Online",
+       "LastPublishedDate": "2026-10-03T09:00:00.000+0000",
+       "SystemModstamp": "2026-10-03T09:00:00.000+0000",
+       "IsVisibleInApp": true,
+       "IsVisibleInPkb": true,
+       "IsVisibleInCsp": false,
+       "RecordTypeId": "012000000000001AAA",
+       "Summary": "Summary of Restablecer la contraseña.",
+       "Answer__c": "<p>Use <b>Olvidé mi contraseña</b>.</p>",
+       "Internal_Notes__c": "never synced",
+       "DataCategorySelections": {
+        "totalSize": 1,
+        "done": true,
+        "records": [
+         {
+          "attributes": {
+           "type": "Knowledge__DataCategorySelection"
+          },
+          "DataCategoryGroupName": "Region",
+          "DataCategoryName": "Spain"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

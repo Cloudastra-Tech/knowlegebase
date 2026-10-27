@@ -92,10 +92,15 @@ def test_a_founder_creates_a_workspace_with_google_workspace(google, signup_on):
     found = client.post("/api/auth/sso/discover",
                         json={"email": "colleague@signup-corp.example"}).json()
     assert found["workspace"]["google"] is True and "name" not in found["workspace"]
-    # A colleague signing in with Google joins it as a regular member.
+    # A colleague signing in with Google asks to join it: a new workspace's joining
+    # policy is 'request' (join_store.py). Not a second sign-up either way.
     google.claims = founder("signup-corp.example", "colleague")
     colleague = client.get("/api/auth/sso/google/callback?code=x&state=y").headers["location"]
-    assert colleague.startswith("/#sso?code=")          # a normal sign-in, not a second sign-up
+    assert colleague == "/#join-requested"
+    import join_store
+    assert join_store.workspace_policy("signup-corp") == "request"
+    assert [r["email"] for r in join_store.pending("signup-corp")] == [
+        "colleague@signup-corp.example"]
 
 
 def test_a_domain_that_already_has_a_workspace_cant_make_another(google, signup_on):

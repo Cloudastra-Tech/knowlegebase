@@ -1,0 +1,98 @@
+// The backend client, split by domain. Import from "@/lib/api": `api` and `signIn`
+// keep the shape they had when this was one file.
+
+import { apiKeysApi } from "@/lib/api/api-keys"
+import { assistantApi } from "@/lib/api/assistant"
+import { auditApi } from "@/lib/api/audit"
+import { authApi } from "@/lib/api/auth"
+import { billingApi } from "@/lib/api/billing"
+import { chatApi } from "@/lib/api/chat"
+import { digestsApi } from "@/lib/api/digests"
+import { docsApi } from "@/lib/api/docs"
+import { draftsApi } from "@/lib/api/drafts"
+import { emailInApi } from "@/lib/api/email-in"
+import { extensionApi } from "@/lib/api/extension"
+import { groupsApi } from "@/lib/api/groups"
+import { insightsApi } from "@/lib/api/insights"
+import { integrationsApi } from "@/lib/api/integrations"
+import { membersApi } from "@/lib/api/members"
+import { myIntegrationsApi } from "@/lib/api/my-integrations"
+import { onboardingApi } from "@/lib/api/onboarding"
+import { signInSettingsApi } from "@/lib/api/sign-in-settings"
+import { slackApi } from "@/lib/api/slack"
+import { spacesApi } from "@/lib/api/spaces"
+import { teamsApi } from "@/lib/api/teams"
+import { webhooksApi } from "@/lib/api/webhooks"
+import { workspaceApi } from "@/lib/api/workspace"
+
+export * from "@/lib/api/types"
+export type * from "@/lib/api/insights"
+export type * from "@/lib/api/api-keys"
+export type * from "@/lib/api/assistant"
+export type * from "@/lib/api/slack"
+export type * from "@/lib/api/teams"
+export type * from "@/lib/api/email-in"
+export type * from "@/lib/api/extension"
+export type * from "@/lib/api/workspace"
+export type * from "@/lib/api/operator"
+export type * from "@/lib/api/spaces"
+export type * from "@/lib/api/digests"
+export type * from "@/lib/api/drafts"
+export type * from "@/lib/api/webhooks"
+export type * from "@/lib/api/billing"
+export type * from "@/lib/api/onboarding"
+export {
+  ApiError,
+  session,
+  setForbiddenHandler,
+  setUnauthorizedHandler,
+} from "@/lib/api/client"
+export { m365StartUrl, signupStartUrl, ssoStartUrl } from "@/lib/api/auth"
+
+export const api = {
+  ...authApi,
+  ...chatApi,
+  ...docsApi,
+  ...integrationsApi,
+  ...myIntegrationsApi,
+}
+
+// Sign-in settings, members, invites and the audit log (admin only).
+export const signIn = { ...signInSettingsApi, ...membersApi, ...auditApi }
+
+// Insights, the question log's settings, answer feedback and the test set.
+export const insights = insightsApi
+
+// API keys for the public API and the MCP server: one's own, and the workspace's (admin).
+export const apiKeys = apiKeysApi
+
+// The assistant's content controls: verified answers, source rules, settings, glossary.
+export const assistant = assistantApi
+// The Slack app: install, its settings (admin), and what HR may see of it.
+export const slack = slackApi
+// Access groups (admin) and who a document can be shared with (HR / Admin).
+export const groups = groupsApi
+// The Teams bot: which bot, the Microsoft tenant it answers, its settings (admin).
+export const teams = teamsApi
+// Email-in: ask@<workspace>.<mail domain>, on or off (admin).
+export const emailIn = emailInApi
+// The browser extension: connecting it to your account.
+export const extension = extensionApi
+// Spaces, files attached to a chat, saved prompts.
+export const spaces = spacesApi
+
+// The workspace itself: export, delete, support access, audit retention; and data
+// requests about one member (admin).
+export const workspace = workspaceApi
+export { saveFile } from "@/lib/api/workspace"
+
+// Digests of what changed: everyone's own; the email's unsubscribe link needs no sign-in.
+export const digests = digestsApi
+// Drafts the assistant writes for HR to review and publish.
+export const drafts = draftsApi
+// Outbound webhooks (admin).
+export const webhooks = webhooksApi
+// Plan & billing (BILLING=on only): admins see it, billing owners change it.
+export const billing = billingApi
+// A new workspace's first steps: the checklist, first-run suggestions, sample documents.
+export const onboarding = onboardingApi

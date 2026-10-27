@@ -1,0 +1,268 @@
+// The workspace's assistant and its content controls: verified answers
+// (/api/admin/verified-answers, HR and admins), source rules (/api/admin/doc-rules,
+// HR and admins), and the assistant's settings and glossary (/api/admin/assistant,
+// /api/admin/glossary, admins). Members read the assistant's name (/api/assistant).
+
+import { json, request, seg } from "@/lib/api/client"
+import type { Access, KnowledgeItem } from "@/lib/api/types"
+
+// ---- Verified answers ----
+export type VerifiedStatus = "current" | "due" | "expired"
+
+export interface VerifiedSource {
+  doc_key: string
+  title: string
+  provider: string | null
+  access: Access | null
+  url: string | null
+  missing?: boolean // no longer in the search index
+}
+
+export interface VerifiedAnswer {
+  id: string
+  title: string
+  variants: string[]
+  answer_md: string
+  sources: VerifiedSource[]
+  access: Access
+  min_access: Access // it was made from something this restricted: never lower
+  owner: string
+  owner_name: string
+  verified_by: string
+  verified_by_name: string
+  verified_at: number
+  review_days: number
+  due_at: number
+  status: VerifiedStatus
+  from_message: string | null
+  from_gap: number | null
+  created_by: string
+  created_at: number
+  updated_at: number
+}
+
+export interface VerifiedList {
+  answers: VerifiedAnswer[]
+  owners: { username: string; name: string }[]
+  review_days: number[]
+  default_review_days: number
+  notice_days: number
+}
+
+// What the editor sends; a draft (from a chat answer or a content gap) has the same shape.
+export interface VerifiedInput {
+  title: string
+  variants: string[]
+  answer_md: string
+  sources: string[] // document keys
+  access: Access
+  owner?: string
+  review_days?: number
+  from_message?: string | null
+  from_gap?: number | null
+}
+
+export interface VerifiedDraft extends VerifiedInput {
+  min_access: Access
+}
+
+// ---- Source rules ----
+export type RuleMatch = NonNullable<KnowledgeItem["rule"]>["match_type"]
+export type RuleAction = NonNullable<KnowledgeItem["rule"]>["action"]
+
+export interface DocRule {
+  id: number
+  match_type: RuleMatch
+  match_value: string
+  action: RuleAction
+  weight: number
+  created_by?: string
+  created_at?: number
+  updated_at?: number
+}
+
+export interface RuleWeights {
+  boost: { min: number; max: number; default: number }
+  demote: { min: number; max: number; default: number }
+}
+
+// ---- Assistant settings ----
+export type Tone = "default" | "friendly" | "formal" | "concise" | "detailed"
+export type AnswerCache = "off" | "exact" | "semantic"
+
+// The personal data policy (pii.py): which types are masked in answers and in the
+// question log, and flagged at ingest; the workspace's own email domains stay in answers.
+export type PiiEntity =
+  | "EMAIL"
+  | "PHONE"
+  | "CARD"
+  | "IBAN"
+  | "US_SSN"
+  | "UK_NI"
+  | "IN_PAN"
+  | "IN_AADHAAR"
+
+export interface PiiPolicy {
+  answers: PiiEntity[]
+  logs: PiiEntity[]
+  ingest: PiiEntity[]
+  allow_own_domains: boolean
+  allowed_domains: string[]
+  dense_min: number
+}
+
+export interface GlossaryEntry {
+  id: number
+  term: string
+  definition: string
+  synonyms: string[]
+  created_by: string
+  updated_at: number
+}
+
+export interface AssistantSettings {
+  assistant_name: string | null
+  tone: Tone
+  instructions: string
+  language: string // "auto" or a language from choices.languages
+  allow_wikipedia: boolean // as applied: the server's switch is a ceiling
+  allow_currency: boolean
+  allow_wikipedia_server: boolean
+  allow_currency_server: boolean
+  show_steps: boolean
+  adapt_verified: boolean
+  answer_cache: AnswerCache
+  answer_cache_server: boolean // false: ANSWER_CACHE=off on this server
+  cross_lingual: boolean
+  pii_policy: PiiPolicy
+  own_domains: string[] // the workspace's verified domains
+  updated_by: string | null
+  updated_at: number | null
+  choices: {
+    tones: Tone[]
+    languages: string[]
+    answer_cache: AnswerCache[]
+    pii_entities: { id: PiiEntity; label: string }[]
+    pii_packs: Record<string, PiiEntity[]>
+  }
+  limits: {
+    name: number
+    instructions: number
+    term: number
+    definition: number
+    synonyms: number
+    pii_domains: number
+  }
+  glossary: GlossaryEntry[]
+}
+
+export type AssistantChange = Partial<
+  Pick<
+    AssistantSettings,
+    | "assistant_name"
+    | "tone"
+    | "instructions"
+    | "language"
+    | "allow_wikipedia"
+    | "allow_currency"
+    | "show_steps"
+    | "adapt_verified"
+    | "answer_cache"
+    | "cross_lingual"
+  >
+> & { pii_policy?: PiiPolicy | null }
+
+export interface GlossaryInput {
+  term: string
+  definition: string
+  synonyms: string[]
+}
+
+// ---- Model provider (admins): the server's, or AWS Bedrock in the company's own account
+export type ModelProvider = "default" | "bedrock"
+export type AwsAuth = "role" | "keys"
+
+export interface ModelProviderSettings {
+  provider: ModelProvider
+  region: string | null
+  auth: AwsAuth
+  role_arn: string | null
+  external_id: string // generated by the server, for the role's trust policy
+  keys_saved: boolean
+  access_key_hint: string | null
+  chat_model: string | null // null: the default below
+  fast_model: string | null
+  embed_model: string | null
+  embed_dims: number | null
+  tested_at: number | null
+  updated_by: string | null
+  updated_at: number | null
+  effective: { provider: "openai" | "bedrock"; chat_model: string; fast_model: string; embed_model: string }
+  server: { provider: "openai" | "bedrock" | null; region: string | null }
+  defaults: { chat_model: string; fast_model: string; embed_model: string; embed_dims: number | null }
+  embed_dimensions: Record<string, number[]>
+  index_embeddings: string | null
+  trust_policy: object
+  permissions_policy: object
+  reindex?: boolean
+}
+
+export interface ModelProviderChange {
+  provider?: ModelProvider
+  region?: string | null
+  auth?: AwsAuth
+  role_arn?: string | null
+  access_key_id?: string
+  secret_access_key?: string
+  chat_model?: string | null
+  fast_model?: string | null
+  embed_model?: string | null
+  embed_dims?: number | null
+  confirm_reindex?: boolean
+}
+
+export type ConnectionTest =
+  | { ok: true; chat_model: string; reply: string; tokens: number; embed_model: string; dimensions: number }
+  | { ok: false; error: string }
+
+export const assistantApi = {
+  // Everyone: the chat's greeting and whether members see the steps panel.
+  info: () => request<{ assistant_name: string | null; show_steps: boolean }>("/assistant"),
+
+  verifiedAnswers: () => request<VerifiedList>("/admin/verified-answers"),
+  verifiedDraft: (from: { messageId?: string; gapId?: number }) => {
+    const q = new URLSearchParams()
+    if (from.messageId) q.set("message_id", from.messageId)
+    if (from.gapId !== undefined) q.set("gap_id", String(from.gapId))
+    return request<VerifiedDraft>(`/admin/verified-answers/draft?${q.toString()}`)
+  },
+  createVerified: (body: VerifiedInput) =>
+    request<VerifiedAnswer>("/admin/verified-answers", json("POST", body)),
+  updateVerified: (id: string, body: Partial<VerifiedInput>) =>
+    request<VerifiedAnswer>(`/admin/verified-answers/${seg(id)}`, json("PATCH", body)),
+  reviewVerified: (id: string) =>
+    request<VerifiedAnswer>(`/admin/verified-answers/${seg(id)}/review`, json("POST")),
+  deleteVerified: (id: string) =>
+    request<{ ok: true }>(`/admin/verified-answers/${seg(id)}`, json("DELETE")),
+
+  docRules: () => request<{ rules: DocRule[]; weights: RuleWeights }>("/admin/doc-rules"),
+  addDocRule: (rule: { match_type: RuleMatch; match_value: string; action: RuleAction; weight?: number }) =>
+    request<DocRule>("/admin/doc-rules", json("POST", rule)),
+  changeDocRule: (id: number, action: RuleAction, weight?: number) =>
+    request<DocRule>(`/admin/doc-rules/${id}`, json("PATCH", { action, weight })),
+  deleteDocRule: (id: number) => request<{ ok: true }>(`/admin/doc-rules/${id}`, json("DELETE")),
+
+  settings: () => request<AssistantSettings>("/admin/assistant"),
+  saveSettings: (change: AssistantChange) =>
+    request<AssistantSettings>("/admin/assistant", json("PUT", change)),
+  addTerm: (entry: GlossaryInput) => request<GlossaryEntry>("/admin/glossary", json("POST", entry)),
+  updateTerm: (id: number, entry: GlossaryInput) =>
+    request<GlossaryEntry>(`/admin/glossary/${id}`, json("PATCH", entry)),
+  deleteTerm: (id: number) => request<{ ok: true }>(`/admin/glossary/${id}`, json("DELETE")),
+
+  modelProvider: () => request<ModelProviderSettings>("/admin/assistant/models"),
+  saveModelProvider: (change: ModelProviderChange) =>
+    request<ModelProviderSettings>("/admin/assistant/models", json("PUT", change)),
+  testModelProvider: (change: ModelProviderChange) =>
+    request<ConnectionTest>("/admin/assistant/models/test", json("POST", change)),
+}

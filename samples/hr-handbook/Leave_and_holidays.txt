@@ -1,0 +1,25 @@
+Northwind Labs Employee Handbook (SAMPLE): Leave and holidays
+
+This is a sample document for trying the Knowledge assistant. Northwind Labs is a made-up company.
+
+Annual leave
+Every full-time employee gets 24 days of paid annual leave a year, plus public holidays. Part-time employees get the same, pro rata to their hours. Leave builds up monthly (2 days a month) and the year runs from 1 January to 31 December.
+
+Up to 5 unused days carry over into the next year; they must be used by 31 March or they lapse. Leave can't be paid out instead of taken, except when someone leaves the company.
+
+How to book leave
+Ask your manager at least two weeks ahead for leave of 3 days or more, and at least two days ahead for shorter leave. Book it in the HR portal under Time off; your manager approves it there. Leave isn't confirmed until it shows as Approved.
+
+Sick leave
+Tell your manager before 10:00 on the first day you're ill. Up to 3 days in a row need no doctor's note; from the 4th day on, send a note to people@northwind.example. Paid sick leave is up to 10 days a year at full pay, then statutory sick pay.
+
+Parental leave
+Birth parents get 26 weeks of paid parental leave at full pay. Other parents, adoptive parents included, get 12 weeks at full pay. Either can be taken in up to three blocks within the child's first year. Tell HR at least 8 weeks before the leave starts.
+
+Other leave
+Bereavement leave: up to 5 days paid for a close family member, 2 days for others.
+Jury service: paid at full pay for as long as it lasts.
+Volunteering: 2 paid days a year for a registered charity.
+
+Public holidays
+The office is closed on the public holidays of the country you work in. If you have to work on one, you get a day off in lieu, to be taken within 3 months.

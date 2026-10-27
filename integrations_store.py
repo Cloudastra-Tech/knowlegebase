@@ -1,40 +1,39 @@
 """
 integrations_store.py  —  which tools each workspace has connected.
 
-A tiny SQLite database (config/app.db, gitignored and mounted in Docker).
+A tiny SQLite database (config/app.db, gitignored and mounted in Docker; see db.py).
 OAuth tokens are ENCRYPTED (secret_box.py).
+
+Each connection also says WHO may ask about the files it syncs (settings["access"]):
+  restricted  HR and admins only, like docs/<workspace>/restricted/ (the default)
+  everyone    everyone in the workspace
+A connection without the key (new, or made before the setting existed) is
+restricted: an admin opens it up on purpose, never by accident. A connector may
+LOCK it (settings["access_lock"] = "restricted": Zendesk while it syncs
+tickets, which hold customers' personal data): then it is restricted whatever
+settings["access"] says.
+
+The access level is now one of three PERMISSION POLICIES (policy_of): the
+source's own permissions, the whole workspace, or HR and admins.
 """
 
 import json
-import os
-import sqlite3
 import threading
 import time
 
+import db
 import secret_box
 
-DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
 _lock = threading.Lock()
+
+ACCESS_LEVELS = ("restricted", "everyone")
+DEFAULT_ACCESS = "restricted"
+POLICIES = ("source", "workspace", "restricted")
+DEFAULT_POLICY = "restricted"
 
 
 def _db():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""CREATE TABLE IF NOT EXISTS integrations (
-        workspace    TEXT NOT NULL,
-        provider     TEXT NOT NULL,
-        status       TEXT NOT NULL,          -- connected | syncing | error
-        account      TEXT,                   -- e.g. the Google account email
-        secret       BLOB,                   -- encrypted JSON (tokens)
-        settings     TEXT DEFAULT '{}',      -- JSON (e.g. chosen folder)
-        connected_by TEXT,
-        connected_at REAL,
-        last_sync_at REAL,
-        last_error   TEXT,
-        doc_count    INTEGER DEFAULT 0,
-        PRIMARY KEY (workspace, provider))""")
-    return conn
+    return db.connect()
 
 
 def _row(r):
@@ -65,8 +64,23 @@ def all_connected(provider):
             (provider,))]
 
 
+def all_personal(provider):
+    """Every member's own connection of a personal connector (connectors/base.py
+    is_personal: their keys are "<provider>~<hash>"), in every workspace."""
+    prefix = f"{provider}~"
+    with _lock, _db() as conn:
+        return [_row(r) for r in conn.execute(
+            "SELECT * FROM integrations WHERE substr(provider, 1, ?) = ? AND "
+            "status != 'disconnected'", (len(prefix), prefix))]
+
+
+def owner_of(row):
+    """The member a PERSONAL connection belongs to (settings["owner"]), else None."""
+    return ((row or {}).get("settings") or {}).get("owner") or None
+
+
 def connect(workspace, provider, account, secret, user):
-    blob = secret_box.seal(secret)
+    blob = secret_box.seal(secret, workspace)
     with _lock, _db() as conn:
         conn.execute("""INSERT INTO integrations
             (workspace, provider, status, account, secret, connected_by, connected_at)
@@ -82,14 +96,14 @@ def secret(workspace, provider):
     with _lock, _db() as conn:
         r = conn.execute("SELECT secret FROM integrations WHERE workspace=? AND provider=?",
                          (workspace, provider)).fetchone()
-    return secret_box.unseal(r["secret"]) if r else None
+    return secret_box.unseal(r["secret"], workspace) if r else None
 
 
 def update(workspace, provider, **fields):
     if "settings" in fields:
         fields["settings"] = json.dumps(fields["settings"])
     if "secret" in fields:
-        fields["secret"] = secret_box.seal(fields["secret"])
+        fields["secret"] = secret_box.seal(fields["secret"], workspace)
     cols = ", ".join(f"{k}=?" for k in fields)
     with _lock, _db() as conn:
         conn.execute(f"UPDATE integrations SET {cols} WHERE workspace=? AND provider=?",
@@ -100,3 +114,41 @@ def remove(workspace, provider):
     with _lock, _db() as conn:
         conn.execute("DELETE FROM integrations WHERE workspace=? AND provider=?",
                      (workspace, provider))
+
+
+def policy_of(row):
+    """A connection's PERMISSION POLICY (settings["policy"]; platform.md PL-10.2):
+      source      each file is for who may read it at the source (its
+                  source_items.acl, mapped to members and groups by
+                  kb/services/permissions.py; what doesn't map is left out)
+      workspace   everyone in the workspace (the old "everyone")
+      restricted  HR and admins (the old "restricted", the default)
+    A connection from before policies has its access level's; a LOCKED one
+    (access_lock) is restricted whatever it says."""
+    settings = (row or {}).get("settings") or {}
+    if settings.get("access_lock") == "restricted" or settings.get("owner"):
+        # (A personal connection's files are its owner's alone whatever this says:
+        # kb/services/permissions.py personal_acl.)
+        return "restricted"
+    policy = settings.get("policy")
+    if policy in POLICIES:
+        return policy
+    return "workspace" if settings.get("access") == "everyone" else DEFAULT_POLICY
+
+
+def access_of(row):
+    """Who may ask about a connection's files as a level: "everyone" for the
+    workspace policy, else "restricted" (the source policy's files have their
+    own ACLs; one that can't be worked out falls back to this)."""
+    return "everyone" if policy_of(row) == "workspace" else "restricted"
+
+
+def chunk_access(level):
+    """The access tag a connection's chunks get in the index (rag.ROLE_ACCESS)."""
+    return "public" if level == "everyone" else "restricted"
+
+
+def chunk_access_levels(workspace):
+    """{provider: chunk access tag} for every connection of a workspace. Synced
+    files of a provider missing here (e.g. left behind) count as restricted."""
+    return {r["provider"]: chunk_access(access_of(r)) for r in list_for(workspace)}

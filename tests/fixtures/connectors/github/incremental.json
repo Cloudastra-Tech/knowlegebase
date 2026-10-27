@@ -1,0 +1,166 @@
+{
+ "_source": [
+  "https://github.com/github/rest-api-description (descriptions/api.github.com/api.github.com.json): POST /app/installations/{installation_id}/access_tokens -> installation-token {token, expires_at, permissions, repository_selection}; GET /repos/{owner}/{repo} -> full-repository {full_name, default_branch, private, visibility}; GET /repos/{owner}/{repo}/branches/{branch} -> branch-with-protection {name, commit {sha}}; GET /repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1 -> git-tree {sha, truncated, tree [{path, mode, type, sha, size}]}; GET /repos/{owner}/{repo}/git/blobs/{file_sha} -> blob {content (base64), encoding, sha, size}; GET /repos/{owner}/{repo}/collaborators -> [collaborator {login, id, permissions, role_name}]; GET /repos/{owner}/{repo}/teams",
+  "https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps (repo teams need Administration read: without it, 403 Resource not accessible by integration)",
+  "https://github.com/github/rest-api-description (descriptions/api.github.com/api.github.com.json): GET /repos/{owner}/{repo}/compare/{basehead} -> commit-comparison {status ahead|behind|diverged|identical, ahead_by, total_commits, commits, files [diff-entry {sha, filename, status added|removed|modified|renamed|copied|changed|unchanged, previous_filename}]} (files: up to 300)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": 6231,
+     "name": "api",
+     "full_name": "acme/api",
+     "private": false,
+     "visibility": "public",
+     "default_branch": "main",
+     "html_url": "https://github.com/acme/api",
+     "owner": {
+      "login": "acme",
+      "type": "Organization"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api/branches/main"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "name": "main",
+     "commit": {
+      "sha": "d1"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": 7950,
+     "name": "handbook",
+     "full_name": "acme/handbook",
+     "private": true,
+     "visibility": "private",
+     "default_branch": "main",
+     "html_url": "https://github.com/acme/handbook",
+     "owner": {
+      "login": "acme",
+      "type": "Organization"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/branches/main"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "name": "main",
+     "commit": {
+      "sha": "c2"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/compare/c1...c2"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "status": "ahead",
+     "ahead_by": 2,
+     "behind_by": 0,
+     "total_commits": 2,
+     "commits": [],
+     "files": [
+      {
+       "sha": "b-setup-2",
+       "filename": "docs/setup.md",
+       "status": "modified",
+       "additions": 1,
+       "deletions": 0,
+       "changes": 1
+      },
+      {
+       "sha": null,
+       "filename": "docs/guide.rst",
+       "status": "removed",
+       "additions": 0,
+       "deletions": 4,
+       "changes": 4
+      },
+      {
+       "sha": "b-readme",
+       "filename": "docs/intro.md",
+       "status": "renamed",
+       "previous_filename": "README.md",
+       "additions": 0,
+       "deletions": 0,
+       "changes": 0
+      },
+      {
+       "sha": "b-app-2",
+       "filename": "src/app.py",
+       "status": "modified",
+       "additions": 1,
+       "deletions": 1,
+       "changes": 2
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/git/blobs/b-setup-2"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-setup-2",
+     "size": 42,
+     "encoding": "base64",
+     "content": "IyBTZXR1cAoKYGBgYmFzaAptYWtlIHNldHVwCm1ha2UgdGVzdApgYGAK\n",
+     "url": "https://api.github.com/blobs/b-setup-2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/git/blobs/b-readme"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-readme",
+     "size": 24,
+     "encoding": "base64",
+     "content": "IyBIYW5kYm9vawoKU3RhcnQgaGVyZS4K\n",
+     "url": "https://api.github.com/blobs/b-readme"
+    }
+   }
+  }
+ ]
+}

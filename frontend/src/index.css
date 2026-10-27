@@ -117,12 +117,41 @@
     --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Printing a conversation (the chat's "Print", C25): the conversation alone, on paper
+   that grows with it. Screen chrome carries data-print="hide"; the boxes that scroll
+   on screen carry data-print="flow", so the whole chat lands on the page, not just
+   what was in view. */
+@media print {
+  html, body {
+    height: auto;
+    overflow: visible;
+  }
+  [data-print="hide"],
+  [data-slot="sidebar"],
+  [data-slot="sidebar-gap"],
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+  [data-print="flow"] {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
     }
   body {
     @apply bg-background text-foreground;
+    /* Installed as an app on a phone with a notch (index.html: viewport-fit=cover):
+       nothing sits under the rounded corners in landscape. The header and the
+       composer keep clear of the top and bottom insets themselves. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
     }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;

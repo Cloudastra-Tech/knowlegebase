@@ -1,0 +1,26 @@
+{
+ "hosts": {"docs.example.com": "93.184.216.34", "other.example.org": "93.184.216.35"},
+ "exchanges": [
+  {"request": {"method": "GET", "url": "https://docs.example.com/robots.txt"},
+   "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                "text": "User-agent: *\nDisallow: /private\nCrawl-delay: 2\n"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/"},
+   "response": {"status": 200, "headers": {"Content-Type": "text/html; charset=utf-8",
+                                           "ETag": "\"home-v1\""},
+                "text": "<html><head><title>Acme Docs</title></head><body><nav><a href=\"/pricing\">Pricing</a></nav><main><h1>Welcome</h1><p>Start with the <a href=\"/guide\">guide</a>.</p><a href=\"/missing\">old page</a> <a href=\"/private/salaries\">private</a> <a href=\"https://other.example.org/x\">elsewhere</a> <a href=\"/logo.png\">logo</a> <a href=\"/guide#install\">install</a></main><footer>(c) Acme</footer></body></html>"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/pricing"},
+   "response": {"status": 200, "headers": {"Content-Type": "text/html"},
+                "text": "<html><head><title>Pricing</title></head><body><p>Plans start at 10 dollars.</p></body></html>"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/guide"},
+   "response": {"status": 301, "headers": {"Location": "/guide/"}}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/guide/"},
+   "response": {"status": 200, "headers": {"Content-Type": "text/html",
+                                           "Last-Modified": "Mon, 26 Oct 2026 10:00:00 GMT"},
+                "text": "<html><head><title>Guide</title></head><body><article><h2>Install</h2><p>Run the installer, then sign in.</p><a href=\"deep\">deeper</a></article></body></html>"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/guide/deep"},
+   "response": {"status": 200, "headers": {"Content-Type": "text/html"},
+                "text": "<html><head><meta name=\"robots\" content=\"noindex\"><title>Draft</title></head><body><p>Not ready.</p></body></html>"}},
+  {"request": {"method": "GET", "url": "https://docs.example.com/missing"},
+   "response": {"status": 404, "text": "Not found"}}
+ ]
+}

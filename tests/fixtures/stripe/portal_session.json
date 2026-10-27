@@ -1,0 +1,10 @@
+{
+  "id": "bps_1QabcdEFghIJklMN",
+  "object": "billing_portal.session",
+  "configuration": "bpc_1QabcdEFghIJklMN",
+  "created": 1761600000,
+  "customer": "cus_Rtest0001",
+  "livemode": false,
+  "return_url": "http://testserver/billing",
+  "url": "https://billing.stripe.com/p/session/test_YWNjdF8xUWFiY2RFRmdoSUprbE1O"
+}

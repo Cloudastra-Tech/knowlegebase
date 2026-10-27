@@ -1,11 +1,5 @@
 export { cn } from "cn"
 
-// The site routes by hash, so redirects carry their parameters after it:
-// "#login?error=cancelled" -> URLSearchParams { error: "cancelled" }.
-export function hashParams() {
-  return new URLSearchParams(window.location.hash.split("?")[1] ?? "")
-}
-
 // "5 min ago" for a Unix time in seconds; "never" for none.
 export function timeAgo(epoch?: number | null) {
   if (!epoch) return "never"

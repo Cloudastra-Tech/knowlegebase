@@ -1,0 +1,754 @@
+{
+ "_source": [
+  "https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json (GET /spaces, /spaces/{id}/permissions, /spaces/{id}/pages, /spaces/{id}/blogposts, /pages/{id}, /blogposts/{id}: MultiEntityResult with _links.next)",
+  "https://dac-static.atlassian.com/cloud/confluence/swagger.v3.json (GET /wiki/rest/api/content/search: results of Content with version, space, ancestors, container, restrictions expansions; _links.next carries the cursor)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/spaces",
+    "params": {
+     "keys": "ENG"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "1001",
+       "key": "ENG",
+       "name": "Engineering",
+       "type": "global",
+       "status": "current"
+      }
+     ],
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/spaces/1001/permissions"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "sp1",
+       "principal": {
+        "type": "user",
+        "id": "acc-ann"
+       },
+       "operation": {
+        "key": "read",
+        "targetType": "space"
+       }
+      },
+      {
+       "id": "sp2",
+       "principal": {
+        "type": "group",
+        "id": "grp-eng"
+       },
+       "operation": {
+        "key": "read",
+        "targetType": "space"
+       }
+      },
+      {
+       "id": "sp3",
+       "principal": {
+        "type": "user",
+        "id": "acc-bob"
+       },
+       "operation": {
+        "key": "administer",
+        "targetType": "space"
+       }
+      }
+     ],
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki",
+      "next": "/wiki/api/v2/spaces/1001/permissions?cursor=perm2&limit=250"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/spaces/1001/permissions",
+    "params": {
+     "cursor": "perm2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "sp4",
+       "principal": {
+        "type": "role",
+        "id": "role-viewer"
+       },
+       "operation": {
+        "key": "read",
+        "targetType": "space"
+       }
+      }
+     ],
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/rest/api/content/search",
+    "params": {
+     "cql~": "space in (\"ENG\") AND type in (page, blogpost, attachment)",
+     "expand": "version,space,ancestors,container,restrictions.read.restrictions.user,restrictions.read.restrictions.group"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "2001",
+       "type": "page",
+       "status": "current",
+       "title": "Deploys",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 3,
+        "when": "2026-10-12T10:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2001",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/2001"
+       }
+      },
+      {
+       "id": "2002",
+       "type": "page",
+       "status": "current",
+       "title": "Salaries",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-11T10:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [
+        {
+         "id": "2001",
+         "type": "page",
+         "status": "current",
+         "title": "x"
+        }
+       ],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [
+            {
+             "type": "known",
+             "accountId": "acc-ann",
+             "email": "Ann@acme.com",
+             "publicName": "Ann"
+            }
+           ],
+           "start": 0,
+           "limit": 100,
+           "size": 1
+          },
+          "group": {
+           "results": [
+            {
+             "type": "group",
+             "name": "hr",
+             "id": "grp-hr"
+            }
+           ],
+           "start": 0,
+           "limit": 100,
+           "size": 1
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2002",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/2002"
+       }
+      },
+      {
+       "id": "3001",
+       "type": "blogpost",
+       "status": "current",
+       "title": "Q3 retro",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-05T10:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/3001",
+        "self": "https://acme.atlassian.net/wiki/rest/api/content/3001"
+       }
+      }
+     ],
+     "start": 0,
+     "limit": 100,
+     "size": 3,
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki",
+      "context": "/wiki",
+      "next": "/rest/api/content/search?cql=space+in+%28%22ENG%22%29&limit=100&expand=version,space,ancestors,container,restrictions.read.restrictions.user,restrictions.read.restrictions.group&cursor=s2"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/rest/api/content/search",
+    "params": {
+     "cursor": "s2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "att4001",
+       "type": "attachment",
+       "status": "current",
+       "title": "runbook.pdf",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-10T09:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2001/attachments/att4001",
+        "download": "/download/attachments/2001/runbook.pdf?version=1&api=v2"
+       },
+       "extensions": {
+        "mediaType": "application/pdf",
+        "fileSize": 1200,
+        "comment": ""
+       },
+       "container": {
+        "id": "2001",
+        "type": "page",
+        "status": "current",
+        "title": "x"
+       }
+      },
+      {
+       "id": "att4002",
+       "type": "attachment",
+       "status": "current",
+       "title": "diagram.png",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-10T09:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2001/attachments/att4002",
+        "download": "/download/attachments/2001/diagram.png?version=1&api=v2"
+       },
+       "extensions": {
+        "mediaType": "image/png",
+        "fileSize": 5000,
+        "comment": ""
+       },
+       "container": {
+        "id": "2001",
+        "type": "page",
+        "status": "current",
+        "title": "x"
+       }
+      },
+      {
+       "id": "att4003",
+       "type": "attachment",
+       "status": "current",
+       "title": "old.pdf",
+       "space": {
+        "id": 1001,
+        "key": "ENG",
+        "name": "Engineering",
+        "type": "global",
+        "status": "current"
+       },
+       "version": {
+        "number": 1,
+        "when": "2026-10-10T09:00:00.000Z",
+        "minorEdit": false
+       },
+       "ancestors": [],
+       "restrictions": {
+        "read": {
+         "operation": "read",
+         "restrictions": {
+          "user": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          },
+          "group": {
+           "results": [],
+           "start": 0,
+           "limit": 100,
+           "size": 0
+          }
+         }
+        }
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/9999/attachments/att4003",
+        "download": "/download/attachments/9999/old.pdf?version=1&api=v2"
+       },
+       "extensions": {
+        "mediaType": "application/pdf",
+        "fileSize": 900,
+        "comment": ""
+       },
+       "container": {
+        "id": "9999",
+        "type": "page",
+        "status": "current",
+        "title": "x"
+       }
+      }
+     ],
+     "start": 0,
+     "limit": 100,
+     "size": 3,
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki",
+      "context": "/wiki"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/spaces/1001/pages",
+    "params": {
+     "status": "current",
+     "limit": "250"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "2001",
+       "status": "current",
+       "title": "Deploys",
+       "spaceId": "1001",
+       "authorId": "acc-ann",
+       "createdAt": "2026-09-01T09:00:00.000Z",
+       "version": {
+        "createdAt": "2026-10-12T10:00:00.000Z",
+        "number": 3,
+        "minorEdit": false,
+        "authorId": "acc-ann"
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2001",
+        "tinyui": "/x/2001"
+       },
+       "parentId": null,
+       "parentType": null
+      },
+      {
+       "id": "2002",
+       "status": "current",
+       "title": "Salaries",
+       "spaceId": "1001",
+       "authorId": "acc-ann",
+       "createdAt": "2026-09-01T09:00:00.000Z",
+       "version": {
+        "createdAt": "2026-10-11T10:00:00.000Z",
+        "number": 1,
+        "minorEdit": false,
+        "authorId": "acc-ann"
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2002",
+        "tinyui": "/x/2002"
+       },
+       "parentId": "2001",
+       "parentType": "page"
+      }
+     ],
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki",
+      "next": "/wiki/api/v2/spaces/1001/pages?cursor=pg2&limit=250&status=current"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/spaces/1001/pages",
+    "params": {
+     "cursor": "pg2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "2003",
+       "status": "current",
+       "title": "Fresh page",
+       "spaceId": "1001",
+       "authorId": "acc-ann",
+       "createdAt": "2026-09-01T09:00:00.000Z",
+       "version": {
+        "createdAt": "2026-10-13T08:00:00.000Z",
+        "number": 1,
+        "minorEdit": false,
+        "authorId": "acc-ann"
+       },
+       "_links": {
+        "webui": "/spaces/ENG/pages/2003",
+        "tinyui": "/x/2003"
+       },
+       "parentId": "2001",
+       "parentType": "page"
+      }
+     ],
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/spaces/1001/blogposts",
+    "params": {
+     "status": "current"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "3001",
+       "status": "current",
+       "title": "Q3 retro",
+       "spaceId": "1001",
+       "authorId": "acc-ann",
+       "createdAt": "2026-09-01T09:00:00.000Z",
+       "version": {
+        "createdAt": "2026-10-05T10:00:00.000Z",
+        "number": 1,
+        "minorEdit": false,
+        "authorId": "acc-ann"
+       },
+       "_links": {
+        "webui": "/spaces/ENG/blog/3001",
+        "tinyui": "/x/3001"
+       }
+      }
+     ],
+     "_links": {
+      "base": "https://acme.atlassian.net/wiki"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/pages/2001",
+    "params": {
+     "body-format": "storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "2001",
+     "status": "current",
+     "title": "Deploys",
+     "spaceId": "1001",
+     "authorId": "acc-ann",
+     "createdAt": "2026-09-01T09:00:00.000Z",
+     "version": {
+      "createdAt": "2026-10-12T10:00:00.000Z",
+      "number": 3,
+      "minorEdit": false,
+      "authorId": "acc-ann"
+     },
+     "_links": {
+      "webui": "/spaces/ENG/pages/2001",
+      "tinyui": "/x/2001"
+     },
+     "parentId": null,
+     "parentType": null,
+     "body": {
+      "storage": {
+       "representation": "storage",
+       "value": "<h1>How we deploy</h1><p>We deploy on <strong>Tuesdays</strong>.</p><ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">bash</ac:parameter><ac:plain-text-body><![CDATA[make deploy ENV=prod]]></ac:plain-text-body></ac:structured-macro><p><ac:structured-macro ac:name=\"jira\"><ac:parameter ac:name=\"key\">OPS-12</ac:parameter></ac:structured-macro></p>"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/pages/2002",
+    "params": {
+     "body-format": "storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "2002",
+     "status": "current",
+     "title": "Salaries",
+     "spaceId": "1001",
+     "authorId": "acc-ann",
+     "createdAt": "2026-09-01T09:00:00.000Z",
+     "version": {
+      "createdAt": "2026-10-11T10:00:00.000Z",
+      "number": 1,
+      "minorEdit": false,
+      "authorId": "acc-ann"
+     },
+     "_links": {
+      "webui": "/spaces/ENG/pages/2002",
+      "tinyui": "/x/2002"
+     },
+     "parentId": null,
+     "parentType": null,
+     "body": {
+      "storage": {
+       "representation": "storage",
+       "value": "<p>Bands are reviewed in March.</p>"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/pages/2003",
+    "params": {
+     "body-format": "storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "2003",
+     "status": "current",
+     "title": "Fresh page",
+     "spaceId": "1001",
+     "authorId": "acc-ann",
+     "createdAt": "2026-09-01T09:00:00.000Z",
+     "version": {
+      "createdAt": "2026-10-13T08:00:00.000Z",
+      "number": 1,
+      "minorEdit": false,
+      "authorId": "acc-ann"
+     },
+     "_links": {
+      "webui": "/spaces/ENG/pages/2003",
+      "tinyui": "/x/2003"
+     },
+     "parentId": null,
+     "parentType": null,
+     "body": {
+      "storage": {
+       "representation": "storage",
+       "value": "<p>Just written.</p>"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.atlassian.com/ex/confluence/cloud-1/wiki/api/v2/blogposts/3001",
+    "params": {
+     "body-format": "storage"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "3001",
+     "status": "current",
+     "title": "Q3 retro",
+     "spaceId": "1001",
+     "authorId": "acc-ann",
+     "createdAt": "2026-09-01T09:00:00.000Z",
+     "version": {
+      "createdAt": "2026-10-05T10:00:00.000Z",
+      "number": 1,
+      "minorEdit": false,
+      "authorId": "acc-ann"
+     },
+     "_links": {
+      "webui": "/spaces/ENG/blog/3001",
+      "tinyui": "/x/3001"
+     },
+     "body": {
+      "storage": {
+       "representation": "storage",
+       "value": "<ac:task-list><ac:task><ac:task-id>1</ac:task-id><ac:task-status>complete</ac:task-status><ac:task-body>Fix the pager rota</ac:task-body></ac:task></ac:task-list>"
+      }
+     }
+    }
+   }
+  }
+ ]
+}

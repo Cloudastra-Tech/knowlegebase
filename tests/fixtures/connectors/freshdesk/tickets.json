@@ -1,0 +1,151 @@
+{
+ "_source": [
+  "https://developers.freshdesk.com/api/#solution_category_attributes (Category: id, name, description; GET /api/v2/solutions/categories)",
+  "https://developers.freshdesk.com/api/#solution_folder_attributes (Folder: id, name, visibility 1-7, company_ids, contact_segment_ids, company_segment_ids, parent_folder_id, sub_folders_count, articles_count; GET /api/v2/solutions/categories/[id]/folders, /folders/[id]/subfolders)",
+  "https://developers.freshdesk.com/api/#solution_article_attributes (Article: id, title, description (HTML), description_text, status 1 draft / 2 published, folder_id, category_id, tags, updated_at; GET /api/v2/solutions/folders/[id]/articles)",
+  "https://developers.freshdesk.com/api/#pagination (per_page up to 100; Link: <...>; rel=\"next\")",
+  "https://developers.freshdesk.com/api/#list_all_tickets (GET /api/v2/tickets?updated_since=&order_by=updated_at&order_type=asc&include=description; filter=deleted; at most 300 pages)",
+  "https://developers.freshdesk.com/api/#ticket_attributes (status 2 Open, 3 Pending, 4 Resolved, 5 Closed)",
+  "https://developers.freshdesk.com/api/#list_all_ticket_notes (GET /api/v2/tickets/[id]/conversations: body_text, private, incoming)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/tickets",
+    "params": {
+     "order_by": "updated_at",
+     "order_type": "asc",
+     "include": "description",
+     "per_page": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "headers": {
+     "Link": "<https://acme.freshdesk.com/api/v2/tickets?page=2&per_page=100>; rel=\"next\""
+    },
+    "json": [
+     {
+      "id": 801,
+      "subject": "Refund for order 1234",
+      "status": 4,
+      "priority": 1,
+      "type": "Question",
+      "tags": [
+       "billing"
+      ],
+      "requester_id": 9801,
+      "created_at": "2026-09-20T10:00:00Z",
+      "updated_at": "2026-10-02T10:00:00Z",
+      "description": "<div>Please refund order 1234.</div>",
+      "description_text": "Please refund order 1234."
+     },
+     {
+      "id": 802,
+      "subject": "Login loop",
+      "status": 2,
+      "priority": 1,
+      "type": "Question",
+      "tags": [],
+      "requester_id": 9802,
+      "created_at": "2026-09-20T10:00:00Z",
+      "updated_at": "2026-10-03T10:00:00Z",
+      "description": "<div>I can't sign in.</div>",
+      "description_text": "I can't sign in."
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/tickets",
+    "params": {
+     "page": "2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 803,
+      "subject": "Invoice address",
+      "status": 5,
+      "priority": 1,
+      "type": "Question",
+      "tags": [],
+      "requester_id": 9803,
+      "created_at": "2026-09-20T10:00:00Z",
+      "updated_at": "2026-10-04T10:00:00Z",
+      "description": "<div>Change my address.</div>",
+      "description_text": "Change my address."
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/tickets",
+    "params": {
+     "filter": "deleted"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 777,
+      "subject": "spam",
+      "status": 5,
+      "updated_at": "2026-10-01T00:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/tickets/801/conversations"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 1,
+      "body_text": "Refunded.",
+      "private": false,
+      "incoming": false,
+      "created_at": "2026-10-02T09:00:00Z"
+     },
+     {
+      "id": 2,
+      "body_text": "Customer is on the watch list.",
+      "private": true,
+      "incoming": false,
+      "created_at": "2026-10-02T09:30:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/tickets/803/conversations"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 3,
+      "body_text": "Updated it for you.",
+      "private": false,
+      "incoming": false,
+      "created_at": "2026-10-04T09:00:00Z"
+     }
+    ]
+   }
+  }
+ ]
+}
