@@ -66,7 +66,7 @@ test("an ended trial is read-only: questions are refused with the reason", async
   await expect(log).toContainText("trial has ended")
   await shot(page, "read-only-390")
   await page.goto("/billing")
-  await expect(page.getByText("The workspace is read-only")).toBeVisible()
+  await expect(page.getByText("The workspace is read-only", { exact: true })).toBeVisible()
   await expect(page.getByText("Trial ended")).toBeVisible()
 })
 

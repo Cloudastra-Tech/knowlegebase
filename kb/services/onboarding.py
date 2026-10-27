@@ -20,8 +20,9 @@ SAMPLE DOCUMENTS ("Try it with a sample HR handbook"): samples/hr-handbook/,
 copied into the workspace's docs/sample/ and indexed like an upload, for
 everyone, shown as "Sample documents". Removing them deletes the files and
 their chunks from the index there and then (not when the next index run gets
-to it), so no answer after that can cite them; an index run follows to tidy up.
-They count for no limit and no onboarding step.
+to it), and empties the workspace's answer cache, so no answer after that can
+cite them; an index run follows to tidy up. They count for no limit and no
+onboarding step (an answer citing only them isn't the first answer).
 
 FIRST RUN: someone who hasn't asked anything yet gets an "ask your first
 question" screen with questions made from the titles of documents they may read.
@@ -39,7 +40,7 @@ import members_store
 import onboarding_store as store
 import slack_store
 import workspaces
-from kb.services import indexing
+from kb.services import answer_cache, indexing
 
 log = logging.getLogger("uvicorn.error")
 
@@ -72,8 +73,14 @@ def _real_citation(sources):
         cited = json.loads(sources or "[]")
     except ValueError:
         return False
-    return any(isinstance(s, dict) and not str(s.get("doc_key") or "").startswith(
-        SAMPLE_FOLDER + "/") for s in cited)
+    return any(isinstance(s, dict) and not _sample_source(s) for s in cited)
+
+
+def _sample_source(s):
+    """A source from the sample documents: by its key, or (a list that keeps no key)
+    by the provider ingest.py tags them with."""
+    return (str(s.get("doc_key") or "").startswith(SAMPLE_FOLDER + "/")
+            or s.get("provider") == ingest.SAMPLES)
 
 
 def _checks(ws):
@@ -202,6 +209,7 @@ def remove_sample(ws):
     shutil.rmtree(_sample_dir(ws), ignore_errors=True)
     if keys:
         forget_chunks(ws, keys)
+        answer_cache.clear(ws)                       # no answer kept from before is served
         indexing.schedule_index(ws, docs=keys)       # tidies up after a run in progress
     return keys
 

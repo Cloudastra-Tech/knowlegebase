@@ -94,6 +94,11 @@ def test_the_checklist_is_worked_out_from_the_data_and_stays_done(client, nothin
     # An answer from the sample documents only isn't the workspace's own.
     question_log_store.add(ws, f"founder@{domain}", "web", "answered", text_mode="metadata",
                            sources=[{"doc_key": "sample/Leave_and_holidays.txt"}])
+    # ...nor when the logged source keeps only the chat's citation (a doc_id and the
+    # provider ingest.py tags the samples with, no doc_key), as a real answer logs it.
+    question_log_store.add(ws, f"founder@{domain}", "web", "answered", text_mode="metadata",
+                           sources=[{"doc_id": "3f9a", "title": "Leave_and_holidays.txt",
+                                     "provider": "Sample documents"}])
     assert steps(client.get("/api/onboarding", headers=h).json())["answer"] is False
     question_log_store.add(ws, f"founder@{domain}", "web", "answered", text_mode="metadata",
                            sources=[{"doc_key": "public/doc0.txt"}])
@@ -183,12 +188,23 @@ def test_sample_documents_are_removed_from_answers_at_once(kb, monkeypatch):
     docs = kb.client.get("/api/docs", headers=admin).json()
     assert [d["name"] for d in docs.get("docs", docs)] == ["travel.txt"]
 
+    # An answer the cache kept while they were there isn't served after.
+    import answer_cache_store
+    answer_cache_store.put(w, {"key": "k", "partition": "p", "fingerprint": "f",
+                               "username": "a", "index_version": "i", "settings_version": 1,
+                               "verified_stamp": "[]", "question": "parental leave?",
+                               "answer": "16 weeks [1]", "state": "answered",
+                               "max_access": "public", "expires_at": time.time() + 600,
+                               "sources": [{"provider": "Sample documents"}]})
+    assert answer_cache_store.count(w) == 1
+
     # One click removes them: no index run is needed for them to stop being found.
     schedule_index = indexing.schedule_index
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kw: None)
     r = kb.client.delete("/api/onboarding/sample", headers=admin)
     assert r.status_code == 200 and r.json() == {"on": False, "available": True, "files": []}
     assert {k for k, _ in kb.chunks(w).values()} == {"public/travel.txt"}
+    assert answer_cache_store.count(w) == 0
     for q in ("How many weeks of parental leave do parents get?", "hotel limit per night",
               "Northwind laptop IT help"):
         assert not any(f["doc_key"].startswith("sample/")
