@@ -35,6 +35,8 @@ import time
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0020"
 down_revision = "0019"
 branch_labels = None
@@ -124,7 +126,7 @@ TABLES = ("pending_signups", "onboarding", "stripe_events", "billing_owners", "s
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)
     now = time.time()
@@ -142,6 +144,6 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in TABLES:
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")

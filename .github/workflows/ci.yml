@@ -25,6 +25,7 @@ jobs:
   backend:
     name: ${{ matrix.backend == 'sqlite' && 'backend' || format('backend ({0})', matrix.backend) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +53,8 @@ jobs:
           cache-dependency-path: requirements*.txt
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xmlsec1   # SAML tests
       - run: pip install -r requirements-dev.txt
-      - run: pytest
+      # -rfEs: the Postgres leg lists what failed and what it skipped, and why.
+      - run: pytest ${{ matrix.backend == 'postgres' && '-rfEs' || '' }}
         env:
           OPENAI_API_KEY: sk-test-not-used
       # Retrieval regression gate and leak suite (eval/harness.py): no secrets, a
