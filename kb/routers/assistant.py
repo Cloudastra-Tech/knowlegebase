@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel
 
 import assistant_store as store
+import pii
 from kb.audit import audited
 from kb.deps import current_user, require_admin, require_hr, ws_of
 from kb.services import assistant, indexing
@@ -28,6 +29,9 @@ class SettingsIn(BaseModel):
     allow_currency: bool | None = None
     show_steps: bool | None = None
     adapt_verified: bool | None = None
+    answer_cache: str | None = None          # off / exact / semantic
+    cross_lingual: bool | None = None
+    pii_policy: dict | None = None           # pii.py; null: back to the defaults
 
 
 class TermIn(BaseModel):
@@ -50,10 +54,14 @@ class RuleChange(BaseModel):
 
 def _settings_view(ws):
     s = assistant.effective(ws)
-    return {**s, "choices": {"tones": list(store.TONES), "languages": list(store.LANGUAGES)},
+    return {**s, "choices": {"tones": list(store.TONES), "languages": list(store.LANGUAGES),
+                             "answer_cache": list(store.ANSWER_CACHE),
+                             "pii_entities": [{"id": k, "label": many[0].upper() + many[1:]}
+                                              for k, (_, many) in pii.ENTITIES.items()],
+                             "pii_packs": {k: list(v) for k, v in pii.PACKS.items()}},
             "limits": {"name": store.NAME_CHARS, "instructions": store.INSTRUCTIONS_CHARS,
                        "term": store.TERM_CHARS, "definition": store.DEFINITION_CHARS,
-                       "synonyms": store.MAX_SYNONYMS}}
+                       "synonyms": store.MAX_SYNONYMS, "pii_domains": pii.MAX_DOMAINS}}
 
 
 # ---- Everyone: what the chat shows --------------------------------------------------------
@@ -79,7 +87,8 @@ def save_settings(body: SettingsIn, user=Depends(require_admin),
                   audit=audited("assistant.settings")):
     ws = ws_of(user)
     change = body.model_dump(exclude_unset=True)
-    for key in ("tone", "language", "show_steps", "adapt_verified"):
+    for key in ("tone", "language", "show_steps", "adapt_verified", "answer_cache",
+                "cross_lingual"):
         if key in change and change[key] is None:
             del change[key]
     try:

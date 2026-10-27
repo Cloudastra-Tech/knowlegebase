@@ -4,8 +4,10 @@ made by migrations/versions/0012_verified_answers_and_assistant_settings.py):
 
     assistant_settings  its name, tone, extra instructions, answer language, the
                         outbound tools, the steps panel and whether a verified
-                        answer may be reworded (platform.md PL-29). No row: today's
-                        behaviour (DEFAULTS)
+                        answer may be reworded (platform.md PL-29); the answer
+                        cache, cross-lingual search (pipeline.md P2-2, P2-4) and
+                        the personal data policy (PL-13, pii.py; migration 0018).
+                        No row: today's behaviour (DEFAULTS)
     glossary            the workspace's own terms: definition and synonyms
     doc_rules           boost, demote or block documents by provider, folder or
                         document key (PL-28)
@@ -23,15 +25,18 @@ import re
 import time
 
 import db
+import pii
 
 TONES = ("default", "friendly", "formal", "concise", "detailed")
 LANGUAGES = ("auto", "English", "Hindi", "Spanish", "French", "German", "Portuguese",
              "Italian", "Dutch", "Japanese", "Chinese", "Arabic")
+ANSWER_CACHE = ("off", "exact", "semantic")
 NAME_CHARS = 40
 INSTRUCTIONS_CHARS = 1500
 DEFAULTS = {"assistant_name": None, "tone": "default", "instructions": "", "language": "auto",
             "allow_wikipedia": None, "allow_currency": None, "show_steps": True,
-            "adapt_verified": False}
+            "adapt_verified": False, "answer_cache": "exact", "cross_lingual": False,
+            "pii_policy": None}
 SETTINGS = tuple(DEFAULTS)
 
 TERM_CHARS = 80
@@ -93,6 +98,9 @@ def settings(workspace):
             "allow_wikipedia": _tristate(row["allow_wikipedia"]),
             "allow_currency": _tristate(row["allow_currency"]),
             "show_steps": bool(row["show_steps"]), "adapt_verified": bool(row["adapt_verified"]),
+            "answer_cache": row["answer_cache"] if row["answer_cache"] in ANSWER_CACHE
+            else DEFAULTS["answer_cache"], "cross_lingual": bool(row["cross_lingual"]),
+            "pii_policy": pii.load(row["pii_policy"]) if row["pii_policy"] else None,
             "updated_by": row["updated_by"], "updated_at": row["updated_at"]}
 
 
@@ -119,6 +127,14 @@ def clean_settings(change):
                 raise Invalid(f"Extra instructions are {INSTRUCTIONS_CHARS:,} characters at most.")
         elif key in ("allow_wikipedia", "allow_currency"):
             value = _tristate(value)
+        elif key == "answer_cache":
+            if value not in ANSWER_CACHE:
+                raise Invalid(f"The answer cache is one of: {', '.join(ANSWER_CACHE)}.")
+        elif key == "pii_policy":
+            try:
+                value = None if value is None else pii.clean_policy(value)
+            except pii.Invalid as e:
+                raise Invalid(str(e))
         else:
             value = bool(value)
         out[key] = value
@@ -130,7 +146,8 @@ def save_settings(workspace, change, by):
     change = clean_settings(change)
     if change:
         cols = ", ".join(change)
-        values = [int(v) if isinstance(v, bool) else v for v in change.values()]
+        values = [int(v) if isinstance(v, bool) else json.dumps(v) if isinstance(v, dict)
+                  else v for v in change.values()]
         updates = ", ".join(f"{k} = excluded.{k}" for k in change)
         with _db() as conn:
             conn.execute(f"""INSERT INTO assistant_settings (workspace, {cols}, version,

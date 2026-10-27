@@ -72,8 +72,9 @@ def passage(chunk_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
 
 
 # Trace entries that aren't tools the assistant chose, for admins only: the source
-# rules that weighed what it read (agent.rules_applied).
-ADMIN_ONLY = ("source_rules",)
+# rules that weighed what it read (agent.rules_applied), and that an answer came
+# from the answer cache (kb/services/answer_cache.py).
+ADMIN_ONLY = ("source_rules", "answer_cache")
 
 
 def _steps(trace, details=True):
@@ -200,7 +201,7 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
             done = answering.ask(ws, user, viewer, question, surface="web", turn=turn,
-                                 on_event=on_event, cancel=stop, out=out)
+                                 on_event=on_event, cancel=stop, out=out, cache=not again)
             followups = suggestions.followups(question, done.answer, done.state, done.sources)
             save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
                  max_access=done.max_access, acl=done.acl, standalone_question=done.standalone,

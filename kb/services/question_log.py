@@ -12,9 +12,13 @@ tokens of every model call made while answering (counting(), LangChain callbacks
 Logging never fails a question: an error writing the row is only logged.
 
 The TEXT logged follows the workspace's mode (question_log_store.settings):
-full keeps it, redacted masks emails, phone and card numbers with the same rules
-answers are masked with (safety.redact_pii), metadata keeps none. It's applied
+full keeps it, redacted masks the personal data the workspace's policy names for
+logs (pii.py, PL-13: by default every type), metadata keeps none. It's applied
 here, before the row is written, so unmasked text is never stored.
+
+Each row also says whether the answer cache served it (cache_hit), how many of
+its figures the faithfulness check didn't find in what it cited (unsupported),
+and the question's language: the quality trend Insights shows (P2-3).
 """
 
 import contextlib
@@ -28,10 +32,10 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration
 from langchain_core.tracers.context import register_configure_hook
 
+import pii
 import question_log_store as store
 from agent import Cancelled
-from kb.services import agents, conversations
-from safety import redact_pii
+from kb.services import agents, assistant, conversations
 
 log = logging.getLogger("uvicorn.error")
 
@@ -111,12 +115,15 @@ def counting():
 
 
 # ---- What's written --------------------------------------------------------------------
-def text_for(mode, text, limit):
-    """`text` as the log keeps it under `mode`."""
+def text_for(mode, text, limit, mask=None):
+    """`text` as the log keeps it under `mode`. mask: the workspace's policy for logs
+    (pii.Policy.log); None masks every type."""
     if mode == "metadata" or not text:
         return None
     text = text[:limit]
-    return redact_pii(text) if mode == "redacted" else text
+    if mode != "redacted":
+        return text
+    return mask(text) if mask else pii.redact(text)
 
 
 def block_reason(answer):
@@ -154,21 +161,24 @@ def _tools(trace):
 
 
 def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(), sources=(),
-           max_access="restricted", latency_ms=None, usage=None, message_id=None):
+           max_access="restricted", latency_ms=None, usage=None, message_id=None,
+           cache_hit=None, unsupported=None, language=None):
     """Write one row. Never raises: a question is never failed by its log."""
     try:
         mode = store.settings(ws)["mode"]
+        mask = assistant.pii_policy(ws).log if mode == "redacted" else None
         return store.add(
             ws, user["username"] if isinstance(user, dict) else user, surface, outcome,
-            text_mode=mode, question=text_for(mode, question, QUESTION_CHARS),
-            answer=text_for(mode, answer, ANSWER_CHARS), message_id=message_id, role=role,
+            text_mode=mode, question=text_for(mode, question, QUESTION_CHARS, mask),
+            answer=text_for(mode, answer, ANSWER_CHARS, mask), message_id=message_id, role=role,
             block_reason=block_reason(answer) if outcome == "blocked" else None,
             sources=[] if outcome == "blocked" else _sources(sources), tools=_tools(trace),
             max_access=max_access, latency_ms=latency_ms,
             tokens_in=usage.tokens_in if usage else None,
             tokens_out=usage.tokens_out if usage else None,
             tokens_cached=usage.tokens_cached if usage else None,
-            model=usage.model if usage else None)
+            model=usage.model if usage else None, cache_hit=cache_hit,
+            unsupported=unsupported, language=language)
     except Exception:
         log.exception("Question log: couldn't log a question in workspace %s", ws)
         return None
@@ -202,9 +212,11 @@ def tracked(run, ws, user, role, surface, turn=None):
                 if agents.outline_on(ws, role):
                     levels.append(agents.outline_access())
                 fields["max_access"] = conversations.max_access(levels)
+            unsupported = out.get("unsupported")
             record(ws, user, role, surface, question, outcome, usage=usage,
                    latency_ms=int((time.monotonic() - started) * 1000), message_id=message_id,
-                   **fields)
+                   unsupported=None if unsupported is None else len(unsupported),
+                   language=out.get("language"), **fields)
 
         with counting() as usage:
             try:
@@ -237,5 +249,5 @@ def change_settings(ws, mode, days):
     before = store.settings(ws)["mode"]
     store.set_settings(ws, mode, days)
     if before == "full" and mode == "redacted":
-        store.redact_text(ws, redact_pii)
+        store.redact_text(ws, assistant.pii_policy(ws).log)
     return store.settings(ws)

@@ -13,7 +13,10 @@ through it, so every surface gets the same agent and the same path:
     highest access level of everything the model read (conversations.outcome);
   * the question log, with the surface it came from (kb/services/question_log.py:
     what Insights shows), and the log line when answering fails, without the
-    question (tenant data).
+    question (tenant data);
+  * the answer cache (kb/services/answer_cache.py): a question asked without
+    history is answered from the answer given before to the SAME set of
+    principals, while the index and settings are unchanged.
 
 `role` is who the agent searches as: a viewer (access.Viewer: the asker's
 principals and the role they view the app as) or a bare role ("hr" / "public":
@@ -22,11 +25,13 @@ that role's own principals). Who may ask, and as whom, is the caller's to decide
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 
 import access
+import language
 from agent import Cancelled  # noqa: F401  (re-exported: a stopped run raises it)
-from kb.services import agents, conversations, question_log
+from kb.services import agents, answer_cache, conversations, question_log
 
 log = logging.getLogger("uvicorn.error")
 
@@ -52,9 +57,28 @@ class Answer:
     standalone: str | None = None               # the question as searched, when it differs
     verified: dict | None = None                # served from a verified answer: {id, title, by, at}
     acl: list | None = None                     # who may read it (access.clauses); None: max_access
+    cached: str | None = None                   # exact / semantic: from the answer cache
 
 
-def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None):
+def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, started):
+    """A cached answer, as ask() returns one: shown, logged (no tokens), with the
+    answer_cache step first in its steps."""
+    row = hit.row
+    trace = [answer_cache.step(hit)] + list(row["trace"])
+    out.update(standalone=question, sources=row["sources"], cached=hit.kind)
+    if on_event:
+        on_event({"type": "answer", "text": row["answer"], "sources": row["sources"]})
+    question_log.record(ws, user, role, surface, question, row["state"], answer=row["answer"],
+                        trace=trace, sources=row["sources"], max_access=row["max_access"],
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        message_id=turn["message_id"] if turn else None, cache_hit=hit.kind,
+                        language=language.detect(question))
+    return Answer(row["answer"], row["sources"], row["state"], row["max_access"], trace, None,
+                  None, row["acl"], hit.kind)
+
+
+def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None,
+        cache=True, space=None):
     """Answer `question` in workspace `ws` for `user` (a dict with "username") as
     `role` -> Answer. role: the asker as a viewer (access.Viewer: what they may
     see), or a bare role (its own principals: "public" is everyone's content
@@ -62,13 +86,28 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
     (conversations.start_turn): its history is what a follow-up is answered with.
     on_event / cancel: stream progress, and stop (raises Cancelled). out: the
     agent's running report (agent.run), for a caller that needs what was read so
-    far after a stop. Raises Failed when answering fails."""
+    far after a stop. cache: False asks again without reading the answer cache
+    (retry, regenerate); the new answer still replaces the cached one. space:
+    the space the question is scoped to, if any (part of the cache key). Raises
+    Failed when answering fails."""
     if surface not in SURFACES:
         raise ValueError(f"surface must be one of: {', '.join(SURFACES)}")
+    started = time.monotonic()
     out = {} if out is None else out
     who, role = role, access.role_of(role)
     history_access = turn["history_access"] if turn else "public"
     asker = {"principals": who} if isinstance(who, access.Viewer) else {}
+    # ANSWER CACHE: never for a follow-up (its meaning depends on the conversation).
+    try:
+        scope = None if turn and turn.get("history") else answer_cache.scope(ws, who, space)
+    except Exception:
+        log.exception("Answer cache: unavailable in workspace %s; answering as usual", ws)
+        scope = None
+    if scope and cache:
+        hit = answer_cache.lookup(scope, question)
+        if hit:
+            return _from_cache(ws, user, role, surface, question, hit, turn, on_event, out,
+                               started)
     try:
         # No waiting for re-indexing: it changes the index document by document, or
         # builds a new one beside it (services/indexing.py).
@@ -87,6 +126,9 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
                       "%d characters)", ws, role, surface, len(question))
         raise Failed(type(e).__name__) from e
     standalone = out.get("standalone")
-    return Answer(answer, sources, state, level, trace,
+    done = Answer(answer, sources, state, level, trace,
                   standalone if standalone not in (None, question) else None,
                   out.get("verified"), acl)
+    answer_cache.save(scope, question, done, out,
+                      user.get("username") if isinstance(user, dict) else user)
+    return done

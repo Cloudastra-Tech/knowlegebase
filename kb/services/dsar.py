@@ -111,6 +111,9 @@ def erase_member(ws, username):
         run("conversations", "DELETE FROM conversations WHERE workspace = ? AND owner = ?", ws, u)
         run("folders", "DELETE FROM conversation_folders WHERE workspace = ? AND owner = ?", ws, u)
         run("questions", "DELETE FROM question_log WHERE workspace = ? AND user = ?", ws, u)
+        run("cached_answers", "DELETE FROM answer_cache WHERE workspace = ? AND username = ?",
+            ws, u)
+        run("alerts", "DELETE FROM abuse_alerts WHERE workspace = ? AND subject = ?", ws, u)
         run("feedback", "DELETE FROM message_feedback WHERE workspace = ? AND user = ?", ws, u)
         run("sign_in_events", "DELETE FROM sso_events WHERE workspace = ? AND lower(email) = ?",
             ws, u)

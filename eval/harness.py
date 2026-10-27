@@ -25,6 +25,10 @@ GOLDEN SET FORMAT (one JSON object per line, eval/golden/<corpus>.jsonl):
     notes             what a correct answer says (for the LLM judge in evaluate.py)
     must_include      optional: strings the final answer must contain (evaluate.py)
     must_not_include  optional: strings it must never contain, e.g. restricted facts
+    lang              optional: the question's language when it isn't English (language.py
+                      codes: "hi", "hi-Latn" for Hinglish, "es", ...): graded here by
+                      retrieval like the rest; its notes name the answer's language for
+                      evaluate.py's judge
 
 LEAK SUITE: for every restricted document, public-role searches must never
 return any of its chunks — not for the golden questions, not for the
