@@ -255,7 +255,7 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
             disabled={save.isPending}
             onChange={(on) => save.mutate({ cross_lingual: on })}
           />
-          <Field orientation="horizontal">
+          <Field orientation="responsive">
             <FieldContent>
               <FieldLabel htmlFor="as-cache">Reuse recent answers</FieldLabel>
               <FieldDescription>
@@ -269,7 +269,7 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
               disabled={!settings.answer_cache_server || save.isPending}
               onValueChange={(v) => save.mutate({ answer_cache: v as AnswerCache })}
             >
-              <SelectTrigger id="as-cache" className="w-40 shrink-0">
+              <SelectTrigger id="as-cache" className="w-full shrink-0 @md/field-group:w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

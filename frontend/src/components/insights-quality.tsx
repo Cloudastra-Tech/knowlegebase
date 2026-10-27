@@ -29,7 +29,7 @@ function Stat({ label, value, note }: { label: string; value: string; note: stri
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="text-lg font-semibold tracking-tight tabular-nums">{value}</p>
-      <p className="truncate text-xs text-muted-foreground">{note}</p>
+      <p className="text-xs text-muted-foreground">{note}</p>
     </div>
   )
 }

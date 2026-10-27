@@ -96,8 +96,10 @@ export function AlertsPanel() {
                 variant="outline"
                 disabled={ack.isPending}
                 onClick={() => ack.mutate(a.id)}
+                aria-label={`Acknowledge: ${a.title}`}
               >
-                <Check data-icon="inline-start" /> Acknowledge
+                <Check data-icon="inline-start" />
+                <span className="hidden sm:inline">Acknowledge</span>
               </Button>
             )}
           </li>

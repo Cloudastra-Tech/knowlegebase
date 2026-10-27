@@ -84,7 +84,7 @@ export function PiiSettings({ settings }: { settings: AssistantSettings }) {
     >
       <FieldGroup className="gap-5">
         <div className="overflow-hidden rounded-xl border border-border/70">
-          <div className="grid grid-cols-[1fr_repeat(3,3.5rem)] items-center gap-x-2 border-b border-border/70 bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground sm:grid-cols-[1fr_repeat(3,5.5rem)]">
+          <div className="grid grid-cols-[1fr_repeat(3,3.25rem)] items-center gap-x-2 border-b border-border/70 bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground sm:grid-cols-[1fr_repeat(3,5.5rem)]">
             <span>Type</span>
             {COLUMNS.map((c) => (
               <span key={c.key} className="text-center" title={c.hint}>
@@ -98,9 +98,9 @@ export function PiiSettings({ settings }: { settings: AssistantSettings }) {
               {entities.map((entity) => (
                 <div
                   key={entity}
-                  className="grid grid-cols-[1fr_repeat(3,3.5rem)] items-center gap-x-2 px-3 py-1.5 text-sm sm:grid-cols-[1fr_repeat(3,5.5rem)]"
+                  className="grid grid-cols-[1fr_repeat(3,3.25rem)] items-center gap-x-2 px-3 py-1.5 text-sm sm:grid-cols-[1fr_repeat(3,5.5rem)]"
                 >
-                  <span className="min-w-0 truncate" title={labels[entity]}>
+                  <span className="min-w-0 leading-snug break-words">
                     {labels[entity] ?? entity}
                   </span>
                   {COLUMNS.map((c) => (
