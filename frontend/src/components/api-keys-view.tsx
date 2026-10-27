@@ -1,8 +1,11 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Copy, KeyRound, Loader2, Plus, TriangleAlert } from "lucide-react"
+import { Check, Copy, KeyRound, Plus, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import { CopyField } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -73,10 +76,14 @@ function inDays(epoch: number) {
 }
 
 const STATUS = {
-  active: { label: "Active", className: "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400" },
-  expired: { label: "Expired", className: "bg-amber-500/10 text-amber-800 dark:text-amber-300" },
+  active: { label: "Active", className: "bg-success/10 text-success" },
+  expired: { label: "Expired", className: "bg-warning/10 text-warning" },
   revoked: { label: "Revoked", className: "bg-muted text-muted-foreground" },
 } as const
+
+// A caution in the status tokens: the warning tint and glyph, the words in the ink.
+const WARNING_ALERT =
+  "border-warning/40 bg-warning/10 text-warning *:data-[slot=alert-title]:text-foreground *:data-[slot=alert-description]:text-foreground/90"
 
 // One key: its name and hint, what it may do, when it was used, and Revoke.
 export function KeyRow({
@@ -209,10 +216,10 @@ export function NewKeyDialog({
             </DialogDescription>
           </DialogHeader>
           {service && (
-            <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+            <Alert className={WARNING_ALERT}>
               <TriangleAlert />
               <AlertTitle>Anyone with it reads what public users can</AlertTitle>
-              <AlertDescription className="text-amber-900/90 dark:text-amber-200/90">
+              <AlertDescription>
                 Restricted documents stay out of reach, but keep it off public websites. It
                 stops working if you're no longer an admin.
               </AlertDescription>
@@ -274,10 +281,8 @@ export function NewKeyDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || !name.trim() || !picked.length}>
-              {saving ? <Loader2 className="animate-spin" data-icon="inline-start" /> : (
-                <Plus data-icon="inline-start" />
-              )}
+            <Button type="submit" loading={saving} disabled={!name.trim() || !picked.length}>
+              {!saving && <Plus data-icon="inline-start" />}
               Make key
             </Button>
           </DialogFooter>
@@ -320,7 +325,7 @@ export function CodeBlock({ label, code, wrap }: { label: string; code: string; 
         onClick={copy}
         aria-label={`Copy ${label}`}
       >
-        {copied ? <Check /> : <Copy />}
+        {copied ? <Check className="text-success" /> : <Copy />}
       </Button>
     </div>
   )
@@ -400,10 +405,10 @@ export function KeyCreatedDialog({
             request.
           </DialogDescription>
         </DialogHeader>
-        <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+        <Alert className={WARNING_ALERT}>
           <TriangleAlert />
           <AlertTitle>Copy it now</AlertTitle>
-          <AlertDescription className="text-amber-900/90 dark:text-amber-200/90">
+          <AlertDescription>
             It won't be shown again. If it's lost, make a new one and revoke this one.
           </AlertDescription>
         </Alert>
@@ -446,31 +451,27 @@ export function ApiKeysView() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <KeyRound className="size-6" /> API keys
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Ask the knowledge base from your own scripts, or from Claude, Cursor and other
-            agents, as you.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          onClick={() => setCreating(true)}
-          disabled={!data || !!off || active >= (data?.max_keys ?? 0)}
-        >
-          <Plus data-icon="inline-start" /> New key
-        </Button>
-      </div>
+      <ScreenHeader
+        icon={KeyRound}
+        title="API keys"
+        description="Ask the knowledge base from your own scripts, or from Claude, Cursor and other agents, as you."
+        actions={
+          <Button
+            size="sm"
+            onClick={() => setCreating(true)}
+            disabled={!data || !!off || active >= (data?.max_keys ?? 0)}
+          >
+            <Plus data-icon="inline-start" /> New key
+          </Button>
+        }
+      />
 
       {!data ? (
         <Skeleton className="mt-6 h-48 rounded-2xl" />
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-6">
           {off && (
-            <Alert>
+            <Alert className={WARNING_ALERT}>
               <TriangleAlert />
               <AlertTitle>Turned off in this workspace</AlertTitle>
               <AlertDescription>
@@ -478,7 +479,8 @@ export function ApiKeysView() {
               </AlertDescription>
             </Alert>
           )}
-          <section className="rounded-2xl border border-border/70 bg-background">
+          {/* The keys: a list to act on, so opaque. */}
+          <Panel tone="solid" className="overflow-hidden p-0">
             {data.keys.length ? (
               <div className="divide-y">
                 {data.keys.map((k) => (
@@ -486,46 +488,46 @@ export function ApiKeysView() {
                 ))}
               </div>
             ) : (
-              <p className="p-5 text-sm text-muted-foreground">
-                No keys yet. A key acts as you: it sees what your role sees, at each call, so if
-                your role changes, so does what it can do.
-              </p>
+              <AsciiEmptyState
+                art="key"
+                title="No keys yet."
+                description="A key acts as you: it sees what your role sees, at each call, so if your role changes, so does what it can do."
+                className="px-5"
+              />
             )}
-          </section>
+          </Panel>
 
-          <section className="grid min-w-0 grid-cols-1 gap-4 rounded-2xl border border-border/70 bg-background p-5">
-            <div>
-              <h3 className="font-medium">Connect an agent (MCP)</h3>
-              <p className="text-sm text-muted-foreground">
+          <Panel title="Connect an agent (MCP)" className="min-w-0">
+            <div className="grid min-w-0 grid-cols-1 gap-4">
+              <p className="-mt-2 text-sm text-pretty text-muted-foreground">
                 {data.settings.mcp_enabled
                   ? "Give Claude, Cursor or another MCP client your key, and it can search and ask the knowledge base with your permissions."
                   : "Your admins have turned the MCP server off."}
               </p>
+              {data.settings.mcp_enabled && (
+                <>
+                  <CopyField label="MCP server URL" value={data.mcp_url} />
+                  <McpSnippets mcpUrl={data.mcp_url} />
+                </>
+              )}
             </div>
-            {data.settings.mcp_enabled && (
-              <>
-                <CopyField label="MCP server URL" value={data.mcp_url} />
-                <McpSnippets mcpUrl={data.mcp_url} />
-              </>
-            )}
-          </section>
+          </Panel>
 
-          <section className="grid min-w-0 grid-cols-1 gap-3 rounded-2xl border border-border/70 bg-background p-5">
-            <div>
-              <h3 className="font-medium">REST API</h3>
-              <p className="text-sm text-muted-foreground">
+          <Panel title="REST API" className="min-w-0">
+            <div className="grid min-w-0 grid-cols-1 gap-3">
+              <p className="-mt-2 text-sm text-pretty text-muted-foreground">
                 {data.settings.api_enabled
                   ? "Version 1: ask, search, sources, documents and (admins) the audit log."
                   : "Your admins have turned the API off."}
               </p>
+              {data.settings.api_enabled && (
+                <>
+                  <CopyField label="Base URL" value={data.api_url} />
+                  <CopyField label="OpenAPI description" value={data.openapi_url} />
+                </>
+              )}
             </div>
-            {data.settings.api_enabled && (
-              <>
-                <CopyField label="Base URL" value={data.api_url} />
-                <CopyField label="OpenAPI description" value={data.openapi_url} />
-              </>
-            )}
-          </section>
+          </Panel>
         </div>
       )}
 

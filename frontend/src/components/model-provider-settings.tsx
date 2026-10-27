@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CircleCheck, Loader2, PlugZap, TriangleAlert } from "lucide-react"
+import { CircleCheck, PlugZap, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -217,7 +217,7 @@ function ProviderForm({ settings }: { settings: Settings }) {
               >
                 <Label
                   htmlFor="mp-auth-role"
-                  className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal"
+                  className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal has-data-[state=checked]:border-signal/50"
                 >
                   <RadioGroupItem value="role" id="mp-auth-role" className="mt-0.5" />
                   <span className="grid gap-0.5">
@@ -229,7 +229,7 @@ function ProviderForm({ settings }: { settings: Settings }) {
                 </Label>
                 <Label
                   htmlFor="mp-auth-keys"
-                  className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal"
+                  className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal has-data-[state=checked]:border-signal/50"
                 >
                   <RadioGroupItem value="keys" id="mp-auth-keys" className="mt-0.5" />
                   <span className="grid gap-0.5">
@@ -351,7 +351,7 @@ function ProviderForm({ settings }: { settings: Settings }) {
 
         {tested &&
           (tested.ok ? (
-            <Alert>
+            <Alert className="border-success/40 text-success *:data-[slot=alert-title]:text-foreground">
               <CircleCheck />
               <AlertTitle>Connected</AlertTitle>
               <AlertDescription>
@@ -368,22 +368,17 @@ function ProviderForm({ settings }: { settings: Settings }) {
           ))}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="submit" disabled={save.isPending}>
-            {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button type="submit" loading={save.isPending}>
             Save
           </Button>
           {bedrock && (
             <Button
               type="button"
               variant="outline"
-              disabled={test.isPending}
+              loading={test.isPending}
               onClick={() => test.mutate()}
             >
-              {test.isPending ? (
-                <Loader2 className="animate-spin" data-icon="inline-start" />
-              ) : (
-                <PlugZap data-icon="inline-start" />
-              )}
+              {!test.isPending && <PlugZap data-icon="inline-start" />}
               Test connection
             </Button>
           )}
