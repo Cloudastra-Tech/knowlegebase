@@ -586,7 +586,8 @@ export function ChatView({ role }: { role: Role }) {
     hideSteps,
   }
 
-  const starters = startersFrom(knowledge.data?.items)
+  // Starters come from the whole workspace: not offered inside a space.
+  const starters = space ? [] : startersFrom(knowledge.data?.items)
   const outline = knowledge.data?.outline ?? false
   const empty = messages.length === 0 && !opening
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
