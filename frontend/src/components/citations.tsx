@@ -1,6 +1,6 @@
 import { use, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ExternalLink, FileText, Lock } from "lucide-react"
+import { ExternalLink, FileText, Lock, Paperclip } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -67,6 +67,19 @@ function RestrictedBadge() {
   )
 }
 
+// Who may read a source: a file the asker attached (or keeps in their space) is
+// theirs alone, which is what "restricted" means for it.
+function AccessBadge({ source }: { source: Source }) {
+  if (source.attachment)
+    return (
+      <Badge variant="outline" className="shrink-0">
+        <Paperclip />
+        {source.attachment === "chat" ? "Attached" : "Your file"}
+      </Badge>
+    )
+  return source.access === "restricted" ? <RestrictedBadge /> : null
+}
+
 // The hover card: which document, where in it, the passage, and why it was found.
 function SourcePreview({ source }: { source: Source }) {
   const place = placeOf(source)
@@ -80,7 +93,7 @@ function SourcePreview({ source }: { source: Source }) {
           <p className="truncate font-medium">{source.title}</p>
           <p className="truncate text-xs text-muted-foreground">{meta}</p>
         </div>
-        {source.access === "restricted" && <RestrictedBadge />}
+        <AccessBadge source={source} />
       </div>
       {place && <p className="text-xs font-medium text-muted-foreground">{place}</p>}
       {source.snippet && (
@@ -141,7 +154,7 @@ function SourceSheetBody({ source }: { source: Source }) {
           <span>{source.provider}</span>
           {place && <span>· {place}</span>}
           {updated && <span>· {updated}</span>}
-          {source.access === "restricted" && <RestrictedBadge />}
+          <AccessBadge source={source} />
         </SheetDescription>
       </SheetHeader>
 

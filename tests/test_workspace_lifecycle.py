@@ -108,6 +108,22 @@ def populate(ws, root):
     a = conversations_store.add_message(cid, "assistant", "", parent_id=q)
     conversations_store.finish_message(a, "20 days a year.", "answered")
     conversations_store.set_feedback(a, staff, ws, 1)
+    # Spaces (team and personal), files attached to a chat and kept in a space,
+    # saved prompts (workspace and personal).
+    import attachments_store
+    import prompts_store
+    import spaces_store
+    team = spaces_store.create_team(ws, "Sales", "", "Answer briefly.", admin)
+    spaces_store.set_member(ws, team["id"], staff, "member", admin)
+    spaces_store.add_source(ws, team["id"], "folder", "public", admin)
+    mine = spaces_store.personal(ws, staff)
+    chunk = [{"text": f"Notes of {staff}", "char_start": 0, "char_end": 9}]
+    attachments_store.add(ws, staff, "notes.txt", "text/plain", "txt", 9, chunk,
+                          conversation_id=cid)
+    attachments_store.add(ws, staff, "mine.txt", "text/plain", "txt", 9, chunk,
+                          space_id=mine["id"])
+    prompts_store.create(ws, None, "Reply", "Reply to {{customer}}", admin)
+    prompts_store.create(ws, staff, "Mine", "Summarise {{doc}}", staff)
     question_log_store.add(ws, staff, "web", "answered", text_mode="full",
                            question="How much leave do I get?", answer="20 days a year.")
     verified_store.create(ws, {"title": "Leave", "variants": ["leave?"], "answer_md": "20 days",

@@ -1,5 +1,13 @@
 import { lazy, useState } from "react"
-import { ChevronDown, KeyRound, LogOut, Mail, MonitorSmartphone } from "lucide-react"
+import {
+  ChevronDown,
+  KeyRound,
+  Layers,
+  LogOut,
+  Mail,
+  MessageSquareText,
+  MonitorSmartphone,
+} from "lucide-react"
 import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
 
@@ -195,6 +203,16 @@ export default function App() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/spaces">
+                    <Layers /> Spaces
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/prompts">
+                    <MessageSquareText /> My prompts
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link to="/api-keys">
                     <KeyRound /> API keys

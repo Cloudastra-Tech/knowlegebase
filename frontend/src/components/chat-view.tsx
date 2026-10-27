@@ -4,11 +4,14 @@ import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react
 import { ArrowDown, CornerUpLeft, Info, MoreHorizontal, Pencil, Share2, SquarePen, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AttachButton, AttachmentChips } from "@/components/attachment-chips"
 import { AssistantMessage, BranchNav, type AnswerActions, type Message } from "@/components/chat-answer"
 import { Composer } from "@/components/chat-composer"
 import { ChatSidebar } from "@/components/chat-sidebar"
 import { LoggingNotice } from "@/components/logging-notice"
+import { usePromptPicker } from "@/components/prompt-menu"
 import { ShareDialog } from "@/components/share-dialog"
+import { SpaceChip } from "@/components/space-switcher"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,7 +44,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   api,
   ApiError,
+  spaces,
   type AnswerState,
+  type Attachment,
   type Conversation,
   type ConversationSummary,
   type Role,
@@ -49,9 +54,10 @@ import {
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
-import { FOCUS_COMPOSER, TOGGLE_SIDEBAR } from "@/lib/chat-events"
+import { CHOOSE_SPACE, FOCUS_COMPOSER, TOGGLE_SIDEBAR } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
 import { queries } from "@/lib/queries"
+import { spaceLabel } from "@/lib/spaces"
 
 // A saved conversation's messages as the chat shows them. `keys`: the React keys
 // messages already on screen have, by id, so they aren't drawn anew.
@@ -104,6 +110,24 @@ interface Again {
 }
 
 const isAbort = (err: unknown) => err instanceof DOMException && err.name === "AbortError"
+
+// The space new chats are asked in, remembered on this device (chat.md C31).
+const SPACE_KEY = "kb.space"
+function storedSpace() {
+  try {
+    return localStorage.getItem(SPACE_KEY)
+  } catch {
+    return null
+  }
+}
+function storeSpace(id: string | null) {
+  try {
+    if (id) localStorage.setItem(SPACE_KEY, id)
+    else localStorage.removeItem(SPACE_KEY)
+  } catch {
+    /* private mode: just not remembered */
+  }
+}
 
 // What the screen reader hears when an answer ends (not every word as it streams).
 const ENDED: Partial<Record<AnswerState, string>> = {
@@ -159,6 +183,10 @@ export function ChatView({ role }: { role: Role }) {
   const account = useUser()
   const assistantInfo = useQuery(queries.assistantInfo()).data
   const hideSteps = assistantInfo?.show_steps === false && account.role === "public"
+  const spaceList = useQuery({ ...queries.spaces(), meta: { silent: true } })
+  const limits = useQuery({ ...queries.attachmentLimits(), meta: { silent: true } }).data
+  const [chosenSpace, setChosenSpace] = useState<string | null>(storedSpace)
+  const [uploading, setUploading] = useState<string[]>([])
 
   // What's on screen: this screen's own session while it is the one at the address
   // (and the role it began under), else the saved conversation there, if any.
@@ -175,6 +203,17 @@ export function ChatView({ role }: { role: Role }) {
   const title = listed?.title ?? conversation?.title ?? ""
   const forkedFrom = (conversation as Conversation | null)?.forked_from ?? null
   const opening = urlId !== null && !live && saved.isPending
+  // The space this chat is asked in: a saved one's own; a new one's, as chosen
+  // (while that space is still one of yours).
+  const chosen =
+    chosenSpace && (spaceList.isPending || spaceList.data?.spaces.some((s) => s.id === chosenSpace))
+      ? chosenSpace
+      : null
+  const spaceId = urlId ? (listed?.space_id ?? conversation?.space_id ?? null) : chosen
+  const space = spaceList.data?.spaces.find((s) => s.id === spaceId) ?? null
+  const attached = useQuery({ ...queries.attachments(urlId ?? ""), enabled: urlId !== null })
+  const files: Attachment[] = urlId ? (attached.data ?? []) : []
+  const picker = usePromptPicker({ input, setInput, inputRef })
 
   // A conversation that isn't there (deleted, someone else's): back to a new chat.
   useEffect(() => {
@@ -267,6 +306,69 @@ export function ChatView({ role }: { role: Role }) {
   function newChat() {
     open("/chat")
     requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  // Ask in another space: new chats go there; a chat already under way stays in
+  // its own, so choosing another starts a new chat.
+  function chooseSpace(id: string | null) {
+    storeSpace(id)
+    setChosenSpace(id)
+    if (urlId && id !== spaceId) newChat()
+  }
+
+  // "Ask in this space" (the spaces screen).
+  useEffect(() => {
+    const onChoose = (e: Event) => {
+      const id = (e as CustomEvent<string | null>).detail
+      storeSpace(id)
+      setChosenSpace(id)
+    }
+    window.addEventListener(CHOOSE_SPACE, onChoose)
+    return () => window.removeEventListener(CHOOSE_SPACE, onChoose)
+  }, [])
+
+  // A new chat is saved (in the chosen space) before its first question or file.
+  async function saveNewChat() {
+    const created = await api.createConversation(chosen)
+    setSession({ id: created.id, role, messages, conversation: created, notice: null })
+    navigate(`/chat/${created.id}`, { flushSync: true })
+    return created.id
+  }
+
+  // Attach files to this chat: read on the server into text for this chat only.
+  async function attachFiles(list: File[]) {
+    if (loading || uploading.length) return
+    const room = (limits?.per_chat ?? 10) - files.length
+    if (list.length > room) {
+      toast.error(
+        room > 0
+          ? `You can attach ${room} more file${room === 1 ? "" : "s"} to this chat.`
+          : "This chat has as many files as it can take.",
+      )
+      return
+    }
+    setUploading(list.map((f) => f.name))
+    try {
+      const id = urlId ?? (await saveNewChat())
+      await spaces.attach(id, list)
+      await queryClient.invalidateQueries({ queryKey: ["attachments", id] })
+      setAnnounce(`Attached ${list.length === 1 ? list[0].name : `${list.length} files`}.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't attach the files.")
+    } finally {
+      setUploading([])
+      inputRef.current?.focus()
+    }
+  }
+
+  async function detach(file: Attachment) {
+    if (!urlId) return
+    try {
+      await spaces.detach(urlId, file.id)
+      queryClient.invalidateQueries({ queryKey: ["attachments", urlId] })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't remove the file.")
+    }
   }
 
   // The saved conversation again (after a new branch, or switching to another one),
@@ -372,7 +474,7 @@ export function ChatView({ role }: { role: Role }) {
     try {
       let conversationId = urlId
       if (!conversationId) {
-        const created = await api.createConversation()
+        const created = await api.createConversation(chosen)
         conversationId = created.id
         savedIn = created.id
         change((s) => ({ ...s, id: created.id, conversation: created }))
@@ -484,7 +586,8 @@ export function ChatView({ role }: { role: Role }) {
     hideSteps,
   }
 
-  const starters = startersFrom(knowledge.data?.items)
+  // Starters come from the whole workspace: not offered inside a space.
+  const starters = space ? [] : startersFrom(knowledge.data?.items)
   const outline = knowledge.data?.outline ?? false
   const empty = messages.length === 0 && !opening
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
@@ -494,6 +597,8 @@ export function ChatView({ role }: { role: Role }) {
       <SidebarEvents />
       <ChatSidebar
         activeId={urlId}
+        spaceId={spaceId}
+        onSpace={chooseSpace}
         busy={loading}
         onOpen={(id) => open(`/chat/${id}`)}
         onNewChat={newChat}
@@ -534,12 +639,15 @@ export function ChatView({ role }: { role: Role }) {
             {empty && (
               <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
                 <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                  Ask your company docs
+                  {space ? `Ask in ${spaceLabel(space)}` : "Ask your company docs"}
                 </h2>
                 <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                  Answers come from your company's documents
-                  {outline ? " and the Outline wiki" : ""}, with the sources cited under every
-                  answer.
+                  {space?.kind === "personal"
+                    ? "Answers come from the files you keep in your space and the sources you added to it, "
+                    : space
+                      ? "Answers come only from this space's sources that you can see, "
+                      : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
+                  with the sources cited under every answer. Attach a file to ask about it too.
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Searching as{" "}
@@ -645,7 +753,24 @@ export function ChatView({ role }: { role: Role }) {
             onEditLast={lastUser?.id && !loading ? () => setEditing(lastUser.key) : undefined}
             busy={loading}
             inputRef={inputRef}
+            top={
+              <>
+                <SpaceChip value={spaceId} onChange={chooseSpace} disabled={loading} />
+                <AttachmentChips files={files} uploading={uploading} onRemove={detach} />
+              </>
+            }
+            leading={
+              <AttachButton
+                limits={limits}
+                disabled={loading || uploading.length > 0}
+                onFiles={attachFiles}
+              />
+            }
+            above={picker.menu}
+            intercept={picker.intercept}
+            onFiles={attachFiles}
           />
+          {picker.dialog}
         </div>
       </div>
       {sharing && urlId && (

@@ -4,12 +4,14 @@ workspace holds about them, and erasing it.
 
 EXPORT: their member row (never the password hash), the questions they asked
 (the question log, text as the workspace keeps it), their chats with every
-message, the feedback they gave, their API keys and invites, and the audit
-events where they are the actor.
+message, the feedback they gave, their API keys and invites, the spaces they're
+in, the files they attached or keep (names, not text), their saved prompts, and
+the audit events where they are the actor.
 
 ERASE: deletes their questions, chats (messages, feedback on them, share
 links), folders, feedback, sign-in events, invites to them, API keys, sessions,
-their place in access groups, and the member itself. Documents shared with them
+their place in access groups and team spaces, their own space, the files they
+attached or kept, their saved prompts, and the member itself. Documents shared with them
 by name keep that grant under their pseudonym (no one holds it: fails closed),
 and the search index's ACLs are re-tagged without them. Where they appear as who made or changed something
 (a provider they added, an invite they sent, a verified answer they own) the
@@ -74,7 +76,15 @@ def export_member(ws, username):
                                              "WHERE m.workspace = ? AND m.username = ?", ws, u),
                "shared_documents": _dicts(conn, "SELECT doc_key, created_at FROM doc_acl WHERE "
                                                 "workspace = ? AND principal_type = 'user' AND "
-                                                "lower(principal) = ?", ws, u)}
+                                                "lower(principal) = ?", ws, u),
+               "spaces": _dicts(conn, "SELECT s.name, s.kind, m.role, m.added_at FROM "
+                                      "space_members m JOIN spaces s ON s.id = m.space_id "
+                                      "WHERE m.workspace = ? AND m.username = ?", ws, u),
+               "files": _dicts(conn, "SELECT filename, kind, size, conversation_id, created_at "
+                                     "FROM attachments WHERE workspace = ? AND owner = ?", ws, u),
+               "prompts": _dicts(conn, "SELECT title, body, created_at, updated_at FROM "
+                                       "prompt_templates WHERE workspace = ? AND owner = ?",
+                                 ws, u)}
         out["member"]["groups"] = json.loads(out["member"]["groups"] or "[]")
         for c in _dicts(conn, "SELECT id, title, role_used, created_at, updated_at, deleted_at "
                               "FROM conversations WHERE workspace = ? AND owner = ? "
@@ -126,6 +136,14 @@ def erase_member(ws, username):
         run("document_access", "UPDATE OR REPLACE doc_acl SET principal = ? WHERE workspace = ? "
                                "AND principal_type = 'user' AND lower(principal) = ?",
             pseudonym, ws, u)
+        # SPACES: their own space and every file they attached or kept (cascade:
+        # the files' text), their saved prompts, their place in team spaces.
+        run("files", "DELETE FROM attachments WHERE workspace = ? AND owner = ?", ws, u)
+        run("spaces", "DELETE FROM spaces WHERE workspace = ? AND kind = 'personal' AND "
+                      "owner = ?", ws, u)
+        run("space_members", "DELETE FROM space_members WHERE workspace = ? AND username = ?",
+            ws, u)
+        run("prompts", "DELETE FROM prompt_templates WHERE workspace = ? AND owner = ?", ws, u)
         run("invites", "DELETE FROM invites WHERE workspace = ? AND lower(email) = ?", ws, u)
         run("api_keys", "DELETE FROM api_keys WHERE workspace = ? AND created_by = ?", ws, u)
         run("sessions", "DELETE FROM sessions WHERE username = ?", u)

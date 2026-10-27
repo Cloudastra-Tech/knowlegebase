@@ -142,15 +142,16 @@ def search(workspace, owner, levels, q, limit=20, visible=None):
 
 
 # ---- Conversations --------------------------------------------------------------------
-def create(workspace, owner, role_used, title=None, forked_from=None):
+def create(workspace, owner, role_used, title=None, forked_from=None, space_id=None):
+    """space_id: the space it's asked in (kb/services/spaces.py), None for none."""
     now = time.time()
     cid = _new_id()
     with _lock, _db() as conn:
         conn.execute("INSERT INTO conversations (id, workspace, owner, title, title_source, "
-                     "role_used, forked_from_message_id, created_at, updated_at) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "role_used, forked_from_message_id, space_id, created_at, updated_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (cid, workspace, owner, title, "user" if title else None, role_used,
-                      forked_from, now, now))
+                      forked_from, space_id, now, now))
         _index_title(conn, cid, title)
     return get(workspace, owner, cid)
 

@@ -458,6 +458,7 @@ export interface Source extends PassagePlace {
   access?: Access
   snippet?: string // the passage, as it was when the answer was written
   why?: SourceWhy
+  attachment?: "chat" | "space" // a file attached to the chat, or kept in your space
 }
 
 // GET /api/passages/{chunk_id}: a passage and its document's text around it.
@@ -535,6 +536,7 @@ export interface ConversationSummary {
   role_changed: boolean // viewed as another role now: the next question starts a new chat
   pinned: boolean
   folder_id: string | null
+  space_id?: string | null // asked in this space (its sources only)
   created_at: number
   updated_at: number
 }

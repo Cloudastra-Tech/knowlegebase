@@ -12,7 +12,7 @@ import access
 import conversations_store as store
 from kb.audit import audited
 from kb.deps import current_role, current_user, current_viewer, require_admin, require_hr, ws_of
-from kb.services import conversations
+from kb.services import conversations, spaces
 
 router = APIRouter()
 
@@ -21,6 +21,7 @@ COMMENT_CHARS = 1000
 
 class NewConversationIn(BaseModel):
     title: str | None = None
+    space_id: str | None = None      # asked in this space (one of the asker's)
 
 
 class ConversationEdit(BaseModel):
@@ -55,6 +56,7 @@ def _summary(conv, role):
     return {"id": conv["id"], "title": conv["title"] or "New chat",
             "role_used": conv["role_used"], "role_changed": conv["role_used"] != role,
             "pinned": conv.get("pinned_at") is not None, "folder_id": conv.get("folder_id"),
+            "space_id": conv.get("space_id"),
             "created_at": conv["created_at"], "updated_at": conv["updated_at"]}
 
 
@@ -99,10 +101,14 @@ def search_conversations(q: str = Query("", max_length=200), limit: int = Query(
 @router.post("/api/conversations")
 def create_conversation(body: NewConversationIn, user=Depends(current_user),
                         role=Depends(current_role), audit=audited("conversation.create")):
-    """A new, empty conversation under the role the app is viewed as now."""
+    """A new, empty conversation under the role the app is viewed as now, in one of
+    the asker's spaces or none."""
     title = " ".join((body.title or "").split())[:store.TITLE_CHARS] or None
-    conv = store.create(ws_of(user), user["username"], role, title)
-    audit.record("conversation", conv["id"], {"role": role}, user=user)
+    if body.space_id:
+        spaces.open_space(ws_of(user), user, body.space_id)  # 404 unless they're in it
+    conv = store.create(ws_of(user), user["username"], role, title, space_id=body.space_id)
+    audit.record("conversation", conv["id"], {"role": role, "space": bool(body.space_id)},
+                 user=user)
     return _summary(conv, role)
 
 
