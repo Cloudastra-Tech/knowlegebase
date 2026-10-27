@@ -29,12 +29,13 @@ import os
 import re
 import time
 
+import access
 import integrations_store
 import sync_store
 import workspaces
 from connectors import base, extract, registry
 from kb import jobs
-from kb.services import digests, indexing, webhooks
+from kb.services import digests, indexing, permissions, webhooks
 from kb.settings import env_int
 
 log = logging.getLogger("uvicorn.error")
@@ -89,6 +90,16 @@ def _remove(folder, name):
         pass
 
 
+class _Acls:
+    """{source id: its source acl} of a run's items, as Resolver.resolve reads them."""
+
+    def __init__(self, items):
+        self.items = items
+
+    def get(self, source_id, default=None):
+        return (self.items.get(source_id) or {}).get("acl", default)
+
+
 class _Run:
     """One sync run's bookkeeping."""
 
@@ -100,8 +111,11 @@ class _Run:
         self.counts = {"upserted": 0, "deleted": 0, "skipped": 0, "unchanged": 0}
         self.deletes = []
         self.cursor, self.full, self.limit = None, full, 0
-        # The level its files have now: the change feed keeps it with each change.
-        self.access = integrations_store.chunk_access_levels(ws).get(provider, "restricted")
+        # Who may read its files: the change feed keeps it with each change.
+        row = integrations_store.get(ws, provider)
+        self.policy = integrations_store.policy_of(row) if row else "restricted"
+        self.level = integrations_store.chunk_access_levels(ws).get(provider, "restricted")
+        self._resolver = None
 
     def key(self, name):
         return f"connectors/{self.provider}/{name}"
@@ -111,10 +125,18 @@ class _Run:
             _remove(self.folder, row["file_name"])
             self.changed.add(self.key(row["file_name"]))
 
-    def note(self, name, change, title, folder=None, version=None):
+    def acl_of(self, source_acl):
+        """An item's ACL as the index tags it (kb/services/permissions.py)."""
+        if self.policy != "source":
+            return access.level_acl(self.level)
+        if self._resolver is None:
+            self._resolver = permissions.Resolver(self.ws)
+        return self._resolver.resolve(source_acl, _Acls(self.items))[0]
+
+    def note(self, name, change, title, folder=None, version=None, source_acl=None):
         """The change feed's row for a digest (kb/services/digests.py)."""
         digests.record(self.ws, self.key(name), change, title=title, folder=folder,
-                       access_level=self.access, version=version)
+                       acl=self.acl_of(source_acl), version=version)
 
     def upsert(self, c, ctx, item):
         row = self.items.get(item.source_id)
@@ -164,7 +186,7 @@ class _Run:
         if not unchanged:
             _write(self.folder, name, body)
             self.note(name, "modified" if had_copy else "added", item.title, item.parent_id,
-                      digest)
+                      digest, item.acl)
         if not unchanged or (row.get("title"), row.get("url")) != (item.title, item.url):
             self.changed.add(self.key(name))
         sync_store.save_item(self.ws, self.provider, item.source_id, file_name=name,
@@ -179,7 +201,7 @@ class _Run:
         row = self.items.get(source_id)
         if row and row.get("file_name"):           # its copy is gone from search
             self.note(row["file_name"], "removed", title or row.get("title"),
-                      row.get("parent_id"))
+                      row.get("parent_id"), source_acl=row.get("acl"))
         self._drop_file(row)
         sync_store.save_item(self.ws, self.provider, source_id, file_name=None, version=None,
                              content_hash=None, skipped_reason=reason, title=title or None,
@@ -203,7 +225,8 @@ class _Run:
         for source_id in targets:
             row = self.items.pop(source_id)
             if row.get("file_name"):
-                self.note(row["file_name"], "removed", row.get("title"), row.get("parent_id"))
+                self.note(row["file_name"], "removed", row.get("title"), row.get("parent_id"),
+                          source_acl=row.get("acl"))
             self._drop_file(row)
             sync_store.delete_item(self.ws, self.provider, source_id)
         self.counts["deleted"] = len(targets)
@@ -275,6 +298,12 @@ def sync(ws, provider, full=False, confirm_deletes=False):
     integrations_store.update(ws, provider, status="connected", last_sync_at=now,
                               doc_count=synced, last_error=None)
     _reindex(ws, run)
+    # PERMISSION SYNC (kb/services/permissions.py): with the source policy, every
+    # file's ACL is worked out again from what the source says now and this
+    # workspace's members and groups, and the chunks whose ACL changed are
+    # re-tagged (no embedding), so permissions are at most one sync old.
+    if integrations_store.policy_of(integrations_store.get(ws, provider)) == "source":
+        indexing.schedule_retag(ws, provider)
     return {**run.counts, "held_deletes": held, "limit_reached": run.limit,
             "mode": "full" if run.full else "incremental", "reindexed": len(run.changed)}
 

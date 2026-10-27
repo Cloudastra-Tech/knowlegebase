@@ -344,6 +344,55 @@ def test_purge_leaves_nothing_of_the_workspace(client, places, jobs_paused):
                       ).status_code == 200
 
 
+def _teams_and_email(ws):
+    """A connected Teams bot (its secret sealed), a user, a thread and an activity
+    seen in its tenant, and email-in on with one email taken in."""
+    import conversations_store
+    import email_in_store
+    import teams_store
+    tenant = str(uuid.uuid4())
+    secret = f"teams-SECRET-{ws}"
+    admin, staff = f"admin@{ws}.example", f"staff@{ws}.example"
+    teams_store.set_custom_app(ws, str(uuid.uuid4()), tenant, secret, admin)
+    teams_store.remember_user(tenant, "aad-1", "29:aad-1", "https://smba.example/", "a:1p")
+    cid = conversations_store.create(ws, staff, "public", "From Teams")["id"]
+    teams_store.remember_thread(tenant, "a:1p", "aad-1", cid)
+    teams_store.first_time(f"act-{ws}", tenant)
+    email_in_store.set_enabled(ws, True, admin)
+    email_in_store.first_time(f"<m-{ws}@mail.example>", ws, staff)
+    return tenant, secret
+
+
+def test_purge_disconnects_teams_and_turns_email_in_off(client, places, jobs_paused):
+    import email_in_store
+    import teams_store
+    from kb.services import lifecycle
+    ws, bystander = new_workspace(), new_workspace()
+    tenant, secret = _teams_and_email(ws)
+    other_tenant, other_secret = _teams_and_email(bystander)
+    admin = login(client, f"admin@{ws}.example")
+    assert client.request("DELETE", "/api/admin/workspace", headers=admin,
+                          json={"confirm": f"Acme {ws}"}).status_code == 200
+    with db.connect() as conn:
+        conn.execute("UPDATE workspaces SET deleting_at = ? WHERE slug = ?",
+                     (time.time() - 1, ws))
+    lifecycle.purge_due()
+    run_jobs("workspace_purge")
+
+    (purged,) = [e for e in events(audit_store.PLATFORM)
+                 if e["action"] == "workspace.purged" and e["target_id"] == ws]
+    assert {"teams", "email_in"} <= set(purged["details"]["revoked"])
+    # Nothing left: not the bot, its secret or tenant, nor the rows kept by tenant
+    # (users, threads, activities: no workspace column of their own), nor its emails.
+    assert leftovers([ws, tenant, secret]) == []
+    assert teams_store.by_tenant(tenant) is None and teams_store.user(tenant, "aad-1") is None
+    assert not email_in_store.enabled(ws)
+    # The workspace next door still answers in Teams and by email.
+    assert teams_store.app_secret(bystander) == other_secret
+    assert teams_store.user(other_tenant, "aad-1") is not None
+    assert email_in_store.enabled(bystander)
+
+
 def test_a_cancelled_deletion_isnt_purged(client, places, jobs_paused):
     from kb.services import lifecycle
     ws = new_workspace()

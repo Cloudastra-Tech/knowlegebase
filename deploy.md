@@ -654,6 +654,181 @@ laptop a tunnel, e.g. `cloudflared tunnel --url http://localhost:5180` with
     app from Slack's side (*Manage apps → Remove app*): the card shows **Removed
     in Slack**, and Activity has `slack.uninstall` by `slack` (system).
 
+## Microsoft Teams bot
+
+People can ask in Teams: a 1:1 chat with the app (answered with their own role),
+or `@Knowledge` in a channel or group chat (answered in the thread from **public**
+documents only, with a note saying so). Answers are Adaptive Cards with numbered
+source links and 👍 / 👎 that land in the same feedback as the web chat's. When a
+search as an HR / Admin asker finds restricted passages for a channel question,
+the full answer comes to them in their 1:1 chat with the app (a proactive message;
+Teams allows it only when the app is installed for them personally, otherwise
+nothing more is sent). Nothing in the channel says restricted sources exist.
+
+**Who gets answered.** The activity's Microsoft Entra tenant must be the one the
+workspace connected. The sender's email or sign-in name (UPN), from the Bot
+Connector's member lookup, is the member they are, with their role as it is now.
+People with no account are refused (default) or answered from public documents
+only (the card's setting); turned-off members and guests from other tenants are
+never answered.
+
+**Requests** carry the Bot Connector's JWT, checked before anything else
+([connector authentication](https://learn.microsoft.com/en-us/azure/bot-service/rest-api/bot-framework-rest-connector-authentication)):
+signed by a key from `https://login.botframework.com/v1/.well-known/keys` endorsed
+for `msteams` (else 403), issuer `https://api.botframework.com`, audience the bot's
+App ID, unexpired with 5 minutes' skew, and its `serviceUrl` claim equal to the
+activity's. Keys are cached a day. Each answer is a job (`teams`); questions are
+in the question log (surface `teams`) and the audit log (`teams.ask`, its length,
+never its text).
+
+**Which bot.** Azure stopped creating multi-tenant bots after 31 July 2025
+([bot registration](https://learn.microsoft.com/en-us/azure/bot-service/bot-service-quickstart-registration)),
+so each customer normally registers their **own single-tenant Azure Bot** and pastes
+it on the card. A host that already has a multi-tenant bot can offer it to every
+workspace with `TEAMS_APP_ID` / `TEAMS_APP_PASSWORD` (endpoint
+`PUBLIC_URL/api/teams/messages`); the admin then only names their tenant ID.
+
+### Checking Teams by hand (no Microsoft tenant here: not run live)
+
+Needs a Microsoft 365 tenant where you may register apps and upload custom Teams
+apps, an Azure subscription, and this server reachable over https.
+
+1. **Register the bot.** Azure portal → *Create a resource* → **Azure Bot**. Type of
+   App: **Single Tenant**; creation type: *Create new Microsoft App ID*. Once made,
+   *Configuration* shows the **Microsoft App ID** and **App Tenant ID**; *Manage
+   Password* → *New client secret* → copy its **Value**.
+2. **Connect it here.** As an admin, Integrations → Microsoft Teams → *Connect your
+   bot* → paste the App ID, App Tenant ID and secret value → *Save*. The card says
+   **Waiting for Teams**; Activity shows `teams.app` with the App ID and tenant, no
+   secret. Open *Messaging endpoint for Azure* and copy it
+   (`https://<host>/api/teams/apps/<key>/messages`).
+3. **Point the bot at us.** Azure Bot → *Configuration* → *Messaging endpoint*: paste
+   it → *Apply*. *Channels* → add **Microsoft Teams** (accept the terms) → *Apply*.
+4. **Upload the Teams app.** On the card, *Download Teams app* (a zip:
+   `manifest.json` with the bot's App ID and this host, and the two icons). Teams
+   admin center → *Teams apps* → *Manage apps* → *Upload new app* → the zip (or, if
+   custom-app upload is allowed for you, Teams → *Apps* → *Manage your apps* →
+   *Upload an app*). Allow it in the org's app permission policy if needed.
+5. **1:1 chat.** In Teams, open the app → *Chat* → ask something from your documents.
+   "Looking that up…" appears, then becomes the card: the answer with `[1]` links, a
+   Sources list, 👍 / 👎 and *Open in the app*. The card here now says **Connected**.
+   As an HR / Admin member, ask about a restricted document: answered from it.
+6. **A channel.** Add the app to a team, then in a channel `@Knowledge <question>` as
+   a **public** member: answered in the thread from public documents, with the
+   "Answered from documents everyone here may see" note; no 1:1 message.
+7. **The private answer.** As an **HR / Admin** member who has the app installed
+   personally (step 5), `@Knowledge` a restricted question in the channel: the
+   thread gets the public-only card; your 1:1 chat with the app gets "You asked in a
+   channel: …" and the full answer. Remove the app from your personal apps and ask
+   again: only the channel answer (the server log says Teams refused the 1:1 message).
+8. **Feedback.** Click 👎 on a channel answer as another member: Teams shows "Thanks
+   for telling us…". Insights → Feedback lists it; Activity shows `feedback.set`
+   with surface `teams`.
+9. **Who's refused.** A user with no account here gets a polite refusal. Switch the
+   card to *Answer from public documents only*: answered, public-only. Turn a member
+   off in Members: refused.
+10. **A forged request.** `curl -X POST https://<host>/api/teams/apps/<key>/messages
+    -H 'Content-Type: application/json' -d '{}'` → 401. Insights → *Where questions
+    come from* lists Microsoft Teams.
+11. **Disconnect.** *Disconnect* on the card: the secret and tenant are forgotten and
+    Teams messages get 401. Remove the app in the Teams admin center too.
+
+## Email-in
+
+Members email `ask@<workspace>.<EMAIL_IN_DOMAIN>` and get a cited answer as a reply
+in the same thread; a reply to it continues the same chat. Off per workspace until
+an admin turns it on (Integrations → Email). Postmark's inbound webhook is the
+provider (`/api/email-in/postmark`); the code has a provider interface for SES/SNS
+later. Only an **enabled member of that workspace** whose email passed Postmark's
+SPF check (`Received-SPF: pass`) **and** carries a DKIM signature aligned with the
+From domain (`DKIM_VALID_AU` in Postmark's `X-Spam-Tests`) is answered; Postmark
+documents no DMARC verdict
+([parse an email](https://postmarkapp.com/developer/user-guide/inbound/parse-an-email)).
+Everything else is dropped **without a reply** (no backscatter to spoofed
+senders): automatic mail (`Auto-Submitted` other than `no`, RFC 3834),
+`Precedence: bulk/list/junk`, any `List-*` header, `X-Auto-Response-Suppress`, a
+null Return-Path, our own addresses, mailer-daemon-like senders, a Message-ID
+already taken in, and senders over `RATE_LIMIT_EMAIL_USER` a minute. Replies carry
+`Auto-Submitted: auto-replied`, In-Reply-To and References. Questions are logged
+with surface `email`.
+
+### Checking email-in by hand (no mail provider here: not run live)
+
+1. **DNS.** Pick a mail domain, e.g. `kb.example.com`. Add MX `*.kb.example.com` →
+   `inbound.postmarkapp.com`, priority 10 (and MX `kb.example.com` → the same, for
+   the `ask+<workspace>@kb.example.com` form)
+   ([inbound domain forwarding](https://postmarkapp.com/developer/user-guide/inbound/inbound-domain-forwarding)).
+2. **Postmark.** In the server's *Default Inbound Stream* → *Settings*: *Inbound
+   domain* `*.kb.example.com`; *Webhook URL*
+   `https://<USER>:<PASSWORD>@<host>/api/email-in/postmark` (Postmark signs nothing,
+   so the Basic credentials are the check:
+   [webhooks](https://postmarkapp.com/developer/webhooks/webhooks-overview)).
+   Optionally allow only Postmark's webhook IPs at the firewall
+   ([IPs](https://postmarkapp.com/support/article/800-ips-for-firewalls#webhooks)).
+3. **This server.** Set `EMAIL_IN_DOMAIN`, `EMAIL_IN_WEBHOOK_USER` and
+   `EMAIL_IN_WEBHOOK_PASSWORD` (long random values, the same as in the URL), a real
+   `MAIL_BACKEND` (e.g. `postmark` with `POSTMARK_TOKEN` and a verified `MAIL_FROM`),
+   optionally `EMAIL_IN_FROM`; restart.
+4. **Turn it on.** As an admin, Integrations → Email → *Answer emails*; copy the
+   address.
+5. **Test.**
+   - From a member's real mailbox (a domain with SPF and DKIM), email the address:
+     "Re: <subject>" with numbered sources arrives within a minute.
+   - Reply with a follow-up: it continues the same chat (check the web app). If
+     Postmark replaces the Message-ID we set, follow-ups are still answered, in a
+     new chat: note it.
+   - From a non-member, or with email-in off: no reply; `email_in_messages` and the
+     log line "Email-in: dropped …" say why.
+   - Postmark's *Retry* on a message: no second answer.
+   - Break the webhook password: Postmark's activity shows 403 and stops retrying.
+
+## Browser extension
+
+`extension/` (its README has the details): a Chrome / Edge side panel. Build it
+with `cd frontend && npm run build:extension` (→ `extension/dist`) and load it
+unpacked, or publish that folder to the Chrome Web Store / Edge Add-ons. Then set
+`EXTENSION_ORIGINS=chrome-extension://<its id>` (comma-separate several: a store
+build and a dev build have different ids) and restart. Until it's set the
+extension can't be connected and `/api/v1` sends no CORS headers. People connect
+it from the extension (Connect → confirm in the app); each connection is a
+personal API key with the `ask` scope for 90 days, listed under API keys and
+Integrations → Browser extension, and revoked by Disconnect. Questions from it are
+logged with surface `extension`.
+
+## Installing as an app (PWA)
+
+The site is installable (Chrome / Edge: the install icon in the address bar;
+Android: *Add to Home screen*; iOS Safari: *Share → Add to Home Screen*). It needs
+https (or localhost). `manifest.webmanifest` and `sw.js` are served from the site
+root with `Cache-Control: no-cache`, so a new service worker is picked up on the
+next visit. The service worker caches the app shell only and never touches
+`/api/`, `/mcp` or `/scim/`.
+
+## Digests and outbound webhooks
+
+**Digests** go by the mailer (`MAIL_BACKEND`, above) or as a Slack DM from the
+workspace's Slack app (the member is found by email: `users.lookupByEmail`, scope
+`users:read.email`, already in the manifest). Links in them use `PUBLIC_URL`. The
+summaries use `FAST_MODEL`, once per version of a document.
+
+**Webhooks** are added by a workspace's admins (Access → Webhooks). Addresses must
+be `https://` and resolve only to public IPs. To try one against a receiver on
+this machine, list it like a connector's test site:
+`CONNECTOR_ALLOW_PRIVATE_HOSTS=127.0.0.1:9000` (plain http is then allowed for it).
+A receiver checks each request:
+
+```python
+import hashlib, hmac, time
+def valid(secret, timestamp, body: bytes, signature):          # X-KB-Timestamp, X-KB-Signature
+    if abs(time.time() - int(timestamp)) > 300:
+        return False
+    mac = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256)
+    return hmac.compare_digest("v1=" + mac.hexdigest(), signature)
+```
+
+It should answer 2xx quickly; anything else is retried for 24 hours, and
+`X-KB-Delivery` repeats on a retry, so receivers can drop duplicates.
+
 ## Health checks and error tracking
 
 - `GET /api/health` — the process is up. Always 200 while it runs; the Docker

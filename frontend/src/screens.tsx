@@ -46,6 +46,9 @@ const KnowledgeView = lazy(() =>
 const SourceSheet = lazy(() =>
   import("@/components/citations").then((m) => ({ default: m.SourceSheet })),
 )
+const ExtensionConnect = lazy(() =>
+  import("@/components/extension-connect").then((m) => ({ default: m.ExtensionConnect })),
+)
 const SharedView = lazy(() =>
   import("@/components/shared-view").then((m) => ({ default: m.SharedView })),
 )
@@ -256,6 +259,17 @@ export function KnowledgeScreen() {
         key={activeRole}
         onOpenDraft={(id) => navigate(`/documents?draft=${id}`)}
       />
+    </Screen>
+  )
+}
+
+// /extension/connect?redirect=...: the browser extension's sign-in (signed in first,
+// like any screen here); Connect sends it back a one-time code.
+export function ExtensionConnectScreen() {
+  const [params] = useSearchParams()
+  return (
+    <Screen>
+      <ExtensionConnect redirect={params.get("redirect") ?? ""} />
     </Screen>
   )
 }

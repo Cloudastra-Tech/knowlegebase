@@ -16,7 +16,7 @@ from kb.deps import ws_of
 from kb.settings import env_int
 
 LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20,
-          "signup": 10, "invite": 30, "unsubscribe": 30}
+          "signup": 10, "invite": 30, "extension_exchange": 20, "unsubscribe": 30}
 ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 # Limits on what a signed-in person can make the server do (it costs OpenAI calls
 # or indexing time), per minute: (per person, per workspace). Each can be set in
@@ -122,6 +122,27 @@ def slack_limit(team_id, slack_user):
     return True
 
 
+# Questions from Teams (kb/services/teams.py) and by email (kb/services/email_in.py),
+# per minute: (per person, per Teams tenant / workspace). RATE_LIMIT_TEAMS_USER,
+# RATE_LIMIT_TEAMS_SCOPE, RATE_LIMIT_EMAIL_USER, RATE_LIMIT_EMAIL_SCOPE. Over them a
+# request is acknowledged and dropped (an email isn't answered), so a flood can't
+# fill the job queue; an answered question also counts as one of its person's "chat".
+INBOUND_LIMITS = {"teams": (30, 600), "email": (5, 60)}
+
+
+def inbound_limit(kind, scope, who):
+    """True if one more request of `kind` ("teams", "email") from `who`, in `scope`
+    (a tenant, a workspace), may be taken in now."""
+    if not rate_limits_on():
+        return True
+    per_user, per_scope = (env_int(f"RATE_LIMIT_{kind.upper()}_{level}", default)
+                           for level, default in zip(("USER", "SCOPE"), INBOUND_LIMITS[kind]))
+    try:
+        _take([((kind, "user", scope, who), per_user, ""),
+               ((kind, "scope", scope), per_scope, "")])
+    except HTTPException:
+        return False
+    return True
 def reset_workspace(workspace, usernames=(), key_ids=()):
     """Forget the counts of a workspace, its people and its API keys (an operator's
     "reset rate limits"; this process only). Returns how many counters went."""

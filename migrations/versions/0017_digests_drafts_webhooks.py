@@ -1,7 +1,7 @@
 """digests, drafts and outbound webhooks
 
-Revision ID: 0016
-Revises: 0013
+Revision ID: 0017
+Revises: 0016
 Create Date: 2026-10-27
 
 New tables only (platform.md PL-30, PL-31, PL-20); nothing existing changes. Every
@@ -10,7 +10,7 @@ deletes its rows like any other table's.
 
     doc_changes           what changed in a workspace's documents: a document
                           added, modified or removed by an upload, an edit or a
-                          connector sync, with its title and the access level it had
+                          connector sync, with its title and the ACL it had
     digest_subscriptions  who gets a digest of those changes, how often, of which
                           sources or folders, by email or Slack DM
     doc_summaries         the short summary of one version of a document (a
@@ -25,8 +25,8 @@ deletes its rows like any other table's.
 
 from alembic import op
 
-revision = "0016"
-down_revision = "0013"
+revision = "0017"
+down_revision = "0016"
 branch_labels = None
 depends_on = None
 
@@ -40,6 +40,7 @@ TABLES = (
         title        TEXT,
         change       TEXT NOT NULL CHECK (change IN ('added', 'modified', 'removed')),
         access       TEXT NOT NULL,         -- its chunks' access tag when it changed
+        acl          TEXT NOT NULL DEFAULT '["group:hr"]',  -- JSON: its ACL then (access.py)
         version      TEXT,                  -- a hash of its content then (none: removed)
         actor        TEXT,                  -- who uploaded or edited it (none: a sync)
         at           REAL NOT NULL)""",
@@ -82,6 +83,8 @@ TABLES = (
                      CHECK (status IN ('generating', 'draft', 'failed', 'published')),
         sources      TEXT NOT NULL DEFAULT '[]',   -- JSON: the documents it was written from
         max_access   TEXT NOT NULL DEFAULT 'restricted',  -- the highest of their levels
+        audience     TEXT NOT NULL DEFAULT '[["nobody"]]',  -- JSON: their ACLs as clauses
+                                            -- (access.clauses): who may read the draft
         error        TEXT,
         created_by   TEXT NOT NULL,
         created_at   REAL NOT NULL,

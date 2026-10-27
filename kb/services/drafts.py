@@ -11,29 +11,36 @@ Drafts written by the assistant (platform.md PL-31), for HR and admins to review
         "TO CONFIRM:"
 
 Writing takes a few model calls, so it runs as a `draft` job; the draft shows as
-"generating" until then. The requester's role is looked up again when the job
-runs, and every document and passage is checked with access.may_read for them.
+"generating" until then. The requester's principals (groups_store.principals_for)
+are looked up again when the job runs, and only documents and passages whose ACL
+they meet are read.
 
-A draft is never searchable and never published by itself (drafts_store.py): HR
-edits it on the Documents screen, then publishes it at an access level no lower
-than the most restricted document it was written from. Publishing copies it into
-public/ or restricted/ with its sources list, indexes it, and notes it in the
-change feed. Every step is audited by the endpoint that asks for it.
+A draft is never searchable and never published by itself (drafts_store.py). Its
+AUDIENCE is its sources' ACLs as clauses (access.clauses): only someone who meets
+every one may open it, and it may only be published to principals who do too
+(covers()): everyone only if every source was for everyone, a group only if it's
+in every source's ACL, a member only if they may read every source. HR edits it on
+the Documents screen, then publishes it with the documents' own access picker:
+it's copied into public/ or restricted/ with its sources list and its ACL
+(doc_acl), indexed, and noted in the change feed. Every step is audited by the
+endpoint that asks for it.
 """
 
 import logging
 import os
 import time
 
+import access
 import docs_store
 import drafts_store
+import groups_store
 import integrations_store
 import members_store
 import question_log_store
 import sync_store
 import workspaces
 from kb import jobs
-from kb.services import access, digests, indexing, insights, retrieval, summaries
+from kb.services import audience, digests, indexing, insights, retrieval, summaries
 
 log = logging.getLogger("uvicorn.error")
 
@@ -48,18 +55,18 @@ class Empty(Exception):
 
 
 # ---- What a scope holds ---------------------------------------------------------------
-def scope_docs(ws, member, provider, folder=None):
-    """The documents of a source (and one of its folders) that `member` may read,
-    newest first: [{doc_key, title, provider, url, access, modified}]."""
+def scope_docs(ws, reader, provider, folder=None):
+    """The documents of a source (and one of its folders) that `reader` (a Viewer
+    or a member) may read, newest first: [{doc_key, title, provider, url, access,
+    acl, modified}]."""
     root = workspaces.docs_root(ws)
     found = []
-    if provider == access.UPLOADS:
+    if provider == audience.UPLOADS:
         for d in docs_store.list_docs(root):
             key = f"{d['access']}/{d['name']}"
             if folder and d["access"] != folder:
                 continue
             found.append({"doc_key": key, "title": d["name"], "url": None,
-                          "access": d["access"], "acl": None,
                           "modified": os.path.getmtime(d["path"])})
     else:
         level = integrations_store.chunk_access_levels(ws).get(provider)
@@ -74,11 +81,13 @@ def scope_docs(ws, member, provider, folder=None):
                 continue
             found.append({"doc_key": f"connectors/{provider}/{name}",
                           "title": item.get("title") or name, "url": item.get("url"),
-                          "access": level, "acl": item.get("acl"),
                           "modified": os.path.getmtime(os.path.join(conn_dir, name))})
-    label = digests.source_label(provider)
-    out = [{**d, "provider": label} for d in found
-           if access.may_read(member, {**d, "provider": provider})]
+    label, acls = digests.source_label(provider), audience.Acls(ws)
+    out = []
+    for d in found:
+        acl = acls.now(d["doc_key"])
+        if audience.may_read(reader, acl):
+            out.append({**d, "provider": label, "acl": acl, "access": access.level_of_acl(acl)})
     out.sort(key=lambda d: -d["modified"])
     return out
 
@@ -87,13 +96,13 @@ def scope_label(provider, folder=None):
     label = digests.source_label(provider)
     if not folder:
         return f"Everything from {label}"
-    if provider == access.UPLOADS:
-        return f"{label}: {'HR only' if folder == 'restricted' else 'public'} files"
+    if provider == audience.UPLOADS:
+        return f"{label}: {'limited' if folder == 'restricted' else 'everyone'} files"
     return f"{label}: folder {folder}"
 
 
 def _source(d):
-    return {k: d.get(k) for k in ("doc_key", "title", "provider", "url", "access")}
+    return {k: d.get(k) for k in ("doc_key", "title", "provider", "url", "access", "acl")}
 
 
 # ---- Starting one ---------------------------------------------------------------------
@@ -128,9 +137,9 @@ def find_gap(ws, role, gap_id):
 
 
 # ---- Writing one (the job) ------------------------------------------------------------
-def write_summary(ws, member, draft):
+def write_summary(ws, reader, draft):
     scope = draft["scope"]
-    docs = scope_docs(ws, member, scope.get("provider"), scope.get("folder"))
+    docs = scope_docs(ws, reader, scope.get("provider"), scope.get("folder"))
     if not docs:
         raise Empty("There are no documents here you can read.")
     summarised = []
@@ -147,28 +156,29 @@ def write_summary(ws, member, draft):
     return summaries.summarise_folder(label, summarised), sources
 
 
-def write_gap(ws, member, draft):
-    role = access.access_role(member)
-    gap = find_gap(ws, role, draft["scope"].get("gap_id"))
+def write_gap(ws, reader, draft):
+    gap = find_gap(ws, reader.role, draft["scope"].get("gap_id"))
     if not gap:
         raise Empty("This content gap is gone (gaps are worked out again weekly).")
     queries = gap["samples"][:MAX_GAP_QUERIES] or [gap["label"] or ""]
     passages, sources, seen = [], [], set()
+    acls = audience.Acls(ws)
     for q in [q for q in queries if q.strip()]:
         try:
-            found = retrieval.search(ws, role, q, k=PASSAGES_PER_QUERY)
+            found = retrieval.search(ws, reader, q, k=PASSAGES_PER_QUERY)
         except retrieval.Refused:
             continue
         for p in found:
-            if p["chunk_id"] in seen or not access.may_read(member, p):
+            key = p.get("doc_key") or p.get("doc_id")
+            acl = acls.now(key)
+            if p["chunk_id"] in seen or not audience.may_read(reader, acl):
                 continue
             seen.add(p["chunk_id"])
-            key = p.get("doc_key") or p.get("doc_id")
             index = next((n for n, s in enumerate(sources, 1) if s["doc_key"] == key), None)
             if index is None:
                 sources.append({"doc_key": key, "title": p.get("title"),
                                 "provider": p.get("provider"), "url": p.get("url"),
-                                "access": p.get("access") or "restricted"})
+                                "access": access.level_of_acl(acl), "acl": acl})
                 index = len(sources)
             passages.append({"text": p["text"], "source": index, "title": p.get("title")})
             if len(passages) >= MAX_PASSAGES:
@@ -186,13 +196,14 @@ def run_draft(job):
     if not draft or draft["status"] != "generating":
         return {"skipped": "not waiting"}
     member = members_store.get(draft["created_by"])
-    if not member or member["workspace"] != ws or access.access_role(member) is None:
+    reader = audience.viewer_of(member) if member and member["workspace"] == ws else None
+    if reader is None:
         drafts_store.update(ws, draft["id"], status="failed",
                             error="Whoever asked for it can't any more.")
         return {"failed": "requester"}
     try:
         text, sources = (write_summary if draft["kind"] == "summary" else write_gap)(
-            ws, member, draft)
+            ws, reader, draft)
     except Empty as e:
         drafts_store.update(ws, draft["id"], status="failed", error=str(e))
         return {"failed": str(e)}
@@ -204,23 +215,42 @@ def run_draft(job):
                             error="It couldn't be written. Try again later.")
         return {"failed": type(e).__name__}
     drafts_store.write_text(ws, draft["id"], text)
-    level = access.strictest(*(s["access"] or "restricted" for s in sources)) if sources \
-        else "public"
-    drafts_store.update(ws, draft["id"], status="draft", sources=sources, max_access=level,
-                        error=None)
+    found = access.clauses([s["acl"] for s in sources])
+    drafts_store.update(ws, draft["id"], status="draft", sources=sources, audience=found,
+                        max_access=access.level_of(found), error=None)
     return {"draft": draft["id"], "sources": len(sources)}
 
 
 # ---- Reading, editing, publishing -----------------------------------------------------
-def may_see(user, draft):
-    """A draft is for HR who may read everything it was written from."""
-    return access.may_read(user, {"access": draft["max_access"]})
+def may_see(viewer, draft):
+    """A draft is for HR who may read everything it was written from. One being
+    written, or that failed, holds no text yet: any HR may see it's there."""
+    if draft["status"] in ("generating", "failed"):
+        return True
+    return access.sees(viewer, draft["audience"])
+
+
+def covers(ws, acl, found):
+    """True if everyone `acl` names may read a draft with audience `found` (see the
+    top of this file): never wider than its sources."""
+    for p in acl:
+        if p == access.EVERYONE:
+            if found:
+                return False
+        elif p.startswith("user:"):
+            member = members_store.get(p.split(":", 1)[1])
+            reader = audience.viewer_of(member) if member and member["workspace"] == ws else None
+            if reader is None or not access.sees(reader, found):
+                return False
+        elif not all(p in clause for clause in found):
+            return False
+    return True
 
 
 def view(draft, content=None):
     out = {k: draft[k] for k in ("id", "kind", "title", "scope", "status", "sources",
-                                 "max_access", "error", "created_by", "created_at",
-                                 "updated_at", "published_as", "published_at")}
+                                 "max_access", "audience", "error", "created_by",
+                                 "created_at", "updated_at", "published_as", "published_at")}
     if content is not None:
         out["content"] = content
     return out
@@ -232,16 +262,17 @@ class PublishError(Exception):
         self.status, self.message = status, message
 
 
-def publish(ws, user, draft, level, name):
-    """Copy the draft into the documents at `level` as `name` (with its sources),
-    index it and mark it published. Raises PublishError."""
+def publish(ws, user, draft, acl, name):
+    """Copy the draft into the documents as `name` (with its sources), for `acl`
+    (checked by the caller: permissions.check_upload_acl), index it and mark it
+    published. Raises PublishError."""
     if draft["status"] != "draft":
         raise PublishError(409, "Only a finished draft can be published.")
-    if level not in docs_store.ACCESS_LEVELS:
-        raise PublishError(400, "Access must be public or restricted.")
-    if access.strictest(level, draft["max_access"]) != level:
-        raise PublishError(400, "This draft was written from HR-only documents, so it can "
-                                "only be published as HR only.")
+    if not covers(ws, acl, draft["audience"]):
+        raise PublishError(400, "Some of the documents it was written from aren't for "
+                                "everyone you picked. Pick only people who can read all of "
+                                "its sources.")
+    level = "public" if access.EVERYONE in acl else "restricted"
     name = docs_store.safe_name(name or draft["title"])
     if not name.endswith(".txt"):
         name = os.path.splitext(name)[0] + ".txt"
@@ -254,7 +285,9 @@ def publish(ws, user, draft, level, name):
     text = summaries.with_sources(drafts_store.read_text(ws, draft["id"]), draft["sources"])
     docs_store.save(level, name, text.encode("utf-8"), root)
     key = f"{level}/{name}"
-    digests.record(ws, key, "added", title=name, actor=user["username"], access_level=level)
+    groups_store.set_doc_acl(ws, key, None if acl == access.level_acl(level) else acl,
+                             user["username"])
+    digests.record(ws, key, "added", title=name, actor=user["username"], acl=acl)
     indexing.schedule_index(ws, docs=[key])
     drafts_store.remove_text(ws, draft["id"])
     return drafts_store.update(ws, draft["id"], status="published", published_as=key,

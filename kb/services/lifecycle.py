@@ -22,8 +22,10 @@ later unless cancelled. Meanwhile only admins sign in, the admins are emailed,
 and the request is in the workspace's audit log and the operators' (PLATFORM).
 
 PURGE (job "workspace_purge", queued by the hourly "workspace_purge_due"):
-    1. each connector's disconnect (revoking its tokens at the provider), and
-       the Slack app uninstalled (its bot token revoked)
+    1. each connector's disconnect (revoking its tokens at the provider), the
+       Slack app uninstalled (its bot token revoked), the Teams bot disconnected
+       (its sealed secret, tenant, and the users and threads seen there
+       forgotten) and email-in turned off and forgotten
     2. API keys and SCIM tokens revoked
     3. its search index collections dropped, its documents and exports deleted
     4. its data keys deleted: anything still sealed under them, in a backup say,
@@ -339,7 +341,8 @@ def run_purge(job):
 
 
 def _revoke_outside(ws):
-    """Revoke what the providers let us: each connector's tokens, the Slack bot."""
+    """Revoke what the providers let us: each connector's tokens, the Slack bot;
+    and stop the other ways in: the Teams bot, email-in."""
     done = []
     for row in integrations_store.list_for(ws):
         c = registry.CONNECTORS.get(row["provider"])
@@ -359,6 +362,13 @@ def _revoke_outside(ws):
             done.append("slack")
         except Exception:
             log.exception("Purge: couldn't uninstall Slack for workspace %s", ws)
+    from kb.services import email_in, teams
+    for name, step in (("teams", teams.uninstall), ("email_in", email_in.teardown)):
+        try:
+            if step(ws):
+                done.append(name)
+        except Exception:
+            log.exception("Purge: couldn't stop %s for workspace %s", name, ws)
     return done
 
 

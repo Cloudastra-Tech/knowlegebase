@@ -24,7 +24,9 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+import access
 import api_keys_store
+import groups_store
 import lifecycle_store
 import members_store
 import workspaces
@@ -50,12 +52,20 @@ class Principal:
     name: str
     member_role: str           # their role now: public / hr / admin (a service key: public)
     scopes: tuple
-    surface: str               # api / mcp
+    surface: str               # api / mcp, or extension: a key the browser extension was given
 
     @property
     def role(self):
         """The access role it searches and reads as (rag.ROLE_ACCESS)."""
         return "hr" if self.member_role in members_store.STAFF_ROLES else "public"
+
+    @property
+    def viewer(self):
+        """What it may read (access.py): a personal key, its person's principals
+        now; a service key, everyone's content only."""
+        if self.kind != "personal":
+            return access.for_role("public")
+        return groups_store.principals_for(self.workspace, self.username, self.role)
 
     @property
     def user(self):
@@ -106,6 +116,8 @@ def authenticate(authorization, surface, scope=None):
         if not alive or member["role"] != "admin":
             raise KeyRefused(401, INVALID)
         username, name, role = f"key:{key['prefix']}", key["name"], "public"
+    if surface == "api" and key.get("client") == "extension":
+        surface = "extension"           # its questions are logged and audited as the extension's
     principal = Principal(key["id"], key["prefix"], key["kind"], ws, username, name, role,
                           tuple(key["scopes"]), surface)
     if scope and not principal.may(scope):

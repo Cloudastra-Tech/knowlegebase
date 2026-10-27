@@ -27,19 +27,20 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { AccessPicker, EVERYONE, HR_GROUP } from "@/components/access-picker"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import { drafts, type Access, type Draft } from "@/lib/api"
+import { drafts, type Draft } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 // The assistant's drafts on the Documents screen (platform.md PL-31): a source's or
 // folder's summary, or a doc for a content gap. HR reviews and edits one here, then
 // publishes it as a document (it's indexed then) or deletes it. A draft is never
-// searchable, and can't be published to more people than its sources are for.
+// searchable, and can't be published to more people than its sources are for: the
+// server checks the picked groups and people against every source's ACL.
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const STATUS: Record<Draft["status"], string> = {
@@ -96,18 +97,26 @@ function fileName(title: string) {
   return `${stem || "draft"}.txt`
 }
 
+// Who the published document is for, to start with: everyone when every source is;
+// else the principals every source shares (often the HR group).
+function startingAcl(draft: Draft) {
+  if (draft.audience.length === 0) return [EVERYONE]
+  const shared = draft.audience.reduce((acc, clause) => acc.filter((p) => clause.includes(p)))
+  return shared.length ? shared : [HR_GROUP]
+}
+
 function PublishDialog({ draft, onPublished }: { draft: Draft; onPublished: (key: string) => void }) {
-  const restricted = draft.max_access === "restricted"
+  const limited = draft.audience.length > 0
   const [open, setOpen] = useState(false)
   const [name, setName] = useState(() => fileName(draft.title))
-  const [access, setAccess] = useState<Access>(restricted ? "restricted" : "public")
+  const [acl, setAcl] = useState<string[]>(() => startingAcl(draft))
   const [saving, setSaving] = useState(false)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
     try {
-      const done = await drafts.publish(draft.id, access, name)
+      const done = await drafts.publish(draft.id, acl, name)
       toast.success(`Published as ${done.published_as} · updating the index`)
       setOpen(false)
       onPublished(done.published_as ?? "")
@@ -146,24 +155,12 @@ function PublishDialog({ draft, onPublished }: { draft: Draft; onPublished: (key
               />
             </Field>
             <Field>
-              <FieldLabel>Who can see it?</FieldLabel>
-              <RadioGroup value={access} onValueChange={(v) => setAccess(v as Access)} className="gap-3">
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="public" id="publish-public" disabled={restricted} />
-                  <FieldLabel htmlFor="publish-public" className="font-normal">
-                    Public (everyone)
-                  </FieldLabel>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="restricted" id="publish-restricted" />
-                  <FieldLabel htmlFor="publish-restricted" className="font-normal">
-                    Restricted (HR only)
-                  </FieldLabel>
-                </div>
-              </RadioGroup>
-              {restricted && (
+              <FieldLabel htmlFor="publish-access">Who can see it</FieldLabel>
+              <AccessPicker id="publish-access" value={acl} onChange={setAcl} />
+              {limited && (
                 <FieldDescription>
-                  It was written from HR-only documents, so it can only be published as HR only.
+                  Some of its sources aren't for everyone, so pick only groups and people who
+                  can read all of them.
                 </FieldDescription>
               )}
             </Field>
@@ -172,7 +169,7 @@ function PublishDialog({ draft, onPublished }: { draft: Draft; onPublished: (key
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || !name.trim()}>
+            <Button type="submit" disabled={saving || !name.trim() || !acl.length}>
               {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
               Publish
             </Button>
@@ -356,7 +353,7 @@ function LoadedDraft({
                     <span className="truncate">{s.title ?? s.doc_key}</span>
                   )}
                   {s.access === "restricted" ? (
-                    <Lock className="size-3.5 shrink-0 text-destructive" aria-label="HR only" />
+                    <Lock className="size-3.5 shrink-0 text-destructive" aria-label="Limited" />
                   ) : (
                     <Globe className="size-3.5 shrink-0 text-muted-foreground" aria-label="Public" />
                   )}

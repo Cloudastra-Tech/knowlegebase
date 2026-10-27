@@ -128,13 +128,13 @@ def test_publishing_indexes_it_at_no_lower_level_than_its_sources(setup):
     d = summarise(setup, provider="uploads")
     publish = lambda **b: setup.client.post(f"/api/drafts/{d['id']}/publish",  # noqa: E731
                                             headers=setup.admin, json=b)
-    r = publish(access="public", name="Overview")
-    assert r.status_code == 400 and "HR only" in r.json()["detail"]
+    r = publish(acl=["everyone"], name="Overview")
+    assert r.status_code == 400 and "aren't for" in r.json()["detail"]
     # An edit first (on the Documents screen), that drops the sources list by mistake.
     r = setup.client.patch(f"/api/drafts/{d['id']}", headers=setup.admin,
                            json={"content": "Overview\nEdited by HR [1].", "title": "Overview"})
     assert r.status_code == 200
-    r = publish(access="restricted", name="Overview")
+    r = publish(acl=["group:hr"], name="Overview")
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "published"
     assert r.json()["published_as"] == "restricted/Overview.txt"
@@ -149,17 +149,57 @@ def test_publishing_indexes_it_at_no_lower_level_than_its_sources(setup):
     assert [c["change"] for c in digests_store.changes(setup.ws, 0)
             if c["doc_key"] == "restricted/Overview.txt"] == ["added"]
     # Published once: it's no longer a draft to edit or publish.
-    assert publish(access="restricted", name="Again").status_code == 409
+    assert publish(acl=["group:hr"], name="Again").status_code == 409
     assert setup.client.get("/api/drafts", headers=setup.admin).json()["drafts"] == []
 
 
 def test_a_public_folder_summary_can_be_published_to_everyone(setup):
     d = summarise(setup, provider="uploads", folder="public")
     r = setup.client.post(f"/api/drafts/{d['id']}/publish", headers=setup.admin,
-                          json={"access": "public", "name": "leave-overview.txt"})
+                          json={"acl": ["everyone"], "name": "leave-overview.txt"})
     assert r.status_code == 200, r.text
     setup.wait(setup.ws)
     assert "public/leave-overview.txt" in indexed_keys(setup)
+
+
+def test_a_draft_from_a_group_document_stays_with_that_group(setup):
+    """Written from a document shared with one group (and an HR-only one), the
+    draft is for people in both only: HR outside the group can't open it, and it
+    can be published to neither the group alone nor HR alone, only to someone
+    who may read every source."""
+    import auth
+    import groups_store
+    import members_store
+    ws = setup.ws
+    members_store.set_password(f"hr2@{ws}.example", "Other HR", auth.hash_password("correct-horse"),
+                               ws, "hr")
+    g = groups_store.create(ws, "Board", "", "admin")
+    groups_store.set_members(ws, g["id"], [f"admin@{ws}.example", f"staff@{ws}.example"],
+                             "admin")
+    board = f"group:{g['id']}"
+    r = setup.client.post("/api/docs", headers=setup.admin,
+                          json={"name": "board.txt", "access": "restricted", "acl": [board],
+                                "content": "# Board\n\nThe board meets monthly."})
+    assert r.status_code == 200, r.text
+    setup.wait(ws)
+    d = summarise(setup, provider="uploads", folder="restricted")
+    assert {s["doc_key"] for s in d["sources"]} == {"restricted/board.txt", "restricted/pay.txt"}
+    assert sorted(d["audience"]) == sorted([[board], ["group:hr"]])
+    other = setup.login(ws, "hr2")
+    other["X-Role"] = "hr"
+    assert d["id"] not in [x["id"] for x in setup.client.get("/api/drafts", headers=other)
+                           .json()["drafts"]]
+    assert setup.client.get(f"/api/drafts/{d['id']}", headers=other).status_code == 404
+    publish = lambda acl: setup.client.post(f"/api/drafts/{d['id']}/publish",  # noqa: E731
+                                            headers=setup.admin,
+                                            json={"acl": acl, "name": "board-summary.txt"})
+    assert publish([board]).status_code == 400            # the group can't read pay.txt
+    assert publish(["group:hr"]).status_code == 400        # HR can't all read board.txt
+    assert publish([f"user:staff@{ws}.example"]).status_code == 400   # not HR
+    r = publish([f"user:admin@{ws}.example"])               # in the group, and HR
+    assert r.status_code == 200, r.text
+    assert groups_store.doc_acl(ws, "restricted/board-summary.txt") == [
+        f"user:admin@{ws}.example"]
 
 
 def test_a_deleted_draft_is_gone(setup):

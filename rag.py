@@ -19,11 +19,13 @@ import contextvars
 import logging
 import os
 import re
+import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from dotenv import load_dotenv
 
+import numpy as np
 import regex      # Unicode-aware regular expressions (\p{L} = any letter, any script)
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -32,6 +34,8 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.retrievers import BM25Retriever   # keyword search
 
+import access
+import ingest
 import models
 import rerankers
 from ingest import CHROMA_LOCK
@@ -140,23 +144,78 @@ Answer:"""
 )
 
 
-# Which access levels each ROLE is allowed to see (permission control).
+# Which access levels each ROLE is allowed to see: the old two levels, kept for
+# what still speaks of them. Retrieval itself filters on ACLs (access.py).
 ROLE_ACCESS = {
     "public": ["public"],                  # a normal user: public chunks only
     "hr":     ["public", "restricted"],    # HR / admin: everything
 }
 
+# The keyword index and document intros of a collection, built once per index
+# version (indexing.current) and shared by the agents of every role: each search
+# keeps only what its asker may read. At most CORPORA of them are kept.
+CORPORA = 8
+_corpora = {}
+_corpora_lock = threading.Lock()
 
-def load_chain(role="public", collection=None):
+
+def _corpus(vectorstore, pool, collection, version):
+    """(BM25 over every chunk, or None for an empty index; {source: its first
+    chunks}) of the collection. Cached by (collection, version) when a version
+    is given: a re-tag bumps it, so a cached copy never holds stale ACLs."""
+    key = (collection, version, pool)
+    if version is not None:
+        with _corpora_lock:
+            if key in _corpora:
+                return _corpora[key]
+    # Chunks from before ACLs get their level's first: retrieval filters on them.
+    ingest.backfill_acls(vectorstore)
+    stored = vectorstore.get()                         # all chunks + metadata
+    texts, metas = [], []
+    for cid, text, meta in zip(stored["ids"], stored["documents"], stored["metadatas"]):
+        texts.append(text)
+        # An index from before passage metadata (ingest.CHUNK_META): the
+        # chunk's id is its Chroma id, until the next update re-tags it.
+        metas.append(meta if meta.get("chunk_id") else {**meta, "chunk_id": cid})
+    bm25 = None
+    if texts:
+        bm25 = BM25Retriever.from_texts(texts=texts, metadatas=metas, preprocess_func=tokenize)
+        bm25.k = pool
+    acls = [frozenset(access.chunk_acl(m)) for m in metas]
+
+    # DOCUMENT INTROS: the first chunks of every document (title, summary).
+    # Matching chunks are often from the middle of a document; for "what is X?"
+    # the model also needs how that document begins. See intros_for().
+    intros = {}
+    for text, meta in zip(texts, metas):
+        if meta.get("start_index", 10**9) < INTRO_CHARS:
+            # PDFs are loaded page by page: order by page first, then position.
+            key_ = (meta.get("page", 0), meta["start_index"])
+            intros.setdefault(meta.get("source", ""), []).append((key_, text, meta))
+    intros = {src: [Document(page_content=t, metadata=m)
+                    for _, t, m in sorted(chunks, key=lambda c: c[0])[:INTRO_CHUNKS]]
+              for src, chunks in intros.items()}
+    corpus = (bm25, acls, intros)
+    if version is not None:
+        with _corpora_lock:
+            while len(_corpora) >= CORPORA:
+                _corpora.pop(next(iter(_corpora)))
+            _corpora[key] = corpus
+    return corpus
+
+
+def load_chain(role="public", collection=None, version=None):
     """
     collection: which workspace's search index to use (None = the default one).
+    version: the index's version (indexing.current), when known: the keyword
+    index is then built once for it and shared.
 
-    Build the RAG pipeline, SCOPED to what this role may see.
-    A 'public' user can never retrieve 'restricted' chunks — so confidential
-    text never reaches the model for them. This is permission-filtered retrieval.
+    Build the RAG pipeline, with PERMISSION-FILTERED retrieval: every search
+    keeps only chunks whose ACL names a principal its asker holds (access.py),
+    so confidential text never reaches the model for the wrong user. The asker
+    is given per search (invoke(principals=...)); without one, it is `role`'s
+    own principals (public: everyone; hr: also the hr group).
     """
-    allowed = ROLE_ACCESS.get(role, ["public"])
-
     # Re-open the vector database we built in ingest.py.
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     with CHROMA_LOCK:
@@ -166,51 +225,27 @@ def load_chain(role="public", collection=None):
     # With a reranker, both searches bring a larger pool for it to choose from.
     reranker = RERANKER
     pool = rerankers.CANDIDATES if reranker else TOP_K
-
-    # ---- SEARCH 1: semantic (dense) — matches by MEANING ----
-    # The 'filter' makes Chroma only search chunks whose access is allowed.
-    dense_retriever = vectorstore.as_retriever(
-        search_kwargs={"k": pool, "filter": {"access": {"$in": allowed}}}
-    )
+    viewer = access.for_role(role)
 
     # ---- SEARCH 2: keyword (BM25, sparse) — matches by exact WORDS ----
-    # BM25 needs the raw chunks, so we pull them from Chroma and keep only the
-    # ones this role is allowed to see (so BM25 also respects permissions).
-    stored = vectorstore.get()                         # all chunks + metadata
-    texts, metas = [], []
-    for cid, text, meta in zip(stored["ids"], stored["documents"], stored["metadatas"]):
-        if meta.get("access", "public") in allowed:
-            texts.append(text)
-            # An index from before passage metadata (ingest.CHUNK_META): the
-            # chunk's id is its Chroma id, until the next update re-tags it.
-            metas.append(meta if meta.get("chunk_id") else {**meta, "chunk_id": cid})
+    # BM25 needs the raw chunks, so we pull them from Chroma: all of them, once
+    # per index version. Each search keeps only the ones its asker may see.
+    bm25, acls, intros = _corpus(vectorstore, pool, collection or "langchain", version)
 
-    if texts:
-        bm25_retriever = BM25Retriever.from_texts(texts=texts, metadatas=metas,
-                                                  preprocess_func=tokenize)
-        bm25_retriever.k = pool
-    else:                       # an empty workspace: nothing to search yet
-        bm25_retriever = _NoHits()
+    # ---- SEARCH 1: semantic (dense) — matches by MEANING ----
+    # The 'filter' makes Chroma only search chunks the asker may see.
+    dense_retriever = vectorstore.as_retriever(
+        search_kwargs={"k": pool, "filter": access.chroma_filter(viewer)}
+    )
+    bm25_retriever = KeywordIndex(bm25, acls, viewer, pool) if bm25 else _NoHits()
 
     # ---- HYBRID: fuse both searches with Reciprocal Rank Fusion (RRF) ----
     # Our own little retriever runs BOTH searches and merges their rankings
     # (then reranks the pool, if a reranker is plugged in).
     retriever = HybridRetriever(dense_retriever, bm25_retriever,
                                 top_k=rerankers.KEEP if reranker else TOP_K,
-                                pool=pool, reranker=reranker)
-
-    # DOCUMENT INTROS: the first chunks of every document (title, summary).
-    # Matching chunks are often from the middle of a document; for "what is X?"
-    # the model also needs how that document begins. See intros_for().
-    intros = {}
-    for text, meta in zip(texts, metas):
-        if meta.get("start_index", 10**9) < INTRO_CHARS:
-            # PDFs are loaded page by page: order by page first, then position.
-            key = (meta.get("page", 0), meta["start_index"])
-            intros.setdefault(meta.get("source", ""), []).append((key, text, meta))
-    retriever.intros = {src: [Document(page_content=t, metadata=m)
-                              for _, t, m in sorted(chunks, key=lambda c: c[0])[:INTRO_CHUNKS]]
-                        for src, chunks in intros.items()}
+                                pool=pool, reranker=reranker, principals=viewer)
+    retriever.all_intros = intros
 
     # The FAST model (models.py): HyDE, multi-query, rewriting a follow-up and
     # the output guard's rewrite. The agent's own model writes the answer.
@@ -238,8 +273,45 @@ def tokenize(text):
 
 class _NoHits:
     """Stand-in retriever for an empty index (BM25 can't be built from nothing)."""
+    docs = []
+
     def invoke(self, query):
         return []
+
+
+class KeywordIndex:
+    """A collection's BM25 index (shared by every asker) as one asker searches it:
+    the best-scoring chunks they may read. `principals`: the asker by default;
+    search() takes another per call. `docs`: every chunk they can reach."""
+
+    def __init__(self, bm25, acls, principals, k):
+        self.bm25, self._acls, self.principals, self.k = bm25, acls, principals, k
+        self.preprocess_func = bm25.preprocess_func
+
+    def _allowed(self, principals):
+        held = access.of(principals)
+        return [access.EVERYONE in acl or bool(held & acl) for acl in self._acls]
+
+    @property
+    def docs(self):
+        return [d for d, ok in zip(self.bm25.docs, self._allowed(self.principals)) if ok]
+
+    def search(self, query, k=None, principals=None):
+        """The k best chunks for the query that `principals` may read (BM25's own
+        order: the same chunks, in the same order, as an index of only those)."""
+        k = k or self.k
+        allowed = self._allowed(self.principals if principals is None else principals)
+        scores = self.bm25.vectorizer.get_scores(self.preprocess_func(query))
+        out = []
+        for i in np.argsort(scores)[::-1]:
+            if allowed[i]:
+                out.append(self.bm25.docs[i])
+                if len(out) == k:
+                    break
+        return out
+
+    def invoke(self, query):
+        return self.search(query)
 
 
 class HybridRetriever:
@@ -255,40 +327,58 @@ class HybridRetriever:
     """
 
     def __init__(self, dense_retriever, bm25_retriever, top_k=4, rrf_k=60, pool=None,
-                 reranker=None):
+                 reranker=None, principals=None):
         self.dense = dense_retriever
         self.bm25 = bm25_retriever
         self.top_k = top_k
         self.rrf_k = rrf_k
         self.pool = max(pool or top_k, top_k)   # fused candidates a reranker scores
         self.reranker = reranker
-        self.intros = {}      # source -> its first chunks (set by load_chain)
+        # The asker when a search names none (load_chain: its role's principals).
+        self.principals = principals
+        self.all_intros = {}  # source -> its first chunks, whoever may see them (load_chain)
         # SOURCE RULES (platform.md PL-28): weigh(metadata) -> (multiplier, rule).
         # Set by the agent's builder for workspaces with rules; None = no rules.
         self.weigh = None
 
-    @staticmethod
-    def _hits(retriever, query, k):
+    @property
+    def intros(self):
+        """{source: its first chunks} that the default asker may see."""
+        return {src: kept for src, chunks in self.all_intros.items()
+                if (kept := self._visible(chunks, None))}
+
+    def _visible(self, docs, principals):
+        who = principals if principals is not None else self.principals
+        if who is None:
+            return list(docs)
+        return [d for d in docs if access.can_see(who, access.chunk_acl(d.metadata))]
+
+    def _hits(self, retriever, query, k, principals=None):
         """retriever's chunks for query: as many as it returns by itself, or k of
         them when k is given (each retriever is shared by every question at
-        once, so its own setting is left as it is)."""
-        if k and hasattr(retriever, "vectorstore"):           # Chroma, with its filter
-            return retriever.vectorstore.similarity_search(
-                query, k=k, filter=retriever.search_kwargs.get("filter"))
-        if k and hasattr(retriever, "vectorizer"):            # BM25
-            return retriever.vectorizer.get_top_n(retriever.preprocess_func(query),
-                                                  retriever.docs, n=k)
-        return retriever.invoke(query)
+        once, so its own setting is left as it is), that `principals` (else the
+        retriever's own asker) may see."""
+        if hasattr(retriever, "vectorstore"):                 # Chroma, with its filter
+            if k or principals is not None:
+                where = (access.chroma_filter(principals) if principals is not None
+                         else retriever.search_kwargs.get("filter"))
+                return retriever.vectorstore.similarity_search(
+                    query, k=k or retriever.search_kwargs["k"], filter=where)
+        elif isinstance(retriever, KeywordIndex):            # BM25, filtered as it ranks
+            return retriever.search(query, k, principals)
+        return self._visible(retriever.invoke(query), principals)
 
-    def intros_for(self, docs, max_docs=2):
+    def intros_for(self, docs, max_docs=2, principals=None):
         """The opening chunks of the top documents among `docs` that aren't
-        already included — added to the context, not used for ranking."""
+        already included — added to the context, not used for ranking — and
+        that `principals` (else the default asker) may see."""
         have = {d.page_content for d in docs}
         sources = list(dict.fromkeys(d.metadata.get("source", "") for d in docs))[:max_docs]
-        return [i for src in sources for i in self.intros.get(src, [])
+        return [i for src in sources
+                for i in self._visible(self.all_intros.get(src, []), principals)
                 if i.page_content not in have]
 
-    def invoke(self, query, dense_query=None, dense_queries=None, k=None):
+    def invoke(self, query, dense_query=None, dense_queries=None, k=None, principals=None):
         """query: what the user asked — the KEYWORD search uses exactly this.
         dense_query: an enriched version for the MEANING search only (e.g.
         the question + a HyDE guess); defaults to query. dense_queries: several
@@ -297,6 +387,8 @@ class HybridRetriever:
         match real chunks.
         k: how many chunks (default top_k), each search asked for as many (at
         least the reranker's pool, when one is plugged in).
+        principals: who asks (access.Viewer): both searches keep only chunks
+        whose ACL names one of them. None: the retriever's own (its role's).
         Each chunk comes back as a copy whose metadata also says how it was
         found ("why this source"): rank (1 = best, after fusion and any
         rerank), dense_rank and bm25_rank (None when that search didn't return
@@ -311,9 +403,9 @@ class HybridRetriever:
         want = k or self.top_k
         each = max(k, self.pool) if k and self.reranker else k
         # Run the searches. Each returns an ORDERED list of chunks (best first).
-        lists = [("dense_rank", self._hits(self.dense, q, each))
+        lists = [("dense_rank", self._hits(self.dense, q, each, principals))
                  for q in (dense_queries or [dense_query or query])]
-        lists.append(("bm25_rank", self._hits(self.bm25, query, each)))
+        lists.append(("bm25_rank", self._hits(self.bm25, query, each, principals)))
 
         # Score every chunk by its rank in each list (RRF).
         scores = {}        # chunk text -> fused score
@@ -513,7 +605,7 @@ def passage_text(text, meta):
     return re.sub(r"\A\[[^\]\n]*\]\n", "", text)
 
 
-def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
+def retrieve(question, retriever, llm, role="public", guard=None, expand=None, principals=None):
     """Retrieve: the chunks a question is answered from -> (docs, None), or
     (None, reason) when an input guard refused it. Nothing is generated here:
     the agent writes the one answer, citing these chunks (agent.py).
@@ -521,10 +613,14 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
     below. The caller runs its guards WHILE this retrieves; guard() is waited
     on before anything found is returned.
     expand: optional function -> the question as searched (the workspace's
-    glossary adds the other names of its terms); the guard checks it as asked."""
+    glossary adds the other names of its terms); the guard checks it as asked.
+    principals: who asks (access.Viewer); None: the role's own principals."""
 
-    # Does this role get to see restricted info? (HR yes, public no.)
-    allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
+    # May this asker see restricted HR content? (The hr group: HR / Admin.)
+    allow_restricted = access.may_see_hr(principals if principals is not None else role)
+    # Our retriever filters as it searches; any other (a stand-in) is filtered after.
+    own = isinstance(retriever, HybridRetriever)
+    search = {"principals": principals} if principals is not None and own else {}
 
     # ---- GUARD (input) -------------------------------------------------
     # Check the question BEFORE doing any work (e.g. block empty/abusive input).
@@ -542,15 +638,17 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
     # ---- 1. RETRIEVE (and rerank, if a reranker is plugged in: RERANKER) -
     # Keyword search gets the question as asked; meaning search the enriched one(s).
     if len(queries) == 1:
-        docs = retriever.invoke(question, dense_query=queries[0])
+        docs = retriever.invoke(question, dense_query=queries[0], **search)
     else:
-        docs = retriever.invoke(question, dense_queries=queries)
+        docs = retriever.invoke(question, dense_queries=queries, **search)
+    if principals is not None and not own:
+        docs = [d for d in docs if access.can_see(principals, access.chunk_acl(d.metadata))]
 
     # ---- 1b. Add how the top documents BEGIN (title / summary), so a chunk
     # from the middle of a document is read in context. They come after the
     # matched chunks and have no rank (they weren't matched, see HybridRetriever).
     if hasattr(retriever, "intros_for"):
-        docs = docs + retriever.intros_for(docs)
+        docs = docs + retriever.intros_for(docs, **search)
 
     # The caller's guards ran alongside the retrieval above: nothing retrieved
     # goes into a prompt until they pass.
@@ -566,7 +664,7 @@ def answer_question(question, retriever, llm, role="public", guard=None):
     docs), or (reason, None) when a guard refused the question. The chat agent
     doesn't call this (it retrieves, then writes ONE cited answer itself); it
     stays the plain RAG flow for scripts and the retrieval tests."""
-    allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
+    allow_restricted = access.may_see_hr(role)
     docs, refused = retrieve(question, retriever, llm, role, guard)
     if docs is None:
         return refused, None

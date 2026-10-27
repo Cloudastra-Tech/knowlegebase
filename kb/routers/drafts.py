@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import drafts_store
+import groups_store
 import integrations_store
 from kb.audit import audited
-from kb.deps import current_role, require_hr, ws_of
+from kb.deps import current_viewer, require_hr, ws_of
 from kb.rate_limit import user_limit
-from kb.services import access, drafts
+from kb.services import audience, drafts, permissions
 
 router = APIRouter()
 
@@ -31,38 +32,39 @@ class DraftPatch(BaseModel):
 
 
 class PublishIn(BaseModel):
-    access: str
+    acl: list[str] = Field(min_length=1, max_length=200)   # who may see it (access picker)
     name: str = Field(min_length=1, max_length=200)
 
 
-def _draft(user, draft_id):
+def _draft(user, viewer, draft_id):
     draft = drafts_store.get(ws_of(user), draft_id)
-    if not draft or not drafts.may_see(user, draft):
+    if not draft or not drafts.may_see(viewer, draft):
         raise HTTPException(404, "No such draft.")
     return draft
 
 
 @router.get("/api/drafts")
-def list_drafts(user=Depends(require_hr)):
+def list_drafts(user=Depends(require_hr), viewer=Depends(current_viewer)):
     ws = ws_of(user)
     return {"drafts": [drafts.view(d) for d in drafts_store.list_drafts(ws)
-                       if drafts.may_see(user, d)]}
+                       if drafts.may_see(viewer, d)]}
 
 
 @router.get("/api/drafts/{draft_id}")
-def read_draft(draft_id: str, user=Depends(require_hr)):
-    draft = _draft(user, draft_id)
+def read_draft(draft_id: str, user=Depends(require_hr), viewer=Depends(current_viewer)):
+    draft = _draft(user, viewer, draft_id)
     return drafts.view(draft, drafts_store.read_text(draft["workspace"], draft_id))
 
 
 @router.post("/api/drafts/summarise")
-def summarise(body: SummariseIn, user=Depends(require_hr), audit=audited("draft.summarise")):
+def summarise(body: SummariseIn, user=Depends(require_hr), viewer=Depends(current_viewer),
+              audit=audited("draft.summarise")):
     """Summarise a source (provider) or one of its folders: a draft, written by a job."""
     ws = ws_of(user)
-    if body.provider != access.UPLOADS and body.provider not in \
+    if body.provider != audience.UPLOADS and body.provider not in \
             integrations_store.chunk_access_levels(ws):
         raise HTTPException(404, "This workspace has no such source.")
-    if not drafts.scope_docs(ws, user, body.provider, body.folder):
+    if not drafts.scope_docs(ws, viewer, body.provider, body.folder):
         raise HTTPException(400, "There are no documents here you can read.")
     user_limit(user, "draft")
     draft = drafts.start_summary(ws, user, body.provider, body.folder)
@@ -72,11 +74,11 @@ def summarise(body: SummariseIn, user=Depends(require_hr), audit=audited("draft.
 
 
 @router.post("/api/drafts/from-gap")
-def from_gap(body: GapIn, user=Depends(require_hr), role=Depends(current_role),
+def from_gap(body: GapIn, user=Depends(require_hr), viewer=Depends(current_viewer),
              audit=audited("draft.from_gap")):
     """Draft a document for a content gap (Insights)."""
     ws = ws_of(user)
-    gap = drafts.find_gap(ws, role, body.gap_id)
+    gap = drafts.find_gap(ws, viewer.role, body.gap_id)
     if not gap:
         raise HTTPException(404, "No such content gap.")
     user_limit(user, "draft")
@@ -87,8 +89,8 @@ def from_gap(body: GapIn, user=Depends(require_hr), role=Depends(current_role),
 
 @router.patch("/api/drafts/{draft_id}")
 def edit_draft(draft_id: str, body: DraftPatch, user=Depends(require_hr),
-               audit=audited("draft.update")):
-    draft = _draft(user, draft_id)
+               viewer=Depends(current_viewer), audit=audited("draft.update")):
+    draft = _draft(user, viewer, draft_id)
     if draft["status"] != "draft":
         raise HTTPException(409, "Only a finished draft can be edited.")
     ws = draft["workspace"]
@@ -103,21 +105,28 @@ def edit_draft(draft_id: str, body: DraftPatch, user=Depends(require_hr),
 
 @router.post("/api/drafts/{draft_id}/publish")
 def publish_draft(draft_id: str, body: PublishIn, user=Depends(require_hr),
-                  audit=audited("draft.publish")):
-    """Publish it as a document at an access level no lower than its sources'."""
-    draft = _draft(user, draft_id)
+                  viewer=Depends(current_viewer), audit=audited("draft.publish")):
+    """Publish it as a document, for the groups and people picked (no one its
+    sources aren't for)."""
+    draft = _draft(user, viewer, draft_id)
+    ws = draft["workspace"]
     try:
-        draft = drafts.publish(draft["workspace"], user, draft, body.access, body.name)
+        acl = permissions.check_upload_acl(ws, body.acl)
+    except groups_store.Invalid as e:
+        raise HTTPException(400, str(e))
+    try:
+        draft = drafts.publish(ws, user, draft, acl, body.name)
     except drafts.PublishError as e:
         raise HTTPException(e.status, e.message)
-    audit.record("draft", draft_id, {"published_as": draft["published_as"],
+    audit.record("draft", draft_id, {"published_as": draft["published_as"], "acl": acl,
                                      "sources": len(draft["sources"])}, user=user)
     return drafts.view(draft)
 
 
 @router.delete("/api/drafts/{draft_id}")
-def delete_draft(draft_id: str, user=Depends(require_hr), audit=audited("draft.delete")):
-    draft = _draft(user, draft_id)
+def delete_draft(draft_id: str, user=Depends(require_hr), viewer=Depends(current_viewer),
+                 audit=audited("draft.delete")):
+    draft = _draft(user, viewer, draft_id)
     drafts_store.delete(draft["workspace"], draft_id)
     audit.record("draft", draft_id, {"kind": draft["kind"], "status": draft["status"]},
                  user=user)

@@ -31,7 +31,8 @@ def ws(monkeypatch, tmp_path, jobs_paused):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, docs=None, full=False: None)
     w = f"dg-{uuid.uuid4().hex[:8]}"
-    for name, role in (("admin", "admin"), ("hr", "hr"), ("staff", "public")):
+    for name, role in (("admin", "admin"), ("hr", "hr"), ("staff", "public"),
+                       ("finance", "public")):
         members_store.set_password(f"{name}@{w}.example", name.title(),
                                    auth.hash_password(PASSWORD), w, role)
     calls = []
@@ -65,9 +66,9 @@ def login(client, w, name):
     return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
 
 
-def upload(client, h, access, name, text):
+def upload(client, h, access, name, text, acl=None):
     r = client.post("/api/docs", headers=h, json={"name": name, "access": access,
-                                                  "content": text})
+                                                  "content": text, "acl": acl})
     assert r.status_code == 200, r.text
 
 
@@ -100,10 +101,11 @@ def test_uploads_edits_and_deletes_go_in_the_change_feed(client, ws):
     upload(client, h, "restricted", "pay.txt", "Teachers earn sixty thousand.")
     client.delete("/api/docs/restricted/pay.txt", headers=h)
     rows = digests_store.changes(ws.name, 0)
-    assert [(r["doc_key"], r["change"], r["access"]) for r in rows] == [
-        ("public/leave.txt", "added", "public"), ("public/leave.txt", "modified", "public"),
-        ("restricted/pay.txt", "added", "restricted"),
-        ("restricted/pay.txt", "removed", "restricted")]
+    assert [(r["doc_key"], r["change"], r["acl"]) for r in rows] == [
+        ("public/leave.txt", "added", ["everyone"]),
+        ("public/leave.txt", "modified", ["everyone"]),
+        ("restricted/pay.txt", "added", ["group:hr"]),
+        ("restricted/pay.txt", "removed", ["group:hr"])]
     assert all(r["actor"] == f"admin@{ws.name}.example" for r in rows)
     # Folded per document: added then edited is new; added then removed is nothing.
     folded = digests.fold(rows)
@@ -124,11 +126,11 @@ def test_a_sync_records_what_it_added_changed_and_removed(ws, monkeypatch):
     connector.feed = [base.Upsert(connector.item("a")), base.Delete("b")]
     sync.sync(ws.name, "fake")
     rows = digests_store.changes(ws.name, 0)
-    assert [(r["doc_key"], r["change"], r["title"], r["access"]) for r in rows] == [
-        ("connectors/fake/a.txt", "added", "Alpha", "restricted"),
-        ("connectors/fake/b.txt", "added", "Beta", "restricted"),
-        ("connectors/fake/a.txt", "modified", "Alpha", "restricted"),
-        ("connectors/fake/b.txt", "removed", "Beta", "restricted")]
+    assert [(r["doc_key"], r["change"], r["title"], r["acl"]) for r in rows] == [
+        ("connectors/fake/a.txt", "added", "Alpha", ["group:hr"]),
+        ("connectors/fake/b.txt", "added", "Beta", ["group:hr"]),
+        ("connectors/fake/a.txt", "modified", "Alpha", ["group:hr"]),
+        ("connectors/fake/b.txt", "removed", "Beta", ["group:hr"])]
 
 
 # ---- One digest per recipient -------------------------------------------------------------
@@ -150,20 +152,58 @@ def test_a_restricted_change_never_reaches_a_public_subscriber(client, ws):
     assert len(ws.llm_calls) == 2
 
 
-def test_the_strictest_level_wins_and_is_looked_up_at_send_time(client, ws):
+def _group(ws, name, *people):
+    import groups_store
+    g = groups_store.create(ws.name, name, "", "admin")
+    groups_store.set_members(ws.name, g["id"], [f"{p}@{ws.name}.example" for p in people],
+                             "admin")
+    return f"group:{g['id']}"
+
+
+def test_a_group_restricted_change_never_reaches_a_non_member(client, ws):
+    """A document shared with one group reaches its members only: not a public
+    member outside it, and not HR either (the hr group isn't on its ACL)."""
+    admin = login(client, ws.name, "admin")
+    finance = _group(ws, "Finance", "finance")
+    subs = {name: subscribe(client, login(client, ws.name, name), channel="email")
+            for name in ("finance", "staff", "hr")}
+    upload(client, admin, "restricted", "budget_cuts.txt", "Cut the travel budget.",
+           acl=[finance])
+    upload(client, admin, "public", "leave.txt", "Leave.")
+    for name, sub in subs.items():
+        assert digests.send(due_now(sub))["sent"], name
+    assert "budget_cuts.txt" in email_to(ws, "finance")["body"]
+    for outsider in ("staff", "hr"):
+        got = email_to(ws, outsider)
+        assert "leave.txt" in got["body"] and "budget" not in str(got), outsider
+    # Its removal is news for the group only, too (the ACL it had is kept).
+    ws.emails.clear()
+    client.delete("/api/docs/restricted/budget_cuts.txt", headers=admin)
+    for sub in subs.values():
+        digests.send(due_now(sub))
+    assert "budget_cuts.txt" in email_to(ws, "finance")["body"]
+    assert email_to(ws, "staff") is None and email_to(ws, "hr") is None
+
+
+def test_a_change_needs_every_acl_it_had_and_the_one_it_has_now(client, ws):
     staff = login(client, ws.name, "staff")
     sub = subscribe(client, staff, channel="email")
     # A synced file the connection shared with everyone when it changed, restricted since.
     integrations_store.connect(ws.name, "notion", "Notion", {"access_token": "t"}, "admin")
     integrations_store.update(ws.name, "notion", settings={"access": "everyone"})
     digests.record(ws.name, "connectors/notion/a.txt", "added", title="Board minutes")
-    # An upload whose change was recorded restricted (it was in restricted/ then).
-    digests.record(ws.name, "public/moved.txt", "added", title="Moved", access_level="restricted")
+    # An upload whose change was recorded for HR only (it was in restricted/ then).
+    digests.record(ws.name, "public/moved.txt", "added", title="Moved", acl=["group:hr"])
     assert [e["title"] for e in digests.visible_changes(due_now(sub), _member(ws, "staff"),
                                                        time.time())] == ["Board minutes"]
     integrations_store.update(ws.name, "notion", settings={"access": "restricted"})
     assert digests.visible_changes(due_now(sub), _member(ws, "staff"), time.time()) == []
-    # A member turned off gets nothing at all.
+
+
+def test_a_member_turned_off_gets_nothing(client, ws):
+    staff = login(client, ws.name, "staff")
+    sub = subscribe(client, staff, channel="email")
+    upload(client, login(client, ws.name, "admin"), "public", "leave.txt", "Leave.")
     import members_store
     members_store.set_disabled(f"staff@{ws.name}.example", True, ws.name)
     assert digests.send(due_now(sub)) == {"skipped": "not a member"}
@@ -180,7 +220,7 @@ def test_sources_and_folders_narrow_a_digest(client, ws):
     upload(client, admin, "public", "leave.txt", "Leave.")
     upload(client, admin, "restricted", "pay.txt", "Pay.")
     digests.record(ws.name, "connectors/notion/x.txt", "added", title="Wiki page",
-                   access_level="public")
+                   acl=["everyone"])
     got = digests.build(due_now(sub), _member(ws, "admin"))
     assert [e["title"] for e in got["entries"]] == ["pay.txt"]
 

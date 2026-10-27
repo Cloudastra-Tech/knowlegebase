@@ -22,7 +22,7 @@ import { drafts, type KnowledgeItem } from "@/lib/api"
 const MAX_FOLDERS = 8 // per source, in the menu
 
 function folderLabel(provider: string, folder: string) {
-  if (provider === "uploads") return folder === "restricted" ? "HR-only files" : "Public files"
+  if (provider === "uploads") return folder === "restricted" ? "limited files" : "files for everyone"
   return `Folder ${folder}`
 }
 

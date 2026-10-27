@@ -177,6 +177,56 @@ public"), but it can never *raise* it — the server decides.
 
 ---
 
+## 🧑‍🤝‍🧑 Groups and per-document permissions
+
+Roles (public, hr, admin) gate **screens**. **Access groups** gate **content**
+(`access.py`, `groups_store.py`, platform.md PL-09):
+
+```
+  every chunk ── acl: [principals that may read it]
+                   everyone · user:<email> · group:<id> · domain:<verified domain>
+                   (nobody: nothing it was shared with matched anyone here)
+
+  every request ── the asker's principals, looked up now:
+                   everyone + user:<them> + their groups + group:hr (HR / Admin)
+                   + domain:<their email's domain, if the workspace verified it>
+
+  search keeps a chunk only if its acl ∩ the asker's principals ≠ ∅
+     dense:  Chroma `where {"$or": [{"acl": {"$contains": p}}, ...]}` (chromadb 1.5.9)
+     BM25:   built ONCE per index version, filtered as it ranks (rag.KeywordIndex)
+```
+- **The old levels are ACLs.** `public` is `[everyone]`, `restricted` is the
+  built-in group `hr`, whose members are everyone whose role is HR or Admin. With
+  no groups or picks, nothing behaves differently. Chunks indexed before ACLs get
+  their level's the first time they're searched (`ingest.backfill_acls`).
+- **Groups.** Manual (Access → Groups), or copies of the identity provider's:
+  `idp` from sign-in group claims, `scim` from SCIM pushes (read-only here).
+- **Uploads.** The Documents screen's picker: everyone, or any groups and people.
+  Changing it re-tags the chunks; nothing is embedded again.
+- **Synced files** follow their connection's **permission policy**:
+  `restricted` (HR and admins, the default), `workspace` (everyone), or `source`:
+  each file for who may read it at the source (`source_items.acl`), mapped by
+  `kb/services/permissions.py` to members (emails), identity-provider groups (by
+  email, name or id) and verified domains. **A grant that matches nothing here is
+  dropped, never widened**; a file with nothing left is for no one. Jira issues
+  with a security level, unreadable Confluence restrictions and similar fail
+  closed. Zendesk tickets lock their connection to `restricted`.
+- **ACL drift.** Sharing is read at every sync (every 30 minutes): after each one
+  a source-policy connection is re-tagged (only chunks whose ACL changed). A
+  change at the source, or a new group member here, can take until the next sync;
+  **Sync permissions now** on the card does it at once.
+- **Answers.** An answer's audience is every ACL the model read for it
+  (`messages.acl`, a list of ACLs; a reader must hold a principal of each). Chats,
+  share links (the viewer AND the sharer must qualify), chat search, Copy / export,
+  feedback review, the API, MCP and verified answers all check it on every read.
+  A Slack channel is answered as `everyone` only.
+- **Staff pay.** The salary guardrails are skipped only for holders of the `hr`
+  group (`safety.may_see_restricted`): by default HR and Admin, as before.
+- Password accounts whose username isn't an email only ever match grants made
+  here (groups, picks), never a source's user grants.
+
+---
+
 ## 👤 Same question, two roles (the whole point)
 
 ```
@@ -307,7 +357,8 @@ and to share links:
 
 Every surface asks through one service, `kb/services/answering.ask()`: the web
 chat, the public API and the MCP server get the same agent, guards, `[S#]`
-citations, `max_access` and question log (with `surface` web / api / mcp / slack).
+citations, `max_access` and question log (with `surface` web / api / mcp / slack /
+teams / extension / email; Insights shows where questions come from).
 
 ```
   browser session ──► /api/*   (the app's own API: changes with the site)
@@ -372,6 +423,82 @@ has the scopes, the Marketplace and rate-limit rules, and a by-hand checklist.
 
 ---
 
+## 🟦 The Teams bot
+
+People ask in Microsoft Teams through the same `answering.ask()` (surface `teams`):
+`kb/routers/teams.py` takes the Bot Connector's requests, `kb/services/teams.py`
+answers them, `teams_store.py` keeps the bot (client secret sealed by `secret_box`).
+
+```
+  Bot Connector ──JWT──► /api/teams/apps/<app_key>/messages   (a customer's own Azure Bot)
+                         /api/teams/messages                   (this server's bot, TEAMS_APP_*)
+      token checked first: Bot Framework's key (endorsed for msteams), iss
+      https://api.botframework.com, aud = the bot's App ID, exp (5 min skew),
+      serviceUrl claim = the activity's; activity ids deduped
+                    │  queue a "teams" job, 200 at once (a feedback invoke answers inline)
+                    ▼
+  job: tenant must be the workspace's; Connector member lookup ──► email / UPN ──► member
+       1:1 chat with the bot ──► ask() as their role
+       channel or group chat ──► ask() as PUBLIC ("answered from public documents" note)
+            └─ a search as their role finds restricted passages?
+                 ──► proactive message in their 1:1 chat, ask() as their role
+                     (403 when the app isn't installed for them: nothing more is said)
+       ──► Adaptive Card 1.5: answer, [n] links, sources, 👍 / 👎 (Action.Execute)
+```
+
+A Microsoft Entra tenant is answered by one workspace. Azure stopped creating
+multi-tenant bots after 31 July 2025, so the usual setup is the customer's own
+single-tenant Azure Bot (App ID, tenant, client secret pasted on the Integrations
+card); a host with an existing multi-tenant bot can offer it as "this server's
+bot". The card downloads the Teams app (`teams/manifest.json` with the bot and
+host filled in, and its icons). deploy.md, "Microsoft Teams bot", has the
+checklist.
+
+---
+
+## 🧩 The browser extension
+
+`extension/` is a Chrome / Edge MV3 side panel (built by Vite with the frontend's
+toolchain and shadcn components: `cd frontend && npm run build:extension`). It
+asks through `POST /api/v1/ask` (streamed) with a personal API key of its own
+(scope `ask`, client `extension`, 90 days) that it gets through a one-time code
+after the person confirms on the web app's `/extension/connect` screen
+(`kb/routers/extension.py`); the key never travels in a URL. It never reads
+pages: text selected through the context menu goes along, per question and only
+if ticked, as `context`, spotlighted as untrusted data. Its questions are logged
+with surface `extension`. CORS on `/api/v1` is for `EXTENSION_ORIGINS` only, without
+credentials (`kb/middleware.ExtensionCors`).
+
+---
+
+## ✉️ Email-in
+
+`kb/services/email_in.py`, `email_in_store.py`: an inbound provider (Postmark
+first, behind a small provider interface) posts mail for
+`ask@<slug>.<EMAIL_IN_DOMAIN>` to `/api/email-in/postmark` (HTTP Basic credentials
+in the webhook URL). Only an enabled member of that workspace, whose email passed
+the provider's SPF check with DKIM aligned to the From domain, is answered, and
+only once the workspace's admin has turned email-in on. Everything else, and all
+automatic or list mail (`Auto-Submitted`, `Precedence`, `List-*`, a null
+Return-Path, our own addresses, a Message-ID already seen), is dropped without a
+reply; senders are rate-limited. A job answers through `answering.ask` (surface
+`email`) in the member's conversation and replies in the thread through the
+mailer (In-Reply-To, References, `Auto-Submitted: auto-replied`); a reply to that
+continues the conversation.
+
+---
+
+## 📱 Installable app (PWA)
+
+`frontend/public/manifest.webmanifest`, its icons and `frontend/public/sw.js`
+make the site installable on phones and desktops. The service worker (registered
+in production builds only) keeps the app shell: the page, the hashed `/assets/`
+and the icons, network-first for pages. It never handles `/api/`, `/mcp` or
+`/scim/`, so no answer or document is ever cached. `viewport-fit=cover` plus
+safe-area padding keeps the header, the composer and the sides clear of notches.
+
+---
+
 ## ✅ Verified answers, source rules and the assistant's settings
 
 Admins shape answers in three ways, all per workspace:
@@ -407,6 +534,52 @@ Admins shape answers in three ways, all per workspace:
   glossary adds a term's other names to both searches and gives the model the
   definitions. Any change bumps the workspace's settings version, and its cached
   agents are built again, as after a re-index.
+
+---
+
+## 📰 Digests, drafts and webhooks
+
+Three things the app does without anyone asking a question (platform.md PL-30,
+PL-31, PL-20). Who may read what is access.py's rule throughout, through
+`kb/services/audience.py`.
+
+- **Change feed** (`doc_changes`, `digests_store.py`). Uploads, edits, deletes, a
+  published draft and every connector sync (`kb/services/sync.py`) add a row:
+  added / modified / removed, with the title and the document's **ACL at that
+  moment**.
+- **Digests** (`/digests`, everyone's own; `kb/services/digests.py`). Daily or
+  weekly, of some sources (none: all), by email or Slack DM. The hourly
+  `digests_due` job queues a `digest` job per subscription that's due; it folds
+  the changes per document and keeps one only if the recipient's principals, looked
+  up then, meet **every ACL it had in the window and the one it has now** (a
+  removed one: the ones it had). Filtered per recipient, never per workspace: a
+  document shared with one group is never listed, nor summarised, for anyone
+  outside it. Each kept document gets a 2-3 sentence summary on FAST_MODEL,
+  cached per version (`doc_summaries`). Every email has a one-click unsubscribe
+  link (`/unsubscribe/<token>`, no sign-in; the token is sealed in the database
+  and looked up by its hash).
+- **Drafts** (`kb/services/drafts.py`, HR / Admin). "Summarise" on Knowledge (a
+  source or a folder: each readable document summarised, then one cited overview)
+  and "Draft a doc" on an Insights content gap (its questions searched as the
+  requester, a document drafted from the passages, cited; gaps become "TO
+  CONFIRM:" lines). Written by a `draft` job into `<docs>/drafts/<id>.txt`, a
+  folder `ingest.doc_files` never reads, so a draft is in no index. Its audience
+  is its sources' ACLs as clauses: only someone meeting every one may open it,
+  and Publish (the documents' access picker) only accepts principals that do;
+  the published copy lists its sources, gets that ACL (`doc_acl`) and is indexed.
+- **Webhooks** (Access → Webhooks, admins; `kb/services/webhooks.py`).
+  `document.indexed`, `integration.sync_failed`, `question.unanswered` (the text
+  only as the question log keeps it), `member.added`, `member.disabled`,
+  `sso.metadata_changed` and `audit.event` (every audit event, details left out:
+  `audit_store.listen`). Each event is a row per subscribed endpoint
+  (`webhook_deliveries`), POSTed by a `webhooks` job with `X-KB-Timestamp` and
+  `X-KB-Signature: v1=<HMAC-SHA256 of "<timestamp>.<body>">` (the secret sealed
+  under the workspace's key, shown once). Non-2xx is retried after 30 s, 1, 2, 4 …
+  minutes (at most an hour apart) until 24 h after the event. Addresses pass
+  `url_guard.check_connector` when saved and on every request (https, public IPs
+  only). Payloads carry IDs and a few fields, never document text.
+
+All six tables have a `workspace` column, so a workspace's purge deletes them.
 
 ---
 

@@ -3,8 +3,8 @@ digests_store.py  —  the change feed, digest subscriptions and document
 summaries, in config/app.db (migration 0016; platform.md PL-30).
 
     doc_changes           one row per document added, modified or removed (an
-                          upload, an edit, a connector sync), with the access
-                          level it had then. Kept CHANGES_KEPT_DAYS.
+                          upload, an edit, a connector sync), with the ACL (and
+                          access level) it had then. Kept CHANGES_KEPT_DAYS.
     digest_subscriptions  a member's digest: daily or weekly, of some sources or
                           folders (none: everything), by email or Slack DM. The
                           email's unsubscribe link carries a token; only its
@@ -47,25 +47,30 @@ def _hash(token):
 
 
 # ---- doc_changes ---------------------------------------------------------------------
-def record_change(workspace, doc_key, change, *, provider, access, title=None, folder=None,
-                  version=None, actor=None, at=None):
+def record_change(workspace, doc_key, change, *, provider, acl, access, title=None,
+                  folder=None, version=None, actor=None, at=None):
+    """acl: the document's principals then (access.py); access: its level then."""
     if change not in CHANGES:
         raise ValueError(f"change must be one of: {', '.join(CHANGES)}")
     with _db() as conn:
         conn.execute("""INSERT INTO doc_changes (workspace, doc_key, provider, folder, title,
-                            change, access, version, actor, at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            change, access, acl, version, actor, at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                      (workspace, doc_key, provider, folder, (title or "")[:300] or None, change,
-                      access or "restricted", version, actor, at or time.time()))
+                      access or "restricted", json.dumps(sorted(acl or ["nobody"])), version,
+                      actor, at or time.time()))
 
 
 def changes(workspace, since, until=None):
     """The workspace's changes in [since, until), oldest first."""
     until = time.time() if until is None else until
     with _db() as conn:
-        return [dict(r) for r in conn.execute(
+        rows = [dict(r) for r in conn.execute(
             "SELECT * FROM doc_changes WHERE workspace = ? AND at >= ? AND at < ? "
             "ORDER BY at, id", (workspace, since, until))]
+    for r in rows:
+        r["acl"] = json.loads(r["acl"] or '["nobody"]')
+    return rows
 
 
 def prune_changes(now=None, days=CHANGES_KEPT_DAYS):

@@ -52,7 +52,8 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     POST   /docs                  {name, access, content} new .txt      (HR / Admin)
     PUT    /docs/{access}/{name}  {content} save a .txt                 (HR / Admin)
     DELETE /docs/{access}/{name}                                        (HR / Admin)
-    POST   /docs/upload           multipart: files[], access            (HR / Admin)
+    POST   /docs/upload           multipart: files[], access, acl?      (HR / Admin)
+    PUT    /docs/{access}/{name}/acl  {acl}: who may see it (re-tag)   (HR / Admin)
   index.py
     POST   /reindex               rebuild the search index              (HR / Admin)
     GET    /index/status          background re-index progress
@@ -66,6 +67,9 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PUT    /integrations/google_drive/folders   {folders} choose what to sync  (HR / Admin)
     PUT    /integrations/{provider}/access      {access: restricted|everyone}
                                   who may ask about its files, then re-index  (HR / Admin)
+    PUT    /integrations/{provider}/policy      {policy: source|workspace|restricted}
+                                  its permission policy, then re-tag          (HR / Admin)
+    POST   /integrations/{provider}/permissions/sync   sync permissions now   (HR / Admin)
     POST   /integrations/{provider}/sync        sync now                      (HR / Admin)
     DELETE /integrations/{provider}             disconnect + delete copies    (HR / Admin)
   ({provider} = google_drive | notion)
@@ -112,6 +116,12 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/eval-cases      answers promoted to the test set            (HR / Admin)
     POST   /admin/eval-cases      {message_id, expected_answer}: promote a rated answer (admin)
     DELETE /admin/eval-cases/{id}                                              (admin)
+  groups.py    (who may see content; roles gate screens: access.py)
+    GET    /admin/groups          every group and its members (built-in, manual, idp, scim) (admin)
+    POST   /admin/groups          {name, description}: a manual group                (admin)
+    PATCH  /admin/groups/{id}     {name?, description?}   DELETE /admin/groups/{id}  (admin)
+    PUT    /admin/groups/{id}/members {usernames}: a manual group's members          (admin)
+    GET    /access/principals     everyone, groups, members: the access pickers    (HR / Admin)
   verified.py
     GET    /admin/verified-answers  every verified answer, live status, owners    (HR / Admin)
     GET    /admin/verified-answers/draft ?message_id | ?gap_id: a new one's fields (HR / Admin)
@@ -150,6 +160,8 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     DELETE /admin/api/keys/{id}   revoke any key in the workspace                    (admin)
   api_v1.py    (the public API: "Authorization: Bearer kb_live_...", an API key, not a session)
     POST   /v1/ask | /v1/search   GET /v1/sources | /v1/audit | /v1/openapi.json
+                                  (/v1/ask's optional `context`: selected text, sent as untrusted
+                                  data; an extension key's questions log as surface "extension")
     GET | POST | DELETE /v1/documents ...   see the module; the API we keep stable
   slack.py
     GET    /admin/slack           the Slack app: which app, which Slack team, settings (HR / Admin)
@@ -161,6 +173,24 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PUT    /admin/slack/settings  {unknown_users, auto_answer, auto_answer_channels} (admin)
     POST   /slack/events | /slack/commands | /slack/interactions   (Slack's signature, not a
                                   session; /slack/apps/{app_key}/...: a customer's own app)
+  teams.py
+    GET    /admin/teams           the Teams bot: which bot, which Microsoft tenant, settings (HR / Admin)
+    PUT    /admin/teams/app       {mode: custom, app_id, app_tenant, client_secret} | {mode: central,
+                                  tenant_id}                                      (admin)
+    GET    /admin/teams/package   the Teams app (manifest.json + icons) as a zip    (admin)
+    PUT    /admin/teams/settings  {unknown_users}                                  (admin)
+    DELETE /admin/teams           disconnect: the secret and tenant are forgotten   (admin)
+    POST   /teams/messages | /teams/apps/{app_key}/messages   (the Bot Connector's JWT, not a
+                                  session; app_key: a customer's own Azure Bot)
+  extension.py (the browser extension, extension/)
+    GET    /extension             is it set up here, and my connected extensions
+    POST   /extension/connect     {redirect_uri} -> {code}: one-time, 60 s, for our extension only
+    POST   /v1/extension/exchange {code} -> {key}: a personal key with the ask scope (no session)
+    DELETE /v1/extension/key      the extension's own key is revoked (that key, not a session)
+  email_in.py
+    GET    /admin/email-in        on or off, the workspace's ask@ address, server set up? (HR / Admin)
+    PUT    /admin/email-in        {enabled}                                         (admin)
+    POST   /email-in/postmark     Postmark's inbound webhook (HTTP Basic credentials, not a session)
   workspace.py  (the workspace's own admins; support opened as admin can't do the starred)
     GET    /admin/workspace       its state, exports, support access, audit retention   (admin)
     POST   /admin/workspace/export          * a ZIP, made by a job, kept 24 h             (admin)

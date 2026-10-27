@@ -16,6 +16,12 @@ Which way it goes is set in the environment (.env):
 send(to, template, **values) renders one of TEMPLATES (a subject, a plain-text
 body and a simple HTML one) and sends it; it raises MailError if it couldn't.
 Values are escaped in the HTML.
+
+A reply (email-in's answers, kb/services/email_in.py) also passes `reply`: a
+Reply with the subject, the threading headers (In-Reply-To, References), the
+Reply-To and, optionally, its own From. Every reply is marked
+"Auto-Submitted: auto-replied" (RFC 3834), so other automatic responders don't
+answer it, and gets a Message-ID of ours, which send() returns.
 """
 
 import html
@@ -23,8 +29,9 @@ import logging
 import os
 import smtplib
 import ssl
+from dataclasses import dataclass, field
 from email.message import EmailMessage
-from email.utils import formataddr, parseaddr
+from email.utils import formataddr, make_msgid, parseaddr
 
 import httpx
 
@@ -94,7 +101,40 @@ TEMPLATES = {
         "{body}\n",
         "<p><strong>{title}</strong></p><p>{body}</p>",
     ),
+    # Email-in's answer (kb/services/email_in.py); its subject is the Reply's.
+    "email_answer": (
+        "{subject}",
+        "{answer}\n{sources}\n-- \n{footer}\n",
+        '<div style="white-space:pre-wrap">{answer}</div>'
+        '<div style="white-space:pre-wrap;color:#52525b;font-size:13px;margin-top:12px">'
+        "{sources}</div>"
+        '<p style="color:#71717a;font-size:13px;border-top:1px solid #e4e4e7;padding-top:8px">'
+        "{footer}</p>",
+    ),
 }
+
+
+@dataclass
+class Reply:
+    """What makes an email a reply in its thread (RFC 5322 3.6.4): its subject, the
+    message it answers (In-Reply-To) and that thread's References; where a reply
+    to it goes (Reply-To), and its From when it isn't MAIL_FROM."""
+    subject: str
+    in_reply_to: str | None = None
+    references: list = field(default_factory=list)
+    reply_to: str | None = None
+    from_address: str | None = None
+
+    def headers(self, message_id):
+        out = {"Message-ID": message_id, "Auto-Submitted": "auto-replied"}
+        if self.in_reply_to:
+            out["In-Reply-To"] = self.in_reply_to
+        refs = [r for r in self.references if r]
+        if self.in_reply_to and self.in_reply_to not in refs:
+            refs.append(self.in_reply_to)
+        if refs:
+            out["References"] = " ".join(refs[-20:])
+        return out
 
 
 def render(template, **values):
@@ -118,30 +158,46 @@ def sender():
     return os.getenv("MAIL_FROM", "").strip() or DEFAULT_FROM
 
 
-def send(to, template, **values):
-    """Send one email. Raises MailError."""
+def send(to, template, reply=None, **values):
+    """Send one email (`reply`: a Reply, see above). Returns its Message-ID when it
+    is a reply, else None. Raises MailError."""
+    if reply is not None:
+        values.setdefault("subject", reply.subject)
     subject, text, page = render(template, **values)
     name = backend()
+    extra, message_id = {}, None
+    if reply is not None:
+        domain = parseaddr(reply.from_address or sender())[1].rpartition("@")[2] or "localhost"
+        message_id = make_msgid(domain=domain)
+        extra = {"headers": reply.headers(message_id), "reply_to": reply.reply_to,
+                 "from_address": reply.from_address}
     if name == "console":
-        log.warning("Email (MAIL_BACKEND=console, not sent) to %s: %s\n%s", to, subject, text)
-        return
+        log.warning("Email (MAIL_BACKEND=console, not sent) to %s: %s%s\n%s", to, subject,
+                    f" {extra['headers']}" if extra else "", text)
+        return message_id
     try:
-        {"smtp": _smtp, "resend": _resend, "postmark": _postmark}[name](to, subject, text, page)
+        {"smtp": _smtp, "resend": _resend, "postmark": _postmark}[name](to, subject, text, page,
+                                                                       **extra)
     except MailError:
         raise
     except (OSError, smtplib.SMTPException, httpx.HTTPError) as e:
         log.warning("Couldn't send an email through %s: %s", name, type(e).__name__)
         raise MailError(f"The email couldn't be sent ({name}: {type(e).__name__}).") from None
+    return message_id
 
 
-def _smtp(to, subject, text, page):
+def _smtp(to, subject, text, page, headers=None, reply_to=None, from_address=None):
     host = os.getenv("SMTP_HOST", "").strip()
     if not host:
         raise MailError("SMTP_HOST isn't set.")
     security = os.getenv("SMTP_SECURITY", "starttls").strip().lower()
     port = int(os.getenv("SMTP_PORT") or (465 if security == "ssl" else 587))
     msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = sender(), to, subject
+    msg["From"], msg["To"], msg["Subject"] = from_address or sender(), to, subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    for k, v in (headers or {}).items():
+        msg[k] = v
     msg.set_content(text)
     msg.add_alternative(page, subtype="html")
     context = ssl.create_default_context()
@@ -170,19 +226,29 @@ def _check(response, name):
         raise MailError(f"{name} refused the email (HTTP {response.status_code}).")
 
 
-def _resend(to, subject, text, page):
+def _resend(to, subject, text, page, headers=None, reply_to=None, from_address=None):
+    body = {"from": from_address or sender(), "to": [to], "subject": subject, "text": text,
+            "html": page}
+    if headers:
+        body["headers"] = dict(headers)
+    if reply_to:
+        body["reply_to"] = reply_to
     r = httpx.post("https://api.resend.com/emails", timeout=TIMEOUT,
                    headers={"Authorization": f"Bearer {_api_key('RESEND_API_KEY')}"},
-                   json={"from": sender(), "to": [to], "subject": subject, "text": text,
-                         "html": page})
+                   json=body)
     _check(r, "Resend")
 
 
-def _postmark(to, subject, text, page):
-    name, address = parseaddr(sender())
+def _postmark(to, subject, text, page, headers=None, reply_to=None, from_address=None):
+    name, address = parseaddr(from_address or sender())
+    body = {"From": formataddr((name, address)), "To": to, "Subject": subject,
+            "TextBody": text, "HtmlBody": page, "MessageStream": "outbound"}
+    if headers:
+        body["Headers"] = [{"Name": k, "Value": v} for k, v in headers.items()]
+    if reply_to:
+        body["ReplyTo"] = reply_to
     r = httpx.post("https://api.postmarkapp.com/email", timeout=TIMEOUT,
                    headers={"X-Postmark-Server-Token": _api_key("POSTMARK_TOKEN"),
                             "Accept": "application/json"},
-                   json={"From": formataddr((name, address)), "To": to, "Subject": subject,
-                         "TextBody": text, "HtmlBody": page, "MessageStream": "outbound"})
+                   json=body)
     _check(r, "Postmark")

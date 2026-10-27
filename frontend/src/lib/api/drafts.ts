@@ -13,6 +13,7 @@ export interface DraftSource {
   provider: string | null
   url: string | null
   access: Access
+  acl: string[] // who may read it (principals)
 }
 
 export interface Draft {
@@ -22,7 +23,10 @@ export interface Draft {
   scope: { provider?: string; folder?: string | null; gap_id?: number; label?: string | null }
   status: DraftStatus
   sources: DraftSource[]
-  max_access: Access // the most restricted of its sources: the lowest it may be published at
+  max_access: Access // public only if every source is for everyone
+  // Its sources' ACLs: someone may read (or be published to) it only with a principal
+  // of every one. [] = everyone.
+  audience: string[][]
   error: string | null
   created_by: string
   created_at: number
@@ -40,7 +44,7 @@ export const draftsApi = {
   fromGap: (gapId: number) => request<Draft>("/drafts/from-gap", json("POST", { gap_id: gapId })),
   save: (id: string, body: { title?: string; content?: string }) =>
     request<Draft>(`/drafts/${seg(id)}`, json("PATCH", body)),
-  publish: (id: string, access: Access, name: string) =>
-    request<Draft>(`/drafts/${seg(id)}/publish`, json("POST", { access, name })),
+  publish: (id: string, acl: string[], name: string) =>
+    request<Draft>(`/drafts/${seg(id)}/publish`, json("POST", { acl, name })),
   remove: (id: string) => request<{ ok: boolean }>(`/drafts/${seg(id)}`, { method: "DELETE" }),
 }

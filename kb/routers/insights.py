@@ -16,7 +16,7 @@ from pydantic import BaseModel
 import insights_store
 import question_log_store
 from kb.audit import audited
-from kb.deps import current_role, current_user, require_admin, require_hr, ws_of
+from kb.deps import current_role, current_user, current_viewer, require_admin, require_hr, ws_of
 from kb.services import conversations, insights, question_log
 
 router = APIRouter()
@@ -29,6 +29,7 @@ FORMULA = ("=", "+", "-", "@", "\t", "\r")       # a spreadsheet would run these
 TABLES = {
     "daily": ("day", "questions", "active_users", "answered", "partial", "not_found",
               "blocked", "general_knowledge", "error", "stopped"),
+    "surfaces": ("surface", "questions", "answered"),
     "sources": ("title", "provider", "access", "cited", "url", "doc_key"),
     "never_cited": ("title", "provider", "access", "first_seen", "modified", "url", "doc_key"),
     "stale": ("title", "provider", "access", "modified", "cited", "url", "doc_key"),
@@ -159,8 +160,8 @@ def list_eval_cases(user=Depends(require_hr), role=Depends(current_role)):
 
 
 @router.post("/api/admin/eval-cases")
-def add_eval_case(body: EvalCaseIn, user=Depends(require_admin), role=Depends(current_role),
-                  audit=audited("eval_case.create")):
+def add_eval_case(body: EvalCaseIn, user=Depends(require_admin),
+                  viewer=Depends(current_viewer), audit=audited("eval_case.create")):
     """Promote a rated answer to the test set, with what it should have said. The
     question, answer and sources are copied from the feedback, so the case
     outlives the chat (chat.md D2)."""
@@ -168,7 +169,7 @@ def add_eval_case(body: EvalCaseIn, user=Depends(require_admin), role=Depends(cu
     feedback = insights_store.feedback_for(ws, body.message_id)
     snap = feedback["snapshot"] if feedback else None
     if not snap or not snap.get("question") or not conversations.visible_to(
-            role, {"author": "assistant", **snap}):
+            viewer, {"author": "assistant", **snap}):
         raise HTTPException(404, "There's no feedback on that answer.")
     expected = (body.expected_answer or "").strip()[:EXPECTED_CHARS] or None
     access = snap.get("max_access") or "restricted"

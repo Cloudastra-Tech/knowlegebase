@@ -34,3 +34,4 @@ sentry-sdk==2.72.0         # optional error tracking (observability.py), only wi
 alembic==1.20.1            # versioned migrations for config/app.db (db.py, migrations/)
 SQLAlchemy==2.1.6          # what Alembic runs migrations through (already pulled in by langchain-community; the stores use plain sqlite3)
 mcp==2.3.0                 # the MCP server at /mcp (kb/mcp_server.py): the official Python SDK, Streamable HTTP
+PyJWT==2.15.1              # checks the Bot Connector's tokens on Teams requests (kb/services/teams.py); already pulled in by mcp

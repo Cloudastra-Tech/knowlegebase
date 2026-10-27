@@ -6,10 +6,14 @@ import {
   assistant,
   digests,
   drafts,
+  emailIn,
+  extension,
+  groups,
   insights,
   session,
   signIn,
   slack,
+  teams,
   webhooks,
   workspace,
 } from "@/lib/api"
@@ -92,6 +96,9 @@ export const queries = {
   // The workspace's lifecycle, exports, support access and audit retention (admin).
   workspace: () => queryOptions({ queryKey: ["workspace"], queryFn: workspace.settings }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
+  // Access groups and their members (admins), and who a document can be shared with.
+  groups: () => queryOptions({ queryKey: ["groups"], queryFn: groups.groups }),
+  principals: () => queryOptions({ queryKey: ["principals"], queryFn: groups.principals }),
   // How questions are logged here (the chat's disclosure, the Insights settings).
   logSettings: () =>
     queryOptions({ queryKey: ["log-settings"], queryFn: insights.logSettings, meta: { silent: true } }),
@@ -118,6 +125,9 @@ export const queries = {
   verifiedAnswers: () =>
     queryOptions({ queryKey: ["verified-answers"], queryFn: assistant.verifiedAnswers }),
   slackApp: () => queryOptions({ queryKey: ["slack-app"], queryFn: slack.get }),
+  teamsApp: () => queryOptions({ queryKey: ["teams-app"], queryFn: teams.get }),
+  emailIn: () => queryOptions({ queryKey: ["email-in"], queryFn: emailIn.get }),
+  extension: () => queryOptions({ queryKey: ["extension"], queryFn: extension.get }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

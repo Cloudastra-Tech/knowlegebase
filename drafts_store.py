@@ -44,6 +44,7 @@ def _row(r):
     d = dict(r)
     d["scope"] = json.loads(d["scope"] or "{}")
     d["sources"] = json.loads(d["sources"] or "[]")
+    d["audience"] = json.loads(d["audience"] or '[["nobody"]]')
     return d
 
 
@@ -72,7 +73,7 @@ def list_drafts(ws, include_published=False):
 
 
 def update(ws, draft_id, **fields):
-    for key in ("scope", "sources"):
+    for key in ("scope", "sources", "audience"):
         if key in fields:
             fields[key] = json.dumps(fields[key])
     fields["updated_at"] = time.time()

@@ -54,6 +54,9 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      # The browser extension (extension/), built with this toolchain into extension/dist.
+      - run: npm run test:extension
+      - run: npm run build:extension
 
   # End-to-end smoke tests in Chromium (frontend/e2e/, Playwright): the built site
   # and the API on one port, on throwaway stores, with a fake OpenAI

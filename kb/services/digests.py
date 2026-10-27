@@ -4,17 +4,18 @@ Digests: "what changed this week" (platform.md PL-30), by email or Slack DM.
 THE CHANGE FEED. record() is called where documents change: an upload, an edit or
 a delete on the Documents screen, a published draft, and every connector sync
 (kb/services/sync.py: a new copy, a new version, a skipped or deleted item). Each
-row keeps the document's title and the access level it had at that moment.
+row keeps the document's title and the ACL (access.py) it had at that moment.
 
 SENDING. The hourly `digests_due` job queues a `digest` job per subscription
 that's due; that job builds the digest for ONE recipient:
   1. the member is looked up NOW (a member removed or turned off gets nothing);
   2. the changes since their last digest are folded per document (added then
      edited is "added"; added then removed is nothing);
-  3. each document is kept only if THIS member may read it (access.may_read),
-     at the strictest of the level it had in the feed and the level it has now:
-     a document restricted at any point never reaches a public reader, and a
-     restricted change is never summarised into someone else's digest;
+  3. each document is kept only if THIS member's principals (their groups, the
+     hr group, themselves: groups_store.principals_for, looked up now) meet EVERY
+     ACL it had in the window AND the one it has now (a removed one: the ones it
+     had). A document limited to a group at any point never reaches someone
+     outside it, and is never summarised into their digest;
   4. what's left is summarised (summaries.summarise_doc: cached per version)
      and sent. Filtering is per recipient, never per workspace.
 An empty digest isn't sent. Every email has a one-click unsubscribe link.
@@ -24,6 +25,7 @@ import logging
 import os
 import time
 
+import access
 import digests_store
 import integrations_store
 import mailer
@@ -32,7 +34,7 @@ import slack_store
 import workspaces
 from connectors import registry
 from kb import jobs
-from kb.services import access, summaries
+from kb.services import audience, summaries
 
 log = logging.getLogger("uvicorn.error")
 
@@ -47,21 +49,23 @@ def public_url():
 
 
 def source_label(provider):
-    return "Company documents" if provider == access.UPLOADS else registry.label(provider)
+    return "Company documents" if provider == audience.UPLOADS else registry.label(provider)
 
 
 # ---- The change feed ------------------------------------------------------------------
-def record(ws, doc_key, change, *, title=None, folder=None, actor=None, access_level=None,
+def record(ws, doc_key, change, *, title=None, folder=None, actor=None, acl=None,
            version=None):
-    """Note a change to a document (never fails what changed it)."""
+    """Note a change to a document (never fails what changed it). acl: who may
+    read it now (access.py), if the caller knows; else it's looked up."""
     try:
-        provider = access.provider_of(doc_key)
-        if folder is None and provider == access.UPLOADS:
+        provider = audience.provider_of(doc_key)
+        if folder is None and provider == audience.UPLOADS:
             folder = doc_key.split("/", 1)[0]
+        acl = acl or audience.doc_acl_now(ws, doc_key)
         digests_store.record_change(
             ws, doc_key, change, provider=provider, folder=folder,
             title=title or os.path.basename(doc_key), version=version, actor=actor,
-            access=access_level or access.doc_access_now(ws, doc_key))
+            acl=acl, access=access.level_of_acl(acl))
     except Exception:
         log.exception("Digests: couldn't record a change to %s in workspace %s", doc_key, ws)
 
@@ -69,7 +73,7 @@ def record(ws, doc_key, change, *, title=None, folder=None, actor=None, access_l
 # ---- One recipient's digest -----------------------------------------------------------
 def fold(rows):
     """{doc_key: entry} of the feed's rows: one change per document (see the top),
-    with the strictest access level it had in the window."""
+    with every ACL it had in the window (acls)."""
     out = {}
     for r in rows:
         e = out.get(r["doc_key"])
@@ -77,11 +81,12 @@ def fold(rows):
             out[r["doc_key"]] = {"doc_key": r["doc_key"], "provider": r["provider"],
                                  "folder": r["folder"], "title": r["title"],
                                  "first": r["change"], "change": r["change"],
-                                 "access": r["access"], "at": r["at"]}
+                                 "acls": [r["acl"]], "at": r["at"]}
             continue
         e.update(change=r["change"], at=r["at"], title=r["title"] or e["title"],
-                 folder=r["folder"] or e["folder"],
-                 access=access.strictest(e["access"], r["access"]))
+                 folder=r["folder"] or e["folder"])
+        if r["acl"] not in e["acls"]:
+            e["acls"].append(r["acl"])
     folded = {}
     for key, e in out.items():
         if e["first"] == "added" and e["change"] == "removed":
@@ -94,20 +99,23 @@ def fold(rows):
 
 def visible_changes(sub, member, until):
     """The folded changes since the subscription's last digest that `member` may
-    read, newest first."""
+    read (every ACL it had then, and the one it has now), newest first."""
     ws = sub["workspace"]
     since = sub["last_sent_at"] or sub["created_at"]
-    levels = integrations_store.chunk_access_levels(ws)
+    reader = audience.viewer_of(member)
+    if reader is None:
+        return []
+    now = audience.Acls(ws)
     out = []
     for e in fold(digests_store.changes(ws, since, until)).values():
         if sub["sources"] and e["provider"] not in sub["sources"]:
             continue
         if sub["folders"] and (e["folder"] or "") not in sub["folders"]:
             continue
-        level = access.strictest(e["access"], access.doc_access_now(ws, e["doc_key"], levels))
-        if not access.may_read(member, {**e, "access": level}):
+        acls = e["acls"] + ([] if e["change"] == "removed" else [now.now(e["doc_key"])])
+        if not audience.may_read(reader, *acls):
             continue
-        out.append({**e, "access": level})
+        out.append(e)
     out.sort(key=lambda e: -e["at"])
     return out
 
@@ -232,12 +240,15 @@ def run_digest(job):
 # ---- What a member may subscribe to ---------------------------------------------------
 def sources_for(ws, member):
     """[{id, label}] of the sources a member may follow: uploaded files, and each
-    connection whose files they may read now."""
-    out = [{"id": access.UPLOADS, "label": source_label(access.UPLOADS)}]
-    levels = integrations_store.chunk_access_levels(ws)
-    for provider, level in sorted(levels.items()):
-        if access.may_read(member, {"access": level, "provider": provider}):
-            out.append({"id": provider, "label": source_label(provider)})
+    connection whose files may be for them (a source-policy connection's are, file
+    by file; an HR-only one's only for HR). Each file is still checked when sent."""
+    out = [{"id": audience.UPLOADS, "label": source_label(audience.UPLOADS)}]
+    reader = audience.viewer_of(member)
+    for row in sorted(integrations_store.list_for(ws), key=lambda r: r["provider"]):
+        policy = integrations_store.policy_of(row)
+        level = "public" if policy == "workspace" else "restricted"
+        if policy == "source" or audience.may_read(reader, access.level_acl(level)):
+            out.append({"id": row["provider"], "label": source_label(row["provider"])})
     return out
 
 

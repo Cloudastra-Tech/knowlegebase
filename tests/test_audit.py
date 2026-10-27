@@ -198,8 +198,9 @@ def _draft(ws):
     d = drafts_store.create(ws, "summary", "Summary", {"provider": "uploads"},
                             f"admin@{ws}.example")
     drafts_store.write_text(ws, d["id"], "A summary [1].")
-    drafts_store.update(ws, d["id"], status="draft", max_access="public",
-                        sources=[{"doc_key": "public/a.txt", "title": "a.txt"}])
+    drafts_store.update(ws, d["id"], status="draft", max_access="public", audience=[],
+                        sources=[{"doc_key": "public/a.txt", "title": "a.txt",
+                                  "acl": ["everyone"]}])
     return d["id"]
 
 
@@ -347,7 +348,7 @@ CASES = [
      lambda ws, did: ("PATCH", f"/api/drafts/{did}", {"json": {"content": "private note"}})),
     ("draft.publish", lambda c, h, ws, txt: _draft(ws),
      lambda ws, did: ("POST", f"/api/drafts/{did}/publish",
-                      {"json": {"access": "public", "name": "summary.txt"}})),
+                      {"json": {"acl": ["everyone"], "name": "summary.txt"}})),
     ("draft.delete", lambda c, h, ws, txt: _draft(ws),
      lambda ws, did: ("DELETE", f"/api/drafts/{did}", {})),
     ("webhook.create", None,
