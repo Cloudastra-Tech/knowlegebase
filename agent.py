@@ -49,10 +49,10 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 
+import access
 import faithfulness
 import models
-from rag import (FRESHNESS_RULE, ROLE_ACCESS, load_chain, passage_of, passage_text, retrieve,
-                 tokenize)
+from rag import FRESHNESS_RULE, load_chain, passage_of, passage_text, retrieve, tokenize
 from safety import (MAX_QUESTION_CHARS, check_answer, check_prompt_injection, check_question,
                     redact_pii)
 from untrusted import (RULE, known_urls, neutralise, quotes_retrieved, spotlight,
@@ -339,7 +339,8 @@ SNIPPET_CHARS = 700         # of a passage, kept with the answer's sources
 def cite(text, passages, allowed, partial=False):
     """(text, used, dropped): an answer's [S#] markers checked against what was
     actually read. passages: {n: Document} numbered for this question; allowed:
-    the access levels the asker may see. A marker stays only if its passage
+    who asks (a role or an access.Viewer): a passage counts only if its ACL
+    names one of their principals. A marker stays only if its passage
     was retrieved in this run AND the asker may see it; the others are removed
     (dropped: how many). The kept ones are renumbered 1..k in order of first
     use, so the answer reads [S1], [S2], ... like the sources list under it.
@@ -355,7 +356,7 @@ def cite(text, passages, allowed, partial=False):
         nonlocal dropped
         n = int(m.group(2))
         doc = passages.get(n)
-        if doc is None or doc.metadata.get("access", "public") not in allowed:
+        if doc is None or not access.can_see(allowed, access.chunk_acl(doc.metadata)):
             dropped += 1
             return ""
         if n not in used:
@@ -530,9 +531,16 @@ class _Run:
         # What the retrieval searches for: the question, or a follow-up rewritten
         # to stand on its own (run(history=...)).
         self.search_for = None
-        # The access level of EVERY chunk put in front of a model, cited or not:
-        # the answer may repeat any of them, so its readers are checked against all.
+        # The access level and ACL of EVERY chunk put in front of a model, cited
+        # or not: the answer may repeat any of them, so its readers are checked
+        # against all (access.clauses).
         self.access = set()
+        self.acls = set()                 # tuples of principals
+        # Who asks (access.Viewer), or None: the agent's role's own principals
+        # (viewer: either way), and whether they may see staff pay (run()).
+        self.principals = None
+        self.viewer = access.for_role("public")
+        self.allow_restricted = False
         # The definitions of the glossary terms this question uses: a message the
         # model reads right after the system prompt (build_agent(glossary=...)).
         self.extra = []
@@ -551,6 +559,7 @@ class _Run:
     def saw(self, docs):
         with self._lock:
             self.access.update(d.metadata.get("access", "public") for d in docs)
+            self.acls.update(tuple(sorted(access.chunk_acl(d.metadata))) for d in docs)
 
     def number(self, docs, query):
         """[(n, doc)]: the passages of one search, numbered. A chunk read before in
@@ -698,7 +707,7 @@ def standalone_question(history, question, llm):
 
 
 def build_agent(role="public", collection=None, outline=True, prefs=None, glossary=None,
-                rules=None, verified=None):
+                rules=None, verified=None, version=None):
     """Create an agent for a given user role. Returns a run(question) function.
     collection: the workspace's search index (None = default workspace).
     outline: whether this workspace has the Outline wiki connected.
@@ -712,20 +721,23 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
       verified  verified answers (kb/services/verified.py): .match(question) -> a
                 hit to serve instead of writing an answer, or None; .finish(hit,
                 question) -> its text as served
-    The returned run() can be called from several threads at once."""
+    version: the index's version (indexing.current): its keyword index is then
+    built once and shared with the other roles' agents.
+    The returned run() can be called from several threads at once, each call
+    as its own asker (run(principals=...))."""
     prefs = prefs or {}
-    retriever, rag_llm = load_chain(role, collection)
+    retriever, rag_llm = (load_chain(role, collection) if version is None
+                          else load_chain(role, collection, version=version))
     if rules:
         retriever.weigh = rules.weigh
     expand = glossary.expand if glossary else None
-    allowed = ROLE_ACCESS.get(role, ["public"])
-    allow_restricted = "restricted" in allowed
 
     def search_docs_for(run, question, guard=None):
         """The passages found for `question`, numbered and spotlighted (one block
         each, its ref the marker to cite it with) — evidence, not an answer: the
         agent's model writes the one answer from it."""
-        docs, refused = retrieve(question, retriever, rag_llm, role, guard=guard, expand=expand)
+        docs, refused = retrieve(question, retriever, rag_llm, role, guard=guard, expand=expand,
+                                 principals=run.principals)
         if docs is None:                 # a guard refused before anything was shown
             run.block(refused)
             return _blocked_note(refused)
@@ -1108,12 +1120,14 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         state.emit({"type": "step_start", "id": "verified", "tool": "verified_answer",
                     "label": "Checking verified answers"})
         text = verified.finish(hit, question)
-        if not allow_restricted:
-            text = check_answer(text, rag_llm, allow_restricted)
+        if not state.allow_restricted:
+            text = check_answer(text, rag_llm, state.allow_restricted)
         text = redact_pii(text)
         sources = list(hit["sources"])
         with state._lock:                 # who may read it again: its own level and its sources'
             state.access.update(hit["access"])
+            state.acls.update(tuple(sorted(a)) for a in hit.get("acls") or
+                              [access.level_acl(level) for level in hit["access"]])
         badge = hit["badge"]
         state.emit({"type": "step_end", "id": "verified", "tool": "verified_answer",
                     "result": f"verified answer “{badge['title']}”"})
@@ -1151,7 +1165,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                     # never flash on screen, and check its markers as cite()
                     # will check the whole answer.
                     shown, used, _ = cite(run.strip_links(text, partial=True),
-                                          run.by_number(), allowed, partial=True)
+                                          run.by_number(), run.viewer, partial=True)
                     event = {"type": "answer", "text": redact_pii(shown)}
                     if used != shown_sources:  # sources only when they change
                         shown_sources = used
@@ -1177,7 +1191,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         return messages
 
     def run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
-            out=None):
+            out=None, principals=None):
         """Answer a question -> (answer, trace).
         The answer cites the passages it used as [S1], [S2], ... (checked, see
         cite()). with_sources=True -> (answer, trace, sources) with the sources
@@ -1196,16 +1210,24 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         out: a dict filled in as the run goes, so it is there after Cancelled too:
           standalone  the question searched (the rewritten follow-up, or user_input)
           access      the access levels of every chunk a model read (a set)
+          acls        the ACLs of every chunk a model read (a set of tuples)
           sources     the passages cited so far (streamed runs)
           blocked     an input guard refused the question          (once done)
           coverage    "none" / "partial" / "full", see coverage()  (once done)
           dropped     how many [S#] markers cite() removed          (once done)
           unsupported figures the answer's sources don't show, see
-                      check_figures()                               (once done)"""
+                      check_figures()                               (once done)
+        principals: who asks (access.Viewer: themselves, their groups, ...). The
+        search, the citations and the verified answers keep to what they may
+        see, and the staff-pay guards apply unless they hold the hr group.
+        None: the agent's role's own principals."""
         state = _Run(on_event, cancel, question=user_input)
+        state.principals = None if principals is None else access.of(principals)
+        state.viewer = state.principals or access.for_role(role)
+        state.allow_restricted = allow_restricted = access.may_see_hr(state.viewer)
         report = {} if out is None else out
         state.report = report
-        report.update(standalone=user_input, access=state.access, sources=[])
+        report.update(standalone=user_input, access=state.access, acls=state.acls, sources=[])
         # Earlier answers' markers pointed at THEIR passages: not this question's.
         history = [{**m, "content": strip_markers(m["content"])} if m["role"] != "user" else m
                    for m in history or []]
@@ -1248,7 +1270,9 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         # once the input guards have passed; one they refuse is refused as before.
         if verified is not None and retrieval:
             try:
-                hit = verified.match(state.search_for or user_input)
+                hit = verified.match(state.search_for or user_input,
+                                     **({"principals": state.principals}
+                                        if state.principals is not None else {}))
             except Exception:
                 log.exception("Agent: matching verified answers failed; answering from the search")
                 hit = None
@@ -1299,7 +1323,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
             answer = state.strip_links(answer)
             # CITATIONS: only markers pointing at a passage this question read,
             # that the asker may see; the rest are removed and counted.
-            answer, used, dropped = cite(answer, state.by_number(), allowed)
+            answer, used, dropped = cite(answer, state.by_number(), state.viewer)
             if dropped:
                 log.info("Agent: removed %d citation marker(s) that pointed at no passage "
                          "read for the question", dropped)
@@ -1317,8 +1341,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         return answer + format_sources(sources), trace
 
     # The same search without the agent (kb/services/retrieval.py: the public API's
-    # /search, the MCP server's search_knowledge), already scoped to the role, and
-    # the workspace's glossary expansion for it.
+    # /search, the MCP server's search_knowledge), scoped to the role unless a
+    # search names its asker, and the workspace's glossary expansion for it.
     run.retriever = retriever
     run.expand = expand
     return run

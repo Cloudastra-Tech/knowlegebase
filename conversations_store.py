@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 
+import access
 import db
 
 _lock = threading.Lock()
@@ -50,6 +51,7 @@ def _message(r):
     for key in _JSON_FIELDS:
         m[key] = json.loads(m.get(key) or "[]")
     m["verified"] = json.loads(m["verified"]) if m.get("verified") else None
+    m["acl"] = json.loads(m["acl"]) if m.get("acl") else None
     return m
 
 
@@ -268,20 +270,33 @@ def add_message(cid, author, content, parent_id=None, state=None, max_access="pu
     return mid
 
 
+def audience(max_access, acl=None):
+    """(max_access, acl) as saved: acl is the answer's audience (access.clauses);
+    without one, max_access's (public: everyone, else the hr group). The level
+    is public only when everyone may read it."""
+    found = access.clauses(acl) if acl is not None else []
+    if not found and max_access != "public":
+        found = [[access.HR]]
+    return access.level_of(found), found
+
+
 def finish_message(mid, content, state, sources=(), steps=(), trace=(), max_access="public",
                    standalone_question=None, latency_ms=None, model=None, followups=(),
-                   verified=None):
+                   verified=None, acl=None):
     """An answer is done (or stopped, or failed): its text, state and what it read.
-    verified: the verified answer it was served from ({id, title, by, at}), if any."""
+    verified: the verified answer it was served from ({id, title, by, at}), if any.
+    acl: who may read it (access.clauses of every chunk the model read); None:
+    max_access says (see audience())."""
     if state not in STATES:
         raise ValueError(f"unknown answer state {state!r}")
+    max_access, acl = audience(max_access, acl)
     with _lock, _db() as conn:
         conn.execute("UPDATE messages SET content = ?, state = ?, sources = ?, steps = ?, "
-                     "trace = ?, max_access = ?, standalone_question = ?, latency_ms = ?, "
-                     "model = ?, followups = ?, verified = ? WHERE id = ?",
+                     "trace = ?, max_access = ?, acl = ?, standalone_question = ?, "
+                     "latency_ms = ?, model = ?, followups = ?, verified = ? WHERE id = ?",
                      (content, state, json.dumps(list(sources)), json.dumps(list(steps)),
-                      json.dumps(list(trace)), max_access, standalone_question, latency_ms,
-                      model, json.dumps(list(followups)),
+                      json.dumps(list(trace)), max_access, json.dumps(acl), standalone_question,
+                      latency_ms, model, json.dumps(list(followups)),
                       json.dumps(verified) if verified else None, mid))
         row = conn.execute("SELECT conversation_id FROM messages WHERE id = ?", (mid,)).fetchone()
         if row:
@@ -332,8 +347,8 @@ def siblings(messages):
 
 
 _COPIED = ("author", "content", "standalone_question", "state", "sources", "max_access",
-           "steps", "trace", "followups", "model", "latency_ms", "index_version", "verified",
-           "created_at")
+           "acl", "steps", "trace", "followups", "model", "latency_ms", "index_version",
+           "verified", "created_at")
 
 
 def fork(workspace, owner, cid, message_id):
@@ -355,6 +370,8 @@ def fork(workspace, owner, cid, message_id):
             row = {k: m.get(k) for k in _COPIED}
             for key in _JSON_FIELDS:
                 row[key] = json.dumps(row.get(key) or [])
+            for key in ("acl", "verified"):
+                row[key] = json.dumps(row[key]) if row.get(key) is not None else None
             conn.execute(f"INSERT INTO messages (id, conversation_id, parent_id, "
                          f"{', '.join(_COPIED)}) VALUES (?, ?, ?, {', '.join('?' * len(_COPIED))})",
                          (mid, new["id"], parent, *[row[k] for k in _COPIED]))
