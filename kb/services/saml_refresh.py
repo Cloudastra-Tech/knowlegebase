@@ -22,6 +22,7 @@ import saml_sp
 import sso_setup
 import url_guard
 from kb import jobs
+from kb.services import webhooks
 from kb.services.sign_in import saml_conn
 
 log = logging.getLogger("uvicorn.error")
@@ -51,7 +52,14 @@ def _metadata_attention(conn, column, problem, reason, **status):
     members_store.set_metadata_status(conn["id"], **{column: problem}, **status)
     if conn.get(column) != problem:
         members_store.log_event(conn["workspace"], conn["id"], None, "attention", reason)
+        _tell_webhooks(conn, "attention", reason)
         # TODO: email the workspace's admins as well, once there's a way to send mail.
+
+
+def _tell_webhooks(conn, outcome, reason):
+    """sso.metadata_changed (kb/services/webhooks.py): the same event the admin sees."""
+    webhooks.emit(conn["workspace"], "sso.metadata_changed",
+                  {"connection_id": conn["id"], "outcome": outcome, "reason": reason})
 
 
 def refresh_saml_metadata(conn, due_by=None):
@@ -107,10 +115,13 @@ def refresh_saml_metadata(conn, due_by=None):
     if before != idp["fingerprints"]:
         log.warning("SAML %s: its IdP's signing certificates changed; updated", cid)
         members_store.log_event(conn["workspace"], cid, None, "updated", CERT_UPDATED)
+        _tell_webhooks(conn, "updated", CERT_UPDATED)
     elif (idp["sso_url"], idp["want_authn_requests_signed"]) != (
             settings.get("sso_url"), bool(settings.get("want_authn_requests_signed"))):
         members_store.log_event(conn["workspace"], cid, None, "updated",
                                 "Sign-in settings updated automatically from the metadata")
+        _tell_webhooks(conn, "updated", "Sign-in settings updated automatically from the "
+                                        "metadata")
     return members_store.get_connection(cid)
 
 

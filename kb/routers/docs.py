@@ -1,5 +1,6 @@
 """Documents (HR / Admin): the workspace's uploaded files (docs_store.py). Every
-change queues a re-index of the documents it touched.
+change queues a re-index of the documents it touched, and goes in the change feed
+digests are made from (kb/services/digests.py).
 
 WHO MAY SEE an upload (its ACL, access.py): everyone, groups and members picked
 when it's added or later (PUT .../acl), kept in doc_acl (groups_store.py). Its
@@ -23,7 +24,7 @@ import workspaces
 from kb.audit import audited
 from kb.deps import current_viewer, require_hr, ws_of
 from kb.rate_limit import user_limit
-from kb.services import indexing, permissions
+from kb.services import digests, indexing, permissions
 from kb.settings import UPLOAD_MAX_FILE_MB, UPLOAD_MAX_REQUEST_MB, env_int
 
 router = APIRouter()
@@ -150,6 +151,7 @@ def create_doc(body: NewDocIn, user=Depends(require_hr), audit=audited("doc.crea
     _keep_acl(ws, f"{folder}/{name}", acl, user)
     audit.record("doc", f"{folder}/{name}", {"size": len(body.content.encode("utf-8")),
                                              **({"acl": acl} if acl else {})}, user=user)
+    digests.record(ws, f"{folder}/{name}", "added", actor=user["username"])
     indexing.schedule_index(ws, docs=[f"{folder}/{name}"])
     return {"access": folder, "name": name}
 
@@ -165,6 +167,7 @@ def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr),
     docs_store.save(access, name, body.content.encode("utf-8"), workspaces.docs_root(ws))
     audit.record("doc", f"{access}/{name}", {"size": len(body.content.encode("utf-8"))},
                  user=user)
+    digests.record(ws, f"{access}/{name}", "modified", actor=user["username"])
     indexing.schedule_index(ws, docs=[f"{access}/{name}"])
     return {"ok": True}
 
@@ -173,6 +176,9 @@ def save_doc(access: str, name: str, body: SaveDocIn, user=Depends(require_hr),
 def delete_doc(access: str, name: str, user=Depends(require_hr), audit=audited("doc.delete")):
     ws = ws_of(user)
     os.remove(_existing_path(ws, access, name))
+    # The change feed keeps who could see it (its ACL goes next).
+    digests.record(ws, f"{access}/{name}", "removed", actor=user["username"],
+                   acl=permissions.upload_acl(ws, f"{access}/{name}"))
     groups_store.set_doc_acl(ws, f"{access}/{name}", None, user["username"])
     audit.record("doc", f"{access}/{name}", user=user)
     indexing.schedule_index(ws, docs=[f"{access}/{name}"])
@@ -228,9 +234,13 @@ def upload_docs(files: list[UploadFile] = File(...), access: str = Form("public"
     if not picked:
         raise HTTPException(400, "Please choose at least one text, PDF, Word, PowerPoint, "
                                  "Excel, Markdown or HTML file.")
+    root = workspaces.docs_root(ws)
     for name, f in picked:
-        docs_store.save_file(access, name, f.file, workspaces.docs_root(ws))
+        existed = os.path.exists(docs_store.doc_path(access, name, root))
+        docs_store.save_file(access, name, f.file, root)
         _keep_acl(ws, f"{access}/{name}", picked_acl, user)
+        digests.record(ws, f"{access}/{name}", "modified" if existed else "added",
+                       actor=user["username"])
     audit.record("doc", access, {"files": [name for name, _ in picked],
                                  **({"acl": picked_acl} if picked_acl else {})}, user=user)
     indexing.schedule_index(ws, docs=[f"{access}/{name}" for name, _ in picked])

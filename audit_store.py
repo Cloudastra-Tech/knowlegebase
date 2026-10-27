@@ -36,6 +36,7 @@ are a chain of their own, workspace PLATFORM, which no workspace can be called.
 
 import hashlib
 import json
+import logging
 import secrets
 import threading
 import time
@@ -51,6 +52,9 @@ PAGE = 50                          # rows per page of list()
 MAX_PAGE = 200
 
 _lock = threading.Lock()
+log = logging.getLogger("uvicorn.error")
+# Called with each event once it's written (kb/services/webhooks.py: audit.event).
+LISTENERS = []
 
 
 def _canonical_details(details):
@@ -92,7 +96,19 @@ def record(workspace, action, actor=None, actor_type="user", target_type=None, t
             raise
         finally:
             conn.close()
-    return {**row, "id": cur.lastrowid}
+    event = {**row, "id": cur.lastrowid}
+    for listener in list(LISTENERS):
+        try:
+            listener(event)
+        except Exception:               # a listener never fails the change itself
+            log.exception("Audit: a listener failed on %s", action)
+    return event
+
+
+def listen(fn):
+    """Call fn(event) after every event is written (each function once)."""
+    if fn not in LISTENERS:
+        LISTENERS.append(fn)
 
 
 def _actor_hash(workspace, username):
