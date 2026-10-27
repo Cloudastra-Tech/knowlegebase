@@ -344,7 +344,7 @@ def _reporter(progress):
 
 
 def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None,
-         workspace=None, doc_info=None):
+         workspace=None, doc_info=None, skip=None):
     """Build a search index from a docs folder, from scratch. Returns a summary dict.
     progress(step, total, message) — optional callback, e.g. for a UI progress bar.
     docs_folder / collection — which workspace (defaults = the original setup).
@@ -352,7 +352,9 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
     each connection's setting (integrations_store.chunk_access_levels); a provider
     missing from it is restricted.
     workspace — goes into the chunk ids (default: the collection's name).
-    doc_info — {doc key: {title, url, provider}} for synced files (sync_store.doc_info)."""
+    doc_info — {doc key: {title, url, provider}} for synced files (sync_store.doc_info).
+    skip — skip(doc key, its tags) -> True leaves a document out: a source rule
+    blocks it (kb/services/assistant.py)."""
     report = _reporter(progress)
     collection = collection or "langchain"
     namespace = workspace or collection
@@ -366,12 +368,15 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
     store = _store(collection)
 
     keys = doc_files(docs_folder) if os.path.isdir(docs_folder) else []
-    items, failed = [], []
+    items, failed, blocked = [], [], 0
     report(2, "Splitting into chunks")
     for key in keys:
         path = os.path.join(docs_folder, *key.split("/"))
         try:
             meta = doc_meta(docs_folder, key, connector_access, doc_info)
+            if skip and skip(key, meta):
+                blocked += 1
+                continue
             meta.update(doc_stat=_file_stat(path), doc_hash=_doc_hash(path, meta),
                         modified=_modified(path, meta))
             items += load_and_split(docs_folder, key, meta, namespace)
@@ -381,8 +386,9 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
     _embed_and_store(store, items, report)
     report(4, "Done")
     n_restricted = sum(1 for _, _, m in items if m["access"] == "restricted")
-    return {"documents": len(keys) - len(failed), "chunks": len(items),
-            "restricted": n_restricted, "embedded": len(items), "failed": len(failed)}
+    return {"documents": len(keys) - len(failed) - blocked, "chunks": len(items),
+            "restricted": n_restricted, "embedded": len(items), "failed": len(failed),
+            "blocked": blocked}
 
 
 def _stored_docs(store, keys=None):
@@ -407,7 +413,7 @@ def _same(metas, field):
 
 
 def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None,
-           workspace=None, only=None, doc_info=None):
+           workspace=None, only=None, doc_info=None, skip=None):
     """Bring an existing collection in line with the docs folder, document by
     document. Returns a summary dict (with what was embedded, re-tagged, removed).
 
@@ -420,6 +426,8 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
       new or edited                              re-split; chunks whose id is new
                                                  are embedded, gone ones deleted
       deleted                                    its chunks are deleted
+      blocked by a source rule (skip, see main)  its chunks are deleted, as if it
+                                                 were; unblocked, it is added again
     Readers see each document's old or new chunks while this runs, never an
     empty index. A run cut short is finished by the next one: a document
     whose chunks don't all agree counts as changed."""
@@ -451,6 +459,11 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
                 stats["removed"] += 1
             continue
         meta = doc_meta(docs_folder, key, connector_access, doc_info)
+        if skip and skip(key, meta):
+            if have:
+                deletes += have["ids"]
+            stats["blocked"] += 1
+            continue
         stat = _file_stat(path)
         current = bool(have) and _same(have["metas"], "chunk_meta") == CHUNK_META
         if current and _same(have["metas"], "doc_stat") == stat and all(
@@ -488,7 +501,8 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
     report(4, "Done")
     return {**summary(collection), "embedded": len(adds), "deleted_chunks": len(deletes),
             "added": stats["added"], "changed": stats["changed"],
-            "retagged": stats["retagged"], "removed": stats["removed"], "failed": len(failed)}
+            "retagged": stats["retagged"], "removed": stats["removed"], "failed": len(failed),
+            "blocked": stats["blocked"]}
 
 
 def retag(collection, connector, access):

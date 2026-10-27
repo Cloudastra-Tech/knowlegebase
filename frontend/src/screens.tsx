@@ -34,6 +34,12 @@ const InsightsView = lazy(() =>
 const ApiKeysView = lazy(() =>
   import("@/components/api-keys-view").then((m) => ({ default: m.ApiKeysView })),
 )
+const VerifiedView = lazy(() =>
+  import("@/components/verified-view").then((m) => ({ default: m.VerifiedView })),
+)
+const AssistantView = lazy(() =>
+  import("@/components/assistant-view").then((m) => ({ default: m.AssistantView })),
+)
 const KnowledgeView = lazy(() =>
   import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
 )
@@ -171,6 +177,24 @@ export function DocsScreen() {
   return (
     <Screen>
       <DocsView />
+    </Screen>
+  )
+}
+
+// /admin/verified (HR and admins): verified answers and their review queue.
+export function VerifiedScreen() {
+  return (
+    <Screen>
+      <VerifiedView />
+    </Screen>
+  )
+}
+
+// /admin/assistant (admins): the assistant's settings and glossary.
+export function AssistantScreen() {
+  return (
+    <Screen>
+      <AssistantView />
     </Screen>
   )
 }
@@ -343,6 +367,7 @@ export function InsightsScreen({ tab }: { tab: InsightsTab }) {
         onTabChange={(next) =>
           navigate(next === "overview" ? "/admin/insights" : "/admin/insights/feedback")
         }
+        onAddVerified={(gapId) => navigate(`/admin/verified?from_gap=${gapId}`)}
       />
     </Screen>
   )

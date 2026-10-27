@@ -14,7 +14,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+import assistant_store
 import conversations_store
+import members_store
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
 from kb.services import answering, conversations, indexing, passages, suggestions
@@ -52,7 +54,7 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
         raise HTTPException(502, f"The assistant couldn't answer just now ({e.kind}). "
                                  "Please try again in a moment.")
     return {"answer": done.answer, "sources": done.sources, "state": done.state,
-            "steps": _steps(done.trace, user["role"] == "admin")}
+            "steps": _steps(done.trace, user["role"] == "admin"), "verified": done.verified}
 
 
 @router.get("/api/passages/{chunk_id}")
@@ -69,11 +71,16 @@ def passage(chunk_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
     return found
 
 
+# Trace entries that aren't tools the assistant chose, for admins only: the source
+# rules that weighed what it read (agent.rules_applied).
+ADMIN_ONLY = ("source_rules",)
+
+
 def _steps(trace, details=True):
     """The tools the agent used. Their raw input and output only with details
     (admins): they can be long, and they're the model's working, not the answer."""
     if not details:
-        return [{"tool": t["tool"]} for t in trace]
+        return [{"tool": t["tool"]} for t in trace if t["tool"] not in ADMIN_ONLY]
     return [{"tool": t["tool"], "input": t["input"],
              "output": t["output"][:STEP_PREVIEW_CHARS]
              + (" …(trimmed)" if len(t["output"]) > STEP_PREVIEW_CHARS else "")}
@@ -93,7 +100,9 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
          title       {"id", "title"}                a new chat's title, from its first
                                                     question (saved conversations only)
          done        {"answer", "sources", "steps", "state", "standalone_question",
-                      "message_id", "followups"}    the final, checked answer
+                      "message_id", "followups", "verified"}   the final, checked answer
+                                                    (verified: the verified answer it
+                                                    is, {id, title, by, at}, or null)
          error       {"message", "message_id"}
     With a conversation_id the question and its answer are saved there, and the
     conversation so far is the history it's answered with. retry_of, regenerate_of
@@ -107,6 +116,10 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
     user_limit(user, "chat")
     ws = ws_of(user)
     admin = user["role"] == "admin"
+    # The steps panel: off for members when the workspace's admin turned it off
+    # (assistant settings); HR and admins always see it.
+    steps_shown = (user["role"] in members_store.STAFF_ROLES
+                   or assistant_store.settings(ws)["show_steps"])
 
     turn = None
     if body.conversation_id:
@@ -146,7 +159,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
             for step in seen["steps"]:
                 if step["id"] == event["id"]:
                     step["result"] = event["result"]
-        put(event)
+        if steps_shown or event["type"] not in ("step_start", "step_end"):
+            put(event)
 
     def save(content, answer_state, out, **fields):
         if not turn:
@@ -185,11 +199,12 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
             followups = suggestions.followups(question, done.answer, done.state, done.sources)
             save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
                  max_access=done.max_access, standalone_question=done.standalone,
-                 followups=followups)
+                 followups=followups, verified=done.verified)
             put_title()
             put({"type": "done", "answer": done.answer, "sources": done.sources,
-                 "steps": _steps(done.trace, admin), "state": done.state,
+                 "steps": _steps(done.trace, admin) if steps_shown else [], "state": done.state,
                  "standalone_question": done.standalone, "followups": followups,
+                 "verified": done.verified,
                  "message_id": turn["message_id"] if turn else None})
         except Cancelled:                          # nobody is listening any more
             # What was shown, with the passages its markers cite so far.

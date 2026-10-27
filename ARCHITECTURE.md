@@ -372,6 +372,44 @@ has the scopes, the Marketplace and rate-limit rules, and a by-hand checklist.
 
 ---
 
+## ✅ Verified answers, source rules and the assistant's settings
+
+Admins shape answers in three ways, all per workspace:
+
+- **Verified answers** (`/admin/verified`, HR and admins; `kb/services/verified.py`).
+  An approved answer with question variants, the documents it rests on, who it's
+  for (public or restricted, never lower than those documents or the chat answer
+  it was made from), an owner and a review interval. Its title and variants are
+  embedded into `verified_answer_vectors`, a small set beside it in SQLite (not the
+  search index: shadow rebuilds, BM25 and the passage endpoints never see it). In
+  `agent.run`, while the input guards work, the question (a follow-up as
+  rewritten) is compared with them; at `VERIFIED_MATCH_THRESHOLD` (0.88 cosine) or
+  above, once the guards pass, the answer is served instead of written, with
+  "Verified by <name> · <date>" and its sources, if the asker may see it and every
+  source as tagged now. Otherwise the usual search answers. An admin may let the
+  FAST model reword it; a rewording that adds a figure or a link is dropped. The
+  nightly `verified_review` job marks answers due (within `VERIFIED_NOTICE_DAYS`,
+  7, of their review date) or expired and emails the owner once each; an expired
+  answer is never served (checked live, not only by the job). Slack's
+  auto-answer posts one when it matches as public.
+- **Source rules** (`doc_rules`; row actions on Knowledge). Boost or demote a
+  document, a folder or a provider: the rule multiplies the fused RRF score, and
+  the final order with the freshness boost (`rag.prefer_recent`), so the two
+  compose. Block leaves the document out of ingest (`ingest.update(skip=...)`
+  removes its chunks incrementally) and out of results meanwhile. The rules a
+  search applied are a `source_rules` step admins see.
+- **Assistant settings** (`/admin/assistant`, admins; `assistant_store.py`). Name,
+  tone, answer language and up to 1,500 characters of instructions go in a
+  delimited `<company_preferences>` block at the END of the system prompt, after
+  the safety and citation rules, told it can't change them (and the server checks
+  citations itself). Wikipedia and currency follow the workspace's switch under
+  the server's `ALLOW_*` ceiling; the steps panel can be hidden from members. The
+  glossary adds a term's other names to both searches and gives the model the
+  definitions. Any change bumps the workspace's settings version, and its cached
+  agents are built again, as after a re-index.
+
+---
+
 ## 🗄️ Database migrations
 
 Accounts, sign-in providers, sessions and integrations live in one SQLite file,

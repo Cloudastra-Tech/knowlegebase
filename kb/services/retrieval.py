@@ -35,9 +35,10 @@ def search(ws, role, query, k=5):
     if not ok:
         raise Refused(reason)
     k = max(1, min(MAX_K, int(k)))
-    retriever = agents.get_agent(ws, role).retriever
+    agent = agents.get_agent(ws, role)
+    expand = getattr(agent, "expand", None)          # the workspace's glossary
     found = []
-    for doc in retriever.invoke(query, k=k):
+    for doc in agent.retriever.invoke(expand(query) if expand else query, k=k):
         meta = doc.metadata
         if meta.get("access", "public") not in allowed:     # never, but never shown either
             continue

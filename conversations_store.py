@@ -49,6 +49,7 @@ def _message(r):
     m = dict(r)
     for key in _JSON_FIELDS:
         m[key] = json.loads(m.get(key) or "[]")
+    m["verified"] = json.loads(m["verified"]) if m.get("verified") else None
     return m
 
 
@@ -268,17 +269,20 @@ def add_message(cid, author, content, parent_id=None, state=None, max_access="pu
 
 
 def finish_message(mid, content, state, sources=(), steps=(), trace=(), max_access="public",
-                   standalone_question=None, latency_ms=None, model=None, followups=()):
-    """An answer is done (or stopped, or failed): its text, state and what it read."""
+                   standalone_question=None, latency_ms=None, model=None, followups=(),
+                   verified=None):
+    """An answer is done (or stopped, or failed): its text, state and what it read.
+    verified: the verified answer it was served from ({id, title, by, at}), if any."""
     if state not in STATES:
         raise ValueError(f"unknown answer state {state!r}")
     with _lock, _db() as conn:
         conn.execute("UPDATE messages SET content = ?, state = ?, sources = ?, steps = ?, "
                      "trace = ?, max_access = ?, standalone_question = ?, latency_ms = ?, "
-                     "model = ?, followups = ? WHERE id = ?",
+                     "model = ?, followups = ?, verified = ? WHERE id = ?",
                      (content, state, json.dumps(list(sources)), json.dumps(list(steps)),
                       json.dumps(list(trace)), max_access, standalone_question, latency_ms,
-                      model, json.dumps(list(followups)), mid))
+                      model, json.dumps(list(followups)),
+                      json.dumps(verified) if verified else None, mid))
         row = conn.execute("SELECT conversation_id FROM messages WHERE id = ?", (mid,)).fetchone()
         if row:
             conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -328,7 +332,8 @@ def siblings(messages):
 
 
 _COPIED = ("author", "content", "standalone_question", "state", "sources", "max_access",
-           "steps", "trace", "followups", "model", "latency_ms", "index_version", "created_at")
+           "steps", "trace", "followups", "model", "latency_ms", "index_version", "verified",
+           "created_at")
 
 
 def fork(workspace, owner, cid, message_id):

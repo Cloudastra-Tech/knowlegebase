@@ -33,8 +33,8 @@ of the asker's (follow-ups in a Slack thread continue it) and logged in the
 question log with surface "slack".
 
 AUTO-ANSWER in help channels an admin picks: off by default, and it posts only
-when a verified answer matches (PL-27, not built yet: verified_answer()) or the
-answer is confident (confident()). It needs the extra channels:history scope.
+when a verified answer the channel may see matches (PL-27: verified_answer()) or
+the answer is confident (confident()). It needs the extra channels:history scope.
 
 Slack API facts used here (checked 2026-10-27 on docs.slack.dev):
   signing:   https://docs.slack.dev/authentication/verifying-requests-from-slack
@@ -451,6 +451,11 @@ def answer_blocks(done, message_id, base_url=None, open_url=None):
     text = mrkdwn(done.answer, done.sources, base_url) or "(no answer)"
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": piece}}
               for piece in _pieces(text)][:40]
+    badge = getattr(done, "verified", None)
+    if badge:                        # a verified answer (PL-27): who verified it, and when
+        when = time.strftime("%d %b %Y", time.gmtime(badge["at"]))
+        line = f":white_check_mark: Verified by {_escape(badge['by'])} · {when}"
+        blocks.insert(0, {"type": "context", "elements": [{"type": "mrkdwn", "text": line}]})
     if done.sources:
         items = []
         for s in done.sources:
@@ -700,7 +705,7 @@ def _ask(ws, asker, role, question, key=None, history=None):
         turn["message_id"], done.answer, done.state, sources=done.sources,
         steps=[{"tool": t["tool"]} for t in done.trace], max_access=done.max_access,
         standalone_question=done.standalone,
-        latency_ms=int((time.monotonic() - started) * 1000))
+        latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified)
     return done, turn
 
 
@@ -735,10 +740,16 @@ def answer_in_dm(token, ws, asker, p, note=None):
     _audit(ws, asker, p, asker.role, done, turn, where="dm")
 
 
-def verified_answer(ws, question):
-    """An admin-verified answer matching the question (PL-27): not built yet, so
-    there is none. Auto-answer posts one when it's there."""
-    return None
+def verified_answer(ws, question, role="public"):
+    """The verified answer (PL-27, kb/services/verified.py) the question matches, as
+    `role` may see it (a channel is answered as public: its audience is anyone in
+    it), or None. Auto-answer posts when there is one."""
+    from kb.services import verified
+    try:
+        return verified.Matcher(ws, role).match(question)
+    except Exception as e:
+        log.warning("Slack: matching verified answers failed (%s)", type(e).__name__)
+        return None
 
 
 def confident(done):
@@ -792,15 +803,18 @@ def ask(install, token, p):
     role = asker.role if private else "public"
 
     if auto:
-        if verified_answer(ws, p["text"]) is None:
-            done, turn = _ask(ws, asker, role, p["text"])
-            if not confident(done):
-                # Not posted: it isn't kept in their chats either (the log has it).
-                conversations_store.delete(ws, asker.username, turn["conversation"]["id"])
-                return {"skipped": "not confident"}
-            _deliver(reply, done, turn, private=False)
-            _audit(ws, asker, p, role, done, turn)
-        return {"answered": "auto"}
+        # Posted when a verified answer the channel may see matches (ask() serves it,
+        # as `role`, with its badge), or when the written answer is confident.
+        match = verified_answer(ws, p["text"], role)
+        done, turn = _ask(ws, asker, role, p["text"])
+        served = bool(match) and bool(getattr(done, "verified", None))
+        if not served and not confident(done):
+            # Not posted: it isn't kept in their chats either (the log has it).
+            conversations_store.delete(ws, asker.username, turn["conversation"]["id"])
+            return {"skipped": "not confident"}
+        _deliver(reply, done, turn, private=False)
+        _audit(ws, asker, p, role, done, turn)
+        return {"answered": "auto", **({"verified": done.verified["id"]} if served else {})}
 
     reply.start()
     try:

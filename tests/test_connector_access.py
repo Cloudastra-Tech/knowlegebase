@@ -208,7 +208,7 @@ def outline(monkeypatch):
     monkeypatch.setenv("OUTLINE_API_TOKEN", "ol_api_test")
     monkeypatch.setattr(state, "agents", {})
     monkeypatch.setattr(agents, "build_agent",
-                        lambda role, collection, outline: built.setdefault(role, outline))
+                        lambda role, collection, outline, **kw: built.setdefault(role, outline))
     return built
 
 

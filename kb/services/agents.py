@@ -1,16 +1,19 @@
 """One agent (agent.py) per workspace and role, built on first use and kept in
 state.agents until that workspace's index changes (services/indexing.py bumps
 its version, and may point it at another collection): the agent's keyword
-index (BM25) is a copy of the collection, made when it's built."""
+index (BM25) is a copy of the collection, made when it's built. A change to
+the workspace's assistant settings, glossary or source rules builds it again
+the same way (assistant_store.version)."""
 
 import logging
 import os
 
+import assistant_store
 import workspaces
 from agent import build_agent
 from connectors import outline as outline_connector
 from kb import state
-from kb.services import indexing
+from kb.services import assistant, indexing
 
 log = logging.getLogger("uvicorn.error")
 
@@ -43,11 +46,24 @@ def outline_access():
     return "public" if wanted == "public" else "restricted"
 
 
+def _build(ws, role, collection):
+    """The agent with the workspace's own settings (kb/services/assistant.py): its
+    preferences and tools, glossary, source rules and verified answers."""
+    from kb.services import verified
+    settings = assistant.effective(ws)
+    return build_agent(role, collection, outline_on(ws, role), prefs=assistant.prefs(settings),
+                       glossary=assistant.glossary(ws) or None,
+                       rules=assistant.rules(ws) or None,
+                       verified=verified.Matcher(ws, role, settings["adapt_verified"]))
+
+
 def get_agent(ws, role):
-    index = indexing.current(ws)          # (collection, version)
+    # Built again when the index changes (indexing.py bumps its version) or the
+    # workspace's assistant settings, glossary or source rules do (their version).
+    key = (indexing.current(ws), assistant_store.version(ws))   # ((collection, version), n)
     with state.agents_lock:
         built = state.agents.get((ws, role))
-        if not built or built[0] != index:
-            built = (index, build_agent(role, index[0], outline_on(ws, role)))
+        if not built or built[0] != key:
+            built = (key, _build(ws, role, key[0][0]))
             state.agents[(ws, role)] = built
         return built[1]

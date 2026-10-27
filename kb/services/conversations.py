@@ -79,10 +79,12 @@ def present(message, role, admin=False, feedback=None):
         return out
     if not visible_to(role, message):
         return {**out, "content": "", "withheld": True, "sources": [], "steps": [],
-                "standalone_question": None, "feedback": None, "followups": []}
+                "standalone_question": None, "feedback": None, "followups": [],
+                "verified": None}
     out.update(sources=message.get("sources") or [], steps=message.get("steps") or [],
                standalone_question=message.get("standalone_question"),
-               feedback=_feedback_view(feedback), followups=message.get("followups") or [])
+               feedback=_feedback_view(feedback), followups=message.get("followups") or [],
+               verified=message.get("verified"))
     if admin:                       # the raw tool input and output (steps panel)
         out["trace"] = message.get("trace") or []
     return out
