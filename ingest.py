@@ -92,16 +92,16 @@ def fingerprint(on=None):
     index built with other settings can't be updated chunk by chunk: it is
     rebuilt (a shadow rebuild into a new collection, kb/services/indexing.py,
     started by the app when it sees an index with another FINGERPRINT).
-    on: a workspace's models (models.Models) when they aren't OpenAI's: its
-    embedding model and FAST model are part of it, so switching a workspace's
-    provider or embedding model rebuilds its index. None: OpenAI's (FINGERPRINT,
-    the same value as before there were providers)."""
-    bedrock = on is not None and on.bedrock
+    on: a workspace's models (models.Models) when they aren't the server's OpenAI
+    defaults: its embedding model and FAST model are part of it, so switching a
+    workspace's embeddings (provider or model) rebuilds its index. None: OpenAI's
+    (FINGERPRINT, the same value as before there were providers)."""
+    custom = on is not None
     return hashlib.sha256(json.dumps({
-        "model": on.embed_name if bedrock else EMBED_MODEL, "chunker": chunking.VERSION,
+        "model": on.embed_name if custom else EMBED_MODEL, "chunker": chunking.VERSION,
         "chunk_tokens": chunking.CHUNK_TOKENS, "min_tokens": chunking.MIN_TOKENS,
         "overlap_tokens": chunking.OVERLAP_TOKENS, "header": CHUNK_CONTEXT,
-        "summary": f"llm:{on.fast_name if bedrock else models.fast_model()}:"
+        "summary": f"llm:{on.fast_name if custom else models.fast_model()}:"
                    f"{chunk_context.PROMPT_VERSION}" if CHUNK_SUMMARY == "llm" else "off",
         "ids": 1}, sort_keys=True).encode()).hexdigest()[:16]
 

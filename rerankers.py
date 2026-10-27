@@ -205,7 +205,7 @@ class BedrockReranker(Reranker):
     def scores(self, query, texts):
         import models
         on = models.current()
-        spec = on.spec if on.bedrock else models.Spec(provider="bedrock",
+        spec = on.spec if on.uses("bedrock") else models.Spec(provider="bedrock",
                                                       region=models.server_region())
         client = models.client(spec, "bedrock-agent-runtime", timeout=TIMEOUT, retries=0)
         arn = (self.model if self.model.startswith("arn:")
