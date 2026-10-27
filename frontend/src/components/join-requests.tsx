@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Loader2, UserPlus, X } from "lucide-react"
+import { Check, X } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -107,10 +108,8 @@ function ApproveDialog({
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? <Loader2 className="animate-spin" data-icon="inline-start" /> : (
-                <Check data-icon="inline-start" />
-              )}
+            <Button type="submit" loading={saving}>
+              {!saving && <Check data-icon="inline-start" />}
               Approve
             </Button>
           </DialogFooter>
@@ -134,9 +133,7 @@ function RequestRow({
       <div className="min-w-0 flex-1 basis-56">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{request.name || request.email}</span>
-          <Badge variant="secondary" className="font-normal">
-            Asked to join
-          </Badge>
+          <Badge variant="signal">Asked to join</Badge>
         </div>
         <p className="truncate text-sm text-muted-foreground">
           {request.name ? `${request.email} · ` : ""}
@@ -183,10 +180,8 @@ export function PendingRequests() {
 
   return (
     <div className="mt-4">
-      <h4 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-        <UserPlus className="size-4" /> Pending requests
-      </h4>
-      <div className="mt-2 divide-y rounded-xl border">
+      <AsciiDivider as="h4" label="Pending requests" />
+      <div className="mt-2 divide-y rounded-xl border bg-card">
         {requests.map((r) => (
           <RequestRow
             key={r.id}

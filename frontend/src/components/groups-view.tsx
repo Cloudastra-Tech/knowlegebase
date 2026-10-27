@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Loader2, Plus, Search, Trash2, UserPlus, Users } from "lucide-react"
+import { Check, Plus, Search, Trash2, UserPlus, Users } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -174,8 +176,7 @@ function NewGroupDialog({ onMade }: { onMade: () => void }) {
             />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={saving || !name.trim()}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving} disabled={!name.trim()}>
               Make the group
             </Button>
           </DialogFooter>
@@ -220,15 +221,13 @@ function GroupCard({
   }
 
   return (
-    <li className="rounded-2xl border p-4">
+    <li className="rounded-xl border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <p className="flex flex-wrap items-center gap-2 font-medium">
             <Users className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate">{group.name}</span>
-            <Badge variant={group.editable ? "secondary" : "outline"} className="font-normal">
-              {SOURCE_LABEL[group.source]}
-            </Badge>
+            <Badge variant="mono">{SOURCE_LABEL[group.source]}</Badge>
           </p>
           <p className="text-sm text-muted-foreground">
             {group.description || SOURCE_NOTE[group.source] || ""}
@@ -331,29 +330,41 @@ export function GroupsView() {
         </div>
       ) : (
         <>
-          <section className="flex flex-col gap-3">
-            <h3 className="font-medium">Groups</h3>
-            <ul className="flex flex-col gap-3">
-              {manual.map((g) => (
-                <GroupCard key={g.id} group={g} everyone={data?.members ?? []} onChange={refresh} />
-              ))}
-            </ul>
-          </section>
-          <section className="flex flex-col gap-3">
-            <h3 className="font-medium">From your identity provider</h3>
+          <Panel title="Groups">
+            {manual.length ? (
+              <ul className="flex flex-col gap-3">
+                {manual.map((g) => (
+                  <GroupCard key={g.id} group={g} everyone={data?.members ?? []} onChange={refresh} />
+                ))}
+              </ul>
+            ) : (
+              <AsciiEmptyState
+                art={q ? "search" : "inbox"}
+                size="sm"
+                headingLevel={4}
+                title={q ? "No group matches." : "No groups yet."}
+              />
+            )}
+          </Panel>
+          <Panel title="From your identity provider">
             {external.length ? (
               <ul className="flex flex-col gap-3">
                 {external.map((g) => (
                   <GroupCard key={g.id} group={g} everyone={[]} onChange={refresh} />
                 ))}
               </ul>
+            ) : q && all.some((g) => g.source === "idp" || g.source === "scim") ? (
+              <AsciiEmptyState art="search" size="sm" headingLevel={4} title="No group matches." />
             ) : (
-              <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-                None yet. They appear when people sign in through a provider that sends groups, or
-                when your identity provider pushes them through SCIM.
-              </p>
+              <AsciiEmptyState
+                art="plug"
+                size="sm"
+                headingLevel={4}
+                title="None yet."
+                description="They appear when people sign in through a provider that sends groups, or when your identity provider pushes them through SCIM."
+              />
             )}
-          </section>
+          </Panel>
         </>
       )}
     </div>

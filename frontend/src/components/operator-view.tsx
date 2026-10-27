@@ -17,6 +17,9 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,7 +76,7 @@ const STATUS_LABEL: Record<OperatorWorkspace["status"], string> = {
 function StatusBadge({ ws }: { ws: OperatorWorkspace }) {
   return (
     <Badge
-      variant={ws.status === "active" ? "secondary" : "destructive"}
+      variant={ws.status === "active" ? "mono" : "destructive"}
       className="font-normal"
       title={ws.suspended_reason ?? undefined}
     >
@@ -97,7 +100,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="truncate text-sm">{value}</dd>
+      <dd className="truncate text-sm tabular-nums">{value}</dd>
     </div>
   )
 }
@@ -185,7 +188,7 @@ function WorkspaceRow({
             <span className="truncate font-medium">{ws.name}</span>
             <StatusBadge ws={ws} />
             {supportOpen && (
-              <Badge variant="outline" className="font-normal">
+              <Badge variant="signal" className="font-normal">
                 <LifeBuoy /> Support allowed
               </Badge>
             )}
@@ -202,7 +205,7 @@ function WorkspaceRow({
             )}
           </div>
           <p className="truncate text-xs text-muted-foreground">
-            {ws.slug} · created {timeAgo(ws.created_at)}
+            <span className="font-mono">{ws.slug}</span> · created {timeAgo(ws.created_at)}
             {ws.deleting_at
               ? ` · to be purged ${new Date(ws.deleting_at * 1000).toLocaleDateString()}`
               : ""}
@@ -557,16 +560,16 @@ function AuditSheet({ ws, onClose }: { ws: OperatorWorkspace | null; onClose: ()
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           {log.isPending && <Skeleton className="h-40 w-full rounded-xl" />}
-          <ul className="divide-y rounded-xl border">
+          <ul className="divide-y rounded-xl border bg-card">
             {log.data?.events.map((e) => (
               <li key={e.id} className="px-3 py-2">
                 <p className="text-sm">
-                  <span className="font-medium">{e.action}</span>{" "}
-                  <span className="text-muted-foreground">
+                  <span className="font-mono text-xs font-medium">{e.action}</span>{" "}
+                  <span className="font-mono text-xs break-all text-muted-foreground">
                     {e.target_type ? `${e.target_type}:${e.target_id}` : ""}
                   </span>
                 </p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="truncate font-mono text-xs text-muted-foreground">
                   {e.actor ?? "—"} ({e.actor_type}) · {timeAgo(e.at)}
                 </p>
               </li>
@@ -629,32 +632,37 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-              <Building2 className="size-6" /> Workspaces
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {all.length} workspaces ·{" "}
-              {all.filter((w) => w.status !== "active").length} suspended or being deleted. Every
-              action is in the workspace's audit log.
-            </p>
-          </div>
-          <div className="relative w-full sm:w-64">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              aria-label="Search workspaces"
-              placeholder="Search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full pl-8"
-            />
-          </div>
-        </div>
+        <ScreenHeader
+          title="Workspaces"
+          icon={Building2}
+          description={
+            <>
+              <span className="font-mono tabular-nums">{all.length}</span> workspaces ·{" "}
+              <span className="font-mono tabular-nums">
+                {all.filter((w) => w.status !== "active").length}
+              </span>{" "}
+              suspended or being deleted. Every action is in the workspace's audit log.
+            </>
+          }
+          actions={
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                aria-label="Search workspaces"
+                placeholder="Search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full pl-8"
+              />
+            </div>
+          }
+          className="[&>div:last-child]:w-full sm:[&>div:last-child]:w-auto"
+        />
         <div className="mt-6">
           <AlertsPanel />
         </div>
-        <section className="mt-6 divide-y rounded-2xl border border-border/70 bg-background">
+        {/* An internal console: opaque, no field behind it, nothing staggers in. */}
+        <Panel tone="solid" aria-label="Workspaces" className="mt-6 divide-y overflow-hidden p-0">
           {list.isPending &&
             [0, 1, 2].map((i) => (
               <div key={i} className="p-4">
@@ -673,12 +681,14 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
               onClaimCode={setClaiming}
             />
           ))}
-          {list.data && !shown.length && (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {all.length ? "Nothing matches." : "No workspaces yet."}
-            </p>
-          )}
-        </section>
+          {list.data &&
+            !shown.length &&
+            (all.length ? (
+              <AsciiEmptyState art="search" size="sm" title="Nothing matches." />
+            ) : (
+              <AsciiEmptyState art="inbox" size="sm" title="No workspaces yet." />
+            ))}
+        </Panel>
       </main>
       <SuspendDialog ws={suspending} onClose={() => setSuspending(null)} />
       <AuditSheet ws={auditing} onClose={() => setAuditing(null)} />

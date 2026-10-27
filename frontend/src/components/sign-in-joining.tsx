@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Globe } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
@@ -88,16 +89,16 @@ export function JoiningPolicy({
       </RadioGroup>
 
       {verified.length > 0 && (
-        <div className="grid gap-2">
-          <p className="text-sm font-medium">Per domain</p>
+        <div className="grid grid-cols-1 gap-2">
+          <AsciiDivider as="h4" label="Per domain" />
           <p className="text-sm text-muted-foreground">
             A domain can have its own policy, e.g. contractors' domain invite only.
           </p>
-          <div className="divide-y rounded-xl border">
+          <div className="divide-y rounded-xl border bg-card">
             {verified.map((d) => (
               <div key={d.domain} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
                 <Globe className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate font-medium">{d.domain}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-sm">{d.domain}</span>
                 <Select
                   value={d.join_policy ?? DEFAULT}
                   disabled={saving}
