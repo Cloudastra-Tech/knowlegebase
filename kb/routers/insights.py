@@ -138,18 +138,24 @@ def export_insights(table: str = Query(..., pattern="^(" + "|".join(TABLES) + ")
 
 # ---- Test-set candidates (chat.md C17) --------------------------------------------------
 def _golden(case):
-    """The case as a line of eval/golden/*.jsonl would have it."""
-    return {"id": f"feedback-{case['id']}", "question": case["question"], "role": case["role"],
-            "expect": "answer",
-            "sources": [s.get("doc_key") or s.get("title") for s in case["sources"]
-                        if s.get("kind") != "general_knowledge"],
+    """The case as a line of eval/golden/*.jsonl would have it. A not-found
+    question the weekly job suggested is expected to stay "not found" (no
+    sources) until the documents cover it."""
+    not_found = case.get("origin") == "not_found"
+    return {"id": f"{'gap' if not_found else 'feedback'}-{case['id']}",
+            "question": case["question"], "role": case["role"],
+            "expect": "not_found" if not_found else "answer",
+            "sources": [] if not_found else [s.get("doc_key") or s.get("title")
+                                             for s in case["sources"]
+                                             if s.get("kind") != "general_knowledge"],
             "notes": case["expected_answer"] or "", "origin": "feedback"}
 
 
 def _case(c):
     return {**{k: c[k] for k in ("id", "message_id", "question", "answer", "expected_answer",
                                  "sources", "reasons", "comment", "role", "created_by",
-                                 "created_at")}, "golden": _golden(c)}
+                                 "created_at")},
+            "origin": c.get("origin") or "admin", "golden": _golden(c)}
 
 
 @router.get("/api/admin/eval-cases")

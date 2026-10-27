@@ -187,12 +187,14 @@ function AnswerSheet({
         )}
         {item && canEdit && (
           <SheetFooter className="border-t">
-            {promoted ? (
+            {/* A case the weekly job suggested (origin feedback) is the admin's once added. */}
+            {promoted && (
               <Button variant="outline" disabled={remove.isPending} onClick={() => remove.mutate(promoted.id)}>
                 {remove.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
-                Remove from test set
+                {promoted.origin === "admin" ? "Remove from test set" : "Dismiss the suggestion"}
               </Button>
-            ) : (
+            )}
+            {(!promoted || promoted.origin !== "admin") && (
               <Button onClick={() => onPromote(item)}>
                 <FlaskConical data-icon="inline-start" /> Add to test set
               </Button>
@@ -265,7 +267,11 @@ export function InsightsFeedback({ canEdit }: { canEdit: boolean }) {
                 <span className="line-clamp-2 text-muted-foreground break-words">{f.answer}</span>
                 <div className="flex flex-wrap items-center gap-1">
                   <Reasons item={f} />
-                  {promoted.has(f.message_id) && <Badge variant="outline">In test set</Badge>}
+                  {promoted.has(f.message_id) && (
+                    <Badge variant="outline">
+                      {promoted.get(f.message_id)?.origin === "admin" ? "In test set" : "Suggested for the test set"}
+                    </Badge>
+                  )}
                   {f.sources.length > 0 && (
                     <span className="text-xs text-muted-foreground">
                       {f.sources.length} {f.sources.length === 1 ? "source" : "sources"}

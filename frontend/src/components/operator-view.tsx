@@ -10,6 +10,7 @@ import {
   ScrollText,
   Search,
   ShieldCheck,
+  Wallet,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -42,6 +43,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AlertsPanel, SpendCapsDialog } from "@/components/operator-alerts"
 import { operatorApi, operatorSession, type OperatorWorkspace } from "@/lib/api/operator"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -125,10 +127,12 @@ function WorkspaceRow({
   ws,
   onSuspend,
   onAudit,
+  onSpendCaps,
 }: {
   ws: OperatorWorkspace
   onSuspend: (ws: OperatorWorkspace) => void
   onAudit: (ws: OperatorWorkspace) => void
+  onSpendCaps: (ws: OperatorWorkspace) => void
 }) {
   const queryClient = useQueryClient()
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["operator", "workspaces"] })
@@ -164,6 +168,11 @@ function WorkspaceRow({
                 <LifeBuoy /> Support allowed
               </Badge>
             )}
+            {ws.open_alerts > 0 && (
+              <Badge variant="destructive" className="font-normal">
+                <AlertTriangle /> {ws.open_alerts} alert{ws.open_alerts === 1 ? "" : "s"}
+              </Badge>
+            )}
             {ws.connector_errors.length > 0 && (
               <Badge variant="destructive" className="font-normal">
                 <AlertTriangle /> {ws.connector_errors.length} connector error
@@ -194,6 +203,9 @@ function WorkspaceRow({
               <RefreshCw /> Re-run index
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => act.mutate("limits")}>Reset rate limits</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onSpendCaps(ws)}>
+              <Wallet /> Spend caps…
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onAudit(ws)}>
               <ScrollText /> View audit log
             </DropdownMenuItem>
@@ -204,12 +216,21 @@ function WorkspaceRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-7">
         <Stat label="Plan" value={ws.plan ?? "—"} />
         <Stat label="Seats (30 d)" value={`${ws.seats} of ${ws.members}`} />
         <Stat
           label="Questions (30 d)"
           value={`${ws.usage.questions} · $${ws.usage.cost_usd.toFixed(2)}`}
+        />
+        <Stat
+          label="Spend today"
+          value={
+            <span className={cn(ws.spend.hard_usd !== null && ws.spend.today_usd >= ws.spend.hard_usd && "text-destructive")}>
+              ${ws.spend.today_usd.toFixed(2)}
+              {ws.spend.hard_usd !== null ? ` of $${ws.spend.hard_usd.toFixed(2)}` : ""}
+            </span>
+          }
         />
         <Stat label="Last activity" value={timeAgo(ws.last_activity)} />
         <Stat
@@ -348,6 +369,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
   const [query, setQuery] = useState("")
   const [suspending, setSuspending] = useState<OperatorWorkspace | null>(null)
   const [auditing, setAuditing] = useState<OperatorWorkspace | null>(null)
+  const [capping, setCapping] = useState<OperatorWorkspace | null>(null)
 
   useEffect(() => {
     if (me.isError || list.isError) onSignedOut()
@@ -403,6 +425,9 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
             />
           </div>
         </div>
+        <div className="mt-6">
+          <AlertsPanel />
+        </div>
         <section className="mt-6 divide-y rounded-2xl border border-border/70 bg-background">
           {list.isPending &&
             [0, 1, 2].map((i) => (
@@ -411,7 +436,13 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
               </div>
             ))}
           {shown.map((ws) => (
-            <WorkspaceRow key={ws.slug} ws={ws} onSuspend={setSuspending} onAudit={setAuditing} />
+            <WorkspaceRow
+              key={ws.slug}
+              ws={ws}
+              onSuspend={setSuspending}
+              onAudit={setAuditing}
+              onSpendCaps={setCapping}
+            />
           ))}
           {list.data && !shown.length && (
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -422,6 +453,9 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
       </main>
       <SuspendDialog ws={suspending} onClose={() => setSuspending(null)} />
       <AuditSheet ws={auditing} onClose={() => setAuditing(null)} />
+      {capping && (
+        <SpendCapsDialog key={capping.slug} ws={capping} onClose={() => setCapping(null)} />
+      )}
     </div>
   )
 }

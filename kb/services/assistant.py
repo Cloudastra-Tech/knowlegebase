@@ -12,8 +12,10 @@ agent uses it:
     Rules           source rules (PL-28): boost or demote a document's chunks
                     (a multiplier on the fused score, rag.HybridRetriever), or
                     block it (left out of the index by ingest, and of results)
+    pii_policy(ws)  the personal data policy (PL-13, pii.py): what answers and
+                    the question log mask, with the workspace's own domains
 
-The agent is built with all three (kb/services/agents.py) and cached until the
+The agent is built with all of them (kb/services/agents.py) and cached until the
 workspace's settings version changes (assistant_store.version).
 """
 
@@ -22,6 +24,8 @@ import re
 
 import assistant_store as store
 import db
+import members_store
+import pii
 
 UPLOADS = "uploads"                 # the provider a rule names uploaded files by
 
@@ -31,15 +35,26 @@ def _server_allows(name):
     return os.getenv(name, "on").strip().lower() not in ("0", "off", "false", "no")
 
 
+def answer_cache_server():
+    """ANSWER_CACHE=off turns the answer cache off for every workspace (a ceiling,
+    like ALLOW_WIKIPEDIA); on, the default, leaves it to each workspace's setting."""
+    return _server_allows("ANSWER_CACHE")
+
+
 def effective(ws):
     """The workspace's settings as the agent applies them, with what the server allows
-    ({"allow_wikipedia_server", "allow_currency_server"}) and the version."""
+    ({"allow_wikipedia_server", "allow_currency_server", "answer_cache_server"}), the
+    whole personal data policy and the workspace's own (verified) domains, and the
+    version."""
     s = store.settings(ws)
     out = dict(s)
     for name, env in (("allow_wikipedia", "ALLOW_WIKIPEDIA"), ("allow_currency", "ALLOW_CURRENCY")):
         server = _server_allows(env)
         out[f"{name}_server"] = server
         out[name] = server and (s[name] if s[name] is not None else True)
+    out["answer_cache_server"] = answer_cache_server()
+    out["pii_policy"] = s["pii_policy"] or dict(pii.DEFAULT_POLICY)
+    out["own_domains"] = sorted(members_store.verified_domains(ws))
     out["version"] = store.version(ws)
     return out
 
@@ -47,7 +62,13 @@ def effective(ws):
 def prefs(settings):
     """What build_agent needs of the settings (effective())."""
     return {k: settings[k] for k in ("assistant_name", "tone", "instructions", "language",
-                                     "allow_wikipedia", "allow_currency")}
+                                     "allow_wikipedia", "allow_currency", "cross_lingual")}
+
+
+def pii_policy(ws, settings=None):
+    """The workspace's personal data policy, ready to apply (pii.Policy)."""
+    s = settings or store.settings(ws)
+    return pii.Policy(s["pii_policy"], members_store.verified_domains(ws))
 
 
 # ---- Glossary -------------------------------------------------------------------------------

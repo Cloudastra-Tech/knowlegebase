@@ -639,7 +639,7 @@ def passage_text(text, meta):
 
 
 def retrieve(question, retriever, llm, role="public", guard=None, expand=None, principals=None,
-             keep=None):
+             keep=None, also=None):
     """Retrieve: the chunks a question is answered from -> (docs, None), or
     (None, reason) when an input guard refused it. Nothing is generated here:
     the agent writes the one answer, citing these chunks (agent.py).
@@ -649,7 +649,9 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None, p
     expand: optional function -> the question as searched (the workspace's
     glossary adds the other names of its terms); the guard checks it as asked.
     principals: who asks (access.Viewer); None: the role's own principals.
-    keep: optional SCOPE, metadata -> bool (HybridRetriever.invoke)."""
+    keep: optional SCOPE, metadata -> bool (HybridRetriever.invoke).
+    also: more queries for the MEANING search only (the question translated
+    into the documents' language, agent.translate_query)."""
 
     # May this asker see restricted HR content? (The hr group: HR / Admin.)
     allow_restricted = access.may_see_hr(principals if principals is not None else role)
@@ -669,7 +671,7 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None, p
     # searches. Then HyDE / multi-query (optional) enrich the MEANING search only.
     if expand:
         question = expand(question)
-    queries = dense_queries(question, llm)
+    queries = dense_queries(question, llm) + [q for q in also or () if q]
 
     # ---- 1. RETRIEVE (and rerank, if a reranker is plugged in: RERANKER) -
     # Keyword search gets the question as asked; meaning search the enriched one(s).

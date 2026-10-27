@@ -25,7 +25,7 @@ pytestmark = pytest.mark.sqlite_only("the SQLite file's own migrations")
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
-HEAD = "0018"                                  # the newest migration
+HEAD = "0019"                                  # the newest migration
 # The tables SQLite keeps behind an FTS5 table.
 FTS_SHADOWS = ("data", "idx", "content", "docsize", "config")
 # Made by migrations after the baseline.
@@ -43,7 +43,8 @@ NEWER_TABLES = {"jobs", "search_indexes", "conversations", "messages", "message_
                 "access_groups", "group_members", "doc_acl", "doc_changes",
                 "digest_subscriptions", "doc_summaries", "drafts", "webhooks",
                 "webhook_deliveries", "spaces", "space_members", "space_sources", "attachments",
-                "attachment_chunks", "prompt_templates"}
+                "attachment_chunks", "prompt_templates", "answer_cache", "doc_pii",
+                "usage_daily", "abuse_alerts", "workspace_limits"}
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
           ("workspaces", "role_source"), ("sessions", "username"), ("sessions", "workspace")}

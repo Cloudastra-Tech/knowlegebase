@@ -21,6 +21,9 @@ _tmp = tempfile.mkdtemp(prefix="kb-tests-")
 atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 os.environ["RATE_LIMITS"] = "off"         # every test signs in from the same address
+# Tests ask the same questions again and again and expect the model to answer
+# each time; tests/test_answer_cache.py turns the answer cache on for itself.
+os.environ["ANSWER_CACHE"] = "off"
 # Starting the app doesn't rebuild indexes other tests left with other settings.
 os.environ["REINDEX_ON_SETTINGS_CHANGE"] = "off"
 # No model calls for a chat's title or its follow-ups (kb/services/suggestions.py):

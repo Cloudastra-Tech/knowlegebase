@@ -1138,6 +1138,62 @@ grant access or erase anyone, and every request they make is in its audit log
 with `actor_type=operator`. Every operator action is in the workspace's audit log
 and in the operators' own chain.
 
+### Abuse, cost alerts and spend caps
+
+An hourly job (`abuse_monitor`) checks every workspace and raises an alert in the
+console's **Alerts** panel, emailed once to the operators: questions today above
+k times the 7-day median, one member asking more than N questions an hour, a spike
+of failed sign-ins (`sso_events`), and one address creating several workspaces in a
+day (the audit log's `workspace.create`). A daily job (`usage_daily`) keeps
+questions, people, cached answers, tokens and cost per workspace and day.
+
+```bash
+ABUSE_ALERT_EMAILS=ops@cloudastra.in   # default: OPERATOR_EMAILS
+ABUSE_NOTIFY_TENANT_ADMINS=off         # on: the workspace's admins are told too
+ABUSE_SPIKE_FACTOR=3                   # k, for questions and failed sign-ins
+ABUSE_SPIKE_MIN=50                     # questions a day before a spike counts
+ABUSE_USER_PER_HOUR=120                # N, one member's questions an hour
+ABUSE_FAILED_SIGN_INS=20               # failed sign-ins an hour before a spike counts
+ABUSE_SIGNUPS_PER_IP=3                 # workspaces a day from one address
+SPEND_SOFT_USD_PER_DAY=                # empty: no cap (each workspace can get its own
+SPEND_HARD_USD_PER_DAY=                #   in the console: row menu, Spend caps)
+```
+
+Past the **soft** cap the workspace's admins and the operators are emailed once a
+day; past the **hard** cap every question, on every surface, is answered with a 429
+and a plain sentence until midnight UTC. Spend is the question log's tokens at list
+prices, as Insights shows it. Alerts the tenant is told about are also an
+`abuse.alert` webhook event.
+
+## Answer cache, languages and personal data
+
+- **Answer cache** (Assistant screen, "Reuse recent answers"): the same question from
+  someone with exactly the same principals and role is answered from the answer
+  given in the last `ANSWER_CACHE_TTL` seconds (600), while the index, settings and
+  verified answers are unchanged; never for follow-ups. "Similar questions" also
+  matches by embedding at `ANSWER_CACHE_SIMILARITY` (0.95; one embedding call per
+  question). `ANSWER_CACHE=off` turns it off for every workspace.
+- **Languages**: with the answer language on "Same as the question", the question's
+  language is detected without a model call and the answer is written in it.
+  "Search across languages" also searches a question translated into the
+  documents' language (one FAST model call for those questions).
+- **Personal data** (Assistant screen): which types are masked in answers and in the
+  question log, and flagged on the Knowledge screen after indexing, with the rule
+  packs US SSN, UK NI, India PAN and Aadhaar, IBAN and payment cards (Luhn). Emails at
+  the workspace's verified domains stay in answers unless the admin turns it off.
+- **Presidio (optional, not installed by default)**: to add Microsoft Presidio's
+  detection for the same types, install it in the image and turn it on:
+
+  ```bash
+  pip install presidio-analyzer        # pin the version you tested
+  python -m spacy download en_core_web_lg
+  PII_ENGINE=presidio
+  ```
+
+  It adds a spaCy model (about 600 MB) to the image, which is why it isn't in
+  `requirements.txt`. If it isn't installed or fails, the rules alone apply (one
+  warning in the log).
+
 ## Managing documents from the UI
 
 Sign in with an HR / Admin account and open **Documents** in the top bar to view,
