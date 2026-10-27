@@ -39,6 +39,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
 import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
+import { SlackAppCard } from "@/components/slack-app-card"
 import { SyncHistorySheet } from "@/components/sync-history-sheet"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -287,7 +288,7 @@ function ConnectorCard({
   }
 
   const connected = ["connected", "syncing", "error"].includes(item.status)
-  const reconnect = item.error?.code === "auth_expired"
+  const reconnect = item.error?.code === "auth_expired" || item.error?.code === "missing_scope"
   const fixSettings = item.error?.code === "config" || item.error?.code === "not_found"
   const limit = item.last_run?.limit_reached ?? 0
 
@@ -309,6 +310,7 @@ function ConnectorCard({
                 ? `Read-only. After connecting, you choose what to sync; nothing else is touched. Answers link back to ${item.name}.`
                 : `Read-only. Answers cite each page with a link back to ${item.name}.`}
           </p>
+          {item.note && <p className="mt-2 text-sm text-muted-foreground">{item.note}</p>}
           {item.live_search && (
             <p className="mt-2 text-sm text-muted-foreground">
               Until then, this workspace searches the server's own wiki live.
@@ -580,6 +582,13 @@ export function IntegrationsView({
                 </Button>
               </Card>
             )}
+          </div>
+
+          <div className="mt-10">
+            <p className="text-sm font-medium">Ask from your tools</p>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              <SlackAppCard />
+            </div>
           </div>
 
           {soon.length > 0 && (

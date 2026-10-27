@@ -7,6 +7,7 @@ DELETE /api/admin/members/{username} delete_member require_admin,audited
 DELETE /api/admin/sign-in/connections/{cid} delete_connection require_admin,audited
 DELETE /api/admin/sign-in/domains/{domain} delete_domain require_admin,audited
 DELETE /api/admin/sign-in/scim/tokens/{token_id} revoke_scim_token require_admin,audited
+DELETE /api/admin/slack/install slack_uninstall require_admin,audited
 DELETE /api/admin/verified-answers/{answer_id} delete_answer require_hr,audited
 DELETE /api/conversation-folders/{fid} delete_folder current_user,audited
 DELETE /api/conversations/{cid} delete_conversation current_user,audited
@@ -34,6 +35,8 @@ GET    /api/admin/sign-in sign_in_settings require_admin
 GET    /api/admin/sign-in/new-provider new_provider require_admin
 GET    /api/admin/sign-in/scim scim_settings require_admin
 GET    /api/admin/sign-in/tests/{ticket} test_result require_admin
+GET    /api/admin/slack slack_settings require_hr
+GET    /api/admin/slack/manifest slack_manifest require_admin
 GET    /api/admin/verified-answers list_answers require_hr
 GET    /api/admin/verified-answers/draft draft_answer require_hr
 GET    /api/assistant assistant_info current_user
@@ -69,6 +72,7 @@ GET    /api/passages/{chunk_id} passage current_user,current_role
 GET    /api/question-log/settings log_settings current_user
 GET    /api/shared/{token} open_share current_user,current_role
 GET    /api/shares list_shares current_user
+GET    /api/slack/oauth/callback slack_oauth_callback -
 GET    /api/v1/audit audit_log Filters,api_key,audited
 GET    /api/v1/documents list_documents api_key,audited
 GET    /api/v1/documents/{access}/{name} read_document api_key,audited
@@ -106,6 +110,7 @@ POST   /api/admin/sign-in/domains add_domain require_admin,audited
 POST   /api/admin/sign-in/domains/{domain}/verify verify_domain require_admin,audited
 POST   /api/admin/sign-in/saml-connections add_saml_connection require_admin,audited
 POST   /api/admin/sign-in/scim/tokens create_scim_token require_admin,audited
+POST   /api/admin/slack/install slack_install require_admin,audited
 POST   /api/admin/verified-answers create_answer require_hr,audited
 POST   /api/admin/verified-answers/{answer_id}/review review_answer require_hr,audited
 POST   /api/auth/invite/accept accept_invite audited
@@ -129,6 +134,12 @@ POST   /api/integrations/{provider}/sync integration_sync require_hr,audited
 POST   /api/me/api-keys create_my_key current_user,audited
 POST   /api/reindex reindex require_hr,audited
 POST   /api/shares create_share current_user,current_role,audited
+POST   /api/slack/apps/{app_key}/commands slack_commands slack_signature,audited
+POST   /api/slack/apps/{app_key}/events slack_events slack_signature,audited
+POST   /api/slack/apps/{app_key}/interactions slack_interactions slack_signature,audited
+POST   /api/slack/commands slack_commands slack_signature,audited
+POST   /api/slack/events slack_events slack_signature,audited
+POST   /api/slack/interactions slack_interactions slack_signature,audited
 POST   /api/v1/ask ask api_key,audited
 POST   /api/v1/documents create_document api_key,audited
 POST   /api/v1/documents/upload upload_documents api_key,audited
@@ -143,6 +154,8 @@ PUT    /api/admin/sign-in/connections/{cid}/roles set_group_roles require_admin,
 PUT    /api/admin/sign-in/group-admin-days set_group_admin_days require_admin,audited
 PUT    /api/admin/sign-in/policy set_policy require_admin,audited
 PUT    /api/admin/sign-in/scim/roles set_scim_roles require_admin,audited
+PUT    /api/admin/slack/app set_slack_app require_admin,audited
+PUT    /api/admin/slack/settings set_slack_settings require_admin,audited
 PUT    /api/docs/{access}/{name} save_doc require_hr,audited
 PUT    /api/integrations/{provider}/access integration_access require_hr,audited
 PUT    /api/integrations/{provider}/containers integration_set_containers require_hr,audited

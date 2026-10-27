@@ -24,8 +24,10 @@ import safety
 import verified_store
 from eval.harness import HashEmbeddings
 from kb.services import indexing, verified
+from test_api_keys import kb  # noqa: F401  (a fixture the Slack one needs)
 from test_citations import Allow, CitingModel
 from test_indexing import env  # noqa: F401  (a fixture)
+from test_slack import everything_posted, slack  # noqa: F401  (a fixture)
 
 LEAVE = ("# Leave policy\n\nEvery employee gets twenty days of annual leave a year. "
          "Unused leave carries over up to five days.")
@@ -340,6 +342,39 @@ def test_a_failed_email_is_tried_again_the_next_night(setup, monkeypatch):
     assert verified_store.get(setup.ws, made["id"])["notified"] is None
     verified.review(now=later + 86400)
     assert len(calls) == 2 and verified_store.get(setup.ws, made["id"])["notified"] == "due"
+
+
+# ---- Slack auto-answer (kb/services/slack.py) ------------------------------------------------
+def test_slack_auto_answer_posts_a_verified_answer_the_channel_may_see(slack, monkeypatch):  # noqa: F811
+    """In a help channel (answered as public), a question matching a public verified
+    answer is posted with its badge; one matching only an HR-only answer isn't, even
+    from an HR person. Written answers are never confident enough here."""
+    import slack_store
+    from kb.services import slack as slack_service
+    from slack_fixtures import event
+    monkeypatch.setattr(verified, "embed", HashEmbeddings(dim=256).embed_documents)
+    monkeypatch.setattr(slack_service, "confident", lambda done: False)
+    admin = {"username": f"admin@{slack.ws}.example"}
+    public = verified.create(slack.ws, {"title": "Parking", "variants": ["Is there staff parking?"],
+                                        "answer_md": "Yes: level 2 of the garage.",
+                                        "access": "public"}, admin)
+    verified.create(slack.ws, {"title": "Vendor sign-off", "variants": ["Who signs vendor deals?"],
+                               "answer_md": "The CFO signs them.", "access": "restricted"}, admin)
+    slack_store.set_settings(slack.ws, "x", auto_answer=True, auto_answer_channels=["C0HELP"])
+
+    slack.send_event(event("message", "U_STAFF", "Is there staff parking?", channel="C0HELP",
+                           channel_type="channel", ts="1700000600.000001"))
+    [result] = slack.run_jobs()
+    assert result["answered"] == "auto" and result["verified"] == public["id"]
+    [posted] = slack.fake.calls_to("chat.postMessage")
+    assert "level 2 of the garage" in slack.fake.text_of(posted)
+    assert "Verified by Admin" in json.dumps(posted["data"])
+
+    slack.fake.calls.clear()
+    slack.send_event(event("message", "U_HR", "Who signs vendor deals?", channel="C0HELP",
+                           channel_type="channel", ts="1700000700.000001"))
+    assert slack.run_jobs()[-1]["skipped"] == "not confident"
+    assert "CFO" not in everything_posted(slack.fake)
 
 
 def test_editing_an_answer_verifies_it_again_and_deleting_removes_it(setup):

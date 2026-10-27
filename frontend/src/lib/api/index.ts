@@ -11,11 +11,13 @@ import { insightsApi } from "@/lib/api/insights"
 import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
+import { slackApi } from "@/lib/api/slack"
 
 export * from "@/lib/api/types"
 export type * from "@/lib/api/insights"
 export type * from "@/lib/api/api-keys"
 export type * from "@/lib/api/assistant"
+export type * from "@/lib/api/slack"
 export {
   ApiError,
   session,
@@ -37,3 +39,5 @@ export const apiKeys = apiKeysApi
 
 // The assistant's content controls: verified answers, source rules, settings, glossary.
 export const assistant = assistantApi
+// The Slack app: install, its settings (admin), and what HR may see of it.
+export const slack = slackApi

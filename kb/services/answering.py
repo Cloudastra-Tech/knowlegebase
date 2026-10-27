@@ -1,7 +1,7 @@
 """
 ask(): one question in, a checked answer out. The web chat (kb/routers/chat.py),
-the public API (kb/routers/api_v1.py) and the MCP server (kb/mcp_server.py) all
-answer through it, so every surface gets the same agent and the same path:
+the public API (kb/routers/api_v1.py), the MCP server (kb/mcp_server.py) and the
+Slack app (kb/services/slack.py) all answer through it, so every surface gets the same agent and the same path:
 
   * the input guards (prompt injection, the question rules) and the output ones
     (staff pay, links, PII), inside the agent (agent.py);
@@ -25,7 +25,7 @@ from kb.services import agents, conversations, question_log
 
 log = logging.getLogger("uvicorn.error")
 
-SURFACES = ("web", "api", "mcp")
+SURFACES = ("web", "api", "mcp", "slack")
 
 
 class Failed(Exception):

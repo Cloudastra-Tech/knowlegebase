@@ -98,3 +98,24 @@ def key_limit(key_id, workspace):
            (("api", "workspace", workspace), per_workspace,
             f"Your workspace's API keys have made {per_workspace} calls in the last minute, "
             "the most they can. Try again in {wait} second{s}.")])
+
+
+# Requests Slack sends us (kb/routers/slack.py), per minute: (per Slack user, per
+# Slack team). RATE_LIMIT_SLACK_USER, RATE_LIMIT_SLACK_TEAM. Over them, a request is
+# acknowledged and dropped, so a flood can't fill the job queue; a question also
+# counts as one of its person's chat questions (user_limit) when it's answered.
+SLACK_LIMITS = (30, 600)
+
+
+def slack_limit(team_id, slack_user):
+    """True if one more request from this Slack user may be taken in now."""
+    if not rate_limits_on():
+        return True
+    per_user, per_team = (env_int(f"RATE_LIMIT_SLACK_{who}", default)
+                          for who, default in zip(("USER", "TEAM"), SLACK_LIMITS))
+    try:
+        _take([(("slack", "user", team_id, slack_user), per_user, ""),
+               (("slack", "team", team_id), per_team, "")])
+    except HTTPException:
+        return False
+    return True

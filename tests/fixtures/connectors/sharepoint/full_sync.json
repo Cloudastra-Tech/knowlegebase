@@ -1,0 +1,252 @@
+{
+ "_source": [
+  "https://learn.microsoft.com/en-us/graph/api/drive-list (GET /sites/{id}/drives)",
+  "https://learn.microsoft.com/en-us/graph/api/driveitem-delta (value, deleted facet, @odata.nextLink, @odata.deltaLink)",
+  "https://learn.microsoft.com/en-us/graph/api/driveitem-list-permissions (roles, grantedToV2 user / siteUser / group / siteGroup, link.scope)",
+  "https://learn.microsoft.com/en-us/graph/api/driveitem-get-content"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/sites/acme.sharepoint.com,site-guid,web-guid/drives"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "drv-1",
+       "name": "Documents",
+       "driveType": "documentLibrary",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/root/delta",
+    "headers": {
+     "Prefer": "hierarchicalsharing"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "root-1",
+       "name": "root",
+       "root": {},
+       "folder": {
+        "childCount": 2
+       }
+      },
+      {
+       "id": "fold-1",
+       "name": "Policies",
+       "folder": {
+        "childCount": 3
+       },
+       "parentReference": {
+        "driveId": "drv-1",
+        "id": "root-1"
+       }
+      },
+      {
+       "id": "f-docx",
+       "name": "Leave policy.docx",
+       "size": 1000,
+       "lastModifiedDateTime": "2026-10-01T10:00:00Z",
+       "eTag": "\"{f-docx},1\"",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents/Leave policy.docx",
+       "parentReference": {
+        "driveId": "drv-1",
+        "driveType": "documentLibrary",
+        "id": "fold-1"
+       },
+       "file": {
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+       }
+      },
+      {
+       "id": "f-png",
+       "name": "logo.png",
+       "size": 1000,
+       "lastModifiedDateTime": "2026-10-01T10:00:00Z",
+       "eTag": "\"{f-png},1\"",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents/logo.png",
+       "parentReference": {
+        "driveId": "drv-1",
+        "driveType": "documentLibrary",
+        "id": "fold-1"
+       },
+       "file": {
+        "mimeType": "image/png"
+       }
+      },
+      {
+       "id": "f-big",
+       "name": "All hands.pdf",
+       "size": 31457280,
+       "lastModifiedDateTime": "2026-10-01T10:00:00Z",
+       "eTag": "\"{f-big},1\"",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents/All hands.pdf",
+       "parentReference": {
+        "driveId": "drv-1",
+        "driveType": "documentLibrary",
+        "id": "fold-1"
+       },
+       "file": {
+        "mimeType": "application/pdf"
+       }
+      }
+     ],
+     "@odata.nextLink": "https://graph.microsoft.com/v1.0/drives/drv-1/root/delta?token=page2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/root/delta",
+    "params": {
+     "token": "page2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "f-txt",
+       "name": "Notes.txt",
+       "size": 1000,
+       "lastModifiedDateTime": "2026-10-02T10:00:00Z",
+       "eTag": "\"{f-txt},1\"",
+       "webUrl": "https://acme.sharepoint.com/sites/hr/Shared%20Documents/Notes.txt",
+       "parentReference": {
+        "driveId": "drv-1",
+        "driveType": "documentLibrary",
+        "id": "fold-1"
+       },
+       "file": {
+        "mimeType": "text/plain"
+       },
+       "shared": {
+        "scope": "anonymous"
+       }
+      }
+     ],
+     "@odata.deltaLink": "https://graph.microsoft.com/v1.0/drives/drv-1/root/delta?token=d1"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/items/f-docx/permissions"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "p1",
+       "roles": [
+        "owner"
+       ],
+       "grantedToV2": {
+        "user": {
+         "id": "u-ann",
+         "displayName": "Ann",
+         "email": "Ann@acme.com"
+        },
+        "siteUser": {
+         "id": "7",
+         "displayName": "Ann",
+         "email": "ann@acme.com",
+         "loginName": "i:0#.f|membership|ann@acme.com"
+        }
+       }
+      },
+      {
+       "id": "p2",
+       "roles": [
+        "read"
+       ],
+       "grantedToV2": {
+        "group": {
+         "id": "g-hr",
+         "displayName": "HR",
+         "email": "hr@acme.com"
+        }
+       }
+      },
+      {
+       "id": "p3",
+       "roles": [
+        "read"
+       ],
+       "grantedToV2": {
+        "siteGroup": {
+         "id": "4",
+         "displayName": "HR Visitors",
+         "loginName": "HR Visitors"
+        }
+       }
+      },
+      {
+       "id": "p4",
+       "roles": [
+        "read"
+       ],
+       "link": {
+        "scope": "organization",
+        "type": "view",
+        "webUrl": "https://acme.sharepoint.com/:w:/s/x"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/items/f-txt/permissions"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "p5",
+       "roles": [
+        "read"
+       ],
+       "link": {
+        "scope": "anonymous",
+        "type": "view",
+        "webUrl": "https://acme.sharepoint.com/:t:/s/y"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/drives/drv-1/items/f-txt/content"
+   },
+   "response": {
+    "status": 200,
+    "text": "Parking is free on Fridays."
+   }
+  }
+ ]
+}

@@ -288,7 +288,7 @@ export function NewKeyDialog({
 }
 
 // A block of text to copy: a command or a config file.
-function CodeBlock({ label, code }: { label: string; code: string }) {
+export function CodeBlock({ label, code }: { label: string; code: string }) {
   const [copied, setCopied] = useState(false)
   async function copy() {
     try {

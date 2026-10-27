@@ -87,4 +87,38 @@ describe("IntegrationsView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Outline didn't accept that token.")
     expect(sent[0]).toMatchObject({ url: "https://wiki.acme.com", token: "secret-token" })
   })
+
+  it("connects Confluence Data Center with its own form and says SharePoint needs an admin", async () => {
+    const sent: unknown[] = []
+    const items: Integration[] = [
+      { ...base, id: "confluence_dc", name: "Confluence Data Center", auth: "token", picker: "list", status: "disconnected" },
+      {
+        ...base,
+        id: "sharepoint",
+        name: "SharePoint & OneDrive",
+        auth: "oauth",
+        picker: "tree",
+        picker_required: true,
+        status: "disconnected",
+        note: "Needs a Microsoft 365 admin: they approve read-only access for the organisation when connecting.",
+      },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "POST /api/integrations/confluence_dc/setup": (body: unknown) => {
+        sent.push(body)
+        return { ok: true, account: "confluence.acme.com (Ann)", choose: true }
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    expect(await screen.findByText(/Needs a Microsoft 365 admin/)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Connect Confluence Data Center" }))
+    expect(screen.queryByText("Behind Cloudflare Access?")).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText("Confluence address"), "https://confluence.acme.com")
+    await user.type(screen.getByLabelText("Personal access token"), "pat")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    await screen.findByText("Confluence Data Center")
+    expect(sent[0]).toEqual({ url: "https://confluence.acme.com", token: "pat" })
+  })
 })

@@ -68,6 +68,37 @@ class Forbidden(ConnectorError):
     retry = False
 
 
+class MissingScope(ConnectorError):
+    """The provider says the app wasn't granted a permission this call needs
+    (Atlassian: 401 "scope does not match"; Graph: 403 on a listing the app's
+    permission should allow): an admin has to connect again and approve it."""
+    code = "missing_scope"
+    retry = False
+
+
+class ConnectRefused(ConnectorError):
+    """finish_connect: connecting can't finish, for a reason the Integrations
+    screen explains (`reason` is the callback's error code: wrong_account,
+    admin_consent_required, missing_scope, no_site, ...)."""
+    code = "config"
+    retry = False
+
+    def __init__(self, reason, detail=""):
+        super().__init__(detail or reason)
+        self.reason = reason
+
+
+class NextStep(Exception):
+    """finish_connect: the browser has to make one more trip to the provider
+    before the connection exists (SharePoint: the admin signs in, then approves
+    the app for their tenant). `url(state)` is where to send it, with a new
+    one-time state; `data` comes back to finish_connect as `step`."""
+
+    def __init__(self, url, data):
+        super().__init__("one more step")
+        self.url, self.data = url, data
+
+
 class FormError(ValueError):
     """What an admin typed into a connect / settings form is wrong. Unlike the
     errors above, the message is written for them and shown as it is."""
@@ -82,6 +113,8 @@ ERRORS = {
     "config": "The connection's settings need attention: check what it syncs and its address.",
     "forbidden": "The connected account can't read what was picked. Check its sharing.",
     "not_found": "Something picked to sync no longer exists. Check what it syncs.",
+    "missing_scope": "The app is missing a permission it needs. Reconnect and approve every "
+                     "permission it asks for.",
     "mass_delete": "This sync would remove a large share of the synced items, so nothing was "
                    "removed. Confirm to remove them, or check the connection.",
     "unknown": "The last sync failed. It will be tried again; tell your admin if this stays.",
@@ -199,6 +232,7 @@ class Connector:
     SETTINGS_KEY = "containers"    # where the picks are kept in the connection's settings
     UNIT = "documents"             # what the card counts ("files", "pages")
     SETUP_ENV = ""                 # env vars an oauth connector needs on the server
+    NOTE = ""                      # a line the card shows before connecting, if any
     ACL = False                    # captures source permissions
 
     def configured(self):
@@ -210,7 +244,14 @@ class Connector:
         raise NotImplementedError
 
     def finish_connect(self, workspace, code, redirect_uri, user):
+        """Save the connection; may raise NextStep (a connector that needs it also
+        takes `step=`, the NextStep's data, on the way back)."""
         raise NotImplementedError
+
+    def callback_code(self, params, step=None):
+        """What finish_connect gets as `code` from the callback's query (empty:
+        the provider sent nothing to connect with). `step`: a NextStep's data."""
+        return params.get("code", "")
 
     # auth (token / url): check the form, save the connection; returns its account label
     def connect_form(self, workspace, form, user):
