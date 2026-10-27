@@ -3,6 +3,8 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+import os
+
 import db
 import health
 import ingest
@@ -15,8 +17,11 @@ router = APIRouter()
 def health_check():
     """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200.
     "guards" shows whether the toxicity check is running, since the app starts
-    without it unless REQUIRE_TOXICITY_GUARD says not to."""
-    return {"ok": True, "guards": safety.guards_status()}
+    without it unless REQUIRE_TOXICITY_GUARD says not to. "version" and "commit":
+    what the image was built from (Dockerfile; dev / unknown outside of one)."""
+    return {"ok": True, "guards": safety.guards_status(),
+            "version": os.getenv("APP_VERSION") or "dev",
+            "commit": os.getenv("GIT_SHA") or "unknown"}
 
 
 @router.get("/api/health/ready")

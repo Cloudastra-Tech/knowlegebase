@@ -37,7 +37,6 @@ import logging
 import operator
 import os
 import re
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import requests
@@ -184,12 +183,6 @@ def calculate(expression):
     except SyntaxError:
         raise ValueError("not a valid arithmetic expression")
     return walk(tree)
-
-
-def _safe(text):
-    """Make text printable on a Windows cp1252 console (emoji-safe)."""
-    enc = sys.stdout.encoding or "utf-8"
-    return str(text).encode(enc, "replace").decode(enc, "replace")
 
 
 def _tool_error(name, e):
@@ -1282,8 +1275,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
             if isinstance(m, AIMessage) and m.tool_calls:
                 for tc in m.tool_calls:
                     out = outputs.get(tc["id"], "")
-                    print(_safe(f"[agent] -> {tc['name']}({tc['args']})"))   # console log
-                    print(_safe(f"[agent]    = {out}"))
+                    # Never the arguments or the result: they hold the question's words.
+                    log.debug("Agent: called %s (%d characters back)", tc["name"], len(str(out)))
                     trace.append({"tool": tc["name"], "input": tc["args"],
                                   "output": str(out)})
         # SOURCE RULES that weighed what was read: in the steps admins see.
