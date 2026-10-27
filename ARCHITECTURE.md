@@ -211,10 +211,14 @@ Roles (public, hr, admin) gate **screens**. **Access groups** gate **content**
   email, name or id) and verified domains. **A grant that matches nothing here is
   dropped, never widened**; a file with nothing left is for no one. Jira issues
   with a security level, unreadable Confluence restrictions and similar fail
-  closed. Zendesk tickets lock their connection to `restricted`. Newer connectors
-  tag their acl with `via` (`linear`, `dropbox`, `box`, `s3`) and each has its own
-  mapping; an unknown `via` is for no one. S3 has no source permissions at all,
-  so its connections can't pick `source`.
+  closed. Zendesk and Freshdesk tickets and Intercom conversations lock their
+  connection to `restricted`. Newer connectors tag their acl with `via`
+  (`linear`, `dropbox`, `box`, `s3`, `freshdesk`, `hubspot`, `intercom`,
+  `salesforce`) and each has its own mapping; an unknown `via` is for no one. S3
+  has no source permissions at all, and Intercom's API doesn't expose article
+  audiences, so their connections can't pick `source`. Help-desk and CRM
+  knowledge bases map only provably public articles to everyone; anything
+  narrower is the hr group.
 - **ACL drift.** Sharing is read at every sync (every 30 minutes): after each one
   a source-policy connection is re-tagged (only chunks whose ACL changed). A
   change at the source, or a new group member here, can take until the next sync;

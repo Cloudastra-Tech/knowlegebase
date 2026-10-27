@@ -89,10 +89,13 @@ def populate(ws, root):
     admin, staff = f"admin@{ws}.example", f"staff@{ws}.example"
     secrets = [f"notion-SECRET-{ws}", f"outline-SECRET-{ws}", f"oidc-SECRET-{ws}",
                f"slackclient-SECRET-{ws}", f"slacksign-SECRET-{ws}", f"xoxb-SECRET-{ws}",
-               f"jira-SECRET-{ws}", f"zendesk-SECRET-{ws}", f"github-SECRET-{ws}"]
+               f"jira-SECRET-{ws}", f"zendesk-SECRET-{ws}", f"github-SECRET-{ws}",
+               f"intercom-SECRET-{ws}", f"freshdesk-SECRET-{ws}", f"hubspot-SECRET-{ws}",
+               f"salesforce-SECRET-{ws}"]
     integrations_store.connect(ws, "notion", "Acme Notion", {"access_token": secrets[0]}, admin)
     integrations_store.connect(ws, "outline", "Acme Outline", {"token": secrets[1]}, admin)
-    for provider, secret in zip(("jira", "zendesk", "github"), secrets[6:]):
+    for provider, secret in zip(("jira", "zendesk", "github", "intercom", "freshdesk", "hubspot",
+                                 "salesforce"), secrets[6:]):
         integrations_store.connect(ws, provider, f"Acme {provider}", {"token": secret}, admin)
     members_store.create_connection(ws, "oidc", "Okta", "https://idp.example", "kb",
                                     {"client_secret": secrets[2]},
@@ -218,8 +221,9 @@ def test_the_export_has_the_workspace_and_no_secret(client, places, jobs_paused)
     chats = [json.loads(line) for line in z.read("conversations.jsonl").decode().splitlines()]
     assert chats[0]["messages"][1]["content"] == "20 days a year."
     settings = json.loads(z.read("settings.json"))
-    assert {i["provider"] for i in settings["integrations"]} == {"notion", "outline", "jira",
-                                                                 "zendesk", "github"}
+    assert {i["provider"] for i in settings["integrations"]} == {
+        "notion", "outline", "jira", "zendesk", "github", "intercom", "freshdesk", "hubspot",
+        "salesforce"}
     assert settings["sign_in_providers"][0]["label"] == "Okta"
     assert settings["slack"]["team_name"] == "Acme Slack"
     assert settings["glossary"][0]["term"] == "PTO"
@@ -334,7 +338,8 @@ def test_purge_leaves_nothing_of_the_workspace(client, places, jobs_paused):
 
     # Revoked at the providers: each connector, and Slack's bot token.
     assert sorted(p for p in places["revoked"] if isinstance(p, str)) == [
-        "github", "jira", "notion", "outline", "zendesk"]
+        "freshdesk", "github", "hubspot", "intercom", "jira", "notion", "outline", "salesforce",
+        "zendesk"]
     assert ("auth.revoke", made["secrets"][5]) in places["revoked"]
     # Nothing of it in any table (its name, slug, people, secrets), nor on disk.
     assert leftovers([ws, *made["secrets"]]) == []

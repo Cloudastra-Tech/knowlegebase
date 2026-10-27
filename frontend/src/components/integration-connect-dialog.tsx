@@ -14,6 +14,13 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { api, type Integration } from "@/lib/api"
 
@@ -24,12 +31,15 @@ const TOKEN_COPY: Record<
   string,
   {
     description: string
-    address: string
+    address: string | null // null: no address (HubSpot)
     placeholder: string
     token: string
     cloudflare: boolean
     email?: boolean // Zendesk: the agent or admin the token belongs to
+    region?: boolean // Intercom: the address field is the workspace's hosting region
     hint?: string
+    tokenHint?: string
+    or?: string // the line between "Sign in with ..." and the token form
   }
 > = {
   outline: {
@@ -66,7 +76,43 @@ const TOKEN_COPY: Record<
     cloudflare: false,
     email: true,
   },
+  freshdesk: {
+    description:
+      "Read-only. Use an agent's API key (your profile picture → Profile settings → View API key). It is stored encrypted and used only to sync your knowledge base.",
+    address: "Freshdesk subdomain",
+    placeholder: "acme",
+    hint: "The first part of your Freshdesk address: acme for acme.freshdesk.com.",
+    token: "API key",
+    cloudflare: false,
+  },
+  intercom: {
+    description:
+      "Read-only. Create a private app in your Intercom workspace (Developer Hub) with the Read articles permission (and Read conversations, to sync conversations), then paste its access token. It is stored encrypted.",
+    address: "Region",
+    placeholder: "US",
+    hint: "Where your Intercom workspace is hosted: app.intercom.com is US, app.eu.intercom.com is EU, app.au.intercom.com is Australia.",
+    token: "Access token",
+    region: true,
+    cloudflare: false,
+    or: "or use a private app's token",
+  },
+  hubspot: {
+    description:
+      "Read-only. Create a private app in HubSpot (Settings → Integrations → Private apps) with the cms.knowledge_base.articles.read scope, then paste its access token. It is stored encrypted.",
+    address: null,
+    placeholder: "",
+    token: "Private app access token",
+    tokenHint: "Needs Service Hub Professional or Enterprise.",
+    cloudflare: false,
+    or: "or use a private app's token",
+  },
 }
+
+const REGIONS = [
+  { value: "US", label: "United States" },
+  { value: "EU", label: "Europe" },
+  { value: "AU", label: "Australia" },
+]
 
 // Connect a connector that takes a form instead of a sign-in: Outline, Confluence or
 // Jira Data Center (address + token), Zendesk (subdomain + email + token, or a
@@ -100,15 +146,16 @@ export function IntegrationConnectDialog({
   if (open !== wasOpen) {
     setWasOpen(open)
     if (open) {
-      setUrl(item.base_url ?? "")
+      setUrl(item.base_url ?? (copy.region ? "US" : ""))
       setToken("")
       setProblem(null)
     }
   }
 
-  // Zendesk with the server's OAuth client: sign in on the customer's own subdomain.
+  // With the server's OAuth client: sign in (Zendesk on the customer's own subdomain,
+  // Intercom on their region's host, HubSpot on its own).
   async function signIn() {
-    if (!url.trim()) {
+    if (copy.address && !url.trim()) {
       setProblem(`Enter your ${copy.address.toLowerCase()} first.`)
       return
     }
@@ -136,7 +183,9 @@ export function IntegrationConnectDialog({
             ? { url, token, cf_client_id: cfId, cf_client_secret: cfSecret }
             : copy.email
               ? { url, email, token }
-              : { url, token },
+              : copy.address
+                ? { url, token }
+                : { token },
       )
       toast.success(
         res.choose ? `${item.name} connected. Now choose what to sync.` : `${item.name} connected. Syncing…`,
@@ -163,22 +212,45 @@ export function IntegrationConnectDialog({
             </DialogDescription>
           </DialogHeader>
           <FieldGroup className="gap-4">
-            <Field>
-              <FieldLabel htmlFor={`${ids}-url`}>{website ? "Start address" : copy.address}</FieldLabel>
-              <Input
-                id={`${ids}-url`}
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder={website ? "https://docs.example.com" : copy.placeholder}
-                inputMode={copy.email ? "text" : "url"}
-                required
-                autoFocus
-              />
-              {website && (
-                <FieldDescription>A page, or a sitemap ending in .xml.</FieldDescription>
-              )}
-              {!website && copy.hint && <FieldDescription>{copy.hint}</FieldDescription>}
-            </Field>
+            {!website && copy.region ? (
+              <Field>
+                <FieldLabel htmlFor={`${ids}-url`}>{copy.address}</FieldLabel>
+                <Select value={url || "US"} onValueChange={setUrl}>
+                  <SelectTrigger id={`${ids}-url`} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REGIONS.map((r) => (
+                      <SelectItem key={r.value} value={r.value}>
+                        {r.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {copy.hint && <FieldDescription>{copy.hint}</FieldDescription>}
+              </Field>
+            ) : (
+              (website || copy.address) && (
+                <Field>
+                  <FieldLabel htmlFor={`${ids}-url`}>
+                    {website ? "Start address" : copy.address}
+                  </FieldLabel>
+                  <Input
+                    id={`${ids}-url`}
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder={website ? "https://docs.example.com" : copy.placeholder}
+                    inputMode={website || copy.placeholder.startsWith("http") ? "url" : "text"}
+                    required
+                    autoFocus
+                  />
+                  {website && (
+                    <FieldDescription>A page, or a sitemap ending in .xml.</FieldDescription>
+                  )}
+                  {!website && copy.hint && <FieldDescription>{copy.hint}</FieldDescription>}
+                </Field>
+              )
+            )}
             {!website && item.sign_in && (
               <>
                 <Button
@@ -193,7 +265,7 @@ export function IntegrationConnectDialog({
                 </Button>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <Separator className="flex-1" />
-                  or use an API token
+                  {copy.or ?? "or use an API token"}
                   <Separator className="flex-1" />
                 </div>
               </>
@@ -247,7 +319,9 @@ export function IntegrationConnectDialog({
                     onChange={(e) => setToken(e.target.value)}
                     autoComplete="off"
                     required
+                    autoFocus={!copy.address}
                   />
+                  {copy.tokenHint && <FieldDescription>{copy.tokenHint}</FieldDescription>}
                 </Field>
                 {copy.cloudflare && (
                   <Collapsible>

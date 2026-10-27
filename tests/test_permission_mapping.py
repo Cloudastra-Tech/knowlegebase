@@ -177,6 +177,43 @@ def test_s3_and_unknown_connectors_fail_closed(resolver):
         [access.NOBODY], 1)
 
 
+def test_freshdesk_folder_visibility(resolver):
+    for everyone in (1, 2):                            # all users, logged-in users
+        assert acl(resolver, {"via": "freshdesk", "visibility": everyone}) == (["everyone"], 0)
+    for staff in (3, 4, 5, 6, 7):                      # agents, companies, bots, segments
+        assert acl(resolver, {"via": "freshdesk", "visibility": staff,
+                              "company_ids": [5]})[0] == [access.HR]
+    assert acl(resolver, {"via": "freshdesk", "ticket": True})[0] == [access.HR]
+    for unknown in (None, 8, "1"):
+        assert acl(resolver, {"via": "freshdesk", "visibility": unknown}) == ([access.NOBODY], 1)
+
+
+def test_hubspot_access_types(resolver):
+    assert acl(resolver, {"via": "hubspot", "access_type": "PUBLIC"})[0] == ["everyone"]
+    for narrower in ("SSO_LOGIN", "ACCESS_GROUP_MEMBERSHIP"):
+        assert acl(resolver, {"via": "hubspot", "access_type": narrower,
+                              "access_group_ids": ["7788"]})[0] == [access.HR]
+    assert acl(resolver, {"via": "hubspot", "access_type": None}) == ([access.NOBODY], 1)
+
+
+def test_intercom_never_follows_an_audience_it_cant_read(resolver):
+    published = {"via": "intercom", "kind": "article", "state": "published",
+                 "help_center_live": True, "audience": "not_exposed"}
+    assert acl(resolver, published)[0] == [access.HR]
+    assert acl(resolver, {"via": "intercom", "kind": "conversation"})[0] == [access.HR]
+    assert acl(resolver, {"via": "intercom"}) == ([access.NOBODY], 1)
+
+
+def test_salesforce_channels_and_data_categories(resolver):
+    public = {"via": "salesforce", "channels": {"app": True, "pkb": True}, "data_categories": []}
+    assert acl(resolver, public)[0] == ["everyone"]
+    # Data categories gate guest users too: not provably public.
+    assert acl(resolver, {**public, "data_categories": ["Region:Spain"]})[0] == [access.HR]
+    assert acl(resolver, {**public, "channels": {"app": True, "pkb": False}})[0] == [access.HR]
+    assert acl(resolver, {**public, "channels": {"pkb": "true"}})[0] == [access.HR]
+    assert acl(resolver, {"via": "salesforce", "channels": {}}) == ([access.NOBODY], 1)
+
+
 # ---- The principals algebra ---------------------------------------------------------------------
 def test_an_answers_audience_is_every_acl_it_read():
     eng, alice = access.group("eng"), access.user(ALICE)

@@ -413,6 +413,46 @@ def test_github_visibility_collaborators_and_teams(org, env):  # noqa: F811
     assert _who_reaches(org, texts["ops"]) == set()                 # a login only: no one
 
 
+# ---- Intercom, Freshdesk, HubSpot and Salesforce under the source policy -----------------------
+def test_support_and_crm_knowledge_bases(org, env):  # noqa: F811
+    everyone, staff = {"alice", "bob", "hr", "channel"}, {"hr"}
+    texts = {"fd-1": "Freshdesk article: printers restart from the blue button.",
+             "fd-3": "Freshdesk agents' article: the escalation phone is 555-0199.",
+             "fd-t": "Freshdesk ticket: the customer at 4 Oak Lane wants a refund.",
+             "fd-x": "Freshdesk article whose folder visibility we couldn't read.",
+             "hs-p": "HubSpot article: invoices are emailed on the first.",
+             "hs-g": "HubSpot article for an access group: partner margins are 30 percent.",
+             "ic-a": "Intercom article: bank transfers take two days.",
+             "sf-p": "Salesforce article: reset your password from the sign-in page.",
+             "sf-c": "Salesforce article in a data category: Spanish VAT is 21 percent.",
+             "sf-i": "Salesforce internal article: the override code is ORCA-7."}
+    _sourced(org, env, "freshdesk", {
+        "fd-1": (texts["fd-1"], {"via": "freshdesk", "visibility": 1}),
+        "fd-3": (texts["fd-3"], {"via": "freshdesk", "visibility": 3}),
+        "fd-t": (texts["fd-t"], {"via": "freshdesk", "ticket": True}),
+        "fd-x": (texts["fd-x"], {"via": "freshdesk", "visibility": None})})
+    _sourced(org, env, "hubspot", {
+        "hs-p": (texts["hs-p"], {"via": "hubspot", "access_type": "PUBLIC"}),
+        "hs-g": (texts["hs-g"], {"via": "hubspot", "access_type": "ACCESS_GROUP_MEMBERSHIP",
+                                 "access_group_ids": ["7788"]})})
+    # Intercom can't pick the source policy; forced onto it anyway, it stays staff.
+    _sourced(org, env, "intercom", {
+        "ic-a": (texts["ic-a"], {"via": "intercom", "kind": "article", "state": "published",
+                                 "help_center_live": True, "audience": "not_exposed"})})
+    channels = {"app": True, "pkb": True}
+    _sourced(org, env, "salesforce", {
+        "sf-p": (texts["sf-p"], {"via": "salesforce", "channels": channels,
+                                 "data_categories": []}),
+        "sf-c": (texts["sf-c"], {"via": "salesforce", "channels": channels,
+                                 "data_categories": ["Region:Spain"]}),
+        "sf-i": (texts["sf-i"], {"via": "salesforce", "channels": {"app": True, "pkb": False},
+                                 "data_categories": []})})
+    want = {"fd-1": everyone, "fd-3": staff, "fd-t": staff, "fd-x": set(),
+            "hs-p": everyone, "hs-g": staff, "ic-a": staff,
+            "sf-p": everyone, "sf-c": staff, "sf-i": staff}
+    assert {k: _who_reaches(org, t) for k, t in texts.items()} == want
+
+
 # ---- Changing who may see -----------------------------------------------------------------------
 def test_a_policy_switch_retags_without_embedding(org, env):  # noqa: F811
     embedded = len(env.embedded)

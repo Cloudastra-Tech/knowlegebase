@@ -1,0 +1,76 @@
+{
+ "_source": [
+  "https://developers.hubspot.com/docs/api-reference/2027-03-beta/cms/knowledge-base/get-articles (results, paging.next.after; article id, title, url, body, state, accessType, accessGroupIds, categoryId, knowledgeBaseId, language, updatedAt, archivedInDashboard)",
+  "https://developers.hubspot.com/docs/api-reference/2027-03-beta/cms/knowledge-base/guide (categories: id, name, parentCategoryId; knowledge bases: id, name, domain, language)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.hubapi.com/cms/knowledge-base/2027-03-beta/articles",
+    "params": {
+     "sort": "updatedAt",
+     "includeTranslations": "false"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "501",
+       "knowledgeBaseId": "1",
+       "title": "Download an invoice",
+       "language": "en",
+       "categoryId": "11",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "PUBLIC",
+       "accessGroupIds": [],
+       "path": "kb/501",
+       "url": "https://help.acme.com/kb/501",
+       "body": "<p>Invoices are kept for seven years.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-10T09:00:00Z",
+       "archivedInDashboard": false
+      },
+      {
+       "id": "502",
+       "knowledgeBaseId": "1",
+       "title": "Change your plan",
+       "language": "en",
+       "categoryId": "10",
+       "tagIds": [],
+       "state": "DRAFT",
+       "accessType": "SSO_LOGIN",
+       "accessGroupIds": [],
+       "path": "kb/502",
+       "url": "https://help.acme.com/kb/502",
+       "body": "<p>Text.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-11T09:00:00Z",
+       "archivedInDashboard": false
+      },
+      {
+       "id": "505",
+       "knowledgeBaseId": "1",
+       "title": "Office hours",
+       "language": "en",
+       "categoryId": "20",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "PUBLIC",
+       "accessGroupIds": [],
+       "path": "kb/505",
+       "url": "https://help.acme.com/kb/505",
+       "body": "<p>Text.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-04T09:00:00Z",
+       "archivedInDashboard": false
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

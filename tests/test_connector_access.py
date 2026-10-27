@@ -146,7 +146,7 @@ def test_only_hr_and_admins_set_who_can_ask(env, name, x_role, status):
 @pytest.mark.parametrize("provider, body, status", [
     ("notion", {"access": "public"}, 422),             # not a connection level
     ("google_drive", {"access": "everyone"}, 400),     # not connected
-    ("intercom", {"access": "everyone"}, 404),        # not a live connector
+    ("slack", {"access": "everyone"}, 404),           # not a live connector
 ])
 def test_setting_who_can_ask_checks_its_input(env, provider, body, status):
     client, ws = env

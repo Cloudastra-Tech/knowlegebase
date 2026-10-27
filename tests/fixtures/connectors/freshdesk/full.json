@@ -1,0 +1,285 @@
+{
+ "_source": [
+  "https://developers.freshdesk.com/api/#solution_category_attributes (Category: id, name, description; GET /api/v2/solutions/categories)",
+  "https://developers.freshdesk.com/api/#solution_folder_attributes (Folder: id, name, visibility 1-7, company_ids, contact_segment_ids, company_segment_ids, parent_folder_id, sub_folders_count, articles_count; GET /api/v2/solutions/categories/[id]/folders, /folders/[id]/subfolders)",
+  "https://developers.freshdesk.com/api/#solution_article_attributes (Article: id, title, description (HTML), description_text, status 1 draft / 2 published, folder_id, category_id, tags, updated_at; GET /api/v2/solutions/folders/[id]/articles)",
+  "https://developers.freshdesk.com/api/#pagination (per_page up to 100; Link: <...>; rel=\"next\")"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/categories",
+    "params": {
+     "per_page": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 1,
+      "name": "Getting started",
+      "description": null
+     },
+     {
+      "id": 2,
+      "name": "Internal",
+      "description": null
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/categories/1/folders"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 10,
+      "name": "Setup",
+      "description": null,
+      "visibility": 1,
+      "sub_folders_count": 1,
+      "articles_count": 1,
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-09-01T09:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/folders/10/subfolders"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 11,
+      "name": "Advanced setup",
+      "description": null,
+      "visibility": 2,
+      "sub_folders_count": 0,
+      "articles_count": 1,
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-09-01T09:00:00Z",
+      "parent_folder_id": 10
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/categories/2/folders"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 20,
+      "name": "Agents only",
+      "description": null,
+      "visibility": 3,
+      "sub_folders_count": 0,
+      "articles_count": 1,
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-09-01T09:00:00Z"
+     },
+     {
+      "id": 21,
+      "name": "VIP customers",
+      "description": null,
+      "visibility": 4,
+      "sub_folders_count": 0,
+      "articles_count": 1,
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-09-01T09:00:00Z",
+      "company_ids": [
+       5001
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/folders/10/articles",
+    "params": {
+     "per_page": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "headers": {
+     "Link": "<https://acme.freshdesk.com/api/v2/solutions/folders/10/articles?page=2&per_page=100>; rel=\"next\""
+    },
+    "json": [
+     {
+      "id": 100,
+      "type": 1,
+      "category_id": 1,
+      "folder_id": 10,
+      "title": "Install the agent",
+      "description": "<h2>Steps</h2><p>Download it.</p><pre>curl -sL get.acme.com | sh</pre>",
+      "description_text": "",
+      "status": 2,
+      "agent_id": 1,
+      "tags": [
+       "install"
+      ],
+      "hits": 0,
+      "thumbs_up": 0,
+      "thumbs_down": 0,
+      "seo_data": {},
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-10-01T09:00:00Z"
+     },
+     {
+      "id": 101,
+      "type": 1,
+      "category_id": 1,
+      "folder_id": 10,
+      "title": "Draft: new installer",
+      "description": "<p>Not yet.</p>",
+      "description_text": "",
+      "status": 1,
+      "agent_id": 1,
+      "tags": [],
+      "hits": 0,
+      "thumbs_up": 0,
+      "thumbs_down": 0,
+      "seo_data": {},
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-10-01T09:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/folders/10/articles",
+    "params": {
+     "page": "2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 102,
+      "type": 1,
+      "category_id": 1,
+      "folder_id": 10,
+      "title": "Uninstall the agent",
+      "description": "<p>Run acme uninstall.</p>",
+      "description_text": "",
+      "status": 2,
+      "agent_id": 1,
+      "tags": [],
+      "hits": 0,
+      "thumbs_up": 0,
+      "thumbs_down": 0,
+      "seo_data": {},
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-10-01T09:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/folders/11/articles"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 110,
+      "type": 1,
+      "category_id": 1,
+      "folder_id": 11,
+      "title": "Proxy settings",
+      "description": "<p>Set HTTPS_PROXY before you start.</p>",
+      "description_text": "",
+      "status": 2,
+      "agent_id": 1,
+      "tags": [],
+      "hits": 0,
+      "thumbs_up": 0,
+      "thumbs_down": 0,
+      "seo_data": {},
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-10-01T09:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/folders/20/articles"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 200,
+      "type": 1,
+      "category_id": 2,
+      "folder_id": 20,
+      "title": "Refund override",
+      "description": "<p>The override code is ORCA-7.</p>",
+      "description_text": "",
+      "status": 2,
+      "agent_id": 1,
+      "tags": [],
+      "hits": 0,
+      "thumbs_up": 0,
+      "thumbs_down": 0,
+      "seo_data": {},
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-10-01T09:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.freshdesk.com/api/v2/solutions/folders/21/articles"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": 210,
+      "type": 1,
+      "category_id": 2,
+      "folder_id": 21,
+      "title": "VIP onboarding",
+      "description": "<p>VIPs get a named engineer.</p>",
+      "description_text": "",
+      "status": 2,
+      "agent_id": 1,
+      "tags": [],
+      "hits": 0,
+      "thumbs_up": 0,
+      "thumbs_down": 0,
+      "seo_data": {},
+      "created_at": "2026-09-01T09:00:00Z",
+      "updated_at": "2026-10-01T09:00:00Z"
+     }
+    ]
+   }
+  }
+ ]
+}

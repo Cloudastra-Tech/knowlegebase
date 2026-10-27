@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   Archive,
+  Cloud,
   FileText,
   FolderCog,
   Globe,
@@ -21,6 +22,8 @@ import {
   siDropbox,
   siGithub,
   siGoogledrive,
+  siHubspot,
+  siIntercom,
   siJira,
   siLinear,
   siNotion,
@@ -44,9 +47,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
 import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
 import { S3ConnectDialog } from "@/components/s3-connect-dialog"
+import { SalesforceConnectDialog } from "@/components/salesforce-connect-dialog"
 import { SlackAppCard } from "@/components/slack-app-card"
 import { SurfaceCards } from "@/components/surface-cards"
 import { SyncHistorySheet } from "@/components/sync-history-sheet"
+import { TICKET_OPTIONS } from "@/lib/ticket-options"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -71,8 +76,19 @@ const BRANDS: Record<string, SimpleIcon> = {
   zendesk: siZendesk,
   linear: siLinear,
   box: siBox,
+  intercom: siIntercom,
+  hubspot: siHubspot,
 }
-const LETTERS: Record<string, string> = { sharepoint: "S", slack: "#" }
+// What a connection with an optional picker syncs while nothing is picked.
+const UNPICKED: Record<string, string> = {
+  zendesk: "Every published Help Center article is synced.",
+  intercom: "Every published Help Center article is synced.",
+  freshdesk: "Every published knowledge base article is synced.",
+  hubspot: "Every published knowledge base article is synced.",
+  salesforce: "Every published Knowledge article is synced.",
+  s3: "Every readable file in the bucket (under its prefix) is synced.",
+}
+const LETTERS: Record<string, string> = { sharepoint: "S", slack: "#", freshdesk: "F" }
 
 function ConnectorIcon({ item }: { item: Integration }) {
   const brand = item.icon ? BRANDS[item.icon] : undefined
@@ -85,6 +101,7 @@ function ConnectorIcon({ item }: { item: Integration }) {
   if (item.id === "uploads") return <FileText className="size-5" />
   if (item.id === "website") return <Globe className="size-5" />
   if (item.id === "s3") return <Archive className="size-5" />
+  if (item.id === "salesforce") return <Cloud className="size-5" />
   if (LETTERS[item.id]) return <span className="text-xs font-semibold">{LETTERS[item.id]}</span>
   return <Plug className="size-5" />
 }
@@ -245,8 +262,9 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
       {item.access_locked && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <Lock className="mt-px size-3.5 shrink-0" />
-          Locked to HR and admins while {item.name} tickets are synced: they hold customers'
-          details.
+          Locked to HR and admins while {item.name}{" "}
+          {(TICKET_OPTIONS[item.id]?.label ?? "tickets").toLowerCase()} are synced: they hold
+          customers' details.
         </p>
       )}
       {policy === "workspace" && (
@@ -313,6 +331,7 @@ function ConnectorCard({
   const picks = item.containers ?? []
   const unit = item.unit ?? "items"
   const hasPicker = !!item.picker && item.picker !== "none"
+  const tickets = TICKET_OPTIONS[item.id]
   const nothingPicked = !!item.picker_required && picks.length === 0
 
   // Just connected and nothing picked yet: open the picker (once per arrival).
@@ -457,11 +476,7 @@ function ConnectorCard({
                 <p className="min-w-0 flex-1 text-sm text-muted-foreground">
                   {item.picker_required
                     ? "Nothing is synced yet. Choose what your team should search."
-                    : item.id === "zendesk"
-                      ? "Every published Help Center article is synced."
-                      : item.id === "s3"
-                        ? "Every readable file in the bucket (under its prefix) is synced."
-                        : "Everything shared with the integration is synced."}
+                    : (UNPICKED[item.id] ?? "Everything shared with the integration is synced.")}
                 </p>
                 <Button size="sm" onClick={() => setPickerOpen(true)}>
                   <FolderCog /> {item.picker_required ? "Choose what to sync" : "Narrow it down"}
@@ -494,12 +509,12 @@ function ConnectorCard({
               </div>
             ))}
 
-          {item.options?.tickets !== undefined && (
+          {tickets && item.options?.[tickets.key] !== undefined && (
             <div className="mb-3 flex items-center justify-between gap-3 text-sm">
               <p className="min-w-0 text-muted-foreground">
-                Solved tickets:{" "}
+                {tickets.label}:{" "}
                 <span className="font-medium text-foreground">
-                  {item.options.tickets ? "synced (HR and admins only)" : "off"}
+                  {item.options[tickets.key] ? "synced (HR and admins only)" : "off"}
                 </span>
               </p>
               <Button
@@ -599,7 +614,9 @@ function ConnectorCard({
         </>
       )}
 
-      {item.id === "s3" ? (
+      {item.id === "salesforce" ? (
+        <SalesforceConnectDialog item={item} open={formOpen} onOpenChange={setFormOpen} />
+      ) : item.id === "s3" ? (
         <S3ConnectDialog
           item={item}
           open={formOpen}
