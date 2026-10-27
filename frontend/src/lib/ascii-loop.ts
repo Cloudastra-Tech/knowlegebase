@@ -3,12 +3,13 @@
 // while it's on screen and the tab is in front. With reduced motion (or the app's
 // "Reduce effects") each draws one still frame, and that follows the setting live.
 // The app's background field ("ambient") also rests while the page scrolls and while
-// a dialog is open. All the drawing together gets about 4ms a frame; when it keeps
-// taking longer, the loop steps the frame rates down.
+// a dialog is open. Drawing has a budget per frame: past it the loop steps frame
+// rates down, and back up once frames are cheap again ("The budget", below).
 
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react"
 
 const REDUCED_QUERY = "(prefers-reduced-motion: reduce)"
+const EFFECTS_KEY = "effects" // localStorage; public/theme-init.js reads it before paint
 
 export const reducedMotion = () => window.matchMedia(REDUCED_QUERY).matches
 
@@ -56,36 +57,77 @@ type Sub = {
   visible: boolean
   last: number // when it last drew (rAF time), -1 while resting
   elapsed: number // its own clock, in seconds: runs only while it draws
+  draws: number // frames drawn so far; the first few don't count towards the budget
 }
 
-const BUDGET_MS = 4
-const WINDOW = 30 // frames per budget check
+const WINDOW = 30 // drawn frames per budget check
+const WARMUP = 10 // a subscriber's first frames: cold code, a font still arriving
 const SCROLL_REST_MS = 150
+const RETRY_MS = 10_000 // a field gone still tries moving again after this, then 2x, ...
+const RETRY_MAX_MS = 160_000
 
 const subs = new Set<Sub>()
 let raf = 0
 let reduced = false
-let effects: "full" | "reduced" = "full"
+let effects: "full" | "reduced" | null = null // null: not read from the page yet
 let pausedUntil = 0
 let pauseTimer: ReturnType<typeof setTimeout> | undefined
 let modalOpen = false
-let degrade = 0 // 0 full; 1 ambient 6 fps, hero 20; 2 ambient still too
-let costs: number[] = []
-let overruns = 0
 let warned = false
+
+// The budget. A governor watches the 95th percentile of the cost of 30 drawn frames:
+// over `over` ms it steps its pieces down a level, under `under` it steps back up (the
+// gap keeps it from flapping). There are two, because their pieces never share a page:
+// - app: the background field, spinners and the thinking line. They share frames with
+//   the app's own work (an answer streaming in, typing), so 4ms between them. Levels:
+//   the field at 12 fps, then 6, then still. A still field has no frames to measure,
+//   so it tries moving again after a wait that doubles each time it has to stop.
+// - hero: the landing's brain and ticker, the only things moving on the landing and
+//   sign-in pages. A lower frame rate can't make a draw cheaper (the brain costs the
+//   same at 20 fps as at 30), so held to the app's 4ms a brain that costs 5 stepped
+//   down and never came back. It gets 8ms, half a 60 Hz frame: past that (a busy CPU,
+//   a slow phone) it runs at 20 fps until its draws are under 6ms again.
+type Governor = {
+  over: number
+  under: number
+  max: number // its last level
+  level: number
+  costs: number[]
+  overruns: number
+  retry: number // ms the still level waits before trying again
+  timer?: ReturnType<typeof setTimeout>
+}
+
+const governor = (over: number, under: number, max: number): Governor => ({
+  over,
+  under,
+  max,
+  level: 0,
+  costs: [],
+  overruns: 0,
+  retry: RETRY_MS,
+})
+let app = governor(4, 2, 2)
+let hero = governor(8, 6, 1)
 
 let io: IntersectionObserver | null = null
 let mql: MediaQueryList | null = null
 let bodyObserver: MutationObserver | null = null
 
-const isStill = () => reduced || effects === "reduced"
+// The page may already say "Reduce effects" (theme-init.js, from the saved choice).
+function effectsMode() {
+  effects ??= document.documentElement.dataset.effects === "reduced" ? "reduced" : "full"
+  return effects
+}
+
+const isStill = () => reduced || effectsMode() === "reduced"
 
 function fpsOf(sub: Sub) {
   if (sub.priority === "ambient") {
-    if (degrade >= 2) return 0
-    if (degrade === 1) return Math.min(sub.fps, 6)
+    if (app.level >= 2) return 0
+    if (app.level === 1) return Math.min(sub.fps, 6)
   }
-  if (sub.priority === "hero" && degrade >= 1) return Math.min(sub.fps, 20)
+  if (sub.priority === "hero" && hero.level >= 1) return Math.min(sub.fps, 20)
   return sub.fps
 }
 
@@ -96,8 +138,10 @@ function resting(sub: Sub, now: number) {
 
 function frame(now: number) {
   raf = 0
-  let cost = 0
-  let drew = false
+  let appCost = 0
+  let heroCost = 0
+  let appDrew = false
+  let heroDrew = false
   for (const sub of subs) {
     if (resting(sub, performance.now())) {
       sub.last = -1
@@ -111,25 +155,47 @@ function frame(now: number) {
     sub.last = now
     const start = performance.now()
     sub.draw(sub.elapsed)
-    cost += performance.now() - start
-    drew = true
+    const cost = performance.now() - start
+    if (++sub.draws <= WARMUP) continue
+    if (sub.priority === "hero") {
+      heroCost += cost
+      heroDrew = true
+    } else {
+      appCost += cost
+      appDrew = true
+    }
   }
-  if (drew) account(cost)
+  if (appDrew) account(app, appCost)
+  if (heroDrew) account(hero, heroCost)
   wake()
 }
 
-// The budget: past 4ms at the 95th percentile of the last 30 frames, a step down.
-function account(cost: number) {
-  overruns = cost > BUDGET_MS ? overruns + 1 : 0
-  if (overruns > 2 && !warned && import.meta.env.DEV) {
+function account(g: Governor, cost: number) {
+  g.overruns = cost > g.over ? g.overruns + 1 : 0
+  if (g.overruns > 2 && !warned && import.meta.env.DEV) {
     warned = true
-    console.warn(`ascii-loop: ${overruns} frames in a row over ${BUDGET_MS}ms (${cost.toFixed(1)}ms)`)
+    console.warn(`ascii-loop: ${g.overruns} frames in a row over ${g.over}ms (${cost.toFixed(1)}ms)`)
   }
-  costs.push(cost)
-  if (costs.length < WINDOW) return
-  const sorted = costs.sort((a, b) => a - b)
-  if (sorted[Math.ceil(WINDOW * 0.95) - 1] > BUDGET_MS && degrade < 2) degrade++
-  costs = []
+  g.costs.push(cost)
+  if (g.costs.length < WINDOW) return
+  const p95 = g.costs.sort((a, b) => a - b)[Math.ceil(WINDOW * 0.95) - 1]
+  g.costs = []
+  if (p95 > g.over && g.level < g.max) {
+    g.level++
+    if (g === app && g.level === g.max) {
+      // Still: nothing left to measure, so try again later, and later each time.
+      const wait = g.retry
+      g.retry = Math.min(g.retry * 2, RETRY_MAX_MS)
+      clearTimeout(g.timer)
+      g.timer = setTimeout(() => {
+        g.level = g.max - 1
+        wake()
+      }, wait)
+    }
+  } else if (p95 < g.under) {
+    if (g.level > 0) g.level--
+    else g.retry = RETRY_MS // cheap at full speed: a later stop starts the wait over
+  }
 }
 
 function wake() {
@@ -205,6 +271,9 @@ function end() {
   bodyObserver = null
   clearTimeout(pauseTimer)
   pausedUntil = 0
+  clearTimeout(app.timer)
+  app = governor(4, 2, 2)
+  hero = governor(8, 6, 1)
 }
 
 // Draws `draw(seconds)` at up to `fps` frames a second while `el` is on screen. The
@@ -220,6 +289,7 @@ export function subscribe(el: HTMLElement, draw: (t: number) => void, opts: Loop
     visible: false,
     last: -1,
     elapsed: 0,
+    draws: 0,
   }
   subs.add(sub)
   io?.observe(el)
@@ -239,18 +309,27 @@ export function runLoop(el: HTMLElement, draw: (t: number) => void, still: numbe
   return subscribe(el, draw, { still })
 }
 
-// The app's "Reduce effects": every piece of ASCII still, and the glass opaque
-// (index.css, :root[data-effects="reduced"]).
+// The app's "Reduce effects" (the account menu's theme items): every piece of ASCII
+// still, and the glass opaque (index.css, :root[data-effects="reduced"]). Kept in
+// localStorage, so the next visit starts with it before the first paint.
 export function setEffects(mode: "full" | "reduced") {
   effects = mode
   if (mode === "reduced") document.documentElement.dataset.effects = "reduced"
   else delete document.documentElement.dataset.effects
+  try {
+    if (mode === "reduced") localStorage.setItem(EFFECTS_KEY, mode)
+    else localStorage.removeItem(EFFECTS_KEY)
+  } catch {
+    // No storage (private mode, blocked): it holds for this visit.
+  }
   if (isStill()) {
     cancelAnimationFrame(raf)
     raf = 0
     drawStill()
   } else wake()
 }
+
+export const getEffects = () => effectsMode()
 
 // Rests the background field for `ms` (scrolling, a burst of heavy work).
 export function pauseFor(ms: number) {

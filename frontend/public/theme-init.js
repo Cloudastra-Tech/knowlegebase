@@ -9,6 +9,9 @@ try {
   root.classList.remove("light", "dark")
   root.classList.add(theme)
   root.style.colorScheme = theme
+  // "Reduce effects" (the account menu; lib/ascii-loop.ts, setEffects): opaque glass
+  // and still ASCII from the first paint.
+  if (localStorage.getItem("effects") === "reduced") root.dataset.effects = "reduced"
 } catch {
   // No storage (private mode, blocked): the default, dark, is already on <html>.
 }
