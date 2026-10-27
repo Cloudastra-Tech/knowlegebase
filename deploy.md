@@ -287,16 +287,19 @@ reads the old collection, which this one drops 10 minutes after its rebuild.
 
 ## Connectors
 
-Google Drive, Notion, Outline and websites are **connectors**
+Google Drive, Notion, Outline, Confluence (Cloud and Data Center), SharePoint &
+OneDrive and websites are **connectors**
 (`connectors/registry.py`), all synced the same way (`kb/services/sync.py`): each
 run asks the source only for what changed since its last cursor (Drive's change
-feed, Notion's and Outline's newest edits; a website is crawled again with
+feed, Notion's and Outline's newest edits, a Confluence CQL search on
+`lastmodified`, each SharePoint library's delta link; a website is crawled again with
 conditional requests), writes changed documents to
 `<docs>/connectors/<provider>/`, records them in `source_items` (which replaced
 each folder's `manifest.json`: an existing manifest is imported the first time
 it's met and left in place) and re-indexes exactly those documents. A full
 listing still runs on the first sync, when the picks change, and every 6 hours
-for Notion and Outline, to find deletions.
+for Notion and Outline (every 24 hours for Confluence and SharePoint, which also
+refreshes captured permissions), to find deletions.
 
 - **Errors** show on the Integrations page in plain words, with the sync history
   (the last 50 runs) and skipped items. "Access expired" and "settings need
@@ -314,6 +317,38 @@ for Notion and Outline, to find deletions.
   (`OUTLINE_URL` / `OUTLINE_API_TOKEN`, default workspace only) is still searched
   live as before, unless the workspace has an Outline connection: then only the
   synced copy is searched, under that connection's access level.
+- **Confluence** (Cloud). Create an OAuth 2.0 integration at
+  developer.atlassian.com/console/myapp: *Authorization* → OAuth 2.0 (3LO), callback
+  URL `<PUBLIC_URL>/api/integrations/confluence/callback`; *Permissions* →
+  Confluence API → granular scopes `read:space:confluence`, `read:page:confluence`,
+  `read:blogpost:confluence`, `read:attachment:confluence`,
+  `read:content-details:confluence`, `read:content.restriction:confluence`;
+  *Distribution* → Sharing (so other organisations' sites can install it). Put its
+  client id and secret in `ATLASSIAN_CLIENT_ID` / `ATLASSIAN_CLIENT_SECRET`
+  (`ATLASSIAN_SCOPES` overrides the scope list if Atlassian renames one). A
+  connection reaches the first Confluence site the admin approves. Atlassian
+  meters 3LO apps in points per hour shared by every customer of the app: syncs
+  search only what changed and list everything once a day; apply for the
+  per-tenant tier before many workspaces connect.
+- **Confluence Data Center** (7.9+) needs nothing on the server: a workspace admin
+  pastes the site's address and a personal access token. The address goes through
+  the same public-address check as Outline's (`CONNECTOR_ALLOW_PRIVATE_HOSTS` for a
+  test server). Space permissions aren't readable through Data Center's REST API,
+  so only page restrictions are captured there.
+- **SharePoint & OneDrive.** Register a *multi-tenant* app in Entra ID (App
+  registrations → New: "Accounts in any organizational directory"), Web redirect
+  URI `<PUBLIC_URL>/api/integrations/sharepoint/callback`, a client secret, and
+  API permissions → Microsoft Graph → *Application* `Sites.Read.All` (plus the
+  default delegated `User.Read`; sign-in uses `openid profile email`). Put them in
+  `SHAREPOINT_CLIENT_ID` / `SHAREPOINT_CLIENT_SECRET`. Connecting needs an admin
+  of the customer's tenant: they sign in, then approve the app for their
+  organisation. Customers whose policy blocks unverified apps need publisher
+  verification on the registration. Change notifications (webhooks) are not
+  used yet: libraries are polled with their delta link.
+- Both capture source permissions (Confluence space permissions and page
+  restrictions; SharePoint item permissions) into each item's `acl` for the
+  per-user filtering to come. They are **not enforced** yet: who may ask is the
+  connection's access level, as for every connector.
 - **Websites** must be https on a public address (checked again before every
   request, redirects included). To crawl a test site on this machine, list it
   in `.env` as `CONNECTOR_ALLOW_PRIVATE_HOSTS=localhost:8000` (it may then use
