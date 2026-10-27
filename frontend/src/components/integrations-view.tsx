@@ -12,6 +12,7 @@ import {
   RefreshCw,
   TriangleAlert,
   Unplug,
+  Users,
 } from "lucide-react"
 import {
   siConfluence,
@@ -47,7 +48,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, type ConnectorAccess, type Integration, type IntegrationStatus } from "@/lib/api"
+import { api, type Integration, type IntegrationStatus, type PermissionPolicy } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
@@ -141,23 +142,30 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-// Who may ask about a connection's synced files. Shared by every connector card.
-// Opening them to everyone asks for confirmation; closing them again doesn't.
-function AccessControl({ item, onChange }: { item: Integration; onChange: () => void }) {
-  const access: ConnectorAccess = item.access ?? "restricted"
+// Who may ask about a connection's synced files: its PERMISSION POLICY. Shared by
+// every connector card. Opening them to everyone asks for confirmation; the others
+// don't (they can only narrow it, or follow the source). Changing it re-tags the
+// index: nothing is embedded again.
+function PolicyControl({ item, onChange }: { item: Integration; onChange: () => void }) {
+  const policy: PermissionPolicy =
+    item.policy ?? (item.access === "everyone" ? "workspace" : "restricted")
+  const offered = item.policies ?? ["workspace", "restricted"]
   const [saving, setSaving] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const { refresh: refreshIndex } = useIndexStatus()
   const ids = `${item.id}-access`
 
-  async function save(next: ConnectorAccess) {
+  async function save(next: PermissionPolicy) {
     setSaving(true)
     try {
-      await api.setIntegrationAccess(item.id, next)
+      await api.setIntegrationPolicy(item.id, next)
       toast.success(
-        next === "everyone"
-          ? `Everyone can now ask about ${item.name} files. Re-indexing…`
-          : `Only HR and admins can now ask about ${item.name} files. Re-indexing…`,
+        next === "workspace"
+          ? `Everyone can now ask about ${item.name} files. Updating the index…`
+          : next === "source"
+            ? `${item.name} files now follow their sharing in ${item.name}. Updating the index…`
+            : `Only HR and admins can now ask about ${item.name} files. Updating the index…`,
       )
       onChange()
       refreshIndex()
@@ -168,6 +176,20 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
     }
   }
 
+  async function syncPermissions() {
+    setSyncing(true)
+    try {
+      await api.syncIntegrationPermissions(item.id)
+      toast.success(`Reading who can see each ${item.name} item again…`)
+      onChange()
+      refreshIndex()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="mt-3 rounded-xl border border-border/70 p-3">
       <p className="text-sm font-medium" id={`${ids}-label`}>
@@ -175,11 +197,25 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
       </p>
       <RadioGroup
         aria-labelledby={`${ids}-label`}
-        value={access}
-        onValueChange={(v) => (v === "everyone" ? setConfirming(true) : save("restricted"))}
+        value={policy}
+        onValueChange={(v) => (v === "workspace" ? setConfirming(true) : save(v as PermissionPolicy))}
         disabled={saving || !!item.access_locked}
         className="mt-2 gap-2"
       >
+        {offered.includes("source") && (
+          <div className="flex items-start gap-2">
+            <RadioGroupItem value="source" id={`${ids}-source`} className="mt-0.5" />
+            <Label htmlFor={`${ids}-source`} className="flex-col items-start gap-0.5 font-normal">
+              <span className="flex items-center gap-1.5">
+                <Users className="size-3.5 text-muted-foreground" /> As shared in {item.name}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Each file only for the people and groups it's shared with there, matched to
+                members, identity-provider groups and verified domains here.
+              </span>
+            </Label>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <RadioGroupItem value="restricted" id={`${ids}-restricted`} />
           <Label htmlFor={`${ids}-restricted`} className="font-normal">
@@ -187,7 +223,7 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
           </Label>
         </div>
         <div className="flex items-center gap-2">
-          <RadioGroupItem value="everyone" id={`${ids}-everyone`} />
+          <RadioGroupItem value="workspace" id={`${ids}-everyone`} />
           <Label htmlFor={`${ids}-everyone`} className="font-normal">
             <Globe className="size-3.5 text-muted-foreground" /> Everyone in the workspace
           </Label>
@@ -200,12 +236,32 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
           details.
         </p>
       )}
-      {access === "everyone" && (
+      {policy === "workspace" && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <TriangleAlert className="mt-px size-3.5 shrink-0" />
           Everyone in the workspace can ask about these files, whatever their sharing is in{" "}
           {item.name}.
         </p>
+      )}
+      {policy === "source" && (
+        <div className="mt-2 flex flex-col gap-2 text-xs text-muted-foreground">
+          <p className="flex items-start gap-1.5">
+            <History className="mt-px size-3.5 shrink-0" />
+            Sharing is read at every sync, so a change in {item.name} reaches answers within
+            about 30 minutes. Anyone or any group that matches no one here is left out, never
+            let in. The Knowledge page shows who can see each file.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="self-start text-foreground"
+            onClick={syncPermissions}
+            disabled={syncing || item.status === "syncing"}
+          >
+            {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Sync permissions now
+          </Button>
+        </div>
       )}
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
@@ -218,8 +274,8 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep HR and admins only</AlertDialogCancel>
-            <AlertDialogAction onClick={() => save("everyone")}>Let everyone ask</AlertDialogAction>
+            <AlertDialogCancel>Keep it as it is</AlertDialogCancel>
+            <AlertDialogAction onClick={() => save("workspace")}>Let everyone ask</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -461,7 +517,7 @@ function ConnectorCard({
               or ask your admin to raise the limit.
             </p>
           )}
-          <AccessControl item={item} onChange={onChange} />
+          <PolicyControl item={item} onChange={onChange} />
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Button

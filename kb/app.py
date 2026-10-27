@@ -15,9 +15,9 @@ import safety
 import secret_box
 from kb import jobs, logs, mcp_server, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, assistant, audit, auth,
-                        chat, conversations, docs, dsar, email_in, extension, health, index,
-                        insights, integrations, invites, knowledge, operator, saml, scim, shares,
-                        signup, slack, sso, teams, verified, workspace)
+                        chat, conversations, docs, dsar, email_in, extension, groups, health,
+                        index, insights, integrations, invites, knowledge, operator, saml, scim,
+                        shares, signup, slack, sso, teams, verified, workspace)
 from kb.services import indexing, keys
 
 log = logging.getLogger("uvicorn.error")
@@ -25,7 +25,7 @@ log = logging.getLogger("uvicorn.error")
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, shares, index, docs,
            integrations, knowledge, admin_members, invites, audit, insights, health, scim,
            api_keys, api_v1, slack, verified, assistant, workspace, dsar, operator, teams,
-           extension, email_in)
+           extension, email_in, groups)
 
 
 @contextlib.asynccontextmanager

@@ -6,6 +6,7 @@ import {
   assistant,
   emailIn,
   extension,
+  groups,
   insights,
   session,
   signIn,
@@ -80,6 +81,9 @@ export const queries = {
   // The workspace's lifecycle, exports, support access and audit retention (admin).
   workspace: () => queryOptions({ queryKey: ["workspace"], queryFn: workspace.settings }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
+  // Access groups and their members (admins), and who a document can be shared with.
+  groups: () => queryOptions({ queryKey: ["groups"], queryFn: groups.groups }),
+  principals: () => queryOptions({ queryKey: ["principals"], queryFn: groups.principals }),
   // How questions are logged here (the chat's disclosure, the Insights settings).
   logSettings: () =>
     queryOptions({ queryKey: ["log-settings"], queryFn: insights.logSettings, meta: { silent: true } }),

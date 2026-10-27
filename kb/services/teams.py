@@ -64,8 +64,10 @@ import jwt
 import requests
 from fastapi import HTTPException
 
+import access
 import audit_store
 import conversations_store
+import groups_store
 import members_store
 import slack_store
 import teams_store
@@ -312,6 +314,11 @@ class Asker:
     role: str = "public"           # the access role they may ask as: hr / public
     member: bool = False
     refusal: str | None = None     # set: don't answer, say this
+    viewer: object = None          # a member's principals (access.Viewer), looked up now
+
+    def who(self):
+        """What they may read where they alone read the answer (their 1:1 chat)."""
+        return self.viewer if self.viewer is not None else access.for_role(self.role)
 
     def user(self, ws):
         return {"username": self.username, "workspace": ws}
@@ -345,9 +352,15 @@ def person(app, activity):
 
 
 def member_role(member):
-    """The access role a member asks as, from their role now (rag.ROLE_ACCESS):
-    the same rule as a session (kb/deps.current_role) and an API key."""
+    """The role a member asks as, from their role now: the same rule as a session
+    (kb/deps.current_role) and an API key. What they may READ is member_viewer's."""
     return "hr" if member["role"] in members_store.STAFF_ROLES else "public"
+
+
+def member_viewer(ws, member):
+    """What a member may read (access.Viewer): their principals now, their groups
+    too, as a session's (kb/deps.current_viewer)."""
+    return groups_store.principals_for(ws, member["username"], member_role(member))
 
 
 def identify(install, app, activity):
@@ -369,6 +382,7 @@ def identify(install, app, activity):
             asker.refusal = DISABLED
             return asker
         asker.username, asker.member, asker.role = member["username"], True, member_role(member)
+        asker.viewer = member_viewer(ws, member)
         return asker
     if install["unknown_users"] == "public":
         asker.username = f"teams:{asker.tenant_id}:{asker.aad_object_id}"
@@ -595,12 +609,14 @@ def _base_url():
 
 def _ask(ws, asker, role, question, key=None):
     """Answer `question` as `role`, saved in the asker's conversation (`key`: the
-    Teams chat or thread it continues). Returns (Answer or answering.Failed, turn)."""
+    Teams chat or thread it continues). role: the asker's viewer (their 1:1 chat)
+    or "public" (a channel or group chat: everyone's content only). Returns
+    (Answer or answering.Failed, turn)."""
     idle = THREAD_IDLE if key and key[3] == "personal" else None
     cid = teams_store.thread_conversation(*key[:3], idle=idle) if key else None
     conv = conversations_store.get(ws, asker.username, cid) if cid else None
     if not conv:
-        conv = conversations_store.create(ws, asker.username, role)
+        conv = conversations_store.create(ws, asker.username, access.role_of(role))
     turn = conversations.start_turn(ws, asker.username, role, conv["id"], question)
     if key:
         teams_store.remember_thread(*key[:3], turn["conversation"]["id"])
@@ -614,7 +630,7 @@ def _ask(ws, asker, role, question, key=None):
     conversations_store.finish_message(
         turn["message_id"], done.answer, done.state, sources=done.sources,
         steps=[{"tool": t["tool"]} for t in done.trace], max_access=done.max_access,
-        standalone_question=done.standalone,
+        acl=done.acl, standalone_question=done.standalone,
         latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified)
     return done, turn
 
@@ -631,7 +647,8 @@ def _rendered(done, turn, private):
 def _audit(ws, asker, p, role, done, turn, where):
     audit_store.record(ws, "teams.ask", actor=asker.username, actor_type="user",
                        target_type="question", target_id=turn["message_id"] if turn else None,
-                       details={"surface": "teams", "kind": p["kind"], "audience": role,
+                       details={"surface": "teams", "kind": p["kind"],
+                                "audience": access.role_of(role),
                                 "where": where, "chars": len(p["text"]), "tenant": p["tenant"],
                                 "state": "error" if isinstance(done, answering.Failed)
                                 else done.state})
@@ -661,12 +678,12 @@ def answer_in_personal_chat(app, ws, asker, p):
                          f": {p['text'][:300]}\n\nHere's the answer from everything you can see."}
         path = f"/v3/conversations/{_conv(conversation)}/activities"
         connector(app, "POST", service_url, path, intro)
-        done, turn = _ask(ws, asker, asker.role, p["text"])
+        done, turn = _ask(ws, asker, asker.who(), p["text"])
         connector(app, "POST", service_url, path, _rendered(done, turn, private=True))
     except TeamsError as e:
         log.info("Teams: couldn't answer in the asker's 1:1 chat (%s)", e.code)
         return False
-    _audit(ws, asker, p, asker.role, done, turn, where="personal")
+    _audit(ws, asker, p, asker.who(), done, turn, where="personal")
     return True
 
 
@@ -705,7 +722,8 @@ def ask(install, app, p):
         reply.say({"type": "message", "text": str(e.detail)})
         return {"limited": True}
     private = p["kind"] == "personal"
-    role = asker.role if private else "public"
+    # In their 1:1 chat: what they may read. Anywhere else: everyone's content only.
+    role = asker.who() if private else "public"
     reply.start()
     try:
         done, turn = _ask(ws, asker, role, p["text"],
@@ -716,7 +734,7 @@ def ask(install, app, p):
     reply.finish(_rendered(done, turn, private))
     _audit(ws, asker, p, role, done, turn, where="personal" if private else p["kind"])
     # The audience rule's second half: the asker may see more than the channel.
-    if not private and asker.role != "public" and restricted_found(ws, p["text"]):
+    if not private and asker.member and restricted_found(ws, asker.who(), p["text"]):
         sent = answer_in_personal_chat(app, ws, asker, p)
         return {"answered": "channel+personal" if sent else "channel",
                 **({} if sent else {"personal": "unavailable"})}
@@ -734,12 +752,13 @@ def feedback(install, app, p, activity=None):
     if clicker.refusal:
         return clicker.refusal
     m = slack_store.answer_message(ws, p.get("message_id") or "")
-    if not m or m["author"] != "assistant" or not conversations.visible_to(clicker.role, m):
+    if not m or m["author"] != "assistant" or not conversations.visible_to(clicker.who(), m):
         return "That answer isn't available to you any more."
     question = conversations_store.get_message(ws, m["owner"], m["parent_id"])
     snapshot = {"question": question["content"] if question else None,
                 "standalone_question": m["standalone_question"], "answer": m["content"],
-                "state": m["state"], "sources": m["sources"], "max_access": m["max_access"]}
+                "state": m["state"], "sources": m["sources"], "max_access": m["max_access"],
+                "acl": access.message_clauses(m)}
     conversations_store.set_feedback(m["id"], clicker.username, ws, p["rating"], [], None,
                                      snapshot)
     audit_store.record(ws, "feedback.set", actor=clicker.username, actor_type="user",

@@ -24,9 +24,10 @@ workspace has tens to hundreds of them, so an exact comparison costs nothing.
 
 WHO SEES ONE. An answer is for `public` (everyone) or `restricted` (HR / Admin),
 never lower than the documents it cites, nor than the chat answer it was made
-from. At ask time it is skipped unless the asker's role may see its level AND
-every one of its sources as the index tags them now (a connection made
-restricted since is respected at once), and unless it has expired.
+from. At ask time it is skipped unless the asker may see its level AND every
+one of its sources by their ACLs in the index now (access.py: a document
+restricted since, or one whose group they aren't in, is respected at once),
+and unless it has expired.
 """
 
 import logging
@@ -38,6 +39,7 @@ from urllib.parse import quote
 
 import numpy as np
 
+import access
 import audit_store
 import conversations_store
 import faithfulness
@@ -49,7 +51,7 @@ import verified_store as store
 from kb import jobs
 from kb.services import conversations, indexing
 from kb.settings import env_int
-from rag import ROLE_ACCESS, passage_of, passage_text
+from rag import passage_of, passage_text
 from untrusted import known_urls, spotlight, strip_unknown_links
 
 log = logging.getLogger("uvicorn.error")
@@ -147,7 +149,8 @@ def sources_of(ws, keys):
         meta, text = found[key]
         passage = passage_of(meta)
         sources.append({"n": len(sources) + 1, **passage, "doc_key": key,
-                        "snippet": passage_text(text, meta)[:SNIPPET_CHARS]})
+                        "snippet": passage_text(text, meta)[:SNIPPET_CHARS],
+                        "acl": access.chunk_acl(meta)})
         levels.add(passage["access"])
     return sources, levels, missing
 
@@ -243,12 +246,14 @@ class Matcher:
 
     def __init__(self, ws, role, adapt_wording=False):
         self.ws, self.role, self.adapt = ws, role, adapt_wording
-        self.allowed = ROLE_ACCESS.get(role, ["public"])
 
-    def match(self, question, now=None):
+    def match(self, question, now=None, principals=None):
+        """principals: who asks (access.Viewer); None: the Matcher's role's own."""
         now = time.time() if now is None else now
+        viewer = access.of(principals if principals is not None else self.role)
         rows = [r for r in store.list_for(self.ws)
-                if r["access"] in self.allowed and status_of(r, now) != "expired"]
+                if access.can_see(viewer, access.level_acl(r["access"]))
+                and status_of(r, now) != "expired"]
         if not rows or not (question or "").strip():
             return None
         asked = _norm(question)
@@ -262,20 +267,22 @@ class Matcher:
         for score, row in sorted(scored, key=lambda s: -s[0]):
             if score < THRESHOLD:
                 break
-            hit = self._hit(row, score)
+            hit = self._hit(row, score, viewer)
             if hit:
                 return hit
         return None
 
-    def _hit(self, row, score):
-        """The answer as served, or None when the asker may not see a source of it."""
+    def _hit(self, row, score, viewer):
+        """The answer as served, or None when the asker may not see a source of it
+        (its ACL in the index now: a document restricted since is respected)."""
         sources, levels, _ = sources_of(self.ws, row["sources"])
         levels.add(row["access"])
-        if any(level not in self.allowed for level in levels):
+        acls = [access.level_acl(row["access"])] + [s.pop("acl") for s in sources]
+        if not all(access.can_see(viewer, acl) for acl in acls):
             return None
         names = {}
         return {"id": row["id"], "answer": row["answer_md"], "sources": sources,
-                "access": levels, "score": score,
+                "access": levels, "acls": acls, "score": score,
                 "badge": {"id": row["id"], "title": row["title"],
                           "by": _name(row["verified_by"], names), "at": row["verified_at"]}}
 

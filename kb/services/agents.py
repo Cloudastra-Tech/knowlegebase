@@ -46,24 +46,30 @@ def outline_access():
     return "public" if wanted == "public" else "restricted"
 
 
-def _build(ws, role, collection):
+def _build(ws, role, index):
     """The agent with the workspace's own settings (kb/services/assistant.py): its
-    preferences and tools, glossary, source rules and verified answers."""
+    preferences and tools, glossary, source rules and verified answers. index:
+    (collection, version), so the agents of both roles share one keyword index."""
     from kb.services import verified
     settings = assistant.effective(ws)
+    collection, version = index
     return build_agent(role, collection, outline_on(ws, role), prefs=assistant.prefs(settings),
                        glossary=assistant.glossary(ws) or None,
                        rules=assistant.rules(ws) or None,
-                       verified=verified.Matcher(ws, role, settings["adapt_verified"]))
+                       verified=verified.Matcher(ws, role, settings["adapt_verified"]),
+                       version=f"{version}" if version else None)
 
 
 def get_agent(ws, role):
+    """The workspace's agent for a role (public / hr: it decides the live Outline
+    tool). Who asks is given on each call (run(principals=...)), so the agents
+    are per role, never per person or group: the search filters per question."""
     # Built again when the index changes (indexing.py bumps its version) or the
     # workspace's assistant settings, glossary or source rules do (their version).
     key = (indexing.current(ws), assistant_store.version(ws))   # ((collection, version), n)
     with state.agents_lock:
         built = state.agents.get((ws, role))
         if not built or built[0] != key:
-            built = (key, _build(ws, role, key[0][0]))
+            built = (key, _build(ws, role, key[0]))
             state.agents[(ws, role)] = built
         return built[1]

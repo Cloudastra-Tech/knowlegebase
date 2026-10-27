@@ -13,8 +13,10 @@ import {
   Trash2,
   TriangleAlert,
   Upload,
+  Users,
 } from "lucide-react"
 
+import { AccessPicker, EVERYONE, HR_GROUP, WhoCanSeeBadges } from "@/components/access-picker"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,7 +43,6 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -60,53 +61,81 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function AccessBadge({ access }: { access: Access }) {
-  return access === "restricted" ? (
+// Who can see a document: its ACL as the server labels it (an older list without
+// one: its folder's).
+function AccessBadge({ doc }: { doc: Doc }) {
+  if (doc.who?.length) return <WhoCanSeeBadges who={doc.who} />
+  return doc.access === "restricted" ? (
     <Badge variant="destructive" className="gap-1">
       <Lock className="size-3" /> HR only
     </Badge>
   ) : (
     <Badge variant="secondary" className="gap-1">
-      <Globe className="size-3" /> Public
+      <Globe className="size-3" /> Everyone
     </Badge>
   )
 }
 
-function AccessPicker({
-  value,
-  onChange,
-  idPrefix,
-}: {
-  value: Access
-  onChange: (v: Access) => void
-  idPrefix: string
-}) {
+// Change who may see a document: its chunks are re-tagged, nothing is embedded again.
+function AccessDialog({ doc, onSaved }: { doc: Doc; onSaved: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [acl, setAcl] = useState<string[]>(doc.acl ?? [doc.access === "public" ? EVERYONE : HR_GROUP])
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.setDocAcl(doc, acl)
+      toast.success(`Updated who can see ${doc.name} · updating the index`)
+      setOpen(false)
+      onSaved()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <RadioGroup
-      value={value}
-      onValueChange={(v) => onChange(v as Access)}
-      className="flex gap-6"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) setAcl(doc.acl ?? [doc.access === "public" ? EVERYONE : HR_GROUP])
+      }}
     >
-      <div className="flex items-center gap-2">
-        <RadioGroupItem value="public" id={`${idPrefix}-public`} />
-        <Label htmlFor={`${idPrefix}-public`} className="font-normal">
-          Public (everyone)
-        </Label>
-      </div>
-      <div className="flex items-center gap-2">
-        <RadioGroupItem value="restricted" id={`${idPrefix}-restricted`} />
-        <Label htmlFor={`${idPrefix}-restricted`} className="font-normal">
-          Restricted (HR only)
-        </Label>
-      </div>
-    </RadioGroup>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <Users /> Access
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Who can see {doc.name}?</DialogTitle>
+          <DialogDescription>
+            Only the people and groups picked here can ask about it, or see answers that quote
+            it. Groups gate content; roles only decide who manages it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <Label htmlFor="doc-access">Who can see it</Label>
+          <AccessPicker id="doc-access" value={acl} onChange={setAcl} />
+        </div>
+        <DialogFooter>
+          <Button onClick={save} disabled={saving || !acl.length}>
+            {saving && <Loader2 className="animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
-  const [access, setAccess] = useState<Access>("public")
+  const [acl, setAcl] = useState<string[]>([EVERYONE])
   const [content, setContent] = useState("")
   const [saving, setSaving] = useState(false)
 
@@ -114,13 +143,13 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
     e.preventDefault()
     setSaving(true)
     try {
-      const created = await api.createDoc(name, access, content)
+      const created = await api.createDoc(name, acl, content)
       toast.success(`Added ${created.name}`)
       onCreated({ ...created, size: content.length })
       setOpen(false)
       setName("")
       setContent("")
-      setAccess("public")
+      setAcl([EVERYONE])
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -152,8 +181,8 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
             />
           </div>
           <div className="grid gap-2">
-            <Label>Who can see it?</Label>
-            <AccessPicker value={access} onChange={setAccess} idPrefix="new" />
+            <Label htmlFor="new-access">Who can see it?</Label>
+            <AccessPicker id="new-access" value={acl} onChange={setAcl} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="new-content">Content</Label>
@@ -202,7 +231,7 @@ function UploadDialog({
 }) {
   const [open, setOpen] = useState(false)
   const [files, setFiles] = useState<File[]>([])
-  const [access, setAccess] = useState<Access>("public")
+  const [acl, setAcl] = useState<string[]>([EVERYONE])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -218,7 +247,7 @@ function UploadDialog({
     if (!files.length || problem) return
     setUploading(true)
     try {
-      const { saved } = await api.uploadDocs(files, access)
+      const { saved } = await api.uploadDocs(files, acl)
       toast.success(`Uploaded ${saved.join(", ")}`)
       onUploaded()
       setOpen(false)
@@ -283,8 +312,8 @@ function UploadDialog({
             </Alert>
           )}
           <div className="grid gap-2">
-            <Label>Who can see them?</Label>
-            <AccessPicker value={access} onChange={setAccess} idPrefix="upload" />
+            <Label htmlFor="upload-access">Who can see them?</Label>
+            <AccessPicker id="upload-access" value={acl} onChange={setAcl} />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={uploading || !files.length || !!problem}>
@@ -307,7 +336,9 @@ function DocEditor({
   onSaved: () => void
   onDeleted: () => void
 }) {
-  const isText = doc.name.toLowerCase().endsWith(".txt")
+  // Not shared with the asker: they manage it (access, delete) but can't open it.
+  const sealed = doc.readable === false
+  const isText = doc.name.toLowerCase().endsWith(".txt") && !sealed
   const [original, setOriginal] = useState("")
   const [content, setContent] = useState("")
   const [loading, setLoading] = useState(isText)
@@ -365,18 +396,19 @@ function DocEditor({
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div className="min-w-0 space-y-1.5">
           <CardTitle className="truncate text-base">{doc.name}</CardTitle>
-          <CardDescription className="flex items-center gap-2">
-            <AccessBadge access={doc.access} />
+          <CardDescription className="flex flex-wrap items-center gap-2">
+            <AccessBadge doc={doc} />
             <span>{formatSize(doc.size)}</span>
           </CardDescription>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <AccessDialog doc={doc} onSaved={onSaved} />
           {isText ? (
             <Button size="sm" onClick={save} disabled={!dirty || saving}>
               {saving ? <Loader2 className="animate-spin" /> : <Save />}
               Save
             </Button>
-          ) : (
+          ) : sealed ? null : (
             <Button
               size="sm"
               variant="outline"
@@ -408,7 +440,13 @@ function DocEditor({
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col">
-        {!isText ? (
+        {sealed ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            <Lock className="size-8" />
+            Only the people and groups it's shared with can open it. You can still change
+            who can see it, or delete it.
+          </div>
+        ) : !isText ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             <FileText className="size-8" />
             Only text files can be edited here. Download it, change it, then upload it again
@@ -491,8 +529,8 @@ export function DocsView() {
             <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
               <TabsList>
                 <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="public">Public</TabsTrigger>
-                <TabsTrigger value="restricted">HR</TabsTrigger>
+                <TabsTrigger value="public">Everyone</TabsTrigger>
+                <TabsTrigger value="restricted">Limited</TabsTrigger>
               </TabsList>
             </Tabs>
           </div>

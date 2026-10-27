@@ -393,9 +393,11 @@ def test_public_never_retrieves_restricted_chunks(index, golden):
 
 
 def test_the_leak_suite_catches_a_broken_filter(monkeypatch, index, golden):
-    # Guard against a vacuous suite: let "public" see everything, and it must
-    # report leaks from every restricted document.
-    monkeypatch.setitem(rag.ROLE_ACCESS, "public", ["public", "restricted"])
+    # Guard against a vacuous suite: let "public" see everything (hold the hr
+    # group, which restricted documents are for), and it must report leaks from
+    # every restricted document.
+    monkeypatch.setattr(rag.access, "for_role",
+                        lambda role: rag.access.Viewer([rag.access.HR], role))
     leaks = harness.leak_report(golden)
     assert {leak["source"] for leak in leaks} == set(harness.restricted_lines())
 

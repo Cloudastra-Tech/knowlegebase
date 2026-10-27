@@ -8,8 +8,10 @@ message, the feedback they gave, their API keys and invites, and the audit
 events where they are the actor.
 
 ERASE: deletes their questions, chats (messages, feedback on them, share
-links), folders, feedback, sign-in events, invites to them, API keys, sessions
-and the member itself. Where they appear as who made or changed something
+links), folders, feedback, sign-in events, invites to them, API keys, sessions,
+their place in access groups, and the member itself. Documents shared with them
+by name keep that grant under their pseudonym (no one holds it: fails closed),
+and the search index's ACLs are re-tagged without them. Where they appear as who made or changed something
 (a provider they added, an invite they sent, a verified answer they own) the
 username is replaced by a pseudonym. The audit log isn't edited (it's a hash
 chain, and keeps what happened): from now on it shows the pseudonym in their
@@ -65,7 +67,14 @@ def export_member(ws, username):
                                         "AND created_by = ?", ws, u),
                "invites": _dicts(conn, "SELECT email, role, invited_by, created_at, accepted_at, "
                                        "revoked_at FROM invites WHERE workspace = ? AND email = ?",
-                                 ws, u)}
+                                 ws, u),
+               "access_groups": _dicts(conn, "SELECT g.name, g.source, m.added_at FROM "
+                                             "group_members m JOIN access_groups g ON "
+                                             "g.workspace = m.workspace AND g.id = m.group_id "
+                                             "WHERE m.workspace = ? AND m.username = ?", ws, u),
+               "shared_documents": _dicts(conn, "SELECT doc_key, created_at FROM doc_acl WHERE "
+                                                "workspace = ? AND principal_type = 'user' AND "
+                                                "lower(principal) = ?", ws, u)}
         out["member"]["groups"] = json.loads(out["member"]["groups"] or "[]")
         for c in _dicts(conn, "SELECT id, title, role_used, created_at, updated_at, deleted_at "
                               "FROM conversations WHERE workspace = ? AND owner = ? "
@@ -107,6 +116,16 @@ def erase_member(ws, username):
             ws, u)
         run("scim_groups", "DELETE FROM scim_group_members WHERE username = ? AND group_id IN "
                            "(SELECT id FROM scim_groups WHERE workspace = ?)", u, ws)
+        # ACCESS (access.py): out of every group; a document shared with them by name
+        # keeps the grant under the pseudonym, which no one holds, so it fails closed
+        # (dropping it would hand the document to its folder's default).
+        run("groups", "DELETE FROM group_members WHERE workspace = ? AND username = ?", ws, u)
+        shared = [r[0] for r in conn.execute(
+            "SELECT DISTINCT doc_key FROM doc_acl WHERE workspace = ? AND principal_type = 'user' "
+            "AND lower(principal) = ?", (ws, u)).fetchall()]
+        run("document_access", "UPDATE OR REPLACE doc_acl SET principal = ? WHERE workspace = ? "
+                               "AND principal_type = 'user' AND lower(principal) = ?",
+            pseudonym, ws, u)
         run("invites", "DELETE FROM invites WHERE workspace = ? AND lower(email) = ?", ws, u)
         run("api_keys", "DELETE FROM api_keys WHERE workspace = ? AND created_by = ?", ws, u)
         run("sessions", "DELETE FROM sessions WHERE username = ?", u)
@@ -131,4 +150,18 @@ def erase_member(ws, username):
         raise
     finally:
         conn.close()
+    _retag(ws, shared)
     return pseudonym, counts
+
+
+def _retag(ws, docs):
+    """Their username out of the search index's ACLs too: the uploads shared with
+    them by name, and every file of a connection following its source's sharing
+    (mapped to members: they aren't one any more). Re-tags only, no embedding."""
+    import integrations_store
+    from kb.services import indexing
+    if docs:
+        indexing.schedule_index(ws, docs=docs)
+    for row in integrations_store.list_for(ws):
+        if integrations_store.policy_of(row) == "source":
+            indexing.schedule_retag(ws, row["provider"])

@@ -1,7 +1,7 @@
 """
 Saved chats around the agent (conversations_store.py holds the rows):
 
-  visible_to()   whether a viewer's CURRENT role may read a message. Checked on
+  visible_to()   whether a viewer's CURRENT principals may read a message. Checked on
                  every read, so an owner demoted from HR stops seeing answers built
                  from restricted documents, even in their own chats.
   start_turn()   a question in a conversation: saves it, and loads the history the
@@ -24,9 +24,9 @@ import urllib.parse
 
 from fastapi import HTTPException
 
+import access
 import conversations_store as store
 from kb.services import agents
-from rag import ROLE_ACCESS
 
 # History a follow-up is answered with: at most this many earlier question-and-
 # answer turns, and about this many tokens of them (4 characters a token).
@@ -52,16 +52,17 @@ def max_access(levels):
     return "public" if all(level == "public" for level in levels) else "restricted"
 
 
-def visible_to(role, message):
-    """True if someone viewing the app as `role` may read this message: the highest
-    access level of everything the model read for it (max_access), and of each of
-    its sources, is one the role may see. Questions are their asker's own words."""
+def visible_to(who, message):
+    """True if `who` may read this message. who: a viewer (access.Viewer: their
+    principals now), a bare role (its own principals), or a tuple of them that
+    must ALL be able to (a share link: the viewer and the sharer). An answer's
+    audience is every ACL the model read for it, and each of its sources'
+    (access.message_clauses; an answer from before ACLs: its max_access), and
+    the viewer must hold a principal of each. Questions are their asker's own
+    words."""
     if message.get("author") == "user":
         return True
-    allowed = ROLE_ACCESS.get(role, ["public"])
-    levels = [message.get("max_access") or "restricted"]
-    levels += [s["access"] for s in message.get("sources") or [] if s.get("access")]
-    return all(level in allowed for level in levels)
+    return access.sees(who, message)
 
 
 def present(message, role, admin=False, feedback=None):
@@ -94,29 +95,41 @@ def _feedback_view(f):
     return {"rating": f["rating"], "reasons": f["reasons"], "comment": f["comment"]} if f else None
 
 
-def history_for(path, role):
-    """The conversation before a question, as the agent takes it, and the highest
-    access level in it: the last HISTORY_TURNS turns, newest kept first within
-    HISTORY_TOKENS. Only answers the role may read now are included."""
+def _history(path, who):
+    """(history, the answers in it): see history_for."""
     turns, question = [], None
     for m in path:
         if m["author"] == "user":
             question = m
         elif (question and m.get("state") in HISTORY_STATES and m["content"]
-              and visible_to(role, m)):
+              and visible_to(who, m)):
             turns.append((question, m))
             question = None
     budget = HISTORY_TOKENS * CHARS_PER_TOKEN
-    history, levels = [], []
+    history, used = [], []
     for q, a in reversed(turns[-HISTORY_TURNS:]):
         answer = a["content"][:max(0, budget - len(q["content"]))]
         if not answer:
             break
         history[:0] = [{"role": "user", "content": q["content"]},
                        {"role": "assistant", "content": answer}]
-        levels.append(a["max_access"])
+        used.append(a)
         budget -= len(q["content"]) + len(answer)
-    return history, max_access(levels)
+    return history, used
+
+
+def history_for(path, who):
+    """The conversation before a question, as the agent takes it, and the highest
+    access level in it: the last HISTORY_TURNS turns, newest kept first within
+    HISTORY_TOKENS. Only answers `who` may read now are included."""
+    history, used = _history(path, who)
+    return history, max_access([a["max_access"] for a in used])
+
+
+def history_acl(used):
+    """The audience of the answers given to the model as history: a new answer
+    built on them may repeat them, so its readers must be able to read them too."""
+    return access.clauses([c for a in used for c in access.message_clauses(a)])
 
 
 def _answer_to_ask_again(ws, owner, role, conv, mid, states, refusal):
@@ -142,9 +155,11 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
                       it, answered with the conversation before it (C10)
     The new answer (and edited question) are siblings of the old ones, which stay:
     the chat shows the new branch, and the "‹ 2 / 3 ›" controls switch back.
+    role: the asker as a viewer (access.Viewer) or a bare role; the history is
+    what they may read now.
     Returns a dict: conversation, question, user_message_id, message_id, history,
-    history_access, and new_conversation (True when a role change started a new
-    one, see above)."""
+    history_access, history_acl (the history's audience, access.clauses), and
+    new_conversation (True when a role change started a new one, see above)."""
     conv = store.get(ws, owner, conversation_id)
     if not conv:
         raise HTTPException(404, "That conversation doesn't exist.")
@@ -165,6 +180,7 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
     if not question:
         raise HTTPException(400, "Please type a question.")
 
+    who, role = role, access.role_of(role)
     new_conversation = conv["role_used"] != role
     if new_conversation:
         conv = store.create(ws, owner, role)
@@ -176,12 +192,13 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
         path = store.path(conv["id"], parent_id)
         user_message_id = store.add_message(conv["id"], "user", question, parent_id=parent_id)
     message_id = store.add_message(conv["id"], "assistant", "", parent_id=user_message_id)
-    history, history_access = history_for(path, role)
+    history, used = _history(path, who)
     first = not path
     conv = store.get(ws, owner, conv["id"])
     return {"conversation": conv, "question": question, "user_message_id": user_message_id,
-            "message_id": message_id, "history": history, "history_access": history_access,
-            "new_conversation": new_conversation,
+            "message_id": message_id, "history": history,
+            "history_access": max_access([a["max_access"] for a in used]),
+            "history_acl": history_acl(used), "new_conversation": new_conversation,
             # The chat's first question, titled from it (suggestions.chat_title).
             "first_question": first and conv["title_source"] == "auto" and not again}
 
@@ -269,6 +286,19 @@ def read_access(out, trace, history_access="public"):
     if any(t.get("tool") in OUTLINE_TOOLS for t in trace):
         levels.add(agents.outline_access())
     return max_access(levels)
+
+
+def read_acl(out, trace, history_acl=()):
+    """The audience of everything a model read (access.clauses): the ACL of each
+    chunk searched, the Outline wiki's level if it was searched, and the earlier
+    turns it was given (their own audience)."""
+    found = [list(a) for a in out.get("acls") or ()]
+    found += [list(c) for c in history_acl or ()]
+    found += [access.level_acl(level) for level in out.get("access") or ()
+              if not out.get("acls")]
+    if any(t.get("tool") in OUTLINE_TOOLS for t in trace):
+        found.append(access.level_acl(agents.outline_access()))
+    return access.clauses(found)
 
 
 def outcome(answer, trace, sources, out, history_access="public"):

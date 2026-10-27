@@ -486,3 +486,32 @@ def test_disconnecting_forgets_the_bot_and_stops_answering(teams):
     assert teams_store.get(teams.ws) is None
     assert teams.send(activity("personal_message", "aad-staff", "hi")).status_code == 401
     assert _events(teams.ws, "teams.disconnect")
+
+
+# ---- Group ACLs (access.py): a channel is everyone's content only -------------------------------
+def _share_contract_with_staff(kb):
+    """The restricted contract, shared with a group holding only the public member."""
+    import groups_store
+    from kb.services import indexing
+    g = groups_store.create(kb.ws, "Vendors", "", f"admin@{kb.ws}.example")
+    groups_store.set_members(kb.ws, g["id"], [f"staff@{kb.ws}.example"], f"admin@{kb.ws}.example")
+    groups_store.set_doc_acl(kb.ws, "restricted/contract.txt", [f"group:{g['id']}"], "admin")
+    indexing.index(kb.ws, docs=["restricted/contract.txt"])      # jobs are run by hand here
+
+
+def test_a_group_member_gets_the_groups_document_in_their_1to1_chat_only(teams):
+    _share_contract_with_staff(teams)
+    teams.send(activity("channel_mention", "aad-staff", QUESTION))
+    [result] = teams.run_jobs()
+    assert result["answered"] == "channel+personal"            # they could see more
+    assert SECRET_WORDS not in everything(teams.fake, "19:")   # never in the channel
+    assert SECRET_WORDS in everything(teams.fake, "a:1personal-new-")
+
+
+def test_outside_the_group_even_hr_never_gets_it_in_teams(teams):
+    _share_contract_with_staff(teams)
+    teams.send(activity("personal_message", "aad-hr", QUESTION))
+    teams.send(activity("channel_mention", "aad-hr", QUESTION))
+    results = teams.run_jobs()
+    assert [r["answered"] for r in results] == ["personal", "channel"]
+    assert SECRET_WORDS not in everything(teams.fake)

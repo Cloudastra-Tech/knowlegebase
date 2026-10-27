@@ -9,15 +9,18 @@ MCP server's search_knowledge and read_document return.
   read_document()  a whole document as the index holds it, pieced together
                    from its chunks.
 
-Both only ever see chunks the role may see: the retriever is built for the role
-(rag.load_chain filters both searches), and every chunk is checked again here.
-A document with any chunk the role may not see is not there for it at all.
+Both only ever see chunks the asker may see: the search filters on their
+principals (rag.load_chain filters both searches), and every chunk is checked
+again here. A document with any chunk they may not see is not there for them
+at all. `who` is the asker: an access.Viewer, or a bare role (its own
+principals).
 """
 
+import access
 import ingest
 import safety
 from kb.services import agents, indexing
-from rag import ROLE_ACCESS, passage_of, passage_text
+from rag import passage_of, passage_text
 
 MAX_K = 20
 READ_MAX_CHARS = 60_000
@@ -27,20 +30,21 @@ class Refused(Exception):
     """The question rules refused the query (safety.check_question): the message says why."""
 
 
-def search(ws, role, query, k=5):
+def search(ws, who, query, k=5):
     """[{doc_id, doc_key, chunk_id, title, provider, url, access, page,
     heading_path, modified, text, rank}] for `query`, at most k (1..MAX_K)."""
-    allowed = ROLE_ACCESS.get(role, ["public"])
-    ok, reason = safety.check_question(query, "restricted" in allowed)
+    viewer = access.of(who)
+    ok, reason = safety.check_question(query, safety.may_see_restricted(viewer))
     if not ok:
         raise Refused(reason)
     k = max(1, min(MAX_K, int(k)))
-    agent = agents.get_agent(ws, role)
+    agent = agents.get_agent(ws, access.role_of(who))
     expand = getattr(agent, "expand", None)          # the workspace's glossary
     found = []
-    for doc in agent.retriever.invoke(expand(query) if expand else query, k=k):
+    for doc in agent.retriever.invoke(expand(query) if expand else query, k=k,
+                                      principals=viewer):
         meta = doc.metadata
-        if meta.get("access", "public") not in allowed:     # never, but never shown either
+        if not access.can_see(viewer, access.chunk_acl(meta)):  # never, but never shown either
             continue
         passage = passage_of(meta)
         found.append({**{f: passage[f] for f in ("doc_id", "chunk_id", "title", "provider",
@@ -51,11 +55,11 @@ def search(ws, role, query, k=5):
     return found
 
 
-def read_document(ws, role, doc):
+def read_document(ws, who, doc):
     """{doc_id, doc_key, title, provider, url, access, modified, text, truncated} of
     the document whose doc_id or doc_key is `doc`, or None when it isn't in the
-    index or `role` may not see all of it."""
-    allowed = ROLE_ACCESS.get(role, ["public"])
+    index or `who` may not see all of it."""
+    viewer = access.of(who)
     collection = ingest._store(indexing.current(ws)[0])._collection
     got = {"ids": []}
     for field in ("doc_id", "doc_key"):
@@ -65,7 +69,7 @@ def read_document(ws, role, doc):
     if not got["ids"]:
         return None
     chunks = list(zip(got["documents"], [m or {} for m in got["metadatas"]]))
-    if any(m.get("access", "public") not in allowed for _, m in chunks):
+    if any(not access.can_see(viewer, access.chunk_acl(m)) for _, m in chunks):
         return None
     text, truncated = _piece_together(chunks)
     meta = chunks[0][1]

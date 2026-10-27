@@ -177,6 +177,56 @@ public"), but it can never *raise* it — the server decides.
 
 ---
 
+## 🧑‍🤝‍🧑 Groups and per-document permissions
+
+Roles (public, hr, admin) gate **screens**. **Access groups** gate **content**
+(`access.py`, `groups_store.py`, platform.md PL-09):
+
+```
+  every chunk ── acl: [principals that may read it]
+                   everyone · user:<email> · group:<id> · domain:<verified domain>
+                   (nobody: nothing it was shared with matched anyone here)
+
+  every request ── the asker's principals, looked up now:
+                   everyone + user:<them> + their groups + group:hr (HR / Admin)
+                   + domain:<their email's domain, if the workspace verified it>
+
+  search keeps a chunk only if its acl ∩ the asker's principals ≠ ∅
+     dense:  Chroma `where {"$or": [{"acl": {"$contains": p}}, ...]}` (chromadb 1.5.9)
+     BM25:   built ONCE per index version, filtered as it ranks (rag.KeywordIndex)
+```
+- **The old levels are ACLs.** `public` is `[everyone]`, `restricted` is the
+  built-in group `hr`, whose members are everyone whose role is HR or Admin. With
+  no groups or picks, nothing behaves differently. Chunks indexed before ACLs get
+  their level's the first time they're searched (`ingest.backfill_acls`).
+- **Groups.** Manual (Access → Groups), or copies of the identity provider's:
+  `idp` from sign-in group claims, `scim` from SCIM pushes (read-only here).
+- **Uploads.** The Documents screen's picker: everyone, or any groups and people.
+  Changing it re-tags the chunks; nothing is embedded again.
+- **Synced files** follow their connection's **permission policy**:
+  `restricted` (HR and admins, the default), `workspace` (everyone), or `source`:
+  each file for who may read it at the source (`source_items.acl`), mapped by
+  `kb/services/permissions.py` to members (emails), identity-provider groups (by
+  email, name or id) and verified domains. **A grant that matches nothing here is
+  dropped, never widened**; a file with nothing left is for no one. Jira issues
+  with a security level, unreadable Confluence restrictions and similar fail
+  closed. Zendesk tickets lock their connection to `restricted`.
+- **ACL drift.** Sharing is read at every sync (every 30 minutes): after each one
+  a source-policy connection is re-tagged (only chunks whose ACL changed). A
+  change at the source, or a new group member here, can take until the next sync;
+  **Sync permissions now** on the card does it at once.
+- **Answers.** An answer's audience is every ACL the model read for it
+  (`messages.acl`, a list of ACLs; a reader must hold a principal of each). Chats,
+  share links (the viewer AND the sharer must qualify), chat search, Copy / export,
+  feedback review, the API, MCP and verified answers all check it on every read.
+  A Slack channel is answered as `everyone` only.
+- **Staff pay.** The salary guardrails are skipped only for holders of the `hr`
+  group (`safety.may_see_restricted`): by default HR and Admin, as before.
+- Password accounts whose username isn't an email only ever match grants made
+  here (groups, picks), never a source's user grants.
+
+---
+
 ## 👤 Same question, two roles (the whole point)
 
 ```
