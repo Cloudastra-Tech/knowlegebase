@@ -33,12 +33,12 @@ const WEIGHTS: Record<"boost" | "demote", number[]> = {
 }
 const PROVIDERS: Record<string, string> = { uploads: "uploaded files" }
 
-export function ruleText(rule: Pick<DocRule, "action" | "weight">) {
+function ruleText(rule: Pick<DocRule, "action" | "weight">) {
   if (rule.action === "block") return "Blocked"
   return `${rule.action === "boost" ? "Boosted" : "Demoted"} ×${rule.weight}`
 }
 
-export function matchText(rule: Pick<DocRule, "match_type" | "match_value">, items: KnowledgeItem[]) {
+function matchText(rule: Pick<DocRule, "match_type" | "match_value">, items: KnowledgeItem[]) {
   if (rule.match_type === "doc_key") {
     return items.find((i) => i.doc_key === rule.match_value)?.title ?? rule.match_value
   }

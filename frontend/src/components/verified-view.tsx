@@ -72,7 +72,7 @@ import { queries } from "@/lib/queries"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-export const verifiedDate = (epoch: number) =>
+const verifiedDate = (epoch: number) =>
   new Date(epoch * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
 
 const STATUS: Record<VerifiedStatus, { label: string; className: string }> = {
@@ -400,6 +400,21 @@ function AnswerRow({
   )
 }
 
+const editingOf = (a: VerifiedAnswer): Editing => ({
+  id: a.id,
+  form: {
+    title: a.title,
+    variants: a.variants,
+    answer_md: a.answer_md,
+    sources: a.sources.map((s) => s.doc_key),
+    access: a.access,
+    owner: a.owner,
+    review_days: a.review_days,
+  },
+  minAccess: a.min_access,
+  known: a.sources,
+})
+
 export function VerifiedView() {
   const queryClient = useQueryClient()
   const { data: list } = useQuery(queries.verifiedAnswers())
@@ -408,21 +423,7 @@ export function VerifiedView() {
   const [editing, setEditing] = useState<Editing | null>(null)
   const [deleting, setDeleting] = useState<VerifiedAnswer | null>(null)
 
-  const edit = (a: VerifiedAnswer) =>
-    setEditing({
-      id: a.id,
-      form: {
-        title: a.title,
-        variants: a.variants,
-        answer_md: a.answer_md,
-        sources: a.sources.map((s) => s.doc_key),
-        access: a.access,
-        owner: a.owner,
-        review_days: a.review_days,
-      },
-      minAccess: a.min_access,
-      known: a.sources,
-    })
+  const edit = (a: VerifiedAnswer) => setEditing(editingOf(a))
 
   // Arriving with ?from_message= (a chat answer), ?from_gap= (a content gap) or
   // ?answer= (the review email's link): open the editor on it, once.
@@ -433,13 +434,17 @@ export function VerifiedView() {
     const gap = params.get("from_gap")
     const answer = params.get("answer")
     if (!message && !gap && !answer) return
-    if (answer && !list) return // wait for the list
     opened.current = true
     setParams({}, { replace: true })
     if (answer) {
-      const found = list?.answers.find((a) => a.id === answer)
-      if (found) edit(found)
-      else toast.error("That verified answer isn't there any more.")
+      queryClient
+        .fetchQuery(queries.verifiedAnswers())
+        .then((all) => {
+          const found = all.answers.find((a) => a.id === answer)
+          if (found) setEditing(editingOf(found))
+          else toast.error("That verified answer isn't there any more.")
+        })
+        .catch((err) => toast.error(errorText(err)))
       return
     }
     assistant
@@ -447,17 +452,13 @@ export function VerifiedView() {
       .then((draft) =>
         setEditing({
           id: null,
-          form: {
-            ...draft,
-            variants: draft.variants.length ? draft.variants : [""],
-            review_days: list?.default_review_days ?? 90,
-          },
+          form: { ...draft, variants: draft.variants.length ? draft.variants : [""], review_days: 90 },
           minAccess: draft.min_access,
           known: [],
         }),
       )
       .catch((err) => toast.error(errorText(err)))
-  }, [params, setParams, list])
+  }, [params, setParams, queryClient])
 
   const remove = useMutation({
     mutationFn: (id: string) => assistant.deleteVerified(id),
