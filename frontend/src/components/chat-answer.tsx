@@ -344,8 +344,7 @@ function FeedbackRow({
                 Remove
               </Button>
             )}
-            <Button size="sm" disabled={saving} onClick={() => send(-1)}>
-              {saving && <AsciiSpinner size="xs" label="" />}
+            <Button size="sm" loading={saving} onClick={() => send(-1)}>
               Send feedback
             </Button>
           </div>

@@ -2,7 +2,6 @@ import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -114,8 +113,7 @@ export function ChatSettingsDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving && <AsciiSpinner size="xs" label="" />}
+          <Button onClick={save} loading={saving}>
             Save
           </Button>
         </DialogFooter>

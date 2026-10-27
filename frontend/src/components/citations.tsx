@@ -180,7 +180,7 @@ function SourceSheetBody({ source }: { source: Source }) {
             )}
             <mark
               ref={mark}
-              className="rounded-sm bg-signal/15 px-0.5 text-foreground shadow-[inset_2px_0_0_var(--signal)] [box-decoration-break:clone]"
+              className="rounded-sm bg-signal/15 px-0.5 text-foreground [box-decoration-break:clone]"
             >
               {text}
             </mark>

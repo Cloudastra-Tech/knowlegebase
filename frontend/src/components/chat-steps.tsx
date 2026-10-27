@@ -122,7 +122,7 @@ function StepLineRow({
         <TraceTitle className={cn(status === "done" ? "text-foreground/80" : status === "running" && "text-foreground")}>
           {titleOf(step, status)}
         </TraceTitle>
-        {detail && <TraceDescription className="min-w-0 shrink truncate">{detail}</TraceDescription>}
+        {detail && <TraceDescription className="min-w-0 shrink-[3] truncate">{detail}</TraceDescription>}
       </TraceLine>
     </div>
   )

@@ -16,7 +16,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { ChatSettingsDialog } from "@/components/chat-settings-dialog"
 import { ShareDialog } from "@/components/share-dialog"
 import { SpaceSwitcher } from "@/components/space-switcher"
@@ -154,8 +153,7 @@ function NameForm({
         autoFocus
       />
       <DialogFooter className="mt-4">
-        <Button type="submit" disabled={saving || !name.trim()}>
-          {saving && <AsciiSpinner size="xs" label="" />}
+        <Button type="submit" loading={saving} disabled={!name.trim()}>
           Save
         </Button>
       </DialogFooter>
