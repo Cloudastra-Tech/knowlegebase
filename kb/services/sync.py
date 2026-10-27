@@ -19,8 +19,13 @@ One run (sync()):
      that changed are re-indexed (indexing.schedule_index(ws, docs=...)).
 A run that fails part-way keeps what it wrote (and re-indexes it), deletes
 nothing and keeps the old cursor. Its error is a code (connectors/base.py
-ERRORS), shown in plain words; auth_expired, config and missing_scope wait for
-an admin instead of being retried.
+ERRORS), shown in plain words; auth_expired, config, missing_scope and
+protected_api wait for an admin instead of being retried.
+
+A PERSONAL connection (a member's own Gmail or Calendar: connectors/base.py
+is_personal) syncs the same way, keyed "<provider>~<hash>": its files are for
+its owner alone (kb/services/permissions.py personal_acl), and none of its
+changes go to digests or webhooks.
 """
 
 import hashlib
@@ -50,19 +55,22 @@ MASS_DELETE_MIN = 10              # ... (and at least this many) wait for an adm
 MAX_ITEMS = 10_000                # per connection, unless CONNECTOR_MAX_ITEMS says otherwise
 
 
+WAITS_FOR_ADMIN = ("auth_expired", "config", "missing_scope", "protected_api")
+
+
 def connector(provider):
-    return CONNECTORS.get(provider)
+    return registry.connector_of(provider)
 
 
 def picks(row, provider):
-    c = CONNECTORS[provider]
+    c = registry.connector_of(provider)
     return ((row or {}).get("settings") or {}).get(c.SETTINGS_KEY) or []
 
 
 def ready_to_sync(ws, provider):
     """A connector that syncs only what an admin picked (Drive, Outline, a
     website) has nothing to do until something is picked."""
-    c = CONNECTORS[provider]
+    c = registry.connector_of(provider)
     return not c.PICKER_REQUIRED or bool(picks(integrations_store.get(ws, provider), provider))
 
 
@@ -115,6 +123,8 @@ class _Run:
         row = integrations_store.get(ws, provider)
         self.policy = integrations_store.policy_of(row) if row else "restricted"
         self.level = integrations_store.chunk_access_levels(ws).get(provider, "restricted")
+        self.personal = base.is_personal(provider)
+        self.owner_acl = permissions.personal_acl(row) if self.personal else None
         self._resolver = None
 
     def key(self, name):
@@ -127,6 +137,8 @@ class _Run:
 
     def acl_of(self, source_acl):
         """An item's ACL as the index tags it (kb/services/permissions.py)."""
+        if self.personal:
+            return self.owner_acl
         if self.policy != "source":
             return access.level_acl(self.level)
         if self._resolver is None:
@@ -134,7 +146,10 @@ class _Run:
         return self._resolver.resolve(source_acl, _Acls(self.items))[0]
 
     def note(self, name, change, title, folder=None, version=None, source_acl=None):
-        """The change feed's row for a digest (kb/services/digests.py)."""
+        """The change feed's row for a digest (kb/services/digests.py). A member's
+        own mail or calendar is never in anyone's digest."""
+        if self.personal:
+            return
         digests.record(self.ws, self.key(name), change, title=title, folder=folder,
                        acl=self.acl_of(source_acl), version=version)
 
@@ -236,7 +251,7 @@ class _Run:
 def sync(ws, provider, full=False, confirm_deletes=False):
     """Run one sync of a workspace's connection (see the top of this file).
     Returns the run's summary; raises the connector's error if it failed."""
-    c = CONNECTORS[provider]
+    c = registry.connector_of(provider)
     row = integrations_store.get(ws, provider)
     if not row:
         return {"skipped": "not connected"}
@@ -281,8 +296,9 @@ def sync(ws, provider, full=False, confirm_deletes=False):
         synced, _ = sync_store.counts(ws, provider)
         integrations_store.update(ws, provider, status="error", last_error=code,
                                   doc_count=synced)
-        webhooks.emit(ws, "integration.sync_failed", {"provider": provider, "run_id": run_id,
-                                                      "error_code": code})
+        if not run.personal:
+            webhooks.emit(ws, "integration.sync_failed", {"provider": provider,
+                                                          "run_id": run_id, "error_code": code})
         _reindex(ws, run)
         raise
     now = time.time()
@@ -331,7 +347,7 @@ def _merge(queued, new):
 def run_sync(job):
     ws, p = job.workspace, job.payload
     provider = p["provider"]
-    if provider not in CONNECTORS or not integrations_store.get(ws, provider):
+    if registry.connector_of(provider) is None or not integrations_store.get(ws, provider):
         return {"skipped": "not connected"}         # disconnected while it waited
     try:
         return sync(ws, provider, full=bool(p.get("full")),
@@ -340,15 +356,15 @@ def run_sync(job):
         code = base.error_code(e)
         if isinstance(e, base.ConnectorError) and not e.retry:
             return {"error": code}                  # waits for an admin: no retries
-        raise jobs.Retry(f"{LABELS.get(provider, provider)} sync failed ({code})")
+        raise jobs.Retry(f"{registry.label(provider)} sync failed ({code})")
 
 
 def disconnect(ws, provider):
     """Revoke what the provider lets us, delete the synced copies, their index
     entries and the connection."""
-    c = CONNECTORS[provider]
+    c = registry.connector_of(provider)
     try:
-        c.disconnect(ws)
+        c.revoke(ws, provider)
     except Exception:
         log.exception("Disconnect: %s couldn't revoke its access for workspace %s", provider, ws)
     sync_store.import_manifests(ws)
@@ -368,20 +384,33 @@ def disconnect(ws, provider):
 
 @jobs.periodic("sync_all", lambda: SYNC_EVERY)
 def sync_all(job=None):
-    """Queue a sync of every connected integration, except ones waiting for an
-    admin (reconnect, settings) or with nothing picked yet."""
+    """Queue a sync of every connected integration (and every member's own
+    connections), except ones waiting for an admin (reconnect, settings) or
+    with nothing picked yet."""
     queued = 0
-    for provider, c in CONNECTORS.items():
-        if not c.configured():
-            continue
-        for row in integrations_store.all_connected(provider):
+    for c, rows in ([(c, integrations_store.all_connected(p)) for p, c in CONNECTORS.items()
+                     if c.configured()]
+                    + [(c, integrations_store.all_personal(c.PROVIDER))
+                       for c in registry.PERSONAL if c.configured()]):
+        for row in rows:
             if row["status"] not in ("connected", "error"):
                 continue
-            if row["status"] == "error" and row.get("last_error") in ("auth_expired", "config",
-                                                                       "missing_scope"):
+            if row["status"] == "error" and row.get("last_error") in WAITS_FOR_ADMIN:
                 continue
-            if c.PICKER_REQUIRED and not picks(row, provider):
+            if c.PICKER_REQUIRED and not (row.get("settings") or {}).get(c.SETTINGS_KEY):
                 continue
-            start_sync(row["workspace"], provider)
+            start_sync(row["workspace"], row["provider"])
             queued += 1
     return {"queued": queued}
+
+
+def disconnect_member(ws, username):
+    """Disconnect every personal connection of a member (removed, or erased):
+    their tokens revoked, their synced mail and events deleted and unindexed."""
+    done = []
+    for c in registry.PERSONAL:
+        key = registry.personal_key(c.PROVIDER, username)
+        if integrations_store.get(ws, key):
+            disconnect(ws, key)
+            done.append(c.PROVIDER)
+    return done

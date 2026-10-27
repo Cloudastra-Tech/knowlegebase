@@ -210,8 +210,9 @@ def _sizes(root, skip=()):
 def connectors(ws):
     conn = db.connect()
     try:
+        # (Members' own Gmail and Calendar connections don't count: "~" keys.)
         return [r[0] for r in conn.execute("SELECT provider FROM integrations WHERE workspace = ?",
-                                           (ws,))]
+                                           (ws,)) if "~" not in r[0]]
     finally:
         conn.close()
 

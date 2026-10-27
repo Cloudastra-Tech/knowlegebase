@@ -117,7 +117,10 @@ def listing(user, role, viewer, everything=False):
                 continue
             key = f"connectors/{provider}/{name}"
             acl, dropped = permissions.connection_acl(ws, provider, key, sourced, levels)
-            if not shown(acl):
+            if not shown(acl) or (registry.is_personal(provider)
+                                  and not access.can_see(viewer, acl)):
+                # (A member's own mail and events: only ever listed for them, even
+                # to HR and admins, who otherwise see every document.)
                 continue
             items.append({"title": item.get("title") or name,
                           "source": registry.label(provider),

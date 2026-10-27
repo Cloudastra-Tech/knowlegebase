@@ -66,6 +66,25 @@ Per source:
                  data categories -> everyone; any other article whose channels were
                  read -> staff (profiles, permission sets and data category
                  visibility don't map onto members here); none read -> no one.
+    Asana        the project's members (emails, read through /memberships and
+                 /users); a public-to-workspace project's other Asana users aren't
+                 listed: never more people than the project's members.
+    ClickUp      the List's members as ClickUp lists them (explicit members, emails;
+                 access inherited from a Space, Folder or Team isn't listed, so
+                 never more people than ClickUp names); a List whose members
+                 couldn't be read is for no one.
+    Coda         the doc's sharing, where Coda shows it to the token: emails, a
+                 domain the workspace has verified, or anyone with the link
+                 (everyone); Coda groups and workspace-wide sharing have no
+                 counterpart (dropped). A doc whose sharing can't be read is for
+                 no one, and while any can't, the source policy isn't offered.
+    Teams        a standard channel: the team's members (emails) and its Microsoft
+                 365 group (entra:<id>); a private or shared channel: its own
+                 members only. Teams connections are LOCKED to HR and admins
+                 until an admin turns on "follow channel membership".
+    Gmail, Google Calendar  PERSONAL: never by policy. Every file of a member's
+                 own connection is for them alone (personal_acl: user:<them>),
+                 whatever a policy says; one without an owner is for no one.
     Anything with a `via` this file doesn't know is for no one.
     Partial ACLs (a Drive file in a shared drive, a repo whose teams couldn't
     be read) keep only the grants that were read: never more people.
@@ -85,6 +104,7 @@ import groups_store
 import integrations_store
 import sync_store
 from connectors import registry
+from connectors.base import is_personal
 
 GROUP_PREFIXES = ("google:", "entra:", "atlassian:group:", "github:team:")
 
@@ -148,6 +168,11 @@ class Resolver:
             dropped += not self.domains
         dropped += len(acl.get("roles") or ()) + len(acl.get("dynamic") or ())
         return found, dropped
+
+    def grants_acl(self, acl):
+        """grants() as (ACL, dropped)."""
+        found, dropped = self.grants(acl)
+        return access.clean_acl(found), dropped
 
     def resolve(self, acl, items=None):
         """(ACL, dropped): who may see an item, from its source acl. items:
@@ -265,6 +290,33 @@ def _salesforce(resolver, acl):
     return [access.HR], 0
 
 
+def _asana(resolver, acl):
+    if not acl.get("project") or acl.get("partial"):
+        return [access.NOBODY], 1
+    return resolver.grants_acl({"users": acl.get("users")})
+
+
+def _clickup(resolver, acl):
+    if not acl.get("list") or acl.get("partial"):
+        return [access.NOBODY], 1
+    return resolver.grants_acl({"users": acl.get("users")})
+
+
+def _coda(resolver, acl):
+    if acl.get("unavailable"):
+        return [access.NOBODY], 1
+    found, dropped = resolver.grants({"users": acl.get("users"), "domains": acl.get("domains"),
+                                      "anyone": acl.get("anyone")})
+    dropped += len(acl.get("groups") or ())
+    return access.clean_acl(found), dropped
+
+
+def _teams(resolver, acl):
+    if not acl.get("channel") or acl.get("partial"):
+        return [access.NOBODY], 1
+    return resolver.grants_acl({"users": acl.get("users"), "groups": acl.get("groups")})
+
+
 def _no_source_acl(resolver, acl):
     """S3: the source has no permissions to follow."""
     return [access.NOBODY], 1
@@ -277,14 +329,29 @@ def _unknown_via(resolver, acl):
 # The per-connector mappings of acls that say which connector made them (`via`).
 VIA = {"linear": Resolver._linear, "dropbox": Resolver._dropbox, "box": Resolver._box,
        "s3": _no_source_acl, "freshdesk": _freshdesk, "hubspot": _hubspot,
-       "intercom": _intercom, "salesforce": _salesforce}
+       "intercom": _intercom, "salesforce": _salesforce, "asana": _asana,
+       "clickup": _clickup, "coda": _coda, "teams": _teams}
 
 
-def policies(provider):
+def personal_acl(row):
+    """The ACL of every file a PERSONAL connection syncs: its owner's alone
+    (access.py user:<username>, the principal a personal space's files carry).
+    Never a policy's, never a group's; without an owner, no one's."""
+    owner = integrations_store.owner_of(row)
+    return [access.user(owner)] if owner else [access.NOBODY]
+
+
+def policies(provider, row=None):
     """The policies a connector's connection may have: source only when it
-    captures permissions (connectors/base.py ACL)."""
+    captures permissions (connectors/base.py ACL) and the connection can read
+    them (a connector's source_available: Coda, when its sharing is exposed)."""
     c = registry.get(provider)
-    return integrations_store.POLICIES if c and c.ACL else ("workspace", "restricted")
+    if not c or not c.ACL:
+        return ("workspace", "restricted")
+    check = getattr(c, "source_available", None)
+    if row is not None and check and not check(row.get("settings") or {}):
+        return ("workspace", "restricted")
+    return integrations_store.POLICIES
 
 
 def connector_acls(ws, provider=None, details=False):
@@ -294,6 +361,13 @@ def connector_acls(ws, provider=None, details=False):
     out, resolver = {}, None
     for row in integrations_store.list_for(ws):
         if provider and row["provider"] != provider:
+            continue
+        if is_personal(row["provider"]):            # a member's own: theirs alone
+            acl = personal_acl(row)
+            for item in sync_store.items(ws, row["provider"]).values():
+                if item.get("file_name"):
+                    key = f"connectors/{row['provider']}/{item['file_name']}"
+                    out[key] = (acl, 0) if details else acl
             continue
         if integrations_store.policy_of(row) != "source":
             continue
@@ -378,6 +452,8 @@ def connection_acl(ws, provider, key, source_acls, levels=None):
     level's (levels: integrations_store.chunk_access_levels, read once)."""
     if key in source_acls:
         return source_acls[key]
+    if is_personal(provider):
+        return [access.NOBODY], 0              # a personal file without its connection
     if levels is None:
         levels = integrations_store.chunk_access_levels(ws)
     return access.level_acl(levels.get(provider, "restricted")), 0
