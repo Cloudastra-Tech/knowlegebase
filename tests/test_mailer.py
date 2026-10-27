@@ -130,3 +130,65 @@ def test_the_http_apis(monkeypatch, backend, key, url):
     assert "https://kb.example/invite/abc" in str(body)
     with pytest.raises(mailer.MailError, match="HTTP 422"):
         mailer.send("pat@acme.example", "invite", **INVITE)
+
+
+# ---- Replies in a thread (email-in) -----------------------------------------------------------
+REPLY = mailer.Reply(subject="Re: Refunds?", in_reply_to="<q2@mail.example>",
+                     references=["<q1@mail.example>", "<a1@kb.example>"],
+                     reply_to="ask@acme.kb.example")
+ANSWER = {"answer": "Within thirty days [1]", "sources": "Sources:\n[1] Guide\n",
+          "footer": "Answered from what Pat can see."}
+
+
+def test_a_reply_has_threading_headers_and_says_it_is_automatic(smtp):
+    message_id = mailer.send("pat@acme.example", "email_answer", reply=REPLY, **ANSWER)
+    msg = FakeSMTP.made[0].message
+    assert msg["Subject"] == "Re: Refunds?" and msg["Message-ID"] == message_id
+    assert message_id.startswith("<") and message_id.endswith("@acme.example>")
+    assert msg["In-Reply-To"] == "<q2@mail.example>"
+    assert msg["References"] == "<q1@mail.example> <a1@kb.example> <q2@mail.example>"
+    assert msg["Auto-Submitted"] == "auto-replied" and msg["Reply-To"] == "ask@acme.kb.example"
+    assert "Within thirty days [1]" in msg.get_body(("plain",)).get_content()
+
+
+def test_a_reply_can_come_from_its_own_address(smtp):
+    reply = mailer.Reply(subject="Re: x", from_address="Ask <ask@acme.kb.example>")
+    message_id = mailer.send("pat@acme.example", "email_answer", reply=reply, **ANSWER)
+    msg = FakeSMTP.made[0].message
+    assert msg["From"] == "Ask <ask@acme.kb.example>" and "@acme.kb.example>" in message_id
+    assert msg["In-Reply-To"] is None and msg["References"] is None
+
+
+@pytest.mark.parametrize("backend,key", [("resend", "RESEND_API_KEY"),
+                                         ("postmark", "POSTMARK_TOKEN")])
+def test_the_http_apis_send_a_replys_headers(monkeypatch, backend, key):
+    sent = []
+
+    def post(u, json=None, headers=None, timeout=None):
+        sent.append(json)
+        return httpx.Response(200)
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setenv("MAIL_BACKEND", backend)
+    monkeypatch.setenv(key, "k-123")
+    monkeypatch.setenv("MAIL_FROM", "KB <kb@acme.example>")
+    message_id = mailer.send("pat@acme.example", "email_answer", reply=REPLY, **ANSWER)
+    (body,) = sent
+    if backend == "postmark":
+        headers = {h["Name"]: h["Value"] for h in body["Headers"]}
+        assert body["ReplyTo"] == "ask@acme.kb.example"
+    else:
+        headers = body["headers"]
+        assert body["reply_to"] == "ask@acme.kb.example"
+    assert headers["Message-ID"] == message_id and headers["Auto-Submitted"] == "auto-replied"
+    assert headers["In-Reply-To"] == "<q2@mail.example>"
+    # Without a reply, nothing changes.
+    sent.clear()
+    assert mailer.send("pat@acme.example", "notice", title="t", body="b") is None
+    assert "Headers" not in sent[0] and "headers" not in sent[0]
+
+
+def test_the_console_backend_logs_a_replys_headers(monkeypatch, caplog):
+    monkeypatch.delenv("MAIL_BACKEND", raising=False)
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        message_id = mailer.send("pat@acme.example", "email_answer", reply=REPLY, **ANSWER)
+    assert message_id and "In-Reply-To" in caplog.text

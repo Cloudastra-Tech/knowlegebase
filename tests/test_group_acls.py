@@ -544,7 +544,7 @@ def test_the_migration_fills_in_answers_audiences(tmp_path):
                      "max_access, created_at) VALUES (?, 'c', 'assistant', 'x', 'answered', ?, 0)",
                      (mid, level))
     conn.execute("UPDATE messages SET acl = NULL")
-    conn.execute("UPDATE alembic_version SET version_num = '0013'")
+    conn.execute("UPDATE alembic_version SET version_num = '0015'")
     conn.commit()
     conn.close()
     db.migrate(path)

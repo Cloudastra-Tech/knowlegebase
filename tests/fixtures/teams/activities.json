@@ -1,0 +1,78 @@
+{
+  "_comment": "Activities as the Bot Connector sends them to a Teams bot, after Microsoft's documented examples (bots-conversations, channel-and-group-conversations, universal-action-model). {placeholders} are filled in by tests/teams_fixtures.py.",
+  "personal_message": {
+    "type": "message",
+    "id": "{activity_id}",
+    "timestamp": "2026-10-27T09:00:00.000Z",
+    "serviceUrl": "{service_url}",
+    "channelId": "msteams",
+    "from": {"id": "29:{user}", "name": "{user}", "aadObjectId": "{aad}"},
+    "conversation": {"conversationType": "personal", "tenantId": "{tenant}", "id": "a:1personal-{aad}"},
+    "recipient": {"id": "28:{bot}", "name": "Knowledge"},
+    "textFormat": "plain",
+    "locale": "en-US",
+    "text": "{text}",
+    "entities": [{"type": "clientInfo", "locale": "en-US", "country": "US", "platform": "Web"}],
+    "channelData": {"tenant": {"id": "{tenant}"}}
+  },
+  "channel_mention": {
+    "type": "message",
+    "id": "{activity_id}",
+    "timestamp": "2026-10-27T09:00:00.000Z",
+    "serviceUrl": "{service_url}",
+    "channelId": "msteams",
+    "from": {"id": "29:{user}", "name": "{user}", "aadObjectId": "{aad}"},
+    "conversation": {"isGroup": true, "conversationType": "channel", "tenantId": "{tenant}", "id": "19:general@thread.tacv2;messageid={activity_id}"},
+    "recipient": {"id": "28:{bot}", "name": "Knowledge"},
+    "textFormat": "plain",
+    "text": "<at>Knowledge</at> {text}",
+    "entities": [{"type": "mention", "text": "<at>Knowledge</at>", "mentioned": {"id": "28:{bot}", "name": "Knowledge"}}],
+    "channelData": {"teamsChannelId": "19:general@thread.tacv2", "teamsTeamId": "19:team@thread.tacv2", "channel": {"id": "19:general@thread.tacv2"}, "team": {"id": "19:team@thread.tacv2"}, "tenant": {"id": "{tenant}"}}
+  },
+  "group_chat_mention": {
+    "type": "message",
+    "id": "{activity_id}",
+    "serviceUrl": "{service_url}",
+    "channelId": "msteams",
+    "from": {"id": "29:{user}", "name": "{user}", "aadObjectId": "{aad}"},
+    "conversation": {"isGroup": true, "conversationType": "groupChat", "tenantId": "{tenant}", "id": "19:groupchat@thread.v2"},
+    "recipient": {"id": "28:{bot}", "name": "Knowledge"},
+    "text": "<at>Knowledge</at> {text}",
+    "entities": [{"type": "mention", "text": "<at>Knowledge</at>", "mentioned": {"id": "28:{bot}", "name": "Knowledge"}}],
+    "channelData": {"tenant": {"id": "{tenant}"}}
+  },
+  "feedback_invoke": {
+    "type": "invoke",
+    "name": "adaptiveCard/action",
+    "id": "{activity_id}",
+    "serviceUrl": "{service_url}",
+    "channelId": "msteams",
+    "from": {"id": "29:{user}", "name": "{user}", "aadObjectId": "{aad}"},
+    "conversation": {"conversationType": "personal", "tenantId": "{tenant}", "id": "a:1personal-{aad}"},
+    "recipient": {"id": "28:{bot}", "name": "Knowledge"},
+    "value": {"action": {"type": "Action.Execute", "id": "fb", "verb": "kb_feedback", "data": {"kb": "kb_feedback", "message_id": "{message_id}", "rating": "{rating}"}}, "trigger": "manual"},
+    "channelData": {"tenant": {"id": "{tenant}"}}
+  },
+  "feedback_submit": {
+    "type": "message",
+    "id": "{activity_id}",
+    "serviceUrl": "{service_url}",
+    "channelId": "msteams",
+    "from": {"id": "29:{user}", "name": "{user}", "aadObjectId": "{aad}"},
+    "conversation": {"conversationType": "personal", "tenantId": "{tenant}", "id": "a:1personal-{aad}"},
+    "recipient": {"id": "28:{bot}", "name": "Knowledge"},
+    "value": {"kb": "kb_feedback", "message_id": "{message_id}", "rating": "{rating}"},
+    "channelData": {"tenant": {"id": "{tenant}"}}
+  },
+  "bot_installed": {
+    "type": "conversationUpdate",
+    "id": "{activity_id}",
+    "serviceUrl": "{service_url}",
+    "channelId": "msteams",
+    "from": {"id": "29:{user}", "aadObjectId": "{aad}"},
+    "conversation": {"conversationType": "personal", "tenantId": "{tenant}", "id": "a:1personal-{aad}"},
+    "recipient": {"id": "28:{bot}", "name": "Knowledge"},
+    "membersAdded": [{"id": "28:{bot}"}],
+    "channelData": {"tenant": {"id": "{tenant}"}}
+  }
+}

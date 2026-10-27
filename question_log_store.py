@@ -29,7 +29,7 @@ DEFAULT_MODE = "redacted"
 DEFAULT_DAYS = 90
 DAY_CHOICES = (30, 90, 180, 365)
 KEEP_DAYS = 400                 # a row's metadata (no text) is deleted after this
-SURFACES = ("web", "api", "slack", "mcp")
+SURFACES = ("web", "api", "slack", "mcp", "teams", "extension", "email")   # migration 0015
 
 _lock = threading.Lock()
 
@@ -125,6 +125,15 @@ def active_users(workspace, since_day, until_day):
         return conn.execute("SELECT COUNT(DISTINCT user) FROM question_log WHERE workspace = ? "
                             "AND day >= ? AND day <= ?",
                             (workspace, since_day, until_day)).fetchone()[0]
+
+
+def surface_counts(workspace, since_day, until_day):
+    """{surface: (questions, answered or partly)} in [since_day, until_day]."""
+    with _db() as conn:
+        return {r[0]: (r[1], r[2]) for r in conn.execute(
+            "SELECT surface, COUNT(*), SUM(outcome IN ('answered', 'partial')) FROM question_log "
+            "WHERE workspace = ? AND day >= ? AND day <= ? GROUP BY surface",
+            (workspace, since_day, until_day))}
 
 
 def days_with_rows(workspace, since_day=None):

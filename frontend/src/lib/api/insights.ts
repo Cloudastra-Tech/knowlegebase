@@ -81,6 +81,8 @@ export interface InsightsReport {
   logging: LogSettings
   totals: InsightsTotals
   daily: InsightsDay[]
+  // Where questions were asked (every surface, most asked first).
+  surfaces: SurfaceStat[]
   top_sources: DocStat[]
   never_cited: DocStat[]
   never_cited_count: number
@@ -95,7 +97,22 @@ export interface InsightsReport {
   }
 }
 
-export type InsightsTable = "daily" | "sources" | "never_cited" | "stale" | "gaps" | "connectors"
+export type Surface = "web" | "api" | "mcp" | "slack" | "teams" | "extension" | "email"
+
+export interface SurfaceStat {
+  surface: Surface
+  questions: number
+  answered: number // fully or partly
+}
+
+export type InsightsTable =
+  | "daily"
+  | "surfaces"
+  | "sources"
+  | "never_cited"
+  | "stale"
+  | "gaps"
+  | "connectors"
 
 // An answer someone rated, as it was when they rated it.
 export interface RatedAnswer {

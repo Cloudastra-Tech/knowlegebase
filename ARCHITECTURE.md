@@ -357,7 +357,8 @@ and to share links:
 
 Every surface asks through one service, `kb/services/answering.ask()`: the web
 chat, the public API and the MCP server get the same agent, guards, `[S#]`
-citations, `max_access` and question log (with `surface` web / api / mcp / slack).
+citations, `max_access` and question log (with `surface` web / api / mcp / slack /
+teams / extension / email; Insights shows where questions come from).
 
 ```
   browser session ──► /api/*   (the app's own API: changes with the site)
@@ -419,6 +420,82 @@ so each request is checked with its own signing secret). Answers are saved as
 the asker's conversations (a Slack thread continues one), so 👍 / 👎 land in
 `message_feedback` and Insights like the web chat's. deploy.md, "Slack app",
 has the scopes, the Marketplace and rate-limit rules, and a by-hand checklist.
+
+---
+
+## 🟦 The Teams bot
+
+People ask in Microsoft Teams through the same `answering.ask()` (surface `teams`):
+`kb/routers/teams.py` takes the Bot Connector's requests, `kb/services/teams.py`
+answers them, `teams_store.py` keeps the bot (client secret sealed by `secret_box`).
+
+```
+  Bot Connector ──JWT──► /api/teams/apps/<app_key>/messages   (a customer's own Azure Bot)
+                         /api/teams/messages                   (this server's bot, TEAMS_APP_*)
+      token checked first: Bot Framework's key (endorsed for msteams), iss
+      https://api.botframework.com, aud = the bot's App ID, exp (5 min skew),
+      serviceUrl claim = the activity's; activity ids deduped
+                    │  queue a "teams" job, 200 at once (a feedback invoke answers inline)
+                    ▼
+  job: tenant must be the workspace's; Connector member lookup ──► email / UPN ──► member
+       1:1 chat with the bot ──► ask() as their role
+       channel or group chat ──► ask() as PUBLIC ("answered from public documents" note)
+            └─ a search as their role finds restricted passages?
+                 ──► proactive message in their 1:1 chat, ask() as their role
+                     (403 when the app isn't installed for them: nothing more is said)
+       ──► Adaptive Card 1.5: answer, [n] links, sources, 👍 / 👎 (Action.Execute)
+```
+
+A Microsoft Entra tenant is answered by one workspace. Azure stopped creating
+multi-tenant bots after 31 July 2025, so the usual setup is the customer's own
+single-tenant Azure Bot (App ID, tenant, client secret pasted on the Integrations
+card); a host with an existing multi-tenant bot can offer it as "this server's
+bot". The card downloads the Teams app (`teams/manifest.json` with the bot and
+host filled in, and its icons). deploy.md, "Microsoft Teams bot", has the
+checklist.
+
+---
+
+## 🧩 The browser extension
+
+`extension/` is a Chrome / Edge MV3 side panel (built by Vite with the frontend's
+toolchain and shadcn components: `cd frontend && npm run build:extension`). It
+asks through `POST /api/v1/ask` (streamed) with a personal API key of its own
+(scope `ask`, client `extension`, 90 days) that it gets through a one-time code
+after the person confirms on the web app's `/extension/connect` screen
+(`kb/routers/extension.py`); the key never travels in a URL. It never reads
+pages: text selected through the context menu goes along, per question and only
+if ticked, as `context`, spotlighted as untrusted data. Its questions are logged
+with surface `extension`. CORS on `/api/v1` is for `EXTENSION_ORIGINS` only, without
+credentials (`kb/middleware.ExtensionCors`).
+
+---
+
+## ✉️ Email-in
+
+`kb/services/email_in.py`, `email_in_store.py`: an inbound provider (Postmark
+first, behind a small provider interface) posts mail for
+`ask@<slug>.<EMAIL_IN_DOMAIN>` to `/api/email-in/postmark` (HTTP Basic credentials
+in the webhook URL). Only an enabled member of that workspace, whose email passed
+the provider's SPF check with DKIM aligned to the From domain, is answered, and
+only once the workspace's admin has turned email-in on. Everything else, and all
+automatic or list mail (`Auto-Submitted`, `Precedence`, `List-*`, a null
+Return-Path, our own addresses, a Message-ID already seen), is dropped without a
+reply; senders are rate-limited. A job answers through `answering.ask` (surface
+`email`) in the member's conversation and replies in the thread through the
+mailer (In-Reply-To, References, `Auto-Submitted: auto-replied`); a reply to that
+continues the conversation.
+
+---
+
+## 📱 Installable app (PWA)
+
+`frontend/public/manifest.webmanifest`, its icons and `frontend/public/sw.js`
+make the site installable on phones and desktops. The service worker (registered
+in production builds only) keeps the app shell: the page, the hashed `/assets/`
+and the icons, network-first for pages. It never handles `/api/`, `/mcp` or
+`/scim/`, so no answer or document is ever cached. `viewport-fit=cover` plus
+safe-area padding keeps the header, the composer and the sides clear of notches.
 
 ---
 

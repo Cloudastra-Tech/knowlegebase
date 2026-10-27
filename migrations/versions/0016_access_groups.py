@@ -1,7 +1,7 @@
 """access groups, document ACLs and per-connection permission policies
 
-Revision ID: 0014
-Revises: 0013
+Revision ID: 0016
+Revises: 0015
 Create Date: 2026-10-27
 
 Who may see what moves from two levels (public / restricted) to ACLs of
@@ -28,8 +28,8 @@ workspace, anything else restricted).
 
 from alembic import op
 
-revision = "0014"
-down_revision = "0013"
+revision = "0016"
+down_revision = "0015"
 branch_labels = None
 depends_on = None
 

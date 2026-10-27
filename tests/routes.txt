@@ -9,6 +9,7 @@ DELETE /api/admin/sign-in/connections/{cid} delete_connection require_admin,audi
 DELETE /api/admin/sign-in/domains/{domain} delete_domain require_admin,audited
 DELETE /api/admin/sign-in/scim/tokens/{token_id} revoke_scim_token require_admin,audited
 DELETE /api/admin/slack/install slack_uninstall require_admin,audited
+DELETE /api/admin/teams teams_disconnect require_admin,audited
 DELETE /api/admin/verified-answers/{answer_id} delete_answer require_hr,audited
 DELETE /api/admin/workspace delete_workspace require_tenant_admin,audited
 DELETE /api/admin/workspace/support-access revoke_support require_admin,audited
@@ -20,6 +21,7 @@ DELETE /api/me/api-keys/{key_id} revoke_my_key current_user,audited
 DELETE /api/messages/{mid}/feedback remove_feedback current_user,current_viewer,audited
 DELETE /api/shares/{sid} revoke_share current_user,audited
 DELETE /api/v1/documents/{access}/{name} delete_document api_key,audited
+DELETE /api/v1/extension/key disconnect_extension api_key,audited
 DELETE /scim/v2/Groups/{group_id} delete_group scim_token,audited
 DELETE /scim/v2/Users/{user_id} delete_user scim_token,audited
 GET    /api/access/principals principals require_hr
@@ -29,6 +31,7 @@ GET    /api/admin/audit list_audit Filters,require_admin
 GET    /api/admin/audit/export export_audit Filters,require_admin,audited
 GET    /api/admin/audit/verify verify_audit require_admin
 GET    /api/admin/doc-rules list_rules require_hr
+GET    /api/admin/email-in email_in_settings require_hr
 GET    /api/admin/eval-cases list_eval_cases require_hr,current_role
 GET    /api/admin/feedback list_feedback require_hr,current_viewer
 GET    /api/admin/groups list_groups require_admin
@@ -43,6 +46,8 @@ GET    /api/admin/sign-in/scim scim_settings require_admin
 GET    /api/admin/sign-in/tests/{ticket} test_result require_admin
 GET    /api/admin/slack slack_settings require_hr
 GET    /api/admin/slack/manifest slack_manifest require_admin
+GET    /api/admin/teams teams_settings require_hr
+GET    /api/admin/teams/package teams_package require_admin
 GET    /api/admin/verified-answers list_answers require_hr
 GET    /api/admin/verified-answers/draft draft_answer require_hr,current_viewer
 GET    /api/admin/workspace workspace_settings require_admin
@@ -65,6 +70,7 @@ GET    /api/conversations/search search_conversations current_user,current_viewe
 GET    /api/conversations/{cid} get_conversation current_user,current_role,current_viewer
 GET    /api/docs list_docs require_hr,current_viewer
 GET    /api/docs/{access}/{name} read_doc require_hr,current_viewer
+GET    /api/extension extension_status current_user
 GET    /api/health health_check -
 GET    /api/health/ready ready_check -
 GET    /api/index/status index_status current_user
@@ -148,6 +154,8 @@ POST   /api/conversations create_conversation current_user,current_role,audited
 POST   /api/conversations/{cid}/fork fork_conversation current_user,current_role,audited
 POST   /api/docs create_doc require_hr,audited
 POST   /api/docs/upload upload_docs require_hr,audited
+POST   /api/email-in/postmark postmark_inbound email_in_webhook,audited
+POST   /api/extension/connect connect_extension current_user,audited
 POST   /api/integrations/{provider}/connect integration_connect require_hr,audited
 POST   /api/integrations/{provider}/permissions/sync integration_permissions_sync require_hr,audited
 POST   /api/integrations/{provider}/setup integration_setup require_hr,audited
@@ -168,15 +176,19 @@ POST   /api/slack/apps/{app_key}/interactions slack_interactions slack_signature
 POST   /api/slack/commands slack_commands slack_signature,audited
 POST   /api/slack/events slack_events slack_signature,audited
 POST   /api/slack/interactions slack_interactions slack_signature,audited
+POST   /api/teams/apps/{app_key}/messages teams_messages bot_connector,audited
+POST   /api/teams/messages teams_messages bot_connector,audited
 POST   /api/v1/ask ask api_key,audited
 POST   /api/v1/documents create_document api_key,audited
 POST   /api/v1/documents/upload upload_documents api_key,audited
+POST   /api/v1/extension/exchange exchange_code audited
 POST   /api/v1/search search api_key,audited
 POST   /scim/v2/Groups create_group scim_token,audited
 POST   /scim/v2/Users create_user scim_token,audited
 PUT    /api/admin/api set_api_settings require_admin,audited
 PUT    /api/admin/assistant save_settings require_admin,audited
 PUT    /api/admin/chat-settings set_chat_settings require_admin,audited
+PUT    /api/admin/email-in set_email_in require_admin,audited
 PUT    /api/admin/groups/{group_id}/members set_group_members require_admin,audited
 PUT    /api/admin/question-log/settings set_log_settings require_admin,audited
 PUT    /api/admin/sign-in/connections/{cid}/roles set_group_roles require_admin,audited
@@ -185,6 +197,8 @@ PUT    /api/admin/sign-in/policy set_policy require_admin,audited
 PUT    /api/admin/sign-in/scim/roles set_scim_roles require_admin,audited
 PUT    /api/admin/slack/app set_slack_app require_admin,audited
 PUT    /api/admin/slack/settings set_slack_settings require_admin,audited
+PUT    /api/admin/teams/app set_teams_app require_admin,audited
+PUT    /api/admin/teams/settings set_teams_settings require_admin,audited
 PUT    /api/admin/workspace/audit-retention set_audit_retention require_tenant_admin,audited
 PUT    /api/admin/workspace/support-access grant_support require_tenant_admin,audited
 PUT    /api/docs/{access}/{name} save_doc require_hr,current_viewer,audited

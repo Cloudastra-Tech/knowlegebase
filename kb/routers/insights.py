@@ -29,6 +29,7 @@ FORMULA = ("=", "+", "-", "@", "\t", "\r")       # a spreadsheet would run these
 TABLES = {
     "daily": ("day", "questions", "active_users", "answered", "partial", "not_found",
               "blocked", "general_knowledge", "error", "stopped"),
+    "surfaces": ("surface", "questions", "answered"),
     "sources": ("title", "provider", "access", "cited", "url", "doc_key"),
     "never_cited": ("title", "provider", "access", "first_seen", "modified", "url", "doc_key"),
     "stale": ("title", "provider", "access", "modified", "cited", "url", "doc_key"),

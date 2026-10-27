@@ -41,6 +41,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
 import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
 import { SlackAppCard } from "@/components/slack-app-card"
+import { SurfaceCards } from "@/components/surface-cards"
 import { SyncHistorySheet } from "@/components/sync-history-sheet"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -672,6 +673,7 @@ export function IntegrationsView({
             <p className="text-sm font-medium">Ask from your tools</p>
             <div className="mt-3 grid gap-4 md:grid-cols-2">
               <SlackAppCard />
+              <SurfaceCards />
             </div>
           </div>
 

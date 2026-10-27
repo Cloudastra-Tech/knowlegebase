@@ -117,7 +117,7 @@ export default function App() {
     <div className="flex h-dvh flex-col">
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts. */}
       <CommandPalette user={user} role={activeRole} />
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
           <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
             Knowledge

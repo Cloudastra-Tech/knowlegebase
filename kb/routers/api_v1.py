@@ -5,8 +5,10 @@ kb/api_auth.py); what a key can do is its scopes, and what it can see is the
 role it acts as, looked up on every call. This is the API we keep stable: the
 app's own /api/* may change with the site.
 
-    POST   /api/v1/ask        {question, conversation_id?, stream?} -> {answer, sources, state}
-                              (stream: true -> Server-Sent Events, as the chat streams)  ask
+    POST   /api/v1/ask        {question, conversation_id?, stream?, context?}
+                              -> {answer, sources, state} (stream: true -> Server-Sent
+                              Events, as the chat streams; context: text the question is
+                              about, given to the model as untrusted data)              ask
     POST   /api/v1/search     {query, k} -> passages the key's role may see, no answer   search
     GET    /api/v1/sources    everything the assistant can search                      search
     GET    /api/v1/documents  the workspace's uploaded documents                      docs:read
@@ -17,7 +19,8 @@ app's own /api/* may change with the site.
     GET    /api/v1/audit      ?actor&action&from&to&cursor: the audit log            audit:read
     GET    /api/v1/openapi.json   this API's OpenAPI document (no key needed)
 
-Every call is audited, with surface "api" and the key's prefix: questions by
+Every call is audited, with surface "api" (or "extension": a key the browser
+extension was given, kb/routers/extension.py) and the key's prefix: questions by
 their length and outcome, never their text. Calls are rate-limited per key and
 per workspace (kb/rate_limit.key_limit); a question also counts as one of its
 person's chat questions.
@@ -49,10 +52,12 @@ from kb.routers import docs as docs_router
 from kb.routers import knowledge as knowledge_router
 from kb.routers.audit import Filters
 from kb.services import answering, conversations, permissions, retrieval
+from untrusted import spotlight
 
 router = APIRouter(prefix="/api/v1")
 VERSION = "1.0.0"
 NAME = r"^[^/\\]{1,200}$"
+CONTEXT_CHARS = 4000
 
 
 # ---- What goes in and comes out ----------------------------------------------------------
@@ -63,6 +68,11 @@ class AskIn(BaseModel):
                           "to start one. Personal keys only. The answer says which to send next.")
     stream: bool = Field(False, description="Answer as Server-Sent Events: status, step_start, "
                                             "step_end, answer (the text so far), then done or error.")
+    context: str | None = Field(
+        None, max_length=CONTEXT_CHARS,
+        description="Text the question is about, e.g. what the asker selected on a web page "
+                    "(the browser extension sends it only when they choose to). It is given to "
+                    "the assistant as untrusted data, never as instructions, and isn't saved.")
 
 
 class Source(BaseModel):
@@ -220,11 +230,14 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
         p.record(audit, "question", ids["message_id"],
                  {"chars": len(question), "state": state,
                   "sources": len(done.sources) if done else 0,
+                  **({"context_chars": len(body.context)} if body.context else {}),
                   **({"conversation": ids["conversation_id"]} if turn else {})})
 
+    asked = _with_context(turn, body.context)
+
     def run(on_event=None, cancel=None, out=None):
-        return answering.ask(p.workspace, p.user, p.viewer, question, surface="api", turn=turn,
-                             on_event=on_event, cancel=cancel, out=out)
+        return answering.ask(p.workspace, p.user, p.viewer, question, surface=p.surface,
+                             turn=asked, on_event=on_event, cancel=cancel, out=out)
 
     if body.stream:
         return _stream(run, finish, ids)
@@ -236,6 +249,23 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
                                  "Please try again in a moment.")
     await run_in_threadpool(finish, done=done)
     return {"answer": done.answer, "sources": done.sources, "state": done.state, **ids}
+
+
+def _with_context(turn, context):
+    """The turn the question is answered with: `context` (selected text, say) goes
+    first in its history, spotlighted as untrusted data (untrusted.spotlight), so
+    the model reads it as something to answer about, never as instructions. It
+    isn't saved in the conversation: only the question is."""
+    context = (context or "").strip()[:CONTEXT_CHARS]
+    if not context:
+        return turn
+    history = [{"role": "user", "content": "Here is some text I want to ask about:\n"
+                + spotlight(context, "selected_text")},
+               {"role": "assistant", "content": "I've read the text. What would you like to "
+                                                "know about it?"}]
+    if turn:
+        return {**turn, "history": history + turn["history"]}
+    return {"message_id": None, "history_access": "public", "history": history}
 
 
 def _stream(run, finish, ids):

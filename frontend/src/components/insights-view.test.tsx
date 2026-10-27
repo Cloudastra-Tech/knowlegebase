@@ -46,6 +46,11 @@ const REPORT = {
     rates: { answered: 0.75, not_found: 0.15, blocked: 0.025, general_knowledge: 0.075 },
   },
   daily: [day("2026-10-21", 15), day("2026-10-22", 25)],
+  surfaces: [
+    { surface: "web", questions: 9, answered: 7 },
+    { surface: "teams", questions: 3, answered: 2 },
+    { surface: "email", questions: 0, answered: 0 },
+  ],
   top_sources: [
     { doc_key: "public/handbook.txt", title: "handbook.txt", provider: "Company documents", url: null, access: "public", cited: 12 },
   ],
@@ -79,6 +84,10 @@ describe("InsightsView", () => {
     expect(screen.getByText("2.4 s")).toBeInTheDocument()
     expect(screen.getByText("Questions about documents your role can't see")).toBeInTheDocument()
     expect(screen.getAllByText("handbook.txt").length).toBeGreaterThan(0)
+    // Where questions come from: Teams and email among the surfaces.
+    expect(screen.getByText("Microsoft Teams")).toBeInTheDocument()
+    expect(screen.getByText("3 questions · 66.7% answered")).toBeInTheDocument()
+    expect(screen.getByText("Email")).toBeInTheDocument()
     expect(screen.getByText(/Only admins can change this/)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
   })

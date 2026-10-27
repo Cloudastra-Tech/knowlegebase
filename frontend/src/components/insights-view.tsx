@@ -27,7 +27,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { insights as insightsApi, type InsightsReport, type InsightsTable } from "@/lib/api"
+import {
+  insights as insightsApi,
+  type InsightsReport,
+  type InsightsTable,
+  type Surface,
+  type SurfaceStat,
+} from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
@@ -274,6 +280,44 @@ function ChartKey() {
   )
 }
 
+const SURFACE_NAMES: Record<Surface, string> = {
+  web: "Web chat",
+  slack: "Slack",
+  teams: "Microsoft Teams",
+  extension: "Browser extension",
+  email: "Email",
+  api: "API",
+  mcp: "MCP (other agents)",
+}
+
+// How many questions came from each place people ask, as a share of them all.
+function Surfaces({ rows }: { rows: SurfaceStat[] }) {
+  const total = rows.reduce((n, r) => n + r.questions, 0)
+  return (
+    <ul className="flex flex-col gap-3">
+      {rows.map((r) => (
+        <li key={r.surface} className="grid gap-1.5 text-sm">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className={r.questions ? "font-medium" : "text-muted-foreground"}>
+              {SURFACE_NAMES[r.surface] ?? r.surface}
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {count(r.questions)} questions
+              {r.questions > 0 && ` · ${percent(r.answered / r.questions)} answered`}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-foreground/70"
+              style={{ width: `${total ? (r.questions / total) * 100 : 0}%` }}
+            />
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function Overview({
   canEdit,
   onAddVerified,
@@ -345,6 +389,18 @@ function Overview({
             <QuestionsChart report={report} />
             <ChartKey />
           </>
+        ) : (
+          <Empty>No questions in these days yet.</Empty>
+        )}
+      </Panel>
+
+      <Panel
+        title="Where questions come from"
+        description="The web chat, Slack, Teams, the browser extension, email, the API and other agents."
+        action={<ExportButton table="surfaces" {...range_} />}
+      >
+        {t.questions ? (
+          <Surfaces rows={report.surfaces ?? []} />
         ) : (
           <Empty>No questions in these days yet.</Empty>
         )}
