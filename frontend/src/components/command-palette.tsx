@@ -62,6 +62,7 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
   const [help, setHelp] = useState(false)
   const [query, setQuery] = useState("")
   const [q, setQ] = useState("")
+  const [picked, setPicked] = useState("") // the highlighted item, by its value
   useEffect(() => {
     const t = setTimeout(() => setQ(query.trim()), 200)
     return () => clearTimeout(t)
@@ -122,6 +123,17 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
   const chats = q
     ? (found.data ?? []).map((r) => ({ id: r.conversation_id, title: r.title, snippet: r.snippet }))
     : (recent.data?.conversations ?? []).slice(0, 6).map((c) => ({ id: c.id, title: c.title, snippet: "" }))
+  const shownScreens = screens.filter((s) => matches(s.label))
+  // The highlighted item. cmdk keeps it by value and doesn't filter here, so after a
+  // new search it would point at an item that's gone, and nothing would be lit: the
+  // first item is, until the arrows or the pointer pick another.
+  const items = [
+    ...(matches("New chat") ? ["action-new-chat", "action-toggle-history", "action-shortcuts"] : []),
+    ...chats.map((c) => `chat-${c.id}`),
+    ...savedPrompts.map((p) => `prompt-${p.id}`),
+    ...shownScreens.map((s) => `screen-${s.to}`),
+  ]
+  const active = items.includes(picked) ? picked : (items[0] ?? "")
 
   return (
     <>
@@ -135,10 +147,13 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
         description="Search your chats, start a new one, or go to a screen."
       >
         {/* Filtered here: chats by the server's search, the rest by their names. */}
-        <Command shouldFilter={false}>
+        <Command shouldFilter={false} value={active} onValueChange={setPicked}>
         <CommandInput
           value={query}
-          onValueChange={setQuery}
+          onValueChange={(v) => {
+            setQuery(v)
+            setPicked("")
+          }}
           placeholder="Search chats, or type a screen…"
           aria-label="Search chats and screens"
         />
@@ -213,16 +228,14 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
               ))}
             </CommandGroup>
           )}
-          {screens.some((s) => matches(s.label)) && (
+          {shownScreens.length > 0 && (
             <CommandGroup heading="Go to">
-              {screens
-                .filter((s) => matches(s.label))
-                .map((s) => (
-                  <CommandItem key={s.to} value={`screen-${s.to}`} onSelect={() => run(() => navigate(s.to))}>
-                    <s.icon />
-                    {s.label}
-                  </CommandItem>
-                ))}
+              {shownScreens.map((s) => (
+                <CommandItem key={s.to} value={`screen-${s.to}`} onSelect={() => run(() => navigate(s.to))}>
+                  <s.icon />
+                  {s.label}
+                </CommandItem>
+              ))}
             </CommandGroup>
           )}
         </CommandList>

@@ -225,6 +225,13 @@ export function InsightsFeedback({ canEdit }: { canEdit: boolean }) {
   return (
     <Panel
       title="Thumbs down"
+      description={
+        <>
+          Answers people rated down, newest first, with their reasons. People are told an admin
+          can see the answer and their note.
+          {canEdit ? " Add one to the test set to check later releases against it." : ""}
+        </>
+      }
       className="min-w-0"
       actions={
         <Select value={reason} onValueChange={(v) => setReason(v as typeof reason)}>
@@ -242,13 +249,7 @@ export function InsightsFeedback({ canEdit }: { canEdit: boolean }) {
         </Select>
       }
     >
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        Answers people rated down, newest first, with their reasons. People are told an admin
-        can see the answer and their note.
-        {canEdit ? " Add one to the test set to check later releases against it." : ""}
-      </p>
-
-      <div className="mt-4">
+      <div>
         {!rated ? (
           <Skeleton className="h-48 rounded-2xl" />
         ) : !shown.length ? (

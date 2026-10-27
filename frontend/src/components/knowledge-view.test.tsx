@@ -75,6 +75,32 @@ describe("KnowledgeView", () => {
     expect(screen.queryByText("No documents yet.", { exact: false })).not.toBeInTheDocument()
   })
 
+  it("flags, for HR, an item the scan found instructions to an AI in", async () => {
+    mockApi({
+      "GET /api/knowledge": {
+        workspace: "acme",
+        outline: false,
+        rules: [],
+        items: [
+          { ...ITEMS[0], doc_key: "a", provider: "uploads", folder: null, who: [], injection: { chunks: 2, kinds: ["override"] } },
+          { ...ITEMS[1], doc_key: "b", provider: "gdrive", folder: null, who: [], injection: null },
+        ],
+      },
+    })
+    render(
+      withProviders(
+        <MemoryRouter>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
+
+    const flag = await screen.findByText("Instructions to an AI found in 2 chunks")
+    expect(flag).toHaveClass("sr-only")
+    expect(flag.closest('[data-slot="badge"]')).toHaveAttribute("data-variant", "warning")
+    expect(screen.getAllByText("!")).toHaveLength(1)
+  })
+
   it("titles the screen, and says what to do when there's nothing in it", async () => {
     mockApi({ "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })
     render(

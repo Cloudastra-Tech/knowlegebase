@@ -65,12 +65,17 @@ function statusLine(b: On) {
 // What the workspace uses of each of its plan's limits.
 function Usage({ b }: { b: On }) {
   return (
-    <Panel title="Usage" className="min-w-0">
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        Questions start again on {new Date(`${b.resets_on}T00:00:00Z`).toLocaleDateString(undefined, { dateStyle: "medium" })}.
-        Sample documents don't count.
-      </p>
-      <ul className="mt-4 grid gap-4 sm:grid-cols-2">
+    <Panel
+      title="Usage"
+      description={
+        <>
+          Questions start again on {new Date(`${b.resets_on}T00:00:00Z`).toLocaleDateString(undefined, { dateStyle: "medium" })}.
+          Sample documents don't count.
+        </>
+      }
+      className="min-w-0"
+    >
+      <ul className="grid gap-4 sm:grid-cols-2">
         {b.usage.map((u) => {
           const share = u.limit ? Math.min(100, (u.used / u.limit) * 100) : 0
           const full = u.limit !== null && u.used >= u.limit
@@ -203,12 +208,12 @@ function Owners({ b }: { b: On }) {
   }
 
   return (
-    <Panel title="Billing owners" className="min-w-0">
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        Only they can change the plan or payment details. Admins see this page; Cloudastra support
-        never changes it.
-      </p>
-      <ul className="mt-4 divide-y divide-border/60">
+    <Panel
+      title="Billing owners"
+      description="Only they can change the plan or payment details. Admins see this page; Cloudastra support never changes it."
+      className="min-w-0"
+    >
+      <ul className="divide-y divide-border/60">
         {b.owners.map((o) => (
           <li key={o.username} className="flex items-center justify-between gap-3 py-2 text-sm">
             <span className="min-w-0 truncate">{o.username}</span>

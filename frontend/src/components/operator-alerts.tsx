@@ -63,13 +63,15 @@ export function AlertsPanel() {
           </TabsList>
         </Tabs>
       }
+      description={
+        <>
+          Unusual usage, failed sign-ins and spend, checked every hour.
+          {t &&
+            ` A spike is ${t.spike_factor}× the week's median (at least ${t.spike_min} questions); one person, over ${t.user_per_hour} an hour.`}
+        </>
+      }
     >
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        Unusual usage, failed sign-ins and spend, checked every hour.
-        {t &&
-          ` A spike is ${t.spike_factor}× the week's median (at least ${t.spike_min} questions); one person, over ${t.user_per_hour} an hour.`}
-      </p>
-      <ul className="mt-4 divide-y rounded-xl border">
+      <ul className="divide-y rounded-xl border">
         {list.isPending && (
           <li className="p-3">
             <Skeleton className="h-10 w-full" />

@@ -2,8 +2,9 @@ import { StrictMode, useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ArrowUp, Loader2, LogOut, PanelRight, Square, TextQuote, TriangleAlert, X } from "lucide-react"
+import { ArrowUp, LogOut, PanelRight, Square, TextQuote, TriangleAlert, X } from "lucide-react"
 
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -136,8 +137,7 @@ function Connect({ initialHost, onConnected }: { initialHost: string; onConnecte
           {problem}
         </p>
       )}
-      <Button type="submit" disabled={busy}>
-        {busy && <Loader2 className="size-4 animate-spin" />}
+      <Button type="submit" loading={busy}>
         Connect
       </Button>
       <p className="text-xs text-muted-foreground">
@@ -162,7 +162,7 @@ function Answer({ turn, host }: { turn: Turn; host: string }) {
       </div>
       {turn.busy && !turn.answer && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
+          <AsciiSpinner label="" />
           {turn.status ?? "Looking that up…"}
         </p>
       )}

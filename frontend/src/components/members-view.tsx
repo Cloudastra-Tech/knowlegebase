@@ -363,17 +363,14 @@ export function MembersView({ me }: { me: string }) {
   return (
     <Panel
       title="Members"
+      description="Everyone who has signed in or been given a role. A role you pick here wins over their groups."
       actions={
         <Button onClick={() => setInviting(true)}>
           <MailPlus data-icon="inline-start" /> Invite
         </Button>
       }
     >
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        Everyone who has signed in or been given a role. A role you pick here wins over their
-        groups.
-      </p>
-      <div className="relative mt-4 sm:max-w-xs">
+      <div className="relative sm:max-w-xs">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           aria-label="Search members"

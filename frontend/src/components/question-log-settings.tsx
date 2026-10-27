@@ -60,14 +60,19 @@ export function QuestionLogSettings({
   const note = MODES.find((m) => m.value === mode)?.note
 
   return (
-    <Panel title="Question logging" className="min-w-0">
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        Every question is counted for these insights. This decides how much of its text is kept.
-        Who asked is never shown here, and people see “Questions are logged for your admins for{" "}
-        {settings.days} days” in the chat unless only metadata is kept.
-      </p>
+    <Panel
+      title="Question logging"
+      description={
+        <>
+          Every question is counted for these insights. This decides how much of its text is kept.
+          Who asked is never shown here, and people see “Questions are logged for your admins for{" "}
+          {settings.days} days” in the chat unless only metadata is kept.
+        </>
+      }
+      className="min-w-0"
+    >
       <form
-        className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end"
+        className="flex flex-col gap-4 sm:flex-row sm:items-end"
         onSubmit={(e) => {
           e.preventDefault()
           save.mutate()

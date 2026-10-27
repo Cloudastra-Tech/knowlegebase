@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 // default: an opaque card. glass: the chrome tier, blurred, for a card that floats over
 // the ASCII field (landing tiles, connector cards). subtle: the in-content tier, no blur.

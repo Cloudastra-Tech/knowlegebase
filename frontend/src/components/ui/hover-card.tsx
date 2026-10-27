@@ -1,5 +1,5 @@
 import * as React from "react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
 // A preview is for a pointer resting on its trigger, so it stands down in two cases:
@@ -10,7 +10,7 @@ import { HoverCard as HoverCardPrimitive } from "radix-ui"
 // Otherwise the open delay can run out over the sheet the click opened, and the card
 // pops up on top of it and takes the sheet's Escape.
 type CardContextValue = {
-  trigger: React.RefObject<HTMLElement | null>
+  setTrigger: (el: HTMLElement | null) => void
   press: () => void
   release: () => void
 }
@@ -36,7 +36,9 @@ function HoverCard({
   )
   const card = React.useMemo(
     () => ({
-      trigger,
+      setTrigger: (el: HTMLElement | null) => {
+        trigger.current = el
+      },
       press: () => {
         pressed.current = true
         change(false)
@@ -68,7 +70,7 @@ function HoverCardTrigger({
   const card = React.useContext(CardContext)
   const setRef = React.useCallback(
     (el: HTMLAnchorElement | null) => {
-      if (card) card.trigger.current = el
+      card?.setTrigger(el)
       if (typeof ref === "function") ref(el)
       else if (ref) ref.current = el
     },

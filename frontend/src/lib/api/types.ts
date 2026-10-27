@@ -780,6 +780,10 @@ export interface KnowledgeItem {
   // HR / Admin: the personal data the ingest scan found, when the workspace's policy
   // flags it ("contains 40 phone numbers"); null when it doesn't.
   pii?: { counts: Record<string, number>; text: string } | null
+  // HR / Admin: the chunks the ingest scan found text written to an AI in (planted
+  // instructions), and their kinds; null when none. Still searchable: every passage is
+  // treated as data when answering.
+  injection?: { chunks: number; kinds: string[] } | null
 }
 
 export interface Doc {

@@ -73,7 +73,12 @@ export function QualityTrendView({ trend }: { trend: QualityTrend }) {
               strokeWidth={2}
               strokeDasharray={DASH[key]}
               connectNulls
-              dot={false}
+              // One day of data is a point with no line to draw: it shows as a dot.
+              dot={
+                data.filter((d) => d[key] !== null).length === 1
+                  ? { r: 3.5, fill: `var(--color-${key})`, strokeWidth: 0 }
+                  : false
+              }
               activeDot={{ r: 4 }}
               isAnimationActive={false}
             />

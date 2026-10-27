@@ -68,6 +68,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, type Integration, type IntegrationStatus, type PermissionPolicy } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
+import { type StaggerItem, useStaggerOnce } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -157,27 +158,23 @@ export function StatusBadge({ status }: { status: IntegrationStatus }) {
 
 // The cards of a connector grid: the subtle glass tier (no blur: there are many of
 // them), lifted 2px under a pointer that hovers, and, the first time the grid draws,
-// faded up 40ms apart with the rest arriving with the sixth (`order`).
-const CARD_ENTER =
-  "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1.5 motion-safe:fill-mode-backwards motion-safe:duration-(--dur-reveal) motion-safe:ease-out-strong"
-const enterDelay = (order: number) => ({ animationDelay: `${Math.min(order, 5) * 40}ms` })
-
+// faded up in turn (`enter`, from the grid's useStaggerOnce).
 export function Card({
   item,
-  order,
+  enter,
   children,
 }: {
   item: Integration
-  order?: number // its place in the grid, for the first draw's stagger
+  enter?: StaggerItem
   children?: React.ReactNode
 }) {
   return (
     <Panel
       className={cn(
         "flex min-w-0 flex-col transition-transform duration-180 ease-out-strong motion-safe:hover:-translate-y-0.5",
-        order !== undefined && CARD_ENTER,
+        enter?.className,
       )}
-      style={order !== undefined ? enterDelay(order) : undefined}
+      style={enter?.style}
     >
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
@@ -363,12 +360,12 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
 // One connector, whatever it is: drawn from its registry entry and connection state.
 function ConnectorCard({
   item,
-  order,
+  enter,
   onChange,
   autoOpenPicker,
 }: {
   item: Integration
-  order: number
+  enter: StaggerItem // the grid's first-draw stagger (useStaggerOnce)
   onChange: () => void
   autoOpenPicker?: boolean
 }) {
@@ -438,7 +435,7 @@ function ConnectorCard({
   const limit = item.last_run?.limit_reached ?? 0
 
   return (
-    <Card item={item} order={order}>
+    <Card item={item} enter={enter}>
       {item.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">
           The server needs an OAuth app before {item.name} can be connected
@@ -728,6 +725,7 @@ export function IntegrationsView({
       query.state.data?.integrations.some((i) => i.status === "syncing") ? 3000 : false,
   })
   const items = data?.integrations ?? null
+  const enter = useStaggerOnce(items !== null)
   const workspace = data?.workspace ?? ""
   const { refresh: refreshIndex } = useIndexStatus()
 
@@ -776,14 +774,14 @@ export function IntegrationsView({
               <ConnectorCard
                 key={item.id}
                 item={item}
-                order={i}
+                enter={enter(i)}
                 onChange={load}
                 autoOpenPicker={openPickerFor === item.id}
               />
             ))}
 
             {uploads && (
-              <Card item={uploads} order={live.length}>
+              <Card item={uploads} enter={enter(live.length)}>
                 <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
                   <Stat label="Files" value={uploads.doc_count ?? 0} />
                 </div>

@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
@@ -14,8 +14,8 @@ function Glyph({ char, className }: { char: string; className: string }) {
   )
 }
 
-// Every status shares the one glass surface. The rich-colour variables are set too, so
-// a `richColors` toaster still gets the tokens rather than Sonner's own palette.
+// Every status shares the one glass surface; the glyph carries the status colour. No
+// `richColors`: it would only swap in Sonner's own palette.
 const surface = {
   bg: "var(--glass-bg-strong)",
   border: "var(--glass-border)",
@@ -47,13 +47,6 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-text": surface.text,
           "--normal-border": surface.border,
           "--normal-border-hover": surface.border,
-          ...Object.fromEntries(
-            ["success", "info", "warning", "error"].flatMap((kind) => [
-              [`--${kind}-bg`, surface.bg],
-              [`--${kind}-border`, surface.border],
-              [`--${kind}-text`, surface.text],
-            ])
-          ),
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }

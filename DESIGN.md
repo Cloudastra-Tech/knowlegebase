@@ -94,10 +94,10 @@ pages) is always dark, with the ASCII brain, larger type, pill buttons and a ser
 The working register (chat, knowledge, admin) uses 32px controls, 14px body text and one 24px
 title per screen.
 
-**Status.** The token layer, the theme, print, the motion tokens, the shared ASCII loop and the
-ASCII and glass kit (`components/ascii/*`, `components/glass/*`, `ScreenHeader`, the account
-menu's theme items) are in place. The primitives and the screens move over in the changes that
-follow, so parts of the app still show the older, plainer styling.
+**Status.** Every screen is on Signal Glass: the tokens, the theme, print, the motion tokens,
+the shared ASCII loop, the primitives, the ASCII and glass kit, the shell, chat, the marketing
+and auth pages and every app screen. The values below are the ones in the code after tuning.
+The operator console and the browser extension get the tokens only.
 
 ## Theme
 
@@ -111,7 +111,9 @@ follow, so parts of the app still show the older, plainer styling.
 - **Print is always light:** black on white. `@media print` resets the tokens and the `dark:`
   variant never applies in print (`@custom-variant dark` sits inside `@media not print`).
   Screen chrome carries `data-print="hide"`; scrolling boxes carry `data-print="flow"`.
-- The browser extension's side panel imports the same `index.css` and stays light.
+- The browser extension's side panel imports the same `index.css` and stays light. Its
+  `panel.css` lists the frontend files whose classes it needs (`@source`): `components/ui`
+  and the ASCII spinner that Button's `loading` draws.
 
 ## Colors
 
@@ -133,15 +135,15 @@ reading as colour.
 | `success`, `warning`, `destructive` | status; always with a glyph as well as the colour |
 | `chart-1` … `chart-5` | charts: signal first, then teal, grey-green, amber, grey |
 | `sidebar-*` | the chat sidebar; `sidebar-primary` is the signal |
-| `ascii-ambient`, `ascii-field`, `ascii-ink`, `ascii-signal` | the app's background field (7%), the landing field (16%), the brain (85%), its sparks |
+| `ascii-ambient`, `ascii-field`, `ascii-ink`, `ascii-signal` | the app's background field (9% on dark, 5% on Paper), the landing field (16%), the brain (85%), its sparks |
 
 ### Named rules
 **The One Signal Rule.** Emphasis comes from weight, size and the step between foreground and
 muted text. The signal marks state, never hierarchy. There is no second accent.
 
 **The Status Token Rule.** Success is `success`, warning is `warning`, errors are
-`destructive`. Never raw Tailwind palette colours (`emerald-*`, `amber-*`, `blue-*`); the ones
-still in the code are being replaced.
+`destructive`. Never raw Tailwind palette colours (`emerald-*`, `amber-*`, `blue-*`); there
+are none left in `frontend/src`.
 
 **Contrast on the worst composite.** Check text contrast on glass at its lowest alpha over a field
 glyph at its highest alpha, not on the flat token.
@@ -190,13 +192,15 @@ a landing, sign-in or auth heading.
 
 **The Tight Heading Rule.** Semibold headings use tight tracking and `text-balance`; body text
 never does. **No off-scale sizes:** `text-reading` and `text-ascii` are the only additions to
-Tailwind's scale.
+Tailwind's scale. `cn()` (`lib/utils.ts`) knows them as font sizes, so they survive next to a
+text colour; import `cn` from there, never from the `cn` package itself (the shadcn CLI writes
+`from "cn"` into new primitives: change it).
 
 ## ASCII
 
 | Place | What | Motion |
 |---|---|---|
-| App background | one fixed field at `--ascii-ambient`, masked to about 15% under the content column | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
+| App background | one fixed field at `--ascii-ambient`, at full strength out to 36rem from the centre (the widest screen's edge, so the sides read as ASCII at 1280), fading to 15% by 26rem in, under the content; 15% everywhere on a phone. The chat draws its own (`chat-backdrop.tsx`, 22% under the reading column, a mint glow while thinking) | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
 | Thinking | a braille spinner plus a status line that decodes on change | 80ms frames; decode ≤ 240ms |
 | Inline loading | an ASCII spinner in place of `Loader2` | 80ms `steps()`; a static `•••` with reduced motion |
 | Empty states | 6–14 rows of hand-drawn art with real text beside it | one scan or blink, no faster than every 2s |
@@ -220,7 +224,10 @@ Tokens in `index.css` (and `lib/motion.ts` for Motion):
   citation chip resolving 160ms; an answer's sources stagger 30ms (`--stagger-sources`).
 - **Distances:** `--enter-y` 6px, `--enter-scale` and `--press-scale` 0.97. All zero under
   reduced motion.
-- **Stagger:** 40ms apart, at most 6 items, first mount only.
+- **Stagger:** 40ms apart, at most 6 items, first mount only: `useStaggerOnce(ready)` in
+  `lib/motion.ts` gives each item its class and delay for the first draw, then nothing, so a
+  refetch, a filter or a new item doesn't animate (the Integrations and My connections grids).
+  Never on tables or lists read closely.
 
 | Interaction | Rule |
 |---|---|
@@ -232,7 +239,7 @@ Tokens in `index.css` (and `lib/motion.ts` for Motion):
 | Dialog | 220ms in / 150ms out, from the centre |
 | Sheet | full-edge slide, 280 / 200ms, `ease-drawer` |
 | Screen change | content rises `--enter-y` with a fade on non-glass children, 200ms; no exit |
-| Chat | a question just sent is pinned to the top and its answer grows below it; nothing scrolls while it streams, and "Jump to latest" is instant with reduced motion. New messages rise 6px; history never animates; citations stagger once on completion |
+| Chat | a question just sent is pinned to the top and its answer grows below it; nothing scrolls while it streams, and "Jump to latest" is instant with reduced motion. New messages rise 6px; history never animates (a chat opened from history shows Jump to latest without its entrance until it's scrolled or asked in); citations stagger once on completion |
 | Toast | Sonner's own motion |
 
 **Reduced motion is "fewer and gentler":** movement goes, fades that help understanding stay.
@@ -292,9 +299,28 @@ Borders are 1px hairlines.
   `<select>`, `<textarea>`, or a native date or month input. A missing primitive comes from the
   shadcn CLI.
 - **Buttons:** 32px (28 `sm`, 36 `lg`), 10px radius. Primary is near-white ink on dark. Focus is
-  the signal ring.
+  the signal ring. Variants: `default`, `outline`, `secondary`, `ghost`, `destructive`, `link`,
+  and `glass` (a secondary action sitting on glass: the subtle fill and a hairline highlight).
+  `loading` makes it busy and disabled with the ASCII spinner before the label; the label says
+  what's happening ("Saving…"). Transitions name their properties (colour, background, border,
+  shadow, transform), 120ms; press scales to `--press-scale`.
+- **Badges:** pill, 20px. `mono` (states and roles: live, soon, admin; mono on a hairline),
+  `signal` (live, cited, done: signal text on a faint signal tint) and `warning` (a flag on a
+  row, such as Knowledge's mono `!` on an item the scan found instructions to an AI in: warning
+  text on a warning hairline, with the words in an `sr-only` span and the tooltip), besides
+  shadcn's own.
+- **Cards:** `variant` `default` (opaque card, glass hairline), `glass` (the chrome tier) or
+  `subtle` (`glass-subtle`).
+- **Tabs:** `default`, `line`, and `glass` (a translucent rail with one sliding thumb, instant
+  from the keyboard). `panels={false}` for tabs used as a switch (a filter, a URL per tab).
 - **Panels:** 18px radius, hairline, 20px padding, `glass-subtle` in the redesigned screens.
-- **Tables:** opaque (`bg-card`), solid sticky header, `tabular-nums`, no stagger, no glass.
+  `description` is the muted line under the title, across the panel's width; it also describes
+  the region. Don't fake it with a first child and a negative margin.
+- **Tables:** opaque (`bg-card`), solid sticky header, `tabular-nums`, no stagger, no glass;
+  `TableCell mono` for IDs and timestamps.
+- **Toasts:** Sonner on the strong glass tier, the status as a mono glyph in its token colour
+  (`✓ i ! ×`), the ASCII spinner for loading. No `richColors`.
+- **Switch, Toggle:** colour, background, border and shadow transitions only, 150ms.
 - **Route pass** (sign-in): as a work email is typed, a strip under the field resolves the
   workspace, the sign-in method and where roles come from; `aria-live="polite"`, debounced 350ms;
   values rise in 300ms, motion-safe only.
@@ -308,8 +334,28 @@ Borders are 1px hairlines.
   `AsciiProgress`, `AsciiLoader`. New fields draw on canvas: axe weighs `aria-hidden` text on
   contrast too, and a dim `<pre>` with nothing over it fails. Art in empty states uses the full
   `muted-foreground` for the same reason.
+- **Glass pieces** (`components/glass/*`): `Panel`, `GlassPanel`, `StatusDot` (live, syncing,
+  warning, error, off; a ping ring only for live, motion-safe; the state in words beside it).
+- **Motion helpers** (`lib/motion.ts`): `ease`, `dur`, `spring` and `stagger` mirror the CSS
+  tokens for Motion; `useStaggerOnce`; `markInstant()` before a keyboard-driven navigation;
+  `usePrefersReducedMotion()` for what JS decides (a scroll's `behavior`).
 - **Reduce effects** is kept in `localStorage` (`effects`) and applied before the first paint
   by `theme-init.js`.
+
+## Checks
+
+- `frontend/e2e/motion.spec.ts`: the app field's canvas doesn't change over 1s with reduced
+  motion (and moves again when it's switched off); `html.dark` is the default and a Light choice
+  survives a reload; the sign-in page and a toast on it are dark with Light chosen; a chat
+  opened from history has no running animation.
+- `frontend/e2e/ux-a11y.spec.ts`: axe on every main screen at 1280 and 390; at 390 the page fits
+  and no scrolling box inside it is pushed sideways (`overflowingScrollers`; a box meant to scroll
+  sideways carries an `overflow-x-auto` or `overflow-auto` class).
+- `frontend/e2e/owner-shots.spec.ts`: with `E2E_OWNER_SHOTS=<folder>`, every screen in both
+  themes at 1280 and 390, from the e2e server's fake data, as `<screen>-<theme>-<width>.png`.
+- Grep guards over `frontend/src`: no raw `<input`, `<select`, `<textarea`; no raw palette
+  colours; no `transition-all`; no `ease-in` on its own; no `scale-0` or `zoom-in-0`; no
+  `Loader2`, `animate-pulse` or `animate-spin` outside the kit.
 
 ## Do's and Don'ts
 

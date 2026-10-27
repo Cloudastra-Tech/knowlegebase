@@ -5,15 +5,18 @@
    "Reduce effects" (:root[data-effects="reduced"]). */
 
 /* The field fades out under content: full strength in the gutters, about 15% under
-   the centre column (as wide as the widest screen, max-w-6xl). */
+   the centre column. Full strength reaches in to the widest screen's edge (max-w-6xl,
+   36rem from the centre), so at 1280 the sides read as ASCII, and it has faded by the
+   settings screens' text (max-w-5xl plus a panel's padding, about 26rem in). On a
+   phone it's the 15% everywhere. */
 .ascii-mask-reading-column {
   mask-image: linear-gradient(
     to right,
     #000 0,
-    #000 calc(50% - 40rem),
-    rgb(0 0 0 / 15%) calc(50% - 30rem),
-    rgb(0 0 0 / 15%) calc(50% + 30rem),
-    #000 calc(50% + 40rem),
+    #000 calc(50% - 36rem),
+    rgb(0 0 0 / 15%) calc(50% - 26rem),
+    rgb(0 0 0 / 15%) calc(50% + 26rem),
+    #000 calc(50% + 36rem),
     #000 100%
   );
 }
