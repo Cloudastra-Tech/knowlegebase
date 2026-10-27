@@ -5,7 +5,9 @@ chats are kept). Questions and answers are added by the chat stream
 CURRENT principals (their role and groups now) against what each answer was built from
 (kb/services/conversations.visible_to)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 import access
@@ -126,6 +128,18 @@ def get_conversation(cid: str, user=Depends(current_user), role=Depends(current_
             "forked_from": conversations.forked_from(ws_of(user), user["username"], conv),
             "messages": conversations.view(conv, messages, conv["active_leaf_id"], viewer,
                                            admin, feedback)}
+
+
+@router.get("/api/conversations/{cid}/export")
+def export_conversation(cid: str, user=Depends(current_user), viewer=Depends(current_viewer)):
+    """The conversation as shown, as a markdown file (C25): each question, and
+    each answer with its sources as footnotes. An answer the reader can't see now
+    is left out, as on screen."""
+    conv = _own(user, cid)
+    text = conversations.export_markdown(conv, store.messages_of(cid), viewer)
+    name = re.sub(r"[^A-Za-z0-9 ._-]+", "", conv["title"] or "chat").strip()[:60] or "chat"
+    return Response(text, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.md"'})
 
 
 @router.patch("/api/conversations/{cid}")

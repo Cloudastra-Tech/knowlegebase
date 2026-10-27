@@ -266,7 +266,7 @@ export function HrOnly({ admin = false }: { admin?: boolean }) {
 
 export function Screen({ children }: { children: ReactNode }) {
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto" data-print="flow">
       <LazyPage>{children}</LazyPage>
     </div>
   )
@@ -284,9 +284,10 @@ export function BillingScreen() {
 }
 
 export function DocsScreen() {
+  const user = useUser()
   return (
     <Screen>
-      <DocsView />
+      <DocsView admin={user.role === "admin"} />
     </Screen>
   )
 }
@@ -524,12 +525,21 @@ export function InsightsScreen({ tab }: { tab: InsightsTab }) {
         tab={tab}
         canEdit={user.role === "admin"}
         onTabChange={(next) =>
-          navigate(next === "overview" ? "/admin/insights" : "/admin/insights/feedback")
+          navigate(next === "overview" ? "/admin/insights" : `/admin/insights/${next}`)
         }
         onAddVerified={(gapId) => navigate(`/admin/verified?from_gap=${gapId}`)}
         onDraftDoc={async (gapId) => {
           try {
             const draft = await drafts.fromGap(gapId)
+            toast.success("Writing a draft. It's in Documents, under Drafts.")
+            navigate(`/documents?draft=${draft.id}`)
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Couldn't start the draft.")
+          }
+        }}
+        onDraftQuestion={async (questionId) => {
+          try {
+            const draft = await drafts.fromQuestion(questionId)
             toast.success("Writing a draft. It's in Documents, under Drafts.")
             navigate(`/documents?draft=${draft.id}`)
           } catch (err) {

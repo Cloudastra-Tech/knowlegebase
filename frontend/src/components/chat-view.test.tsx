@@ -1,6 +1,6 @@
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { session, type KnowledgeItem, type User } from "@/lib/api"
 import { GENERIC_STARTERS, startersFrom } from "@/lib/chat-starters"
@@ -200,6 +200,40 @@ describe("the chat", () => {
     })
     renderApp("/chat/c1")
     expect(await screen.findByText(/Your next question starts a new chat/)).toBeInTheDocument()
+  })
+
+  it("downloads the conversation as markdown, and prints it", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": SAVED,
+      "GET /api/conversations/c1/export": () =>
+        new Response("# Refunds\n", {
+          headers: {
+            "Content-Type": "text/markdown",
+            "Content-Disposition": 'attachment; filename="Refunds.md"',
+          },
+        }),
+    })
+    const saved: string[] = []
+    URL.createObjectURL = vi.fn(() => "blob:chat")
+    URL.revokeObjectURL = vi.fn()
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download)
+    })
+    const print = vi.spyOn(window, "print").mockImplementation(() => {})
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Chat options" }))
+    await user.click(screen.getByRole("menuitem", { name: "Download as Markdown" }))
+    await waitFor(() => expect(saved).toEqual(["Refunds.md"]))
+
+    await user.click(screen.getByRole("button", { name: "Chat options" }))
+    await user.click(screen.getByRole("menuitem", { name: "Print" }))
+    await waitFor(() => expect(print).toHaveBeenCalled())
   })
 
   it("goes back to a new chat when the conversation isn't there", async () => {

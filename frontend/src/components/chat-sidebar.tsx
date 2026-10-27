@@ -381,9 +381,10 @@ export function ChatSidebar({
           <SquarePen data-icon="inline-start" />
           New chat
           <KbdGroup className="ml-auto hidden md:inline-flex">
-            <Kbd>{MOD_KEY}</Kbd>
-            <Kbd>⇧</Kbd>
-            <Kbd>O</Kbd>
+            {/* Darker than Kbd's own grey: that fails contrast on the sidebar. */}
+            <Kbd className="text-foreground/70">{MOD_KEY}</Kbd>
+            <Kbd className="text-foreground/70">⇧</Kbd>
+            <Kbd className="text-foreground/70">O</Kbd>
           </KbdGroup>
         </Button>
         <div className="relative">
@@ -458,7 +459,9 @@ export function ChatSidebar({
               }
             >
               {folders.length === 0 && (
-                <p className="px-2 text-xs text-muted-foreground">Group chats in folders from their menu.</p>
+                <SidebarMenuItem>
+                  <p className="px-2 text-xs text-muted-foreground">Group chats in folders from their menu.</p>
+                </SidebarMenuItem>
               )}
               {folders.map((folder) => {
                 const inside = grouped.byFolder.get(folder.id) ?? []

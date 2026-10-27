@@ -2,7 +2,16 @@
 // (/api/conversations: history, folders, search, branches, feedback on answers),
 // the workspace's chat settings, and share links (/api/shares, /api/shared).
 
-import { ApiError, json, request, retryAfterOf, seg, session, unauthorized } from "@/lib/api/client"
+import {
+  ApiError,
+  download,
+  json,
+  request,
+  retryAfterOf,
+  seg,
+  session,
+  unauthorized,
+} from "@/lib/api/client"
 import type {
   ChatFolder,
   ChatReply,
@@ -108,6 +117,8 @@ export const chatApi = {
     request<ConversationSummary>(`/conversations/${seg(id)}`, json("PATCH", { title })),
   deleteConversation: (id: string) =>
     request<{ ok: true }>(`/conversations/${seg(id)}`, json("DELETE")),
+  // The chat as shown, as a markdown file (answers you can't see now left out).
+  exportConversation: (id: string) => download(`/conversations/${seg(id)}/export`),
   // "Branch in new chat": a new chat with a copy of this one up to the answer.
   forkConversation: (id: string, messageId: string) =>
     request<ConversationSummary>(
@@ -147,6 +158,12 @@ export const chatApi = {
     ).then((r) => r.shares),
   revokeShare: (id: string) => request<{ ok: true }>(`/shares/${seg(id)}`, json("DELETE")),
   openShare: (token: string) => request<SharedChat>(`/shared/${seg(token)}`),
+  // "Continue in my chats": a chat of your own with what the link shows you.
+  continueShare: (token: string) =>
+    request<{ id: string; title: string; skipped: number }>(
+      `/shared/${seg(token)}/continue`,
+      json("POST"),
+    ),
 
   giveFeedback: (
     messageId: string,

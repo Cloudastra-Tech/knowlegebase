@@ -53,7 +53,8 @@ export function AttachButton({
         type="file"
         multiple
         accept={limits?.types.join(",")}
-        className="sr-only"
+        // Not sr-only: Input's w-full would make it as wide as the page, past a phone's edge.
+        className="hidden"
         tabIndex={-1}
         aria-hidden
         onChange={(e) => {

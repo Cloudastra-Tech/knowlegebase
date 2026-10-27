@@ -46,7 +46,32 @@ SUMMARY = ("documents", "chunks", "restricted", "embedded", "added", "changed", 
 
 def new_index_state():
     return {"status": "idle", "step": 0, "total": 4, "message": "", "pending": False,
-            "summary": None, "error": None, "finished_at": None}
+            "summary": None, "error": None, "reason": None, "finished_at": None}
+
+
+# Why a run failed, as a code the UI words for everyone (the raw `error` is for
+# admins only: kb/routers/index.py). Matched on the job's error text, so rows
+# written before this existed get a code too. First match wins.
+REASONS = (
+    ("no_ai_key", ("missing credentials", "api_key client option", "openai_api_key",
+                   "unable to locate credentials", "no aws region", "none are saved",
+                   "no role arn")),
+    ("ai_key_rejected", ("authenticationerror", "incorrect api key", "invalid api key",
+                         "error code: 401", "permissiondeniederror", "accessdenied",
+                         "unrecognizedclient", "invalidsignature", "couldn't assume the aws role")),
+    ("ai_quota", ("ratelimiterror", "insufficient_quota", "error code: 429", "throttling")),
+    ("ai_unreachable", ("apiconnectionerror", "apitimeouterror", "connection error",
+                        "connectionerror", "timed out", "endpointconnectionerror")),
+)
+
+
+def reason_of(error):
+    """The REASONS code for a job's error text: unknown when none matches, None
+    without an error."""
+    if not error:
+        return None
+    text = error.lower()
+    return next((code for code, marks in REASONS if any(m in text for m in marks)), "unknown")
 
 
 def lane(ws):
@@ -309,8 +334,8 @@ def index_status(ws):
                       message=p["message"], pending=bool(queued))
     elif queued:
         retry = queued[-1]["error"]
-        status.update(status="indexing", message=f"Trying again soon ({retry})" if retry
-                      else "Queued")
+        status.update(status="indexing", message="Trying again soon" if retry else "Queued",
+                      error=retry, reason=reason_of(retry))
     elif finished:
         last = finished[0]
         if last["status"] == "done":
@@ -318,6 +343,6 @@ def index_status(ws):
             status.update(message="Up to date", finished_at=last["finished_at"],
                           summary={k: result[k] for k in SUMMARY if k in result} or None)
         else:
-            status.update(status="error", error=last["error"], message=last["error"],
-                          finished_at=last["finished_at"])
+            status.update(status="error", error=last["error"], message="Indexing failed",
+                          reason=reason_of(last["error"]), finished_at=last["finished_at"])
     return status

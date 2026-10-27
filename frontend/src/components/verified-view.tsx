@@ -501,7 +501,7 @@ export function VerifiedView() {
         </Button>
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mt-6">
+      <Tabs panels={false} value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mt-6">
         <TabsList>
           <TabsTrigger value="all">All{answers ? ` (${answers.length})` : ""}</TabsTrigger>
           <TabsTrigger value="review">Review queue{answers ? ` (${queue.length})` : ""}</TabsTrigger>

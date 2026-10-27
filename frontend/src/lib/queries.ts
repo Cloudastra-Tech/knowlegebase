@@ -121,6 +121,14 @@ export const queries = {
   ratedAnswers: () =>
     queryOptions({ queryKey: ["rated-answers", session.role], queryFn: () => insights.ratedAnswers(-1) }),
   evalCases: () => queryOptions({ queryKey: ["eval-cases"], queryFn: insights.evalCases }),
+  // Unanswered questions, open or resolved (the Not found tab).
+  notFound: (resolved: boolean, from?: string, to?: string) =>
+    queryOptions({
+      queryKey: ["not-found", session.role, resolved, from ?? "", to ?? ""],
+      queryFn: () => insights.notFound(resolved, from, to),
+    }),
+  // The workspace's background jobs (admins).
+  jobs: () => queryOptions({ queryKey: ["jobs"], queryFn: api.jobs }),
   signInSettings: () => queryOptions({ queryKey: ["sign-in-settings"], queryFn: signIn.get }),
   scimSettings: () => queryOptions({ queryKey: ["scim-settings"], queryFn: signIn.scim }),
   // API keys: the signed-in person's own, and (admin) the workspace's API and MCP settings.

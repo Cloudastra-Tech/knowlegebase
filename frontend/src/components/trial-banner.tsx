@@ -34,6 +34,7 @@ export function TrialBanner({ user }: { user: User }) {
     <div
       role="status"
       data-testid="trial-banner"
+      data-print="hide"
       className={cn(
         "border-b px-4 py-2 text-center text-xs",
         urgent

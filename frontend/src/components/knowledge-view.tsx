@@ -128,7 +128,7 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
             className="pl-9"
           />
         </div>
-        <Tabs value={source} onValueChange={setSource}>
+        <Tabs panels={false} value={source} onValueChange={setSource}>
           <TabsList>
             <TabsTrigger value="all">All</TabsTrigger>
             {sources.map((s) => (

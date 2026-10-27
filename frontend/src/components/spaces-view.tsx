@@ -340,7 +340,7 @@ function FilesTab({ space }: { space: SpaceDetail }) {
           type="file"
           multiple
           accept={limits?.types.join(",")}
-          className="sr-only"
+          className="hidden"
           tabIndex={-1}
           aria-hidden
           onChange={(e) => {

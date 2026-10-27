@@ -437,6 +437,31 @@ def gaps_for(ws, role, mode):
     return out
 
 
+def not_found_for(ws, role, mode, since_day, until_day, resolved=False):
+    """The questions the assistant couldn't answer, newest first, as a viewer in
+    `role` may see them (the Not found tab): a question whose search reached
+    documents beyond the role is left out (counted in `hidden`), and its text
+    shows only while the retention mode keeps any (else None)."""
+    rows, hidden = [], 0
+    for r in log_store.not_found(ws, since_day, until_day, resolved):
+        if not visible(role, r["max_access"]):
+            hidden += 1
+            continue
+        rows.append({"id": r["id"], "question": r["question"] if mode != "metadata" else None,
+                     "at": r["at"], "day": r["day"], "surface": r["surface"],
+                     "language": r.get("language"), "resolved_at": r.get("resolved_at")})
+    return {"questions": rows, "hidden": hidden}
+
+
+def find_not_found(ws, role, log_id):
+    """One unanswered question `role` may see, with its text, or None."""
+    r = log_store.get(ws, log_id)
+    if (not r or r["outcome"] != "not_found" or not r["question"]
+            or not visible(role, r["max_access"])):
+        return None
+    return r
+
+
 # ---- Connectors -----------------------------------------------------------------------------
 def connector_health(ws):
     out = []

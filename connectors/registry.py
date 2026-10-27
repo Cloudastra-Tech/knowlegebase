@@ -20,7 +20,7 @@ CONNECTORS = {c.PROVIDER: c for c in LIVE}
 
 # Marketed as soon (connectors.md §3.1). `icon` is a simple-icons slug, if there is one.
 SOON = (
-    {"id": "slack", "name": "Slack", "icon": None},
+    {"id": "slack", "name": "Slack messages", "icon": None},
 )
 ICONS = {"google_drive": "googledrive", "notion": "notion", "outline": "outline",
          "website": None, "confluence": "confluence", "confluence_dc": "confluence",

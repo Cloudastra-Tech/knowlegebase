@@ -364,7 +364,7 @@ export function ActivityView({ signIns }: { signIns: ReactNode }) {
               : "Sign-ins through your providers and with passwords, and changes providers made by themselves."}
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+        <Tabs panels={false} value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList>
             <TabsTrigger value="changes">Admin changes</TabsTrigger>
             <TabsTrigger value="sign-ins">Sign-ins</TabsTrigger>

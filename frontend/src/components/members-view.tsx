@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { saveFile, signIn, workspace, type AccountRole, type Member } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
@@ -52,6 +53,25 @@ function roleNote(m: Member) {
       : "set by an admin"
   if (m.role_source === "groups") return "from their groups"
   return "default"
+}
+
+// SCIM: the identity provider manages them. It sets whether they may sign in, and
+// would add them back if removed here, so those two are changed there (the API
+// refuses them too). Turning their access off stays possible, for an emergency.
+const SCIM_NOTE =
+  "Managed by your identity provider (SCIM). Their access and membership are changed there; a role you pick here still wins over their groups."
+
+function ScimBadge() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className="cursor-default font-normal" tabIndex={0}>
+          SCIM
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">{SCIM_NOTE}</TooltipContent>
+    </Tooltip>
+  )
 }
 
 function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () => void }) {
@@ -124,6 +144,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{m.name}</span>
           {me && <Badge variant="secondary" className="font-normal">You</Badge>}
+          {m.scim_managed && <ScimBadge />}
           {m.disabled && <Badge variant="destructive">Access off</Badge>}
           {m.has_password && (
             <KeyRound className="size-3.5 text-muted-foreground" aria-label="Has a password" />
@@ -194,8 +215,9 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem
+              disabled={m.scim_managed && m.disabled}
               onSelect={() =>
                 save(
                   { disabled: !m.disabled },
@@ -207,14 +229,28 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
             >
               {m.disabled ? "Turn access back on" : "Turn access off"}
             </DropdownMenuItem>
+            {m.scim_managed && m.disabled && (
+              <p className="px-2 pb-1 text-xs text-muted-foreground">
+                Turn it back on in your identity provider.
+              </p>
+            )}
             <DropdownMenuItem onSelect={() => setConfirmSignOut(true)}>
               Sign out everywhere
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={downloadData}>Download their data</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive" onSelect={() => setConfirm(true)}>
+            <DropdownMenuItem
+              className="text-destructive"
+              disabled={m.scim_managed}
+              onSelect={() => setConfirm(true)}
+            >
               Remove
             </DropdownMenuItem>
+            {m.scim_managed && (
+              <p className="px-2 pb-1 text-xs text-muted-foreground">
+                Remove them in your identity provider.
+              </p>
+            )}
             <DropdownMenuItem
               className="text-destructive"
               onSelect={() => {

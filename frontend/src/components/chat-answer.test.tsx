@@ -214,8 +214,8 @@ describe("inline citations", () => {
     )
     const cards = screen.getAllByRole("button", { name: /^Open source/ })
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
-      "Open source 1: handbook.txt, Refund policy",
-      "Open source 2: Support plan, Page 3",
+      "Open source 1: handbook.txt, Refund policy, Company documents",
+      "Open source 2: Support plan, Page 3, Google Drive",
     ])
   })
 
