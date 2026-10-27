@@ -199,3 +199,36 @@ describe("roles", () => {
     expect(screen.queryByRole("link", { name: "Documents" })).not.toBeInTheDocument()
   })
 })
+
+describe("the app shell", () => {
+  it("draws one background field, and keeps the chat mounted but out of reach elsewhere", async () => {
+    session.setToken("tok-6")
+    mockApi({ ...SIGNED_IN, "GET /api/auth/me": ADMIN })
+    renderApp("/knowledge")
+
+    expect(await screen.findByText("Knowledge base")).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-slot="ascii-field"]')).toHaveLength(1)
+    // Laid out (so its scroll position survives), but inert while Knowledge is open.
+    const chat = document.querySelector("main > [inert]")
+    expect(chat).not.toBeNull()
+    expect(chat).toHaveClass("invisible")
+  })
+
+  it("brings a screen in by mouse, and at once from the keyboard (markInstant)", async () => {
+    session.setToken("tok-7")
+    mockApi({ ...SIGNED_IN, "GET /api/auth/me": ADMIN })
+    const router = renderApp("/knowledge")
+
+    expect(await screen.findByText("Knowledge base")).toBeInTheDocument()
+    expect(document.querySelector("[data-screen]")).toHaveAttribute("data-enter")
+
+    document.documentElement.dataset.instant = "" // what markInstant() sets, for two frames
+    try {
+      await router.navigate("/integrations")
+      expect(await screen.findByText("Integrations", { selector: "h2" })).toBeInTheDocument()
+      expect(document.querySelector("[data-screen]")).not.toHaveAttribute("data-enter")
+    } finally {
+      delete document.documentElement.dataset.instant
+    }
+  })
+})
