@@ -68,6 +68,18 @@ TEMPLATES = {
         '<p style="color:#71717a;font-size:13px">If you think this is a mistake, ask your '
         "company's admin.</p>",
     ),
+    "verified_review": (
+        "Verified answer to review: {title}",
+        "The verified answer \"{title}\" in the {workspace_name} workspace {state}.\n\n"
+        "You own it. Check it still matches the documents, then mark it reviewed (or edit "
+        "it):\n{link}\n",
+        "<p>The verified answer <strong>{title}</strong> in the {workspace_name} workspace "
+        "{state}.</p>"
+        "<p>You own it. Check it still matches the documents, then mark it reviewed (or "
+        "edit it).</p>"
+        '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
+        'background:#18181b;color:#fafafa;text-decoration:none">Review it</a></p>',
+    ),
     "notice": (
         "{title}",
         "{body}\n",

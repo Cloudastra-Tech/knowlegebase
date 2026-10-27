@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query"
 
-import { api, apiKeys, insights, session, signIn, slack } from "@/lib/api"
+import { api, apiKeys, assistant, insights, session, signIn, slack } from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
 // After a change, invalidate the key and the screens showing it load it again.
@@ -83,6 +83,14 @@ export const queries = {
   // API keys: the signed-in person's own, and (admin) the workspace's API and MCP settings.
   myApiKeys: () => queryOptions({ queryKey: ["api-keys", "mine"], queryFn: apiKeys.myApiKeys }),
   adminApi: () => queryOptions({ queryKey: ["api-keys", "admin"], queryFn: apiKeys.adminApi }),
+  // The assistant's name and whether members see the steps panel (everyone).
+  assistantInfo: () =>
+    queryOptions({ queryKey: ["assistant", "info"], queryFn: assistant.info, meta: { silent: true } }),
+  // Its settings and glossary (admins), and the verified answers (HR and admins).
+  assistantSettings: () =>
+    queryOptions({ queryKey: ["assistant", "settings"], queryFn: assistant.settings }),
+  verifiedAnswers: () =>
+    queryOptions({ queryKey: ["verified-answers"], queryFn: assistant.verifiedAnswers }),
   slackApp: () => queryOptions({ queryKey: ["slack-app"], queryFn: slack.get }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>

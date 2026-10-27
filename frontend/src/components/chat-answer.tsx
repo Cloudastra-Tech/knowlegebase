@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode, type Ref } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
+  BadgeCheck,
   BookOpen,
   Check,
   ChevronLeft,
@@ -52,6 +53,7 @@ import {
   type Source,
   type Step,
   type StepLine,
+  type VerifiedBadge,
 } from "@/lib/api"
 import { branchOf } from "@/lib/chat-history"
 import { CitationsContext, citedNumber, placeOf, remarkCitations } from "@/lib/citations"
@@ -82,6 +84,7 @@ export interface Message {
   followups?: string[] // questions to ask next (the last answer shows them)
   siblings?: string[] // its versions, with it: "‹ 2 / 3 ›" (lib/chat-history.ts branchOf)
   copy?: string | null // a shared answer's markdown, ready to copy
+  verified?: VerifiedBadge | null // served from a verified answer (PL-27)
 }
 
 // What an answer's buttons do. Without the optional ones (a shared chat, read only)
@@ -96,7 +99,9 @@ export interface AnswerActions {
   onBranch?: (message: Message, to: string) => void // show another version
   onFollowup?: (question: string) => void
   onAskYourself?: (question: string) => void // a withheld answer, asked with your own role
+  onVerify?: (message: Message) => void // HR / Admin: "Save as verified answer"
   busy?: boolean // an answer is being written: no new branches meanwhile
+  hideSteps?: boolean // the workspace's admin turned the steps panel off for members
 }
 
 // One line of the sources under an answer. A cited passage opens in the source
@@ -561,6 +566,25 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
       </p>
     )
   }
+  if (message.verified) {
+    // C18: an approved answer, in a bordered panel that says who verified it and when.
+    const v = message.verified
+    const date = new Date(v.at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })
+    return (
+      <div className="rounded-xl border border-foreground/15 bg-background" aria-label="Verified answer">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-border/70 px-3 py-2 text-xs">
+          <BadgeCheck className="size-4 text-foreground" aria-hidden />
+          <span className="font-medium text-foreground">
+            Verified by {v.by} · {date}
+          </span>
+          <span className="min-w-0 truncate text-muted-foreground">{v.title}</span>
+        </div>
+        <div className="px-3 py-2.5">
+          <Markdown text={text} />
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="space-y-2">
       {state === "partial" && (
@@ -694,7 +718,7 @@ function ActionRow({ message, actions }: { message: Message; actions: AnswerActi
           <Share2 />
         </IconAction>
       )}
-      {actions.onFork && message.id && shareable && (
+      {(actions.onFork || actions.onVerify) && message.id && shareable && (
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -707,9 +731,16 @@ function ActionRow({ message, actions }: { message: Message; actions: AnswerActi
             <TooltipContent>More</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="start">
-            <DropdownMenuItem disabled={actions.busy} onSelect={() => actions.onFork!(message)}>
-              <GitBranch /> Branch in new chat
-            </DropdownMenuItem>
+            {actions.onFork && (
+              <DropdownMenuItem disabled={actions.busy} onSelect={() => actions.onFork!(message)}>
+                <GitBranch /> Branch in new chat
+              </DropdownMenuItem>
+            )}
+            {actions.onVerify && !message.verified && (state === "answered" || state === "partial") && (
+              <DropdownMenuItem onSelect={() => actions.onVerify!(message)}>
+                <BadgeCheck /> Save as verified answer
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -755,7 +786,7 @@ export function AssistantMessage({
           <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
         </div>
         <div className="min-w-0 flex-1 space-y-3 pt-1">
-          <StepsPanel message={message} />
+          {!actions.hideSteps && <StepsPanel message={message} />}
           {message.limited && <LimitNotice text={message.limited} />}
           {!message.limited && (message.streaming ? message.text && <Markdown text={message.text} streaming /> : <AnswerBody message={message} actions={actions} />)}
 

@@ -220,7 +220,7 @@ def fake_agent(monkeypatch):
     import rag
     from kb.services import agents
 
-    def build(role, collection, outline):
+    def build(role, collection, outline, **settings):
         retriever, _ = rag.load_chain(role, collection)
 
         def run(question, with_sources=False, **kwargs):

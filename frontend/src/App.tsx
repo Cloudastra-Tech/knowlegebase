@@ -91,11 +91,16 @@ export default function App() {
           { to: "/documents", section: "/documents", label: "Documents" },
           { to: "/integrations", section: "/integrations", label: "Integrations" },
           { to: "/admin/insights", section: "/admin/insights", label: "Insights" },
+          { to: "/admin/verified", section: "/admin/verified", label: "Verified" },
         ]
       : []),
-    // Who may sign in: admins only (HR manages documents, not access).
+    // How the assistant answers, and who may sign in: admins only (HR manages
+    // documents, not access).
     ...(activeRole === "hr" && user.role === "admin"
-      ? [{ to: "/admin/sign-in", section: "/admin", label: "Access" }]
+      ? [
+          { to: "/admin/assistant", section: "/admin/assistant", label: "Assistant" },
+          { to: "/admin/sign-in", section: "/admin", label: "Access" },
+        ]
       : []),
   ]
   const under = (section: string) =>

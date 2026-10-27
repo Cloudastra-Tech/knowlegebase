@@ -48,6 +48,7 @@ import {
   type SavedMessage,
   type StreamEvent,
 } from "@/lib/api"
+import { useUser } from "@/lib/auth-context"
 import { FOCUS_COMPOSER, TOGGLE_SIDEBAR } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
 import { queries } from "@/lib/queries"
@@ -76,6 +77,7 @@ function fromSaved(saved: SavedMessage[], keys: Map<string, string> = new Map())
       feedback: m.feedback,
       followups: m.followups,
       siblings: m.siblings,
+      verified: m.verified,
       steps: (m.steps ?? []).map((s) => ({ ...s, done: true })),
     }
   })
@@ -153,6 +155,10 @@ export function ChatView({ role }: { role: Role }) {
   const lastAnswerRef = useRef<HTMLDivElement>(null)
   const knowledge = useQuery({ ...queries.knowledge(), meta: { silent: true } })
   const list = useQuery(queries.conversations())
+  // The workspace's admin may hide the steps panel from members (HR and admins keep it).
+  const account = useUser()
+  const assistantInfo = useQuery(queries.assistantInfo()).data
+  const hideSteps = assistantInfo?.show_steps === false && account.role === "public"
 
   // What's on screen: this screen's own session while it is the one at the address
   // (and the role it began under), else the saved conversation there, if any.
@@ -390,6 +396,7 @@ export function ChatView({ role }: { role: Role }) {
         trace: reply.steps,
         standalone: reply.standalone_question,
         followups: reply.followups,
+        verified: reply.verified,
         streaming: false,
         steps: allDone(m),
       }))
@@ -468,7 +475,13 @@ export function ChatView({ role }: { role: Role }) {
     onFork: fork,
     onBranch: showBranch,
     onFollowup: (question) => ask(question),
+    // HR and admins, viewing as HR: start a verified answer from this one (PL-27).
+    onVerify:
+      role === "hr" && account.role !== "public"
+        ? (m) => m.id && navigate(`/admin/verified?from_message=${encodeURIComponent(m.id)}`)
+        : undefined,
     busy: loading,
+    hideSteps,
   }
 
   const starters = startersFrom(knowledge.data?.items)
