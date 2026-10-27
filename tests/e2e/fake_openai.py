@@ -26,8 +26,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI()
 DIM = 64
-# A passage as the agent's search_docs tool hands it to the model (untrusted.py).
-PASSAGE = re.compile(r'<untrusted_data source="company_documents" ref="S(\d+)"[^>\n]*>\n'
+# A passage as the agent's search_docs tool hands it to the model (untrusted.py):
+# a document's, or a file attached to the chat's (source "attached_file").
+PASSAGE = re.compile(r'<untrusted_data source="(?:company_documents|attached_file)" ref="S(\d+)"'
+                     r'[^>\n]*>\n'
                      r'(.*?)\n</untrusted_data>', re.S)
 
 

@@ -19,6 +19,7 @@ import { toast } from "sonner"
 
 import { ChatSettingsDialog } from "@/components/chat-settings-dialog"
 import { ShareDialog } from "@/components/share-dialog"
+import { SpaceSwitcher } from "@/components/space-switcher"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -273,12 +274,16 @@ function Group({ label, action, children }: { label: string; action?: ReactNode;
 // they were last used. A Sheet on phones (the shadcn Sidebar's mobile mode).
 export function ChatSidebar({
   activeId,
+  spaceId,
+  onSpace,
   busy,
   onOpen,
   onNewChat,
   onDeleted,
 }: {
   activeId: string | null
+  spaceId: string | null // the space the open chat is asked in (chat.md C31)
+  onSpace: (spaceId: string | null) => void
   busy: boolean // an answer is being written in the open chat
   onOpen: (id: string) => void
   onNewChat: () => void
@@ -358,6 +363,13 @@ export function ChatSidebar({
   return (
     <Sidebar className="absolute h-full" aria-label="Chat history">
       <SidebarHeader className="gap-2">
+        <SpaceSwitcher
+          value={spaceId}
+          onChange={(id) => {
+            onSpace(id)
+            if (isMobile) setOpenMobile(false)
+          }}
+        />
         <Button
           variant="outline"
           className="w-full justify-start pointer-coarse:h-10"

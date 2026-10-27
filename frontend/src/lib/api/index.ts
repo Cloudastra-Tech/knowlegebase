@@ -15,6 +15,7 @@ import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 import { slackApi } from "@/lib/api/slack"
+import { spacesApi } from "@/lib/api/spaces"
 import { teamsApi } from "@/lib/api/teams"
 import { workspaceApi } from "@/lib/api/workspace"
 
@@ -28,6 +29,7 @@ export type * from "@/lib/api/email-in"
 export type * from "@/lib/api/extension"
 export type * from "@/lib/api/workspace"
 export type * from "@/lib/api/operator"
+export type * from "@/lib/api/spaces"
 export {
   ApiError,
   session,
@@ -59,6 +61,8 @@ export const teams = teamsApi
 export const emailIn = emailInApi
 // The browser extension: connecting it to your account.
 export const extension = extensionApi
+// Spaces, files attached to a chat, saved prompts.
+export const spaces = spacesApi
 
 // The workspace itself: export, delete, support access, audit retention; and data
 // requests about one member (admin).

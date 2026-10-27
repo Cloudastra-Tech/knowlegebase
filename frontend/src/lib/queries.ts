@@ -11,6 +11,7 @@ import {
   session,
   signIn,
   slack,
+  spaces,
   teams,
   workspace,
 } from "@/lib/api"
@@ -113,6 +114,24 @@ export const queries = {
   teamsApp: () => queryOptions({ queryKey: ["teams-app"], queryFn: teams.get }),
   emailIn: () => queryOptions({ queryKey: ["email-in"], queryFn: emailIn.get }),
   extension: () => queryOptions({ queryKey: ["extension"], queryFn: extension.get }),
+  // Your own space and the team spaces you're in; one of them; what a space can
+  // search (depends on what the app is viewed as).
+  spaces: () => queryOptions({ queryKey: ["spaces"], queryFn: spaces.spaces }),
+  space: (id: string) =>
+    queryOptions({ queryKey: ["spaces", session.role, id], queryFn: () => spaces.space(id) }),
+  sourceOptions: () =>
+    queryOptions({ queryKey: ["source-options", session.role], queryFn: spaces.sourceOptions }),
+  // Files attached to a chat, and what may be attached.
+  attachments: (conversationId: string) =>
+    queryOptions({
+      queryKey: ["attachments", conversationId],
+      queryFn: () => spaces.attachments(conversationId),
+      meta: { silent: true },
+    }),
+  attachmentLimits: () =>
+    queryOptions({ queryKey: ["attachment-limits"], queryFn: spaces.attachmentLimits, staleTime: Infinity }),
+  // Saved prompts: the workspace's and your own.
+  prompts: () => queryOptions({ queryKey: ["prompts", session.role], queryFn: spaces.prompts }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

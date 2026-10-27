@@ -34,6 +34,12 @@ const InsightsView = lazy(() =>
 const ApiKeysView = lazy(() =>
   import("@/components/api-keys-view").then((m) => ({ default: m.ApiKeysView })),
 )
+const SpacesView = lazy(() =>
+  import("@/components/spaces-view").then((m) => ({ default: m.SpacesView })),
+)
+const PromptsView = lazy(() =>
+  import("@/components/prompts-view").then((m) => ({ default: m.PromptsView })),
+)
 const VerifiedView = lazy(() =>
   import("@/components/verified-view").then((m) => ({ default: m.VerifiedView })),
 )
@@ -218,6 +224,26 @@ export function ApiKeysScreen() {
   return (
     <Screen>
       <ApiKeysView />
+    </Screen>
+  )
+}
+
+// /spaces, /spaces/:spaceId: your own space and your team spaces.
+export function SpacesScreen() {
+  const { spaceId } = useParams()
+  const activeRole = useActiveRole()
+  return (
+    <Screen>
+      <SpacesView key={`${activeRole}-${spaceId ?? ""}`} spaceId={spaceId} />
+    </Screen>
+  )
+}
+
+// /prompts: saved prompts, yours and the workspace's.
+export function PromptsScreen() {
+  return (
+    <Screen>
+      <PromptsView />
     </Screen>
   )
 }

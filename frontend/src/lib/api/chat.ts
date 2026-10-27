@@ -98,7 +98,9 @@ export const chatApi = {
     request<{ results: ChatSearchResult[] }>(
       `/conversations/search?q=${encodeURIComponent(q)}`,
     ).then((r) => r.results),
-  createConversation: () => request<ConversationSummary>("/conversations", json("POST", {})),
+  // spaceId: asked in that space (its sources only); none: everything you may see.
+  createConversation: (spaceId?: string | null) =>
+    request<ConversationSummary>("/conversations", json("POST", spaceId ? { space_id: spaceId } : {})),
   conversation: (id: string) => request<Conversation>(`/conversations/${seg(id)}`),
   updateConversation: (id: string, edit: ConversationEdit) =>
     request<ConversationSummary>(`/conversations/${seg(id)}`, json("PATCH", edit)),

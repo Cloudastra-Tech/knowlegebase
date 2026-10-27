@@ -17,9 +17,11 @@ import {
   KnowledgeScreen,
   OperatorScreen,
   PassageScreen,
+  PromptsScreen,
   Root,
   SharedScreen,
   SignInPage,
+  SpacesScreen,
   SsoReturnPage,
   VerifiedScreen,
 } from "@/screens"
@@ -31,6 +33,8 @@ import {
 //   /sso-test          the window of an admin's "Test sign-in"
 //   /chat, /knowledge  everyone signed in
 //   /api-keys          their own API keys (the public API and the MCP server)
+//   /spaces, /spaces/:spaceId   their own space and team spaces (sources, members, files)
+//   /prompts           their saved prompts and the workspace's
 //   /chat/:id          one of their saved conversations
 //   /s/:token          a chat or answer shared by someone in their workspace
 //   /passages/:chunkId one cited passage (where a Slack answer's source links)
@@ -79,6 +83,9 @@ export const routes: RouteObject[] = [
               { path: "passages/:chunkId", Component: PassageScreen }, // a cited passage
               { path: "knowledge", Component: KnowledgeScreen },
               { path: "api-keys", Component: ApiKeysScreen }, // everyone's own keys
+              { path: "spaces", Component: SpacesScreen },
+              { path: "spaces/:spaceId", Component: SpacesScreen },
+              { path: "prompts", Component: PromptsScreen },
               { path: "extension/connect", Component: ExtensionConnectScreen },
               {
                 Component: HrOnly,
