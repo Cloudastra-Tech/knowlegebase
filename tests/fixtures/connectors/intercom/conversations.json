@@ -1,0 +1,191 @@
+{
+ "_source": [
+  "https://github.com/intercom/Intercom-OpenAPI/blob/main/descriptions/2.14/api.intercom.io.yaml (article_list_item, collection, help_center, conversation, conversation_part)",
+  "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/articles/listarticles (GET /articles: per_page up to 250, newest updated_at first; pages.page / total_pages)",
+  "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/help-center/listallcollections",
+  "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/searchconversations (POST /conversations/search; pages.next.starting_after)",
+  "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/retrieveconversation (GET /conversations/{id}?display_as=plaintext; conversation_parts)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.eu.intercom.io/conversations/search",
+    "json": {
+     "query": {
+      "operator": "AND"
+     },
+     "pagination": {
+      "per_page": 150
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "conversation.list",
+     "total_count": 2,
+     "pages": {
+      "type": "pages",
+      "page": 1,
+      "per_page": 150,
+      "total_pages": 2,
+      "next": {
+       "page": 2,
+       "starting_after": "WzE3OTAwMDAwMDAsNzdd"
+      }
+     },
+     "conversations": [
+      {
+       "type": "conversation",
+       "id": "77",
+       "title": "Refund please",
+       "created_at": 1790000000,
+       "updated_at": 1790006000,
+       "state": "closed",
+       "open": false
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.eu.intercom.io/conversations/search",
+    "json": {
+     "pagination": {
+      "starting_after": "WzE3OTAwMDAwMDAsNzdd"
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "conversation.list",
+     "total_count": 2,
+     "pages": {
+      "type": "pages",
+      "page": 2,
+      "per_page": 150,
+      "total_pages": 2
+     },
+     "conversations": [
+      {
+       "type": "conversation",
+       "id": "78",
+       "title": null,
+       "created_at": 1790000100,
+       "updated_at": 1790006100,
+       "state": "closed",
+       "open": false,
+       "source": {
+        "subject": "Invoice address"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.eu.intercom.io/conversations/77",
+    "params": {
+     "display_as": "plaintext"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "conversation",
+     "id": "77",
+     "title": "Refund please",
+     "state": "closed",
+     "created_at": 1790000000,
+     "updated_at": 1790006000,
+     "source": {
+      "type": "conversation",
+      "subject": "",
+      "body": "Please refund order 1234.",
+      "author": {
+       "type": "user",
+       "name": "Jo Customer",
+       "email": "jo@example.com"
+      }
+     },
+     "conversation_parts": {
+      "type": "conversation_part.list",
+      "total_count": 3,
+      "conversation_parts": [
+       {
+        "type": "conversation_part",
+        "part_type": "note",
+        "body": "Customer is on the watch list.",
+        "created_at": 1790001000,
+        "author": {
+         "type": "admin",
+         "name": "Ann"
+        }
+       },
+       {
+        "type": "conversation_part",
+        "part_type": "comment",
+        "body": "Refunded.",
+        "created_at": 1790002000,
+        "author": {
+         "type": "admin",
+         "name": "Ann"
+        }
+       },
+       {
+        "type": "conversation_part",
+        "part_type": "close",
+        "body": null,
+        "created_at": 1790003000,
+        "author": {
+         "type": "admin",
+         "name": "Ann"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.eu.intercom.io/conversations/78",
+    "params": {
+     "display_as": "plaintext"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "type": "conversation",
+     "id": "78",
+     "title": null,
+     "state": "closed",
+     "created_at": 1790000100,
+     "updated_at": 1790006100,
+     "source": {
+      "type": "email",
+      "subject": "Invoice address",
+      "body": "Please change my invoice address.",
+      "author": {
+       "type": "lead",
+       "name": "Sam"
+      }
+     },
+     "conversation_parts": {
+      "type": "conversation_part.list",
+      "total_count": 0,
+      "conversation_parts": []
+     }
+    }
+   }
+  }
+ ]
+}

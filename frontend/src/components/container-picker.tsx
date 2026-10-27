@@ -18,6 +18,7 @@ import {
   Loader2,
   Plus,
   Search,
+  Tag,
   Users,
   X,
 } from "lucide-react"
@@ -43,6 +44,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { api, type Container, type ConnectorOptions, type Integration } from "@/lib/api"
+import { TICKET_OPTIONS } from "@/lib/ticket-options"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -60,6 +62,7 @@ export function ContainerIcon({ item, className = "size-4" }: { item: Container;
   if (item.kind === "section") return <BookOpen className={cls} />
   if (item.kind === "repo") return <FolderGit2 className={cls} />
   if (item.kind === "team") return <Users className={cls} />
+  if (item.kind === "record_type") return <Tag className={cls} />
   if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
   if (item.mimeType === "application/pdf") return <FileType className={cls} />
   return <FileText className={cls} />
@@ -126,6 +129,39 @@ const COPY: Record<
       "Tick whole categories or open one to tick sections (their sub-sections come with them). With none ticked, every published Help Center article is synced.",
     root: "Categories",
     empty: "No categories or sections here.",
+    all: "every published Help Center article",
+  },
+  intercom: {
+    title: "Choose what to sync",
+    description:
+      "Tick whole Help Centers or open one to tick collections (their sub-collections come with them). With none ticked, every published article is synced.",
+    root: "Help Centers",
+    empty: "No collections here.",
+    all: "every published article",
+  },
+  freshdesk: {
+    title: "Choose what to sync",
+    description:
+      "Tick whole categories or open one to tick folders (their sub-folders come with them). With none ticked, every published knowledge base article is synced.",
+    root: "Categories",
+    empty: "No folders here.",
+    all: "every published knowledge base article",
+  },
+  hubspot: {
+    title: "Choose what to sync",
+    description:
+      "Tick whole knowledge bases or open one to tick categories (their subcategories come with them). With none ticked, every published article is synced.",
+    root: "Knowledge bases",
+    empty: "No categories here.",
+    all: "every published article",
+  },
+  salesforce: {
+    title: "Choose article types",
+    description:
+      "Tick the article record types to sync. With none ticked, every published Knowledge article is synced.",
+    root: "Record types",
+    empty: "This org has no article record types: every published article is synced.",
+    all: "every published Knowledge article",
   },
   github: {
     title: "Choose repositories",
@@ -218,7 +254,7 @@ function TreePicker({
   const [selected, setSelected] = useState<Container[]>(initial)
   const [filter, setFilter] = useState("")
   const [saving, setSaving] = useState(false)
-  // The connector's own options (Zendesk tickets, GitHub code file types), if any.
+  // The connector's own options (tickets or conversations, GitHub code file types), if any.
   const [options, setOptions] = useState<ConnectorOptions | undefined>(item.options)
   const [extensions, setExtensions] = useState("")
 
@@ -236,6 +272,7 @@ function TreePicker({
     }
   }
   const codeToggles = item.id === "github"
+  const tickets = TICKET_OPTIONS[item.id]
   const anyCode = selected.some((s) => s.code)
 
   const parent = path.at(-1)?.id
@@ -408,19 +445,16 @@ function TreePicker({
           )}
         </div>
 
-        {item.id === "zendesk" && options && (
+        {tickets && options && (
           <Field orientation="horizontal" className="rounded-xl border p-3">
             <FieldContent>
-              <FieldLabel htmlFor="zendesk-tickets">Also sync solved tickets</FieldLabel>
-              <FieldDescription>
-                Solved and closed tickets with their public replies. They hold customers' details,
-                so while this is on only HR and admins can ask about anything from Zendesk.
-              </FieldDescription>
+              <FieldLabel htmlFor={`${item.id}-tickets`}>{tickets.toggle}</FieldLabel>
+              <FieldDescription>{tickets.description}</FieldDescription>
             </FieldContent>
             <Switch
-              id="zendesk-tickets"
-              checked={!!options.tickets}
-              onCheckedChange={(v) => setOptions({ ...options, tickets: v })}
+              id={`${item.id}-tickets`}
+              checked={!!options[tickets.key]}
+              onCheckedChange={(v) => setOptions({ ...options, [tickets.key]: v })}
             />
           </Field>
         )}

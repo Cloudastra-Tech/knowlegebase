@@ -407,9 +407,11 @@ export interface Integration {
   held_deletes?: number
   last_run?: SyncRun | null
   limits?: { max_pages: number | null; max_depth: number | null }
-  base_url?: string | null // Outline, Confluence / Jira Data Center, Zendesk's subdomain
+  base_url?: string | null // Outline, Confluence / Jira DC, Zendesk / Freshdesk subdomain,
+  // Intercom's region, Salesforce's sign-in host
   live_search?: boolean // Outline: the server's wiki is searched live instead
-  source_policy_note?: string | null // why "as shared at the source" isn't offered (S3)
+  source_policy_note?: string | null // why "as shared at the source" isn't offered (S3, Intercom)
+  server_app?: boolean // Salesforce: the server has its own (packaged) External Client App
   s3?: S3Card // Amazon S3: the bucket, and how a role would be set up
 }
 
@@ -428,7 +430,8 @@ export interface S3Card {
 // A connector's own options (connectors/base.py check_options): Zendesk's tickets
 // switch, GitHub's code file types.
 export interface ConnectorOptions {
-  tickets?: boolean
+  tickets?: boolean // Zendesk, Freshdesk
+  conversations?: boolean // Intercom
   code_extensions?: string[]
 }
 

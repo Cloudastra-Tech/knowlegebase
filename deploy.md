@@ -388,8 +388,8 @@ reads the old collection, which this one drops 10 minutes after its rebuild.
 ## Connectors
 
 Google Drive, Notion, Outline, Confluence and Jira (Cloud and Data Center),
-SharePoint & OneDrive, Zendesk, GitHub, Linear, Dropbox, Box, Amazon S3 and
-websites are **connectors**
+SharePoint & OneDrive, Zendesk, GitHub, Linear, Dropbox, Box, Amazon S3,
+Intercom, Freshdesk, HubSpot, Salesforce Knowledge and websites are **connectors**
 (`connectors/registry.py`), all synced the same way (`kb/services/sync.py`): each
 run asks the source only for what changed since its last cursor (Drive's change
 feed, Notion's and Outline's newest edits, a Confluence CQL search on
@@ -538,10 +538,81 @@ articles and GitHub, which also refreshes captured permissions), to find deletio
   lists the bucket and fetches only objects whose ETag changed. S3 has no
   per-person sharing, so its connections offer only *HR and admins* or
   *Everyone*, never *As shared at the source*.
+- **Intercom.** Help Center articles; closed conversations if turned on. The
+  bootstrap needs nothing on the server: a workspace admin creates a **private
+  app** in their own Intercom workspace (Developer Hub → New app; permissions
+  *Read articles*, plus *Read conversations* for conversations) and pastes its
+  access token; private apps need no review. To let admins *sign in* instead, set
+  `INTERCOM_CLIENT_ID` / `INTERCOM_CLIENT_SECRET` from a **public app** with the
+  same permissions and redirect URL `<PUBLIC_URL>/api/integrations/intercom/callback`;
+  **Intercom reviews every public app before other workspaces can install it**
+  (listed or unlisted, up to about 7 business days). The form asks for the
+  workspace's region (US, EU, Australia): signing in goes to that region's host,
+  and every call goes to the region `GET /me` reports. Intercom tokens don't
+  expire; a revoked one shows *Access expired*. Intercom's API doesn't expose an
+  article's **audience targeting**, so connections offer only *HR and admins* or
+  *Everyone*. **Closed conversations** are off by default and lock the connection
+  to HR and admins while on (`INTERCOM_CONVERSATIONS_BACKFILL_DAYS`, default 365);
+  internal notes and customers' names are left out.
+- **Freshdesk.** Knowledge base (Solutions) articles; resolved and closed tickets
+  if turned on. Nothing on the server: a workspace admin enters the Freshdesk
+  subdomain and an agent's **API key** (Freshdesk documents no OAuth for this).
+  Freshdesk's Solutions API has no "changed since" filter, so the knowledge base
+  is listed at most every `FRESHDESK_ARTICLES_EVERY` seconds (default 10800: 3
+  hours), which also finds deletions; Freshdesk's rate limit is per **account**
+  (3,000-5,000 calls an hour on current plans) and shared with the customer's
+  other integrations, so the sync spaces its calls to one every two seconds.
+  Each article's folder visibility is captured (all users / logged-in users:
+  everyone; agents, companies, segments, bots: HR and admins). **Tickets** lock
+  the connection to HR and admins (`FRESHDESK_TICKETS_BACKFILL_DAYS`, default
+  365); private notes are left out.
+- **HubSpot.** Knowledge base articles (needs **Service Hub Professional or
+  Enterprise**; HubSpot's knowledge base API is in **beta**, version
+  `2027-03-beta`, under HubSpot's developer beta terms). The bootstrap needs
+  nothing on the server: a workspace admin creates a **private app** in HubSpot
+  (Settings → Integrations → Private apps) with the scope
+  `cms.knowledge_base.articles.read` and pastes its token. To let admins sign in
+  instead, set `HUBSPOT_CLIENT_ID` / `HUBSPOT_CLIENT_SECRET` from a public app
+  with that scope and redirect URL `<PUBLIC_URL>/api/integrations/hubspot/callback`
+  (access tokens last 30 minutes and are refreshed). HubSpot documents no token
+  revocation: disconnecting deletes the tokens here; uninstall the app in HubSpot
+  too. Each article's `accessType` is captured (public: everyone; SSO or access
+  groups: HR and admins). Most HubSpot knowledge bases are public: the website
+  connector covers those on any plan.
+- **Salesforce Knowledge.** Published Lightning Knowledge articles
+  (`Knowledge__kav`), every language. **Since Spring '26 Salesforce restricts
+  creating new Connected Apps by default** (re-enabling takes a request to
+  Salesforce Support), so this uses an **External Client App (ECA)**. A *local*
+  ECA only works in the org that created it, so by default each customer creates
+  one in their own org and enters its consumer key and secret on the card (stored
+  encrypted with the workspace's key):
+  1. Setup → External Client App Manager → *New External Client App*; distribution
+     state *Local*.
+  2. *Enable OAuth*: callback URL `<PUBLIC_URL>/api/integrations/salesforce/callback`;
+     scopes *Manage user data via APIs (api)* and *Perform requests at any time
+     (refresh_token, offline_access)*; keep *Require Proof Key for Code Exchange
+     (PKCE)* on; turn on *refresh token rotation*.
+  3. Policies: let the integration user (a user with *Read* on Knowledge and the
+     data categories to sync) use the app; refresh token valid until revoked.
+  4. Copy the consumer key and secret into Integrations → Salesforce Knowledge,
+     with the org's **My Domain** address (`https://acme.my.salesforce.com`; a
+     sandbox is `acme--dev.sandbox.my.salesforce.com`) → *Sign in with
+     Salesforce*.
+  A server operator who ships a *packaged* ECA (a second-generation managed
+  package installed in each customer's org) sets `SALESFORCE_CLIENT_ID` /
+  `SALESFORCE_CLIENT_SECRET`; the form then only asks for the address. Article
+  record types are picked on the card (none: every article). Each sync uses the
+  org's daily API allowance (`REQUEST_LIMIT_EXCEEDED` shows as *rate limited*).
+  Only articles in the **public knowledge base** with no data categories count
+  as everyone's under *As shared in Salesforce*; every other article is HR and
+  admins (Salesforce's profiles and data category visibility don't map onto
+  members here). Disconnecting revokes the refresh token.
 - These capture source permissions (Confluence space permissions and page
   restrictions; Jira project browse grants and security levels; SharePoint item
   permissions; Zendesk user segments; GitHub visibility and collaborators; Linear
-  team members; Dropbox shared-folder members; Box collaborations) into
+  team members; Dropbox shared-folder members; Box collaborations; Freshdesk
+  folder visibility; HubSpot article access; Salesforce channels and data
+  categories; Intercom's article state, without its audience) into
   each item's `acl` for the per-user filtering to come. They are **not enforced** yet: who may ask is the
   connection's access level, as for every connector.
 - **Websites** must be https on a public address (checked again before every
@@ -667,6 +738,93 @@ by the provider (a tunnel on a laptop). Watch the API log for `Sync:` lines.
    the endpoint; a private address is refused.
 7. *Disconnect*: the credentials are gone from the database (and the role
    remains in the customer's account until they delete it).
+
+### Checking Intercom, Freshdesk, HubSpot and Salesforce by hand (no accounts here: not run live)
+
+Built against each vendor's documentation and tested with recorded answers
+(`tests/fixtures/connectors/`); no real account was available. Run each list once
+with a test account before telling a customer they work; for the sign-in paths,
+`PUBLIC_URL` must be reachable by the vendor (a tunnel on a laptop).
+
+**Intercom**
+1. In a test workspace, Developer Hub → *New app* (private), permissions *Read
+   articles* and *Read conversations*; copy the access token.
+2. Integrations → Intercom → *Connect*: pick the workspace's region, paste the
+   token → *Connect*. The card shows the app's name and syncs. An EU or AU
+   workspace: the API log shows calls to `api.eu.intercom.io` / `api.au.intercom.io`.
+3. Ask about a published article: the answer cites it with its Help Center link.
+   A draft article is not there. Pick one collection on the card: only its
+   articles (and its sub-collections') remain.
+4. Edit an article, *Sync now*: an incremental run with 1 upserted. Unpublish it
+   and sync: 1 deleted. Delete one: removed at the next daily full listing (or
+   *Full re-sync*).
+5. The *Who can ask* control offers *HR and admins* / *Everyone* only, with the
+   note about audience targeting.
+6. Turn on *Also sync closed conversations*: the card says it's locked to HR and
+   admins; close a test conversation with a note and a reply, sync: the reply is
+   there, the note and the customer's name aren't. Turn it off: the
+   conversations go.
+7. With `INTERCOM_CLIENT_ID` / `_SECRET` (a public app, before review only your own
+   workspace can install it): *Sign in with Intercom* on the EU region lands on
+   `app.eu.intercom.com` and comes back connected.
+8. Revoke the token (or uninstall the app): the next sync shows *Access expired*.
+
+**Freshdesk**
+1. In a trial account, Profile settings → *View API key*. Integrations →
+   Freshdesk → *Connect*: subdomain and key. A wrong key says so.
+2. Make a folder visible to *All users*, one to *Agents*, one with a sub-folder
+   (Flexible Hierarchy), and a draft article. After the sync every published
+   article is there, the draft isn't; customer-visible articles link to
+   `/support/solutions/articles/…`, agent-only ones to `/a/solutions/articles/…`
+   (check both links open).
+3. *As shared in Freshdesk*: a member sees the all-users article; only HR and
+   admins see the agents-only one.
+4. Edit an article: it updates at the next listing (`FRESHDESK_ARTICLES_EVERY`,
+   or *Full re-sync* at once). Delete one: removed then.
+5. Turn on *Also sync resolved tickets*; resolve a ticket with a public reply and
+   a private note; sync: the reply is there, the note isn't; the card is locked
+   to HR and admins. Reopen it, sync: it goes. Delete a resolved ticket: it goes
+   within a day (the deleted-tickets check).
+6. Watch the account's API usage (Admin → API) during a full listing: it should
+   stay well under the plan's hourly limit.
+
+**HubSpot** (a Service Hub Professional or Enterprise test account)
+1. Settings → Integrations → Private apps → *Create*; scope
+   `cms.knowledge_base.articles.read`; copy the token. Integrations → HubSpot →
+   *Connect* → paste → *Connect*. The account shows the knowledge base's domain.
+   Without the scope, the form says which scope to add. **Note whether private
+   apps can call the beta knowledge base API at all**; if HubSpot refuses, only
+   the OAuth path below works.
+2. After the sync: published articles are there; drafts and articles archived in
+   the dashboard aren't. Pick a category: only it and its subcategories remain.
+3. Edit an article, *Sync now*: an incremental run asks with `updatedAfter`;
+   1 upserted. Unpublish one: 1 deleted.
+4. Set an article to *SSO login* or an access group, sync; *As shared in HubSpot*:
+   only HR and admins can ask about it; public articles stay everyone's.
+5. With `HUBSPOT_CLIENT_ID` / `_SECRET`: *Sign in with HubSpot*, pick the
+   account; wait 30 minutes (or set `renew_at` back) and sync: the token is
+   refreshed without a reconnect.
+6. *Disconnect*, then uninstall the app (or delete the private app) in HubSpot.
+
+**Salesforce Knowledge** (a Developer Edition org with Lightning Knowledge on)
+1. Confirm Setup → *Connected Apps* creation is restricted (Spring '26) and create
+   the External Client App as above (local, PKCE, refresh token rotation).
+2. Integrations → Salesforce Knowledge → *Connect*: My Domain address, consumer key
+   and secret → *Sign in with Salesforce*; approve. The card shows the My Domain
+   host and syncs.
+3. Publish an article with a rich text body in two languages: two items, each
+   citing its Lightning record. A draft isn't there; a plain-text custom field
+   isn't in the text.
+4. Publish a new version of the article: *Sync now* is incremental, the text
+   updates, nothing is deleted. Archive the other article: 1 deleted.
+5. Tick the article as *Visible in Public Knowledge Base* with no data categories:
+   under *As shared in Salesforce* everyone can ask about it; add a data category
+   and sync: HR and admins only.
+6. Pick one record type on the card: only its articles remain.
+7. Revoke the app's token for the user (Setup → Connected Apps OAuth Usage): the
+   next sync shows *Access expired*; *Reconnect* works. With rotation on, check
+   the stored refresh token changes after a refresh (an expired session).
+8. *Disconnect*: the token is gone from the org's OAuth usage.
 
 ## Slack app
 

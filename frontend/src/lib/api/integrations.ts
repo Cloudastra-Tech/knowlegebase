@@ -17,11 +17,16 @@ export const integrationsApi = {
   integrations: () =>
     request<{ workspace: string; integrations: Integration[] }>("/integrations"),
   // Sign-in connectors: the provider's consent screen to send the browser to
-  // (`url`: what it needs first, like Zendesk's subdomain).
-  connectIntegration: (provider: string, url?: string) =>
+  // (`url`: what it needs first, like Zendesk's subdomain or Intercom's region;
+  // `app`: Salesforce's External Client App, when the server has none of its own).
+  connectIntegration: (
+    provider: string,
+    url?: string,
+    app?: { client_id: string; client_secret: string },
+  ) =>
     request<{ url: string }>(
       `/integrations/${seg(provider)}/connect`,
-      url === undefined ? { method: "POST" } : json("POST", { url }),
+      url === undefined && !app ? { method: "POST" } : json("POST", { url: url ?? "", ...app }),
     ),
   // Token / address connectors: the form, checked and saved by the server.
   setupIntegration: (provider: string, form: IntegrationSetup) =>

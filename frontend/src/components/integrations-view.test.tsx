@@ -6,6 +6,10 @@ import { IntegrationsView } from "@/components/integrations-view"
 import type { Integration } from "@/lib/api"
 import { mockApi, withProviders } from "@/test/render"
 
+// What Radix's Select needs and jsdom doesn't have.
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
+
 const base = { availability: "live", picker: "none", unit: "items" } as const
 
 const ITEMS: Integration[] = [
@@ -201,7 +205,7 @@ describe("IntegrationsView", () => {
     })
     render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
     const user = userEvent.setup()
-    expect(await screen.findByText(/Locked to HR and admins while Zendesk tickets/)).toBeInTheDocument()
+    expect(await screen.findByText(/Locked to HR and admins while Zendesk solved tickets/)).toBeInTheDocument()
     expect(screen.getByText("synced (HR and admins only)")).toBeInTheDocument()
     const everyone = screen.getAllByRole("radio", { name: /Everyone in the workspace/ })
     expect(everyone.map((r) => r.hasAttribute("disabled"))).toEqual([false, true])
@@ -315,4 +319,142 @@ describe("IntegrationsView", () => {
       screen.getByText("Nothing selected: everything under the connection's prefix is synced."),
     ).toBeInTheDocument()
   })
+
+  it("connects Freshdesk with a subdomain and key, and HubSpot with a token alone", async () => {
+    const sent: Record<string, unknown[]> = { freshdesk: [], hubspot: [] }
+    const items: Integration[] = [
+      { ...base, id: "freshdesk", name: "Freshdesk", auth: "token", picker: "tree", status: "disconnected" },
+      { ...base, id: "hubspot", name: "HubSpot", auth: "token", picker: "tree", status: "disconnected" },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "POST /api/integrations/freshdesk/setup": (body: unknown) => {
+        sent.freshdesk.push(body)
+        return { ok: true, account: "acme.freshdesk.com (Ann)", choose: false }
+      },
+      "POST /api/integrations/hubspot/setup": (body: unknown) => {
+        sent.hubspot.push(body)
+        return { ok: true, account: "HubSpot (help.acme.com)", choose: false }
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Connect Freshdesk" }))
+    await user.type(screen.getByLabelText("Freshdesk subdomain"), "acme")
+    await user.type(screen.getByLabelText("API key"), "fd-key")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    await vi.waitFor(() => expect(sent.freshdesk).toEqual([{ url: "acme", token: "fd-key" }]))
+
+    await user.click(await screen.findByRole("button", { name: "Connect HubSpot" }))
+    expect(screen.queryByLabelText(/subdomain|address/i)).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText("Private app access token"), "pat-1")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    await vi.waitFor(() => expect(sent.hubspot).toEqual([{ token: "pat-1" }]))
+  })
+
+  it("signs in to Intercom on the region picked, and says why it can't follow sharing", async () => {
+    const signIns: unknown[] = []
+    const items: Integration[] = [
+      {
+        ...base,
+        id: "intercom",
+        name: "Intercom",
+        auth: "token",
+        picker: "tree",
+        status: "disconnected",
+        sign_in: true,
+      },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "POST /api/integrations/intercom/connect": (body: unknown) => {
+        signIns.push(body)
+        return new Response(JSON.stringify({ detail: "Not now." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        })
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Connect Intercom" }))
+    await user.click(screen.getByRole("combobox", { name: "Region" }))
+    await user.click(await screen.findByRole("option", { name: "Europe" }))
+    await user.click(screen.getByRole("button", { name: "Sign in with Intercom" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not now.")
+    expect(signIns[0]).toEqual({ url: "EU" })
+  })
+
+  it("locks Intercom while conversations sync and saves the switch", async () => {
+    const saved: unknown[] = []
+    const items: Integration[] = [
+      {
+        ...base,
+        id: "intercom",
+        name: "Intercom",
+        auth: "token",
+        picker: "tree",
+        status: "connected",
+        access: "restricted",
+        access_locked: true,
+        options: { conversations: true },
+        containers: [],
+        policies: ["workspace", "restricted"],
+        source_policy_note: "Intercom's API doesn't say who each article's audience targeting lets see it.",
+      },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "GET /api/integrations/intercom/containers": {
+        items: [{ id: "hc-1", name: "Acme Help", kind: "category", has_children: true }],
+        picked: [],
+      },
+      "PUT /api/integrations/intercom/containers": (body: unknown) => {
+        saved.push(body)
+        return { containers: [] }
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    expect(
+      await screen.findByText(/Locked to HR and admins while Intercom closed conversations/),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/audience targeting/)).toBeInTheDocument()
+    expect(screen.getByText("Every published Help Center article is synced.")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Narrow it down" }))
+    await user.click(await screen.findByRole("switch", { name: "Also sync closed conversations" }))
+    await user.click(screen.getByRole("button", { name: "Save and sync" }))
+    await vi.waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0]).toEqual({ containers: [], options: { conversations: false } })
+  })
+
+  it("signs in to Salesforce with the customer's External Client App", async () => {
+    const signIns: unknown[] = []
+    const items: Integration[] = [
+      { ...base, id: "salesforce", name: "Salesforce Knowledge", auth: "token", picker: "list", status: "disconnected", sign_in: true, server_app: false },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "POST /api/integrations/salesforce/connect": (body: unknown) => {
+        signIns.push(body)
+        return new Response(JSON.stringify({ detail: "Enter your Salesforce My Domain address." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        })
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Connect Salesforce Knowledge" }))
+    await user.type(screen.getByLabelText("My Domain address"), "https://acme.my.salesforce.com")
+    await user.type(screen.getByLabelText("Consumer key"), "3MVG-key")
+    await user.type(screen.getByLabelText("Consumer secret"), "eca-secret")
+    await user.click(screen.getByRole("button", { name: "Sign in with Salesforce" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("My Domain")
+    expect(signIns[0]).toEqual({
+      url: "https://acme.my.salesforce.com",
+      client_id: "3MVG-key",
+      client_secret: "eca-secret",
+    })
+  }, 20_000) // a lot of typing
 })

@@ -135,8 +135,14 @@ def _integration_info(ws, c, role):
         info["live_search"] = agents.outline_on(ws, role)
     if provider in ("confluence_dc", "jira_dc"):
         info["base_url"] = settings.get("base_url")
-    if provider == "zendesk":
+    if provider in ("zendesk", "freshdesk"):
         info["base_url"] = settings.get("subdomain")
+    if provider == "intercom":
+        info["base_url"] = settings.get("region")     # US, EU or AU
+    if provider == "salesforce":
+        info["base_url"] = settings.get("login")
+        # The server has a packaged External Client App: only the address is asked.
+        info["server_app"] = c.server_app()
     if provider == "s3":
         info["s3"] = c.card(ws, settings)
     info["sign_in"] = c.can_sign_in() and c.configured()
@@ -168,6 +174,9 @@ def integrations_catalog():
 
 class ConnectIn(BaseModel):
     url: str = Field(default="", max_length=2000)
+    # Salesforce (connectors/salesforce.py): the customer's own External Client App.
+    client_id: str = Field(default="", max_length=500)
+    client_secret: str = Field(default="", max_length=500)
 
 
 @router.post("/api/integrations/{provider}/connect")
@@ -403,9 +412,9 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
     ws = ws_of(user)
     c, row = _connected(ws, provider)
     if body.access == "everyone" and (row.get("settings") or {}).get("access_lock"):
-        raise HTTPException(400, f"{c.LABEL} syncs tickets, which hold customers' personal "
-                                 "data, so only HR and admins can ask about it. Turn tickets "
-                                 "off to change this.")
+        raise HTTPException(400, f"{c.LABEL} syncs tickets or conversations, which hold "
+                                 "customers' personal data, so only HR and admins can ask "
+                                 "about it. Turn them off to change this.")
     policy = "workspace" if body.access == "everyone" else "restricted"
     if integrations_store.policy_of(row) != policy:
         # The level IS the policy now: no separate policy key to disagree with it.
@@ -435,9 +444,9 @@ def integration_policy(provider: str, body: PolicyIn, user=Depends(require_hr),
         raise HTTPException(400, f"{c.LABEL} doesn't read who may see each item at the "
                                  "source, so it can't follow the source's permissions.")
     if body.policy != "restricted" and (row.get("settings") or {}).get("access_lock"):
-        raise HTTPException(400, f"{c.LABEL} syncs tickets, which hold customers' personal "
-                                 "data, so only HR and admins can ask about it. Turn tickets "
-                                 "off to change this.")
+        raise HTTPException(400, f"{c.LABEL} syncs tickets or conversations, which hold "
+                                 "customers' personal data, so only HR and admins can ask "
+                                 "about it. Turn them off to change this.")
     before = integrations_store.policy_of(row)
     if before != body.policy:
         integrations_store.update(ws, provider, settings=dict(

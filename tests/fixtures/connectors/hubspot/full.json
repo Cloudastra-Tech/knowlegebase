@@ -1,0 +1,169 @@
+{
+ "_source": [
+  "https://developers.hubspot.com/docs/api-reference/2027-03-beta/cms/knowledge-base/get-articles (results, paging.next.after; article id, title, url, body, state, accessType, accessGroupIds, categoryId, knowledgeBaseId, language, updatedAt, archivedInDashboard)",
+  "https://developers.hubspot.com/docs/api-reference/2027-03-beta/cms/knowledge-base/guide (categories: id, name, parentCategoryId; knowledge bases: id, name, domain, language)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.hubapi.com/cms/knowledge-base/2027-03-beta/categories",
+    "params": {
+     "limit": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "10",
+       "name": "Billing",
+       "parentCategoryId": null
+      },
+      {
+       "id": "11",
+       "name": "Invoices",
+       "parentCategoryId": "10"
+      },
+      {
+       "id": "20",
+       "name": "Internal",
+       "parentCategoryId": null
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.hubapi.com/cms/knowledge-base/2027-03-beta/articles",
+    "params": {
+     "state": "PUBLISHED",
+     "sort": "updatedAt",
+     "includeTranslations": "false",
+     "limit": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "501",
+       "knowledgeBaseId": "1",
+       "title": "Download an invoice",
+       "language": "en",
+       "categoryId": "11",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "PUBLIC",
+       "accessGroupIds": [],
+       "path": "kb/501",
+       "url": "https://help.acme.com/kb/501",
+       "body": "<h2>Steps</h2><p>Open Billing, then Invoices.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-01T09:00:00Z",
+       "archivedInDashboard": false
+      },
+      {
+       "id": "502",
+       "knowledgeBaseId": "1",
+       "title": "Change your plan",
+       "language": "en",
+       "categoryId": "10",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "SSO_LOGIN",
+       "accessGroupIds": [],
+       "path": "kb/502",
+       "url": "https://help.acme.com/kb/502",
+       "body": "<p>Text.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-02T09:00:00Z",
+       "archivedInDashboard": false
+      },
+      {
+       "id": "503",
+       "knowledgeBaseId": "1",
+       "title": "Escalation rota",
+       "language": "en",
+       "categoryId": "20",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "ACCESS_GROUP_MEMBERSHIP",
+       "accessGroupIds": [
+        "7788"
+       ],
+       "path": "kb/503",
+       "url": "https://help.acme.com/kb/503",
+       "body": "<p>Text.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-03T09:00:00Z",
+       "archivedInDashboard": false
+      },
+      {
+       "id": "504",
+       "knowledgeBaseId": "1",
+       "title": "Old pricing",
+       "language": "en",
+       "categoryId": "10",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "PUBLIC",
+       "accessGroupIds": [],
+       "path": "kb/504",
+       "url": "https://help.acme.com/kb/504",
+       "body": "<p>Text.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-01T09:00:00Z",
+       "archivedInDashboard": true
+      }
+     ],
+     "paging": {
+      "next": {
+       "after": "p2",
+       "link": "https://api.hubapi.com/cms/knowledge-base/2027-03-beta/articles?after=p2"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.hubapi.com/cms/knowledge-base/2027-03-beta/articles",
+    "params": {
+     "state": "PUBLISHED",
+     "after": "p2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "results": [
+      {
+       "id": "505",
+       "knowledgeBaseId": "1",
+       "title": "Office hours",
+       "language": "en",
+       "categoryId": "20",
+       "tagIds": [],
+       "state": "PUBLISHED",
+       "accessType": "PUBLIC",
+       "accessGroupIds": [],
+       "path": "kb/505",
+       "url": "https://help.acme.com/kb/505",
+       "body": "<p>Text.</p>",
+       "createdAt": "2026-09-01T09:00:00Z",
+       "updatedAt": "2026-10-04T09:00:00Z",
+       "archivedInDashboard": false
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

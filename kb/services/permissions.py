@@ -51,6 +51,21 @@ Per source:
                  verified domain.
     S3           no source permissions at all: the source policy can't be
                  picked, and an S3 acl met here anyway is for no one.
+    Freshdesk    the article's folder visibility: 1 (all users) or 2 (logged-in
+                 users) -> everyone; 3 (agents), 4 (selected companies), 5 (bots),
+                 6 / 7 (contact / company segments) -> the hr group (staff);
+                 anything else -> no one. Tickets -> staff (and they lock their
+                 connection to restricted).
+    HubSpot      accessType PUBLIC -> everyone; SSO_LOGIN and
+                 ACCESS_GROUP_MEMBERSHIP (lists of HubSpot contacts) -> staff;
+                 anything else -> no one.
+    Intercom     the API doesn't expose an article's audience targeting, so the
+                 source policy can't be picked; an Intercom acl met here anyway is
+                 staff (an article or conversation), else no one.
+    Salesforce   an article in the public knowledge base (IsVisibleInPkb) with no
+                 data categories -> everyone; any other article whose channels were
+                 read -> staff (profiles, permission sets and data category
+                 visibility don't map onto members here); none read -> no one.
     Anything with a `via` this file doesn't know is for no one.
     Partial ACLs (a Drive file in a shared drive, a repo whose teams couldn't
     be read) keep only the grants that were read: never more people.
@@ -215,6 +230,41 @@ class Resolver:
         return access.clean_acl(found), dropped
 
 
+def _freshdesk(resolver, acl):
+    if acl.get("ticket"):
+        return [access.HR], 0
+    visibility = acl.get("visibility")
+    if visibility in (1, 2):
+        return [access.EVERYONE], 0
+    if visibility in (3, 4, 5, 6, 7):
+        return [access.HR], 0
+    return [access.NOBODY], 1
+
+
+def _hubspot(resolver, acl):
+    kind = acl.get("access_type")
+    if kind == "PUBLIC":
+        return [access.EVERYONE], 0
+    if kind in ("SSO_LOGIN", "ACCESS_GROUP_MEMBERSHIP"):
+        return [access.HR], 0
+    return [access.NOBODY], 1
+
+
+def _intercom(resolver, acl):
+    if acl.get("kind") in ("article", "conversation"):
+        return [access.HR], 0
+    return [access.NOBODY], 1
+
+
+def _salesforce(resolver, acl):
+    channels = acl.get("channels")
+    if not isinstance(channels, dict) or not channels:
+        return [access.NOBODY], 1
+    if channels.get("pkb") is True and not acl.get("data_categories"):
+        return [access.EVERYONE], 0
+    return [access.HR], 0
+
+
 def _no_source_acl(resolver, acl):
     """S3: the source has no permissions to follow."""
     return [access.NOBODY], 1
@@ -226,7 +276,8 @@ def _unknown_via(resolver, acl):
 
 # The per-connector mappings of acls that say which connector made them (`via`).
 VIA = {"linear": Resolver._linear, "dropbox": Resolver._dropbox, "box": Resolver._box,
-       "s3": _no_source_acl}
+       "s3": _no_source_acl, "freshdesk": _freshdesk, "hubspot": _hubspot,
+       "intercom": _intercom, "salesforce": _salesforce}
 
 
 def policies(provider):
