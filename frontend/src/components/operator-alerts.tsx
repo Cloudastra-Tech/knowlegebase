@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { BellRing, Check, Loader2 } from "lucide-react"
+import { BellRing, Check } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -46,26 +48,28 @@ export function AlertsPanel() {
   const t = list.data?.thresholds
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="flex items-center gap-2 font-medium">
-            <BellRing className="size-4" /> Alerts
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Unusual usage, failed sign-ins and spend, checked every hour.
-            {t &&
-              ` A spike is ${t.spike_factor}× the week's median (at least ${t.spike_min} questions); one person, over ${t.user_per_hour} an hour.`}
-          </p>
-        </div>
+    <Panel
+      tone="solid"
+      title={
+        <span className="flex items-center gap-2">
+          <BellRing aria-hidden className="size-4" /> Alerts
+        </span>
+      }
+      actions={
         <Tabs panels={false} value={show} onValueChange={(v) => setShow(v as "open" | "all")}>
           <TabsList>
             <TabsTrigger value="open">Open</TabsTrigger>
             <TabsTrigger value="all">All</TabsTrigger>
           </TabsList>
         </Tabs>
-      </div>
-      <ul className="mt-4 divide-y rounded-xl border border-border/70">
+      }
+    >
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
+        Unusual usage, failed sign-ins and spend, checked every hour.
+        {t &&
+          ` A spike is ${t.spike_factor}× the week's median (at least ${t.spike_min} questions); one person, over ${t.user_per_hour} an hour.`}
+      </p>
+      <ul className="mt-4 divide-y rounded-xl border">
         {list.isPending && (
           <li className="p-3">
             <Skeleton className="h-10 w-full" />
@@ -76,16 +80,13 @@ export function AlertsPanel() {
             <div className="min-w-0 flex-1">
               <p className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="font-medium">{a.title}</span>
-                <Badge
-                  variant={a.kind === "spend_hard" ? "destructive" : "outline"}
-                  className="font-normal"
-                >
+                <Badge variant={a.kind === "spend_hard" ? "destructive" : "mono"}>
                   {a.workspace === PLATFORM ? "Platform" : a.workspace}
                 </Badge>
               </p>
               <p className="text-sm text-muted-foreground">{a.summary}</p>
               <p className="text-xs text-muted-foreground">
-                {timeAgo(a.created_at)}
+                <span className="font-mono tabular-nums">{timeAgo(a.created_at)}</span>
                 {a.notified.length ? ` · emailed ${a.notified.length}` : ""}
                 {a.acknowledged_by ? ` · acknowledged by ${a.acknowledged_by}` : ""}
               </p>
@@ -105,12 +106,17 @@ export function AlertsPanel() {
           </li>
         ))}
         {list.data && !alerts.length && (
-          <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-            {show === "open" ? "Nothing needs a look." : "No alerts yet."}
+          <li>
+            <AsciiEmptyState
+              art="inbox"
+              size="sm"
+              headingLevel={4}
+              title={show === "open" ? "Nothing needs a look." : "No alerts yet."}
+            />
           </li>
         )}
       </ul>
-    </section>
+    </Panel>
   )
 }
 
@@ -192,8 +198,7 @@ export function SpendCapsDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="spend-caps" disabled={bad || save.isPending}>
-            {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button type="submit" form="spend-caps" loading={save.isPending} disabled={bad}>
             Save
           </Button>
         </DialogFooter>

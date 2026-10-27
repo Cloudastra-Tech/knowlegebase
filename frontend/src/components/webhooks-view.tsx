@@ -549,7 +549,11 @@ function WebhookCard({
 }
 
 export function WebhooksView() {
-  const { data: settings, error, isPending, refetch, isRefetching } = useQuery(queries.webhooks())
+  // silent: when they can't load, the screen says why (no toast as well).
+  const { data: settings, error, isPending, refetch, isRefetching } = useQuery({
+    ...queries.webhooks(),
+    meta: { silent: true },
+  })
   const [adding, setAdding] = useState(false)
   const [secret, setSecret] = useState<ShownSecret | null>(null)
   const [history, setHistory] = useState<Webhook | null>(null)
