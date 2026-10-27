@@ -98,8 +98,13 @@ def _ensure(conn, workspace):
 
 
 def _claim(conn, workspace, tenant_id):
-    other = conn.execute("SELECT workspace FROM teams_installs WHERE tenant_id = ? AND "
-                         "workspace != ?", (tenant_id, workspace)).fetchone()
+    # Every workspace's installs (db.platform): a tenant's connection sees only its own.
+    everyone = db.connect_platform()
+    try:
+        other = everyone.execute("SELECT workspace FROM teams_installs WHERE tenant_id = ? AND "
+                                 "workspace != ?", (tenant_id, workspace)).fetchone()
+    finally:
+        everyone.close()
     if other:
         raise TenantTaken(tenant_id)
 

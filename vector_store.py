@@ -46,6 +46,7 @@ TABLE = "kb_chunks"
 COLLECTIONS = "kb_collections"
 HNSW_MAX_DIMS = 2000                     # pgvector's HNSW limit for `vector`
 _ready = set()                           # databases with the table, this process
+_iterative = {}                          # database -> has hnsw.iterative_scan (pgvector 0.8+)
 _ready_lock = threading.Lock()
 
 
@@ -145,6 +146,7 @@ def _connect():
             if url not in _ready:
                 _make_tables()
                 _ready.add(url)
+                _iterative[url] = _has_iterative_scan()
     conn = db.connect()
     try:
         with conn:
@@ -202,6 +204,23 @@ def _make_tables():
         conn.execute("COMMIT")
     finally:
         conn.close()
+
+
+def _has_iterative_scan():
+    """pgvector 0.8 or later: a filtered HNSW scan can keep going until it has k
+    rows (hnsw.iterative_scan). Older ones refuse the setting."""
+    import db
+    with db.platform():
+        conn = db.connect()
+    try:
+        version = conn.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+                               ).fetchone()
+    finally:
+        conn.close()
+    try:
+        return tuple(int(p) for p in version[0].split(".")[:2]) >= (0, 8)
+    except (TypeError, ValueError):
+        return False
 
 
 class _Native:
@@ -429,22 +448,27 @@ class PgVectorStore(VectorStore):
     def similarity_search_with_score(self, query, k=4, filter=None, **kwargs):
         vector = self.embeddings.embed_query(query)
         dims = len(vector)
-        args = [self.namespace, self.collection, dims]
+        args = [self.namespace, self.collection]
         where = _where(filter, args)
         cast = f"vector({dims})" if dims <= HNSW_MAX_DIMS else "vector"
-        sql = (f"SELECT id, document, metadata, embedding::{cast} <-> ?::{cast} AS distance "
-               f"FROM {TABLE} WHERE namespace = ? AND collection = ? AND dims = ? AND {where} "
-               "ORDER BY distance, seq LIMIT ?")
+        # dims as a literal and the distance alone in ORDER BY: what lets the planner
+        # use the partial HNSW index for this size (_index_for). Ties by seq below.
+        sql = (f"SELECT id, document, metadata, embedding::{cast} <-> ?::{cast} AS distance, "
+               f"seq FROM {TABLE} WHERE namespace = ? AND collection = ? AND dims = {int(dims)} "
+               f"AND {where} ORDER BY distance LIMIT ?")
+        import db
         with _connect() as conn:
             conn.isolation_level = None
             conn.execute("BEGIN")
             try:
                 # pgvector 0.8: a filtered HNSW scan keeps going until it has k rows.
-                conn.execute("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)")
+                if _iterative.get(db.DATABASE_URL):
+                    conn.execute("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', "
+                                 "true)")
                 rows = conn.execute(sql, [_vector(vector), *args, int(k)]).fetchall()
             finally:
                 conn.execute("COMMIT")
-        rows = sorted(rows, key=lambda r: r[3])            # relaxed_order: sort them again
+        rows = sorted(rows, key=lambda r: (r[3], r[4]))    # relaxed_order: sort them again
         return [(Document(id=r[0], page_content=r[1] or "", metadata=_meta(r[2])), r[3])
                 for r in rows]
 

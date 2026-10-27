@@ -18,7 +18,7 @@ WORKSPACES = ("acme", "globex")
 
 
 @pytest.fixture
-def fresh(tmp_path, monkeypatch):
+def fresh(tmp_path, monkeypatch, fresh_db):
     """A database and server key of their own."""
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setattr(db, "_migrated", set())
@@ -269,6 +269,7 @@ def test_readiness_checks_the_key_against_a_data_key(fresh, monkeypatch):
         health.check_integrations_key(db.DB_PATH)
 
 
+@pytest.mark.sqlite_only("scripts/sqlite_tool.py, the restore tool, reads the SQLite file")
 def test_restore_checks_the_key_against_a_data_key(fresh, tmp_path):
     """scripts/restore.sh's check-key: the key file opens the wrapped data keys."""
     import importlib.util

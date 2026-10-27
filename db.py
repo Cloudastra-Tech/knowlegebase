@@ -121,6 +121,12 @@ def platform():
         _tenant.reset(token)
 
 
+def connect_platform():
+    """connect(), seeing every workspace's rows (platform()), wherever it's called."""
+    with platform():
+        return connect()
+
+
 # ---- The catalog, either backend ------------------------------------------------------
 def tables(conn):
     """{table: [columns]} of the app's tables (not SQLite's own, nor FTS5's

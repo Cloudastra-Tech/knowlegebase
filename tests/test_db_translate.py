@@ -42,6 +42,18 @@ def test_insert_or_ignore_and_or_replace():
             "context = EXCLUDED.context")
 
 
+def test_or_replace_resets_the_columns_it_leaves_out_and_needs_the_primary_key():
+    settable = {"chunk_contexts": ["hash", "model", "context", "created_at"]}.get
+    assert db_pg.translate(
+        "INSERT OR REPLACE INTO chunk_contexts (hash, model) VALUES (?, ?)",
+        KEYS.get, IDENTITY.get, True, lambda t: settable(t) or []).sql == \
+        ("INSERT INTO chunk_contexts (hash, model) VALUES (%s, %s) ON CONFLICT (hash) DO "
+         "UPDATE SET model = EXCLUDED.model, context = DEFAULT, created_at = DEFAULT")
+    # Replacing on another unique key than the primary one: spelled out by the store.
+    with pytest.raises(db_pg.NotSupported, match="without its primary key"):
+        pg("INSERT OR REPLACE INTO chunk_contexts (model, context) VALUES (?, ?)")
+
+
 def test_bare_columns_in_do_update_are_the_tables_own():
     assert pg("INSERT INTO s (workspace, version) VALUES (?, 1) ON CONFLICT(workspace) "
               "DO UPDATE SET version = version + 1, at = excluded.at") == \
@@ -94,3 +106,8 @@ def test_ddl_types():
 def test_sqlite_only_sql_is_refused_by_name(sql):
     with pytest.raises(db_pg.NotSupported, match="SQLite|no Postgres|translation"):
         pg(sql)
+
+
+def test_a_type_name_outside_ddl_is_only_a_type_in_a_cast():
+    assert pg("SELECT secret AS blob, CAST(at AS INTEGER), CAST(x AS REAL) FROM t") == \
+        "SELECT secret AS blob, CAST(at AS BIGINT), CAST(x AS DOUBLE PRECISION) FROM t"

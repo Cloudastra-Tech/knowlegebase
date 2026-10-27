@@ -64,7 +64,7 @@ def test_what_sqlite_does_its_own_way_is_there(fresh_db):
                      "text_mode, question, outcome) VALUES ('w', 1, 'd', 'u', 'email', 'm1', "
                      "'full', 'my question', 'answered')")
         conn.execute("DELETE FROM conversations WHERE id = 'c1'")
-        assert conn.execute("SELECT question, message_id FROM question_log").fetchone() == \
+        assert tuple(conn.execute("SELECT question, message_id FROM question_log").fetchone()) == \
             (None, None)
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO question_log (workspace, at, day, user, surface, "
@@ -84,3 +84,15 @@ def test_upgrading_again_changes_nothing(fresh_db):
             [__import__("tools.migrate_sqlite_to_pg", fromlist=["_head"])._head()]
     finally:
         conn.close()
+
+
+def test_readiness_checks_the_database_and_the_pgvector_index(fresh_db, monkeypatch, tmp_path):
+    import health
+    import vector_store
+    monkeypatch.setenv("VECTOR_STORE", "pgvector")
+    monkeypatch.setattr(vector_store, "_ready", set())
+    health.check_database(db.DB_PATH)
+    with pytest.raises(health.NotReady, match="run ingest.py"):
+        health.check_search_index(str(tmp_path / "index"))       # no table yet
+    vector_store.collection_names(str(tmp_path / "index"))     # makes it
+    health.check_search_index(str(tmp_path / "index"))

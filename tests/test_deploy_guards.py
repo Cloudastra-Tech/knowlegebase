@@ -68,6 +68,7 @@ def test_required_guard_starts_when_installed(api, monkeypatch):
                                                               "toxicity_required": True}
 
 
+@pytest.mark.sqlite_only("reads the new SQLite file with sqlite3; on Postgres every test database is migrated at first use")
 def test_startup_brings_the_database_up_to_date(api, monkeypatch, tmp_path):
     """Migrations run when the server starts, not at its first request."""
     import sqlite3

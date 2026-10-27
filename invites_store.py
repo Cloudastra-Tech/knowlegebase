@@ -24,6 +24,7 @@ import os
 import secrets
 import time
 
+import db
 import members_store
 
 STATUSES = ("pending", "expired", "accepted", "revoked")
@@ -73,6 +74,12 @@ def _invite(row):
 def _check_address(conn, workspace, email):
     """Raise InviteError if `email` can't join `workspace`: a member already, or
     an account of (or on a domain verified by) another workspace."""
+    if getattr(conn, "workspace", None):    # a tenant's (Postgres): blind to the others
+        platform = db.connect_platform()
+        try:
+            return _check_address(platform, workspace, email)
+        finally:
+            platform.close()
     member = conn.execute("SELECT workspace FROM members WHERE username = ?",
                           (email,)).fetchone()
     if member:

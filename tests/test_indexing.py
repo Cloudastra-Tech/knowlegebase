@@ -260,18 +260,17 @@ def test_questions_use_the_old_index_while_a_full_rebuild_builds(env, fake_agent
     assert new != old and new.startswith(f"ws_{w}__g")
     assert "Newco" in ask(env, admin)              # the agent noticed the switch
     # ...and the old collection is dropped (here at once: DROP_AFTER = 0).
-    import chromadb
     import ingest
+    import vector_store
     deadline = time.time() + 10
-    while old in {c.name for c in chromadb.PersistentClient(path=ingest.DB_FOLDER)
-                  .list_collections()} and time.time() < deadline:
+    while old in vector_store.collection_names(ingest.DB_FOLDER) and time.time() < deadline:
         time.sleep(0.05)
     assert time.time() < deadline
 
 
 def test_a_failed_rebuild_leaves_the_old_index_answering(env, fake_agent, monkeypatch):
-    import chromadb
     import ingest
+    import vector_store
     from kb import jobs
     from kb.services import indexing
     w = env.workspace(("public", "vendor.txt", "The vendor is Oldco."))
@@ -289,7 +288,7 @@ def test_a_failed_rebuild_leaves_the_old_index_answering(env, fake_agent, monkey
     state = env.wait(w, expect="error")
     assert state["error"] == "ConnectionError: embedding service down"
     assert indexing.current(w)[0] == old
-    names = {c.name for c in chromadb.PersistentClient(path=ingest.DB_FOLDER).list_collections()}
+    names = set(vector_store.collection_names(ingest.DB_FOLDER))
     assert old in names and not any(n.startswith(f"ws_{w}__g2") for n in names)
     assert "Oldco" in ask(env, admin)
 

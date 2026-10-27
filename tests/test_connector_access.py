@@ -9,7 +9,6 @@ indexing (ingest.py), the access tags, the permission-filtered retriever
 
 import json
 import os
-import sqlite3
 import time
 import uuid
 
@@ -165,7 +164,7 @@ def test_an_existing_connection_without_the_setting_is_restricted(env):
     # Made before the setting existed: chosen folders, no access key; and an
     # older row whose settings column is empty.
     integrations_store.update(ws, "notion", settings={"folders": [{"id": "f1"}]})
-    with sqlite3.connect(db.DB_PATH) as conn:
+    with db.connect() as conn:
         conn.execute("INSERT INTO integrations (workspace, provider, status) "
                      "VALUES (?, 'google_drive', 'connected')", (ws,))
         conn.execute("UPDATE integrations SET settings=NULL WHERE workspace=? "

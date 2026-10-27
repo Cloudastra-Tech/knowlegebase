@@ -56,11 +56,12 @@ def trend(ws, since_day, until_day):
         start = calendar.timegm(time.strptime(since_day, "%Y-%m-%d"))
         end = calendar.timegm(time.strptime(until_day, "%Y-%m-%d")) + 86400
         rated = {}
-        for day, rating, n in conn.execute(
-                "SELECT strftime('%Y-%m-%d', updated_at, 'unixepoch') AS day, rating, COUNT(*) "
-                "FROM message_feedback WHERE workspace = ? AND updated_at >= ? AND "
-                "updated_at < ? GROUP BY day, rating", (ws, start, end)):
-            rated.setdefault(day, {1: 0, -1: 0})[rating] = n
+        # Counted per UTC day here rather than by SQLite's strftime(), so Postgres runs it too.
+        for at, rating in conn.execute(
+                "SELECT updated_at, rating FROM message_feedback WHERE workspace = ? AND "
+                "updated_at >= ? AND updated_at < ?", (ws, start, end)):
+            counts = rated.setdefault(time.strftime("%Y-%m-%d", time.gmtime(at)), {1: 0, -1: 0})
+            counts[rating] = counts.get(rating, 0) + 1
     finally:
         conn.close()
     daily = []

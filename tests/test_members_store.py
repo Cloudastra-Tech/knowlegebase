@@ -13,7 +13,7 @@ import members_store
 
 
 @pytest.fixture
-def store(tmp_path, monkeypatch):
+def store(tmp_path, monkeypatch, fresh_db):
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setattr(db, "_migrated", set())
     monkeypatch.setattr(members_store, "USERS_FILE", str(tmp_path / "users.json"))
@@ -106,6 +106,7 @@ def test_roles_are_checked(store):
         members_store.set_role("pat@acme.com", "owner", "acme")
 
 
+@pytest.mark.sqlite_only("a config/app.db from before Alembic, written with sqlite3")
 def test_an_older_database_gains_the_new_columns_and_keeps_roles(store, tmp_path):
     """A config/app.db from before group roles: roles set by hand become overrides."""
     import sqlite3
@@ -129,6 +130,7 @@ def test_an_older_database_gains_the_new_columns_and_keeps_roles(store, tmp_path
     assert members_store.get("boss")["role"] == "public"
 
 
+@pytest.mark.sqlite_only("a config/app.db from before Alembic, written with sqlite3")
 def test_an_older_event_log_keeps_its_rows_and_takes_metadata_events(store, tmp_path):
     """sso_events from before 'updated' / 'attention': its CHECK is widened, once."""
     import sqlite3
@@ -182,6 +184,7 @@ def test_a_role_comes_from_the_override_then_the_groups_then_public(store):
     assert (pat["role"], pat["groups"], pat["name"]) == ("hr", ["eng"], "Pat")  # its name wins
 
 
+@pytest.mark.sqlite_only("a config/app.db from before Alembic, written with sqlite3")
 def test_an_interrupted_role_migration_is_finished_next_time(store, tmp_path):
     """The column was added (ALTER TABLE commits by itself) but the copy wasn't."""
     import sqlite3
@@ -195,6 +198,7 @@ def test_an_interrupted_role_migration_is_finished_next_time(store, tmp_path):
     assert members_store.get("boss")["override_role"] == "hr"
 
 
+@pytest.mark.sqlite_only("a config/app.db from before Alembic, written with sqlite3")
 def test_a_database_from_before_role_sources_gets_one(store, tmp_path):
     """Then any provider with rules set roles: the one with rules that signed
     someone in last becomes the role source, and group roles already given stay."""
