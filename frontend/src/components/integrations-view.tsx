@@ -387,7 +387,9 @@ function ConnectorCard({
                 <p className="min-w-0 flex-1 text-sm text-muted-foreground">
                   {item.picker_required
                     ? "Nothing is synced yet. Choose what your team should search."
-                    : "Everything shared with the integration is synced."}
+                    : item.id === "zendesk"
+                      ? "Every published Help Center article is synced."
+                      : "Everything shared with the integration is synced."}
                 </p>
                 <Button size="sm" onClick={() => setPickerOpen(true)}>
                   <FolderCog /> {item.picker_required ? "Choose what to sync" : "Narrow it down"}
