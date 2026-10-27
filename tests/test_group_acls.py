@@ -331,6 +331,88 @@ def test_knowledge_shows_who_can_see_each_item(org, env):  # noqa: F811
                                        headers=org.login("bob")).json()["items"][0]
 
 
+# ---- Jira, Zendesk and GitHub under the source policy --------------------------------------------
+def _sourced(org, env, provider, items):  # noqa: F811
+    """A `provider` connection under the source policy with these synced items
+    ({source id: (text, acl)}), indexed."""
+    import integrations_store
+    import sync_store
+    import workspaces
+    from kb.services import indexing
+    integrations_store.connect(org.ws, provider, "Acme", {"access_token": "x"}, "admin")
+    integrations_store.update(org.ws, provider, settings={"policy": "source"})
+    folder = workspaces.connector_dir(org.ws, provider)
+    os.makedirs(folder, exist_ok=True)
+    for sid, (text, acl) in items.items():
+        with open(os.path.join(folder, f"{sid}.txt"), "w", encoding="utf-8") as f:
+            f.write(f"{sid}\n\n{text}")
+        sync_store.save_item(org.ws, provider, sid, file_name=f"{sid}.txt", title=sid, acl=acl)
+    indexing.schedule_index(org.ws)
+    env.wait(org.ws)
+
+
+def _who_reaches(org, text):
+    people = {"alice": org.viewer("alice"), "bob": org.viewer("bob"),
+              "hr": org.viewer("hr", "hr"), "channel": "public"}
+    return {name for name, who in people.items() if text in _texts(_reach(org.ws, who, text))}
+
+
+def test_jira_browse_grants_and_security_levels(org, env):  # noqa: F811
+    eng = {"public": False, "users": ["atlassian:557058:abc"], "dynamic": ["reporter"],
+           "groups": [f"atlassian:group:eng@{org.domain}"], "roles": ["atlassian:role:1"]}
+    opened = {**eng, "public": True}
+    texts = {"ops-1": "Jira OPS-1: the failover drill is on Tuesday at noon.",
+             "ops-2": "Jira OPS-2: the breach report names the Kestrel vendor.",
+             "pub-1": "Jira PUB-1: the public roadmap lists dark mode."}
+    _sourced(org, env, "jira", {
+        "ops-1": (texts["ops-1"], {"project": "OPS", "project_read": eng,
+                                   "security_level": None, "restricted": False}),
+        "ops-2": (texts["ops-2"], {"project": "OPS", "project_read": opened, "restricted": True,
+                                   "security_level": {"id": "1", "name": "Security team"}}),
+        "pub-1": (texts["pub-1"], {"project": "PUB", "project_read": opened,
+                                   "security_level": None, "restricted": False})})
+    assert _who_reaches(org, texts["ops-1"]) == {"alice"}           # the eng group's browse grant
+    assert _who_reaches(org, texts["ops-2"]) == set()               # a security level: no one
+    assert _who_reaches(org, texts["pub-1"]) == {"alice", "bob", "hr", "channel"}
+
+
+def test_zendesk_segments_and_tickets(org, env):  # noqa: F811
+    import integrations_store
+    texts = {"a1": "Zendesk article: resetting a password takes two minutes.",
+             "a2": "Zendesk article for agents: the refund override code is ORCA-7.",
+             "t1": "Zendesk ticket: the customer at 12 Elm Street wants a refund."}
+    _sourced(org, env, "zendesk", {
+        "a1": (texts["a1"], {"mode": "workspace", "everyone": True, "segments": []}),
+        "a2": (texts["a2"], {"mode": "staff", "everyone": False,
+                             "segments": [{"id": "9", "user_type": "staff"}]}),
+        "t1": (texts["t1"], {"mode": "staff", "reason": "ticket"})})
+    assert _who_reaches(org, texts["a1"]) == {"alice", "bob", "hr", "channel"}
+    assert _who_reaches(org, texts["a2"]) == {"hr"}                 # staff: the hr group
+    assert _who_reaches(org, texts["t1"]) == {"hr"}
+    # Tickets on: the connection is locked to HR and admins, whatever its policy says.
+    integrations_store.update(org.ws, "zendesk", settings={"policy": "workspace", "tickets": True,
+                                                           "access_lock": "restricted"})
+    from kb.services import indexing
+    indexing.schedule_retag(org.ws, "zendesk")
+    env.wait(org.ws)
+    assert _who_reaches(org, texts["a1"]) == {"hr"}
+
+
+def test_github_visibility_collaborators_and_teams(org, env):  # noqa: F811
+    texts = {"site": "GitHub acme/site: the README says to run make serve.",
+             "api": "GitHub acme/api: the signing key rotates every 90 days.",
+             "ops": "GitHub acme/ops: the pager rota lives in rota.yaml."}
+    private = {"repo": "acme/api", "visibility": "private", "public": False,
+               "users": ["github:octocat"], "teams": [f"github:team:acme/eng@{org.domain}"]}
+    _sourced(org, env, "github", {
+        "site": (texts["site"], {"repo": "acme/site", "visibility": "public", "public": True}),
+        "api": (texts["api"], private),
+        "ops": (texts["ops"], {**private, "repo": "acme/ops", "teams": None, "partial": True})})
+    assert _who_reaches(org, texts["site"]) == {"alice", "bob", "hr", "channel"}
+    assert _who_reaches(org, texts["api"]) == {"alice"}             # the eng team
+    assert _who_reaches(org, texts["ops"]) == set()                 # a login only: no one
+
+
 # ---- Changing who may see -----------------------------------------------------------------------
 def test_a_policy_switch_retags_without_embedding(org, env):  # noqa: F811
     embedded = len(env.embedded)
@@ -464,3 +546,73 @@ def test_the_migration_fills_in_answers_audiences(tmp_path):
     assert dict(conn.execute("SELECT id, acl FROM messages")) == {
         "m1": "[]", "m2": '[["group:hr"]]'}
     conn.close()
+
+
+# ---- The Groups screen's API --------------------------------------------------------------------
+def test_admins_manage_manual_groups_and_see_the_identity_providers(org, env):  # noqa: F811
+    groups = env.client.get("/api/admin/groups", headers=org.admin).json()["groups"]
+    by_name = {g["name"]: g for g in groups}
+    assert groups[0]["source"] == "builtin" and not groups[0]["editable"]
+    assert {m["username"] for m in by_name["HR & Admin"]["members"]} >= {f"hr@{org.domain}"}
+    idp = by_name[f"eng@{org.domain}"]
+    assert idp["source"] == "idp" and not idp["editable"]
+    assert [m["username"] for m in idp["members"]] == [f"alice@{org.domain}"]
+    r = env.client.put(f"/api/admin/groups/{idp['id']}/members", json={"usernames": []},
+                       headers=org.admin)
+    assert r.status_code == 400                         # read-only: change it at the provider
+
+    made = env.client.post("/api/admin/groups", json={"name": "Legal"}, headers=org.admin).json()
+    assert env.client.post("/api/admin/groups", json={"name": "legal"},
+                           headers=org.admin).status_code == 400          # names are unique
+    r = env.client.put(f"/api/admin/groups/{made['id']}/members",
+                       json={"usernames": [f"bob@{org.domain}", "stranger@else.example"]},
+                       headers=org.admin)
+    assert r.status_code == 400                         # members of this workspace only
+    r = env.client.put(f"/api/admin/groups/{made['id']}/members",
+                       json={"usernames": [f"bob@{org.domain}"]}, headers=org.admin)
+    assert [m["username"] for m in r.json()["members"]] == [f"bob@{org.domain}"]
+    assert access.group(made["id"]) in org.viewer("bob")          # counts at once
+    picker = env.client.get("/api/access/principals", headers=org.admin).json()["principals"]
+    assert {"everyone", access.group(made["id"]), access.user(f"bob@{org.domain}")} <= {
+        p["principal"] for p in picker}
+    assert env.client.delete(f"/api/admin/groups/{made['id']}",
+                             headers=org.admin).status_code == 200
+    assert access.group(made["id"]) not in org.viewer("bob")
+
+    # Groups gate content, roles gate screens: HR and members can't manage groups.
+    for who in ("hr", "bob"):
+        assert env.client.get("/api/admin/groups", headers=org.login(who)).status_code == 403
+    assert env.client.get("/api/access/principals", headers=org.login("bob")).status_code == 403
+
+
+# ---- Route walk -------------------------------------------------------------------------------
+# Routes that know the asker's role but not their principals, and why that's
+# enough. Any other route that reads content must take current_viewer.
+ROLE_ONLY = {
+    "list_conversations": "titles only: a title is the asker's own first question",
+    "create_conversation": "records the role a chat is started under",
+    "edit_conversation": "title and folder only",
+    "fork_conversation": "copies rows; reading the copy is checked like any chat",
+    "create_share": "makes a link; open_share checks every answer",
+    "open_share": "works out the viewer's and the sharer's principals itself",
+    "list_integrations": "the role decides the live Outline tool; no documents",
+    "get_insights": "HR / Admin counts by access level (follow-up: by ACL)",
+    "export_insights": "as get_insights",
+    "list_eval_cases": "HR / Admin; eval cases carry no ACL (follow-up)",
+}
+
+
+def test_every_content_route_checks_the_askers_principals():
+    import api
+    from fastapi.routing import APIRoute, iter_route_contexts
+    role_only = set()
+    for context in iter_route_contexts(api.app.routes):
+        route = context.original_route
+        if not isinstance(route, APIRoute):
+            continue
+        deps = {d.call.__name__ for d in route.dependant.dependencies}
+        if "current_role" in deps and "current_viewer" not in deps:
+            role_only.add(route.endpoint.__name__)
+    assert role_only == set(ROLE_ONLY), ("A route reads the role but not the principals: "
+                                         "check it against groups (access.py), then list it "
+                                         "here with why, or take current_viewer.")
