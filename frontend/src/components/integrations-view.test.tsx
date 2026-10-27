@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { IntegrationsView } from "@/components/integrations-view"
 import type { Integration } from "@/lib/api"
@@ -120,5 +120,104 @@ describe("IntegrationsView", () => {
     await user.click(screen.getByRole("button", { name: "Connect" }))
     await screen.findByText("Confluence Data Center")
     expect(sent[0]).toEqual({ url: "https://confluence.acme.com", token: "pat" })
+  })
+
+  it("connects Zendesk with an email and token, or signs in on its subdomain", async () => {
+    const sent: unknown[] = []
+    const signIns: unknown[] = []
+    const items: Integration[] = [
+      { ...base, id: "zendesk", name: "Zendesk", auth: "token", picker: "tree", status: "disconnected", sign_in: true },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "POST /api/integrations/zendesk/setup": (body: unknown) => {
+        sent.push(body)
+        return { ok: true, account: "acme.zendesk.com (Ann)", choose: false }
+      },
+      "POST /api/integrations/zendesk/connect": (body: unknown) => {
+        signIns.push(body)
+        return new Response(JSON.stringify({ detail: "Enter your Zendesk subdomain." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        })
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Connect Zendesk" }))
+    await user.type(screen.getByLabelText("Zendesk subdomain"), "acme")
+    // Signing in sends the subdomain first; the server's reason is shown as is.
+    await user.click(screen.getByRole("button", { name: "Sign in with Zendesk" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter your Zendesk subdomain.")
+    expect(signIns[0]).toEqual({ url: "acme" })
+    await user.type(screen.getByLabelText("Agent or admin email"), "ann@acme.com")
+    await user.type(screen.getByLabelText("API token"), "tok")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    await screen.findByText("Zendesk")
+    expect(sent[0]).toEqual({ url: "acme", email: "ann@acme.com", token: "tok" })
+  })
+
+  it("keeps code per GitHub repository and locks access while Zendesk tickets sync", async () => {
+    const saved: unknown[] = []
+    const items: Integration[] = [
+      {
+        ...base,
+        id: "github",
+        name: "GitHub",
+        auth: "oauth",
+        picker: "list",
+        picker_required: true,
+        status: "connected",
+        unit: "files",
+        containers: [{ id: "acme/handbook", name: "acme/handbook", kind: "repo", code: false }],
+        options: { code_extensions: [".py"] },
+      },
+      {
+        ...base,
+        id: "zendesk",
+        name: "Zendesk",
+        auth: "token",
+        picker: "tree",
+        status: "connected",
+        access: "restricted",
+        access_locked: true,
+        options: { tickets: true },
+        containers: [],
+      },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "GET /api/integrations/github/containers": {
+        items: [
+          { id: "acme/api", name: "acme/api", kind: "repo", private: false },
+          { id: "acme/handbook", name: "acme/handbook", kind: "repo", private: true },
+        ],
+        picked: [],
+      },
+      "PUT /api/integrations/github/containers": (body: unknown) => {
+        saved.push(body)
+        return { containers: [] }
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    expect(await screen.findByText(/Locked to HR and admins while Zendesk tickets/)).toBeInTheDocument()
+    expect(screen.getByText("synced (HR and admins only)")).toBeInTheDocument()
+    const everyone = screen.getAllByRole("radio", { name: /Everyone in the workspace/ })
+    expect(everyone.map((r) => r.hasAttribute("disabled"))).toEqual([false, true])
+
+    await user.click(screen.getAllByRole("button", { name: "Edit selection" })[0])
+    await user.click(await screen.findByRole("checkbox", { name: "Sync acme/api" }))
+    await user.click(screen.getByRole("switch", { name: "Also sync code from acme/api" }))
+    expect(screen.getByLabelText("Code file types")).toHaveValue(".py")
+    await user.click(screen.getByRole("button", { name: "Save and sync" }))
+    await vi.waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0]).toEqual({
+      containers: [
+        { id: "acme/handbook", name: "acme/handbook", kind: "repo", code: false },
+        { id: "acme/api", name: "acme/api", kind: "repo", private: false, code: true },
+      ],
+      options: { code_extensions: [".py"] },
+    })
   })
 })

@@ -1,0 +1,181 @@
+{
+ "_source": [
+  "https://developer.zendesk.com/api-reference/ticketing/ticket-management/incremental_exports/ (GET /api/v2/incremental/tickets/cursor: start_time, then cursor; CursorBasedExportIncrementalTicketsResponse {tickets, after_cursor, after_url, before_cursor, before_url, end_of_stream}; deleted tickets have status deleted)",
+  "https://developer.zendesk.com/api-reference/ticketing/tickets/ticket_comments/ (GET /api/v2/tickets/{ticket_id}/comments: Comment {id, type, author_id, body, html_body, plain_body, public, created_at}; at most 100 a page, cursor pagination)",
+  "https://developer.zendesk.com/api-reference/introduction/rate-limits/ (incremental exports: 10 requests a minute)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.zendesk.com/api/v2/incremental/tickets/cursor"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "tickets": [
+      {
+       "id": 801,
+       "url": "https://acme.zendesk.com/api/v2/tickets/801.json",
+       "subject": "Refund for order 1234",
+       "raw_subject": "Refund for order 1234",
+       "description": "first message",
+       "status": "solved",
+       "priority": "normal",
+       "type": "question",
+       "tags": [
+        "billing"
+       ],
+       "requester_id": 7001,
+       "assignee_id": 7002,
+       "created_at": "2026-10-01T09:00:00Z",
+       "updated_at": "2026-10-10T09:00:00Z",
+       "generated_timestamp": 1791000000
+      },
+      {
+       "id": 802,
+       "url": "https://acme.zendesk.com/api/v2/tickets/802.json",
+       "subject": "Still broken",
+       "raw_subject": "Still broken",
+       "description": "first message",
+       "status": "open",
+       "priority": "normal",
+       "type": "question",
+       "tags": [
+        "billing"
+       ],
+       "requester_id": 7001,
+       "assignee_id": 7002,
+       "created_at": "2026-10-01T09:00:00Z",
+       "updated_at": "2026-10-10T10:00:00Z",
+       "generated_timestamp": 1791000000
+      }
+     ],
+     "after_cursor": "tc-1",
+     "after_url": "https://acme.zendesk.com/api/v2/incremental/tickets/cursor.json?cursor=tc-1",
+     "before_cursor": null,
+     "before_url": null,
+     "end_of_stream": false
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.zendesk.com/api/v2/incremental/tickets/cursor",
+    "params": {
+     "cursor": "tc-1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "tickets": [
+      {
+       "id": 803,
+       "url": "https://acme.zendesk.com/api/v2/tickets/803.json",
+       "subject": "Invoice copy",
+       "raw_subject": "Invoice copy",
+       "description": "first message",
+       "status": "closed",
+       "priority": "normal",
+       "type": "question",
+       "tags": [
+        "billing"
+       ],
+       "requester_id": 7001,
+       "assignee_id": 7002,
+       "created_at": "2026-10-01T09:00:00Z",
+       "updated_at": "2026-10-11T09:00:00Z",
+       "generated_timestamp": 1791000000
+      }
+     ],
+     "after_cursor": "tc-2",
+     "after_url": "https://acme.zendesk.com/api/v2/incremental/tickets/cursor.json?cursor=tc-2",
+     "before_cursor": null,
+     "before_url": null,
+     "end_of_stream": true
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.zendesk.com/api/v2/tickets/801/comments",
+    "params": {
+     "page[size]": "100"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "comments": [
+      {
+       "id": 1,
+       "type": "Comment",
+       "author_id": 7001,
+       "public": true,
+       "body": "Please refund order 1234.",
+       "plain_body": "Please refund order 1234.",
+       "created_at": "2026-10-01T09:00:00Z"
+      },
+      {
+       "id": 2,
+       "type": "Comment",
+       "author_id": 7002,
+       "public": false,
+       "body": "Internal: customer is on the watch list.",
+       "plain_body": "Internal: customer is on the watch list.",
+       "created_at": "2026-10-01T10:00:00Z"
+      },
+      {
+       "id": 3,
+       "type": "Comment",
+       "author_id": 7002,
+       "public": true,
+       "body": "Refunded.",
+       "plain_body": "Refunded.",
+       "created_at": "2026-10-02T09:00:00Z"
+      }
+     ],
+     "meta": {
+      "has_more": false,
+      "after_cursor": null
+     },
+     "links": {
+      "next": null
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.zendesk.com/api/v2/tickets/803/comments"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "comments": [
+      {
+       "id": 4,
+       "type": "Comment",
+       "author_id": 7001,
+       "public": true,
+       "body": "Send me a copy.",
+       "plain_body": "Send me a copy.",
+       "created_at": "2026-10-11T09:00:00Z"
+      }
+     ],
+     "meta": {
+      "has_more": false,
+      "after_cursor": null
+     },
+     "links": {
+      "next": null
+     }
+    }
+   }
+  }
+ ]
+}

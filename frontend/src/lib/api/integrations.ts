@@ -4,6 +4,7 @@
 import { json, request, seg } from "@/lib/api/client"
 import type {
   ConnectorAccess,
+  ConnectorOptions,
   Container,
   Integration,
   IntegrationSetup,
@@ -14,9 +15,13 @@ import type {
 export const integrationsApi = {
   integrations: () =>
     request<{ workspace: string; integrations: Integration[] }>("/integrations"),
-  // Sign-in connectors: the provider's consent screen to send the browser to.
-  connectIntegration: (provider: string) =>
-    request<{ url: string }>(`/integrations/${seg(provider)}/connect`, { method: "POST" }),
+  // Sign-in connectors: the provider's consent screen to send the browser to
+  // (`url`: what it needs first, like Zendesk's subdomain).
+  connectIntegration: (provider: string, url?: string) =>
+    request<{ url: string }>(
+      `/integrations/${seg(provider)}/connect`,
+      url === undefined ? { method: "POST" } : json("POST", { url }),
+    ),
   // Token / address connectors: the form, checked and saved by the server.
   setupIntegration: (provider: string, form: IntegrationSetup) =>
     request<{ ok: boolean; account: string; choose: boolean }>(
@@ -41,10 +46,11 @@ export const integrationsApi = {
     provider: string,
     containers: Container[],
     limits?: { max_pages?: number; max_depth?: number },
+    options?: ConnectorOptions,
   ) =>
     request<{ containers: Container[] }>(
       `/integrations/${seg(provider)}/containers`,
-      json("PUT", { containers, ...limits }),
+      json("PUT", { containers, ...limits, ...(options ? { options } : {}) }),
     ),
   integrationRuns: (provider: string) =>
     request<{ runs: SyncRun[]; skipped: SkippedItem[] }>(`/integrations/${seg(provider)}/runs`),

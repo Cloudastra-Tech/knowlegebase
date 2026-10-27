@@ -6,7 +6,11 @@ Every connector is listed in connectors/registry.py with the same shape
   GET    /api/integrations                       every connector's card (+ uploads, soon)
   GET    /api/integrations/catalog               the registry, for anyone (landing page)
   POST   /api/integrations/{provider}/connect    oauth: {url} of the provider's consent screen
+                                                 (body {url}: what it needs first, e.g.
+                                                 Zendesk's subdomain)
   GET    /api/integrations/{provider}/callback   the provider redirects the browser back here
+                                                 (a connector may share another's path:
+                                                 Jira comes back on Confluence's)
   POST   /api/integrations/{provider}/setup      token / url: check the form, connect
   GET    /api/integrations/{provider}/containers what can be picked (?parent= for a tree)
   PUT    /api/integrations/{provider}/containers save the picks, then sync
@@ -65,7 +69,10 @@ def _connected(ws, provider):
 
 
 def _redirect_uri(request: Request, provider):
-    return public_url(request, f"/api/integrations/{provider}/callback")
+    """Where the provider sends the browser back. One OAuth app may serve several
+    connectors through one callback URL (Atlassian's: Jira uses Confluence's)."""
+    c = registry.get(provider)
+    return public_url(request, f"/api/integrations/{(c and c.CALLBACK) or provider}/callback")
 
 
 def _ctx(ws, provider, row):
@@ -118,8 +125,13 @@ def _integration_info(ws, c, role):
         info["base_url"] = settings.get("base_url")
         # The server-wide wiki (.env), searched live, when this workspace has no synced one.
         info["live_search"] = agents.outline_on(ws, role)
-    if provider == "confluence_dc":
+    if provider in ("confluence_dc", "jira_dc"):
         info["base_url"] = settings.get("base_url")
+    if provider == "zendesk":
+        info["base_url"] = settings.get("subdomain")
+    info["sign_in"] = c.can_sign_in() and c.configured()
+    info["options"] = c.options_of(settings)
+    info["access_locked"] = settings.get("access_lock") == "restricted"
     if provider == "google_drive":
         info["folders"] = info["containers"]           # the old name
     return info
@@ -144,11 +156,15 @@ def integrations_catalog():
                            for e in registry.catalog()]}
 
 
+class ConnectIn(BaseModel):
+    url: str = Field(default="", max_length=2000)
+
+
 @router.post("/api/integrations/{provider}/connect")
-def integration_connect(provider: str, request: Request, user=Depends(require_hr),
-                        audit=audited("integration.connect_start")):
+def integration_connect(provider: str, request: Request, body: ConnectIn | None = None,
+                        user=Depends(require_hr), audit=audited("integration.connect_start")):
     c = _connector(provider)
-    if c.AUTH != "oauth":
+    if not c.can_sign_in():
         raise HTTPException(400, f"{c.LABEL} is connected with a form, not a sign-in.")
     if not c.configured():
         raise HTTPException(400, f"{c.LABEL} isn't set up on this server yet "
@@ -159,11 +175,16 @@ def integration_connect(provider: str, request: Request, user=Depends(require_hr
         del oauth_states[s]
     state = secrets.token_urlsafe(24)
     redirect_uri = _redirect_uri(request, provider)
+    try:
+        url, step = c.connect_start(redirect_uri, state, (body or ConnectIn()).model_dump())
+    except base.FormError as e:
+        raise HTTPException(400, str(e))
     oauth_states[state] = {"workspace": ws_of(user), "user": user["username"],
                            "provider": provider, "expires": now + OAUTH_STATE_SECONDS,
-                           "redirect_uri": redirect_uri}
+                           "redirect_uri": redirect_uri,
+                           **({"step": step} if step is not None else {})}
     audit.record("integration", provider, user=user)
-    return {"url": c.auth_url(redirect_uri, state)}
+    return {"url": url}
 
 
 @router.get("/api/integrations/{provider}/callback")
@@ -173,10 +194,12 @@ def integration_callback(provider: str, request: Request, state: str = "", code:
     workspace and user who clicked Connect (a redirect carries no session header).
     A connector may need one more trip through the provider (SharePoint: sign-in,
     then the tenant admin's consent): it gets a new one-time state and goes on."""
-    c = _connector(provider)
     pending = kb.state.oauth_states.pop(state, None)
-    if not pending or pending["expires"] < time.time() or pending.get("provider") != provider:
+    c = registry.get((pending or {}).get("provider") or "")
+    if (not pending or not c or pending["expires"] < time.time()
+            or (c.CALLBACK or c.PROVIDER) != provider):
         return RedirectResponse("/#integrations?error=expired")
+    provider = c.PROVIDER                  # the connector the state was made for
     step = pending.get("step")
     if not error:
         code = c.callback_code(dict(request.query_params), step)
@@ -212,6 +235,7 @@ def integration_callback(provider: str, request: Request, state: str = "", code:
 class SetupIn(BaseModel):
     url: str = Field(default="", max_length=2000)
     token: str = Field(default="", max_length=2000)
+    email: str = Field(default="", max_length=320)
     cf_client_id: str = Field(default="", max_length=500)
     cf_client_secret: str = Field(default="", max_length=500)
     max_pages: int | None = Field(default=None, ge=1, le=100_000)
@@ -261,6 +285,7 @@ class ContainersIn(BaseModel):
     containers: list[dict[str, Any]] = Field(max_length=500)
     max_pages: int | None = Field(default=None, ge=1, le=100_000)
     max_depth: int | None = Field(default=None, ge=1, le=100)
+    options: dict[str, Any] | None = None     # the connector's own (check_options)
 
 
 @router.put("/api/integrations/{provider}/containers")
@@ -273,11 +298,19 @@ def integration_set_containers(provider: str, body: ContainersIn, user=Depends(r
     c, row = _connected(ws, provider)
     try:
         picked = c.check_containers(body.containers)
+        options = c.check_options(body.options, row.get("settings") or {}) \
+            if body.options is not None else {}
     except base.FormError as e:
         raise HTTPException(400, str(e))
     settings = dict(row.get("settings") or {})
     changed = settings.get(c.SETTINGS_KEY) != picked
     settings[c.SETTINGS_KEY] = picked
+    for key, value in options.items():
+        changed |= settings.get(key) != value
+        if value is None:
+            settings.pop(key, None)
+        else:
+            settings[key] = value
     for key in ("max_pages", "max_depth"):
         if getattr(body, key) is not None and provider == "website":
             changed |= settings.get(key) != getattr(body, key)
@@ -285,8 +318,12 @@ def integration_set_containers(provider: str, body: ContainersIn, user=Depends(r
     integrations_store.update(ws, provider, settings=settings)
     audit.record("integration", provider,
                  {"containers": [p["id"] for p in picked][:50],
-                  **{k: settings.get(k) for k in ("max_pages", "max_depth") if k in settings}},
+                  **{k: settings.get(k) for k in ("max_pages", "max_depth") if k in settings},
+                  **({"options": {k: options[k] for k in sorted(options)}} if options else {})},
                  user=user)
+    if integrations_store.access_of(row) != integrations_store.access_of({"settings": settings}):
+        from kb.services import indexing
+        indexing.schedule_retag(ws, provider)  # e.g. locked to HR and admins
     if changed:
         sync.start_sync(ws, provider, full=True, confirm_deletes=True)
     return {"containers": picked}
@@ -344,6 +381,10 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
     from kb.services import indexing
     ws = ws_of(user)
     c, row = _connected(ws, provider)
+    if body.access == "everyone" and (row.get("settings") or {}).get("access_lock"):
+        raise HTTPException(400, f"{c.LABEL} syncs tickets, which hold customers' personal "
+                                 "data, so only HR and admins can ask about it. Turn tickets "
+                                 "off to change this.")
     if integrations_store.access_of(row) != body.access:
         integrations_store.update(ws, provider,
                                   settings=dict(row.get("settings") or {}, access=body.access))
