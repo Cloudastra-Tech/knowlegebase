@@ -5,7 +5,6 @@ import {
   Folder,
   FolderInput,
   FolderPlus,
-  Loader2,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -154,8 +153,7 @@ function NameForm({
         autoFocus
       />
       <DialogFooter className="mt-4">
-        <Button type="submit" disabled={saving || !name.trim()}>
-          {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
+        <Button type="submit" loading={saving} disabled={!name.trim()}>
           Save
         </Button>
       </DialogFooter>
