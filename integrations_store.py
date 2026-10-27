@@ -60,7 +60,7 @@ def all_connected(provider):
 
 
 def connect(workspace, provider, account, secret, user):
-    blob = secret_box.seal(secret)
+    blob = secret_box.seal(secret, workspace)
     with _lock, _db() as conn:
         conn.execute("""INSERT INTO integrations
             (workspace, provider, status, account, secret, connected_by, connected_at)
@@ -76,14 +76,14 @@ def secret(workspace, provider):
     with _lock, _db() as conn:
         r = conn.execute("SELECT secret FROM integrations WHERE workspace=? AND provider=?",
                          (workspace, provider)).fetchone()
-    return secret_box.unseal(r["secret"]) if r else None
+    return secret_box.unseal(r["secret"], workspace) if r else None
 
 
 def update(workspace, provider, **fields):
     if "settings" in fields:
         fields["settings"] = json.dumps(fields["settings"])
     if "secret" in fields:
-        fields["secret"] = secret_box.seal(fields["secret"])
+        fields["secret"] = secret_box.seal(fields["secret"], workspace)
     cols = ", ".join(f"{k}=?" for k in fields)
     with _lock, _db() as conn:
         conn.execute(f"UPDATE integrations SET {cols} WHERE workspace=? AND provider=?",

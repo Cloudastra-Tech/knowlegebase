@@ -15,6 +15,7 @@ import {
   IntegrationsScreen,
   InvitePage,
   KnowledgeScreen,
+  OperatorScreen,
   PassageScreen,
   Root,
   SharedScreen,
@@ -36,12 +37,13 @@ import {
 //   /extension/connect ?redirect=: the browser extension signing in (chrome.identity)
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
-//   /admin/sign-in, /admin/members, /admin/activity, /admin/api   admins (the Access
-//                      screen's tabs)
+//   /admin/sign-in, /admin/members, /admin/activity, /admin/api, /admin/data   admins
+//                      (the Access screen's tabs; Data: retention, export, support, delete)
 //   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)
+//   /operator          the platform operators' console (their own sign-in, not a member's)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
   {
@@ -50,6 +52,8 @@ export const routes: RouteObject[] = [
     children: [
       // The popup of an admin's "Test sign-in" lands here: no app, just "done".
       { path: "sso-test", Component: SsoTestDone },
+      // Operators sign in apart from any workspace (kb/operators.py).
+      { path: "operator", Component: OperatorScreen },
       {
         Component: AuthRoot,
         children: [
@@ -105,6 +109,7 @@ export const routes: RouteObject[] = [
                   { path: "members", element: <AccessScreen tab="members" /> },
                   { path: "activity", element: <AccessScreen tab="activity" /> },
                   { path: "api", element: <AccessScreen tab="api" /> },
+                  { path: "data", element: <AccessScreen tab="data" /> },
                 ],
               },
             ],

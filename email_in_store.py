@@ -1,5 +1,5 @@
 """
-email_in_store.py  —  email-in's rows in config/app.db (migration 0013).
+email_in_store.py  —  email-in's rows in config/app.db (migration 0015).
 
 SETTINGS (email_in_settings, one per workspace): email-in on or off. No row, or
 enabled = 0, is off: a workspace answers email only once an admin turns it on.
@@ -53,6 +53,15 @@ def set_enabled(workspace, on, user):
                      "enabled = excluded.enabled, updated_by = excluded.updated_by, "
                      "updated_at = excluded.updated_at",
                      (workspace, int(bool(on)), user, time.time()))
+
+
+def remove(workspace):
+    """Email-in off and forgotten for a workspace (purging it): its setting and the
+    record of every email taken in. Returns how many emails were forgotten."""
+    with _lock, _db() as conn:
+        conn.execute("DELETE FROM email_in_settings WHERE workspace = ?", (workspace,))
+        return conn.execute("DELETE FROM email_in_messages WHERE workspace = ?",
+                            (workspace,)).rowcount
 
 
 # ---- Messages ------------------------------------------------------------------------------

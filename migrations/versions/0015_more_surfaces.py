@@ -1,7 +1,7 @@
 """more surfaces: the Teams bot, the browser extension and email-in
 
-Revision ID: 0013
-Revises: 0012
+Revision ID: 0015
+Revises: 0013
 Create Date: 2026-10-27
 
 People ask from Microsoft Teams (platform.md PL-23, teams_store.py), the browser
@@ -39,8 +39,8 @@ CHECK as it is (it accepts everything the old one did).
 
 from alembic import op
 
-revision = "0013"
-down_revision = "0012"
+revision = "0015"
+down_revision = "0013"   # 0014 is the group ACLs' (in flight): re-point to the newest at merge
 branch_labels = None
 depends_on = None
 

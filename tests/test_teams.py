@@ -409,6 +409,12 @@ def test_setting_up_is_admin_only_audited_and_never_shows_the_secret(teams):
         "mode": "custom", "app_id": BOT, "app_tenant": TENANT, "client_secret": new_secret})
     assert r.status_code == 200, r.text
     assert teams_store.app_secret(teams.ws) == new_secret
+    conn = db.connect()
+    stored = conn.execute("SELECT app_secret FROM teams_installs WHERE workspace = ?",
+                          (teams.ws,)).fetchone()[0]
+    conn.close()
+    assert bytes(stored).startswith(b"kbw1:")         # under the workspace's own data key
+    assert new_secret.encode() not in bytes(stored)
     # Left out, the secret of the same bot is kept.
     r = teams.client.put("/api/admin/teams/app", headers=h, json={
         "mode": "custom", "app_id": BOT, "app_tenant": TENANT, "client_secret": ""})

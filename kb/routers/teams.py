@@ -163,7 +163,7 @@ def teams_disconnect(request: Request, user=Depends(require_admin),
     install = teams_store.get(ws)
     if not install:
         raise HTTPException(400, "Teams isn't connected.")
-    teams_store.remove(ws)
+    teams.uninstall(ws)
     audit.record("teams_tenant", install["tenant_id"], {"mode": install["mode"]}, user=user)
     return _view(request, ws, user)
 

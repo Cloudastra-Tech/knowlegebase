@@ -423,6 +423,15 @@ def _conversation(ws, member, role, p):
     return conv or conversations_store.create(ws, member["username"], role)
 
 
+def teardown(ws):
+    """Email-in off and forgotten for a workspace (purging it, kb/services/lifecycle.py):
+    its setting and its record of emails go, so a queued answer is skipped (run()
+    checks the setting first) and nothing more is taken in for it. Nothing is held
+    at the provider: the inbound domain is the server's, not the workspace's.
+    Returns how many emails were forgotten."""
+    return email_in_store.remove(ws)
+
+
 @jobs.handler(JOB, max_attempts=1)
 def run(job):
     p, ws = job.payload, job.workspace

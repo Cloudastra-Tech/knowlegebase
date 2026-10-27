@@ -142,3 +142,18 @@ def inbound_limit(kind, scope, who):
     except HTTPException:
         return False
     return True
+def reset_workspace(workspace, usernames=(), key_ids=()):
+    """Forget the counts of a workspace, its people and its API keys (an operator's
+    "reset rate limits"; this process only). Returns how many counters went."""
+    people, keys = set(usernames), set(key_ids)
+
+    def theirs(key):
+        return (workspace in key or any(k in people for k in key)
+                or (key[:2] == ("api", "key") and key[2] in keys))
+    with state.hits_lock:
+        gone = [k for k in state.hits if isinstance(k, tuple) and theirs(k)]
+        for k in gone:
+            del state.hits[k]
+        for username in people:
+            state.failed_logins.pop(username, None)
+    return len(gone)

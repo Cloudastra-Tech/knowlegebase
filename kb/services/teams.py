@@ -138,6 +138,25 @@ def app_of(install):
             "tenant": install["app_tenant"]}
 
 
+def uninstall(ws):
+    """Stop answering in Teams for a workspace (disconnect, or purging it): the
+    bot, its sealed secret, the tenant, and the users, threads and activities
+    seen in it are forgotten, with what this process cached for them. There is
+    nothing to revoke at Microsoft: the customer's bot and its secret live in
+    their Azure (the app is removed in Teams by its admin). Returns the install
+    as it was, or None."""
+    install = teams_store.remove(ws)
+    if install:
+        tenant = install["tenant_id"]
+        with state.teams_lock:
+            for key in [k for k in state.teams_people if k[0] == tenant]:
+                del state.teams_people[key]
+            for key in [k for k in state.teams_tokens if install["app_id"]
+                        and k[0] == install["app_id"]]:
+                del state.teams_tokens[key]
+    return install
+
+
 # ---- Checking a request from Teams --------------------------------------------------------
 class Refused(Exception):
     """Not a request the Bot Connector sent this bot: `status` 401, or 403 for a key

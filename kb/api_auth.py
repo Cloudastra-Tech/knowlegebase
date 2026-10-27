@@ -25,6 +25,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 import api_keys_store
+import lifecycle_store
 import members_store
 import workspaces
 from kb import logs
@@ -83,6 +84,8 @@ def authenticate(authorization, surface, scope=None):
     if not key or not workspaces.valid(key["workspace"]):
         raise KeyRefused(401, INVALID)
     ws = key["workspace"]
+    if lifecycle_store.status(ws) != lifecycle_store.ACTIVE:
+        raise KeyRefused(403, "This workspace is suspended or being deleted.")
     settings = api_keys_store.settings(ws)
     if surface == "mcp":
         if not settings["mcp_enabled"]:

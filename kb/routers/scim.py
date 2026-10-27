@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
+import lifecycle_store
 import members_store
 import scim_store
 import sessions_store
@@ -86,6 +87,8 @@ def scim_token(request: Request, authorization: str = Header(default="")):
     if not found:
         raise ScimError(401, "A valid SCIM bearer token is required.")
     workspace, token_id = found
+    if lifecycle_store.status(workspace) != lifecycle_store.ACTIVE:
+        raise ScimError(403, "This workspace is suspended or being deleted.")
     logs.bind(workspace=workspace)
     return {"workspace": workspace, "token_id": token_id,
             "base": public_url(request, "/scim/v2")}

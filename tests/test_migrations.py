@@ -20,7 +20,7 @@ from migrations import legacy
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
-HEAD = "0013"                                  # the newest migration
+HEAD = "0015"                                  # the newest migration
 # The tables SQLite keeps behind an FTS5 table.
 FTS_SHADOWS = ("data", "idx", "content", "docsize", "config")
 # Made by migrations after the baseline.
@@ -32,7 +32,8 @@ NEWER_TABLES = {"jobs", "search_indexes", "conversations", "messages", "message_
                 "conversation_search", *(f"conversation_search_{shadow}" for shadow in FTS_SHADOWS),
                 "api_keys", "api_settings", "chunk_contexts", "slack_installs", "slack_events",
                 "slack_threads", "verified_answers", "verified_answer_vectors", "doc_rules",
-                "assistant_settings", "glossary", "teams_installs", "teams_activities",
+                "assistant_settings", "glossary", "workspace_keys", "workspace_exports",
+                "audit_pseudonyms", "audit_anchors", "teams_installs", "teams_activities",
                 "teams_users", "teams_threads", "email_in_settings", "email_in_messages"}
 # Empty columns the pre-Alembic data fixes fill in (migrations/legacy.py).
 FILLED = {("members", "override_role"), ("members", "groups_updated_at"),
@@ -294,7 +295,7 @@ def test_the_alembic_command_line_upgrades_the_same_way(tmp_path, monkeypatch):
 
 
 def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, monkeypatch):
-    """0013 copies question_log into a table whose CHECK allows teams, extension
+    """0015 copies question_log into a table whose CHECK allows teams, extension
     and email: rows logged before are kept, and deleting a chat still clears its
     words from the log (the trigger is made again)."""
     from alembic import command
@@ -302,7 +303,7 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
     path = str(tmp_path / "app.db")
     monkeypatch.setattr(db, "DB_PATH", path)
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    command.upgrade(config, "0012")
+    command.upgrade(config, "0013")
     log_row = ("INSERT INTO question_log (workspace, at, day, user, surface, message_id, "
                "text_mode, question, outcome) VALUES ('w', ?, 'd', 'u', ?, ?, 'full', ?, "
                "'answered')")
@@ -315,7 +316,7 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(log_row, (2, "teams", None, None))
     conn.close()
-    command.upgrade(config, "0013")
+    command.upgrade(config, "0015")
     with sqlite3.connect(path) as conn:
         for surface in ("teams", "extension", "email"):
             conn.execute(log_row, (2, surface, None, None))

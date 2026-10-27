@@ -10,6 +10,8 @@ DELETE /api/admin/sign-in/scim/tokens/{token_id} revoke_scim_token require_admin
 DELETE /api/admin/slack/install slack_uninstall require_admin,audited
 DELETE /api/admin/teams teams_disconnect require_admin,audited
 DELETE /api/admin/verified-answers/{answer_id} delete_answer require_hr,audited
+DELETE /api/admin/workspace delete_workspace require_tenant_admin,audited
+DELETE /api/admin/workspace/support-access revoke_support require_admin,audited
 DELETE /api/conversation-folders/{fid} delete_folder current_user,audited
 DELETE /api/conversations/{cid} delete_conversation current_user,audited
 DELETE /api/docs/{access}/{name} delete_doc require_hr,audited
@@ -34,6 +36,7 @@ GET    /api/admin/insights get_insights require_hr,current_role
 GET    /api/admin/insights/export export_insights require_hr,current_role,audited
 GET    /api/admin/members list_members require_admin
 GET    /api/admin/members/invites list_invites require_admin
+GET    /api/admin/members/{username}/export export_member_data require_tenant_admin,audited
 GET    /api/admin/sign-in sign_in_settings require_admin
 GET    /api/admin/sign-in/new-provider new_provider require_admin
 GET    /api/admin/sign-in/scim scim_settings require_admin
@@ -44,6 +47,8 @@ GET    /api/admin/teams teams_settings require_hr
 GET    /api/admin/teams/package teams_package require_admin
 GET    /api/admin/verified-answers list_answers require_hr
 GET    /api/admin/verified-answers/draft draft_answer require_hr
+GET    /api/admin/workspace workspace_settings require_admin
+GET    /api/admin/workspace/exports/{eid}/download download_export require_tenant_admin,audited
 GET    /api/assistant assistant_info current_user
 GET    /api/auth/me me current_user
 GET    /api/auth/providers auth_providers -
@@ -74,6 +79,13 @@ GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role
 GET    /api/me/api-keys my_keys current_user
 GET    /api/messages/{mid}/markdown answer_markdown current_user,current_role
+GET    /api/operator/audit operator_audit require_operator
+GET    /api/operator/me operator_me require_operator
+GET    /api/operator/providers operator_providers -
+GET    /api/operator/sso/{provider}/callback operator_sso_callback -
+GET    /api/operator/sso/{provider}/start operator_sso_start -
+GET    /api/operator/workspaces operator_workspaces require_operator
+GET    /api/operator/workspaces/{ws}/audit operator_workspace_audit require_operator
 GET    /api/passages/{chunk_id} passage current_user,current_role
 GET    /api/question-log/settings log_settings current_user
 GET    /api/shared/{token} open_share current_user,current_role
@@ -109,6 +121,7 @@ POST   /api/admin/eval-cases add_eval_case require_admin,current_role,audited
 POST   /api/admin/glossary add_term require_admin,audited
 POST   /api/admin/members/invite create_invite require_admin,audited
 POST   /api/admin/members/invites/{invite_id}/resend resend_invite require_admin,audited
+POST   /api/admin/members/{username}/erase erase_member_data require_tenant_admin,audited
 POST   /api/admin/members/{username}/sign-out sign_out_member require_admin,audited
 POST   /api/admin/sign-in/connections add_connection require_admin,audited
 POST   /api/admin/sign-in/connections/{cid}/test test_connection require_admin,audited
@@ -119,6 +132,8 @@ POST   /api/admin/sign-in/scim/tokens create_scim_token require_admin,audited
 POST   /api/admin/slack/install slack_install require_admin,audited
 POST   /api/admin/verified-answers create_answer require_hr,audited
 POST   /api/admin/verified-answers/{answer_id}/review review_answer require_hr,audited
+POST   /api/admin/workspace/cancel-deletion cancel_workspace_deletion require_admin,audited
+POST   /api/admin/workspace/export export_workspace require_tenant_admin,audited
 POST   /api/auth/invite/accept accept_invite audited
 POST   /api/auth/invite/lookup lookup_invite -
 POST   /api/auth/login login -
@@ -140,6 +155,13 @@ POST   /api/integrations/{provider}/connect integration_connect require_hr,audit
 POST   /api/integrations/{provider}/setup integration_setup require_hr,audited
 POST   /api/integrations/{provider}/sync integration_sync require_hr,audited
 POST   /api/me/api-keys create_my_key current_user,audited
+POST   /api/operator/auth/exchange operator_exchange audited
+POST   /api/operator/auth/logout operator_logout require_operator,audited
+POST   /api/operator/workspaces/{ws}/reindex operator_reindex require_operator,audited
+POST   /api/operator/workspaces/{ws}/reset-rate-limits operator_reset_rate_limits require_operator,audited
+POST   /api/operator/workspaces/{ws}/support-session operator_support_session require_operator,audited
+POST   /api/operator/workspaces/{ws}/suspend operator_suspend require_operator,audited
+POST   /api/operator/workspaces/{ws}/unsuspend operator_unsuspend require_operator,audited
 POST   /api/reindex reindex require_hr,audited
 POST   /api/shares create_share current_user,current_role,audited
 POST   /api/slack/apps/{app_key}/commands slack_commands slack_signature,audited
@@ -170,6 +192,8 @@ PUT    /api/admin/slack/app set_slack_app require_admin,audited
 PUT    /api/admin/slack/settings set_slack_settings require_admin,audited
 PUT    /api/admin/teams/app set_teams_app require_admin,audited
 PUT    /api/admin/teams/settings set_teams_settings require_admin,audited
+PUT    /api/admin/workspace/audit-retention set_audit_retention require_tenant_admin,audited
+PUT    /api/admin/workspace/support-access grant_support require_tenant_admin,audited
 PUT    /api/docs/{access}/{name} save_doc require_hr,audited
 PUT    /api/integrations/{provider}/access integration_access require_hr,audited
 PUT    /api/integrations/{provider}/containers integration_set_containers require_hr,audited

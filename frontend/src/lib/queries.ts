@@ -11,6 +11,7 @@ import {
   signIn,
   slack,
   teams,
+  workspace,
 } from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
@@ -76,6 +77,8 @@ export const queries = {
       queryFn: () => api.integrationRuns(provider),
     }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
+  // The workspace's lifecycle, exports, support access and audit retention (admin).
+  workspace: () => queryOptions({ queryKey: ["workspace"], queryFn: workspace.settings }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
   // How questions are logged here (the chat's disclosure, the Insights settings).
   logSettings: () =>

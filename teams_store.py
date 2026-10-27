@@ -1,5 +1,5 @@
 """
-teams_store.py  —  the Microsoft Teams bot's rows in config/app.db (migration 0013).
+teams_store.py  —  the Microsoft Teams bot's rows in config/app.db (migration 0015).
 
 INSTALLS (teams_installs, one per workspace)
   mode custom    the customer's own Azure Bot, registered in their Microsoft Entra
@@ -44,6 +44,9 @@ _lock = threading.Lock()
 MODES = ("central", "custom")
 UNKNOWN_USERS = ("refuse", "public")
 ACTIVITIES_KEPT = 24 * 60 * 60
+# The bot's client secret is sealed under the workspace's own data key, so
+# secret_box.rotate() / reseal() reach it and deleting the workspace shreds it.
+secret_box.register("teams_installs", "app_secret", ("workspace",))
 _PUBLIC = ("workspace", "mode", "app_key", "app_id", "app_tenant", "tenant_id", "status",
            "unknown_users", "last_activity_at", "updated_by", "updated_at")
 
@@ -106,6 +109,7 @@ def set_custom_app(workspace, app_id, app_tenant, client_secret, user):
     different bot (another App ID) starts over: not connected until Teams sends
     it something. Raises TenantTaken."""
     app_tenant = app_tenant.lower()
+    sealed = secret_box.seal({"client_secret": client_secret}, workspace)
     with _lock, _db() as conn:
         _claim(conn, workspace, app_tenant)
         _ensure(conn, workspace)
@@ -118,7 +122,7 @@ def set_custom_app(workspace, app_id, app_tenant, client_secret, user):
                 "app_secret = ?, tenant_id = ?, app_key = COALESCE(app_key, ?), "
                 "status = CASE WHEN ? THEN status ELSE 'configured' END, "
                 "updated_by = ?, updated_at = ? WHERE workspace = ?",
-                (app_id, app_tenant, secret_box.seal({"client_secret": client_secret}),
+                (app_id, app_tenant, sealed,
                  app_tenant, secrets.token_urlsafe(18), int(same), user, time.time(),
                  workspace))
         except sqlite3.IntegrityError:          # the same tenant, claimed a moment ago
@@ -151,7 +155,9 @@ def app_secret(workspace):
     with _lock, _db() as conn:
         r = conn.execute("SELECT app_secret FROM teams_installs WHERE workspace = ?",
                          (workspace,)).fetchone()
-    return secret_box.unseal(r["app_secret"])["client_secret"] if r and r["app_secret"] else None
+    if not (r and r["app_secret"]):
+        return None
+    return secret_box.unseal(r["app_secret"], workspace)["client_secret"]
 
 
 def set_settings(workspace, user, unknown_users):
@@ -166,14 +172,17 @@ def set_settings(workspace, user, unknown_users):
 
 def remove(workspace):
     """Disconnect: the bot, its secret, the tenant and the settings are forgotten,
-    with the users and threads seen in that tenant."""
+    with the users, threads and activities seen in that tenant (rows that have
+    no workspace column of their own). Returns the install as it was, or None."""
     with _lock, _db() as conn:
-        r = conn.execute("SELECT tenant_id FROM teams_installs WHERE workspace = ?",
+        r = conn.execute("SELECT * FROM teams_installs WHERE workspace = ?",
                          (workspace,)).fetchone()
         conn.execute("DELETE FROM teams_installs WHERE workspace = ?", (workspace,))
         if r and r["tenant_id"]:
             conn.execute("DELETE FROM teams_users WHERE tenant_id = ?", (r["tenant_id"],))
             conn.execute("DELETE FROM teams_threads WHERE tenant_id = ?", (r["tenant_id"],))
+            conn.execute("DELETE FROM teams_activities WHERE tenant_id = ?", (r["tenant_id"],))
+    return _row(r)
 
 
 def seen(workspace):

@@ -62,6 +62,9 @@ const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ de
 const InviteAccept = lazy(() =>
   import("@/components/invite-accept").then((m) => ({ default: m.InviteAccept })),
 )
+const OperatorView = lazy(() =>
+  import("@/components/operator-view").then((m) => ({ default: m.OperatorView })),
+)
 
 // The old hash addresses (/#login, /#sso?code=..., ...) go to their new URLs.
 export function Root() {
@@ -106,6 +109,15 @@ export function SignInPage() {
           window.scrollTo(0, 0)
         }}
       />
+    </LazyPage>
+  )
+}
+
+// /operator: the platform operators' console, with a sign-in of its own (not a member's).
+export function OperatorScreen() {
+  return (
+    <LazyPage fullScreen>
+      <OperatorView />
     </LazyPage>
   )
 }
