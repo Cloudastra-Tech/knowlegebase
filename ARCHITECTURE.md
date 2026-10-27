@@ -770,14 +770,16 @@ name otherwise (`PRAGMA`, `sqlite_master`, `UPDATE OR REPLACE`, FTS5, `json_*`,
 
 **Row-level security** (platform.md PL-04 step 3). Each request runs in a
 `db.tenant_scope()` (`kb/middleware.py`); `current_user` names its workspace
-(`db.set_tenant`), and so does the job runner for a workspace's job. On Postgres,
+(`db.set_tenant`), as do an API key's (`kb/api_auth.py`) and the job runner for a
+workspace's job. On Postgres,
 connections opened after that run as the tenant role (`kb_tenant`) with
 `app.workspace` set, and every tenant table has a policy `workspace =
 current_setting('app.workspace')` (`workspaces` by slug; `messages`,
 `conversation_search`, `scim_group_members`... through their parent row), made by
 `migrations/postgres.py` after every upgrade, so a new table is covered too. A
 tenant connection without the setting sees nothing. The platform — sign-in before
-the workspace is known, jobs of no workspace, the operator, migrations — runs as
+the workspace is known, jobs of no workspace, the operator, webhooks from Slack,
+Teams and Stripe, SCIM (its token alone names the workspace), migrations — runs as
 the login role, which owns the tables and so bypasses the policies;
 `db.platform()` is the way out for a check that is across workspaces by nature.
 `DB_RLS=off` turns it off. On SQLite these are no-ops: isolation stays in the code.
