@@ -17,6 +17,7 @@ import { AppNav, type NavItem } from "@/components/app-nav"
 import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
+import { ThemeMenu } from "@/components/theme-menu"
 import { TrialBanner } from "@/components/trial-banner"
 import {
   AlertDialog,
@@ -216,6 +217,8 @@ export default function App() {
                     </Link>
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuSeparator />
+                <ThemeMenu />
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut}>
                   <LogOut /> Sign out
