@@ -7,6 +7,7 @@ import { auditApi } from "@/lib/api/audit"
 import { authApi } from "@/lib/api/auth"
 import { chatApi } from "@/lib/api/chat"
 import { docsApi } from "@/lib/api/docs"
+import { groupsApi } from "@/lib/api/groups"
 import { insightsApi } from "@/lib/api/insights"
 import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
@@ -41,3 +42,5 @@ export const apiKeys = apiKeysApi
 export const assistant = assistantApi
 // The Slack app: install, its settings (admin), and what HR may see of it.
 export const slack = slackApi
+// Access groups (admin) and who a document can be shared with (HR / Admin).
+export const groups = groupsApi

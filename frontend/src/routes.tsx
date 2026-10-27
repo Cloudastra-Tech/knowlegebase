@@ -34,7 +34,7 @@ import {
 //   /passages/:chunkId one cited passage (where a Slack answer's source links)
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
-//   /admin/sign-in, /admin/members, /admin/activity, /admin/api   admins (the Access
+//   /admin/sign-in, /admin/members, /admin/groups, /admin/activity, /admin/api   admins (the Access
 //                      screen's tabs)
 //   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
@@ -100,6 +100,7 @@ export const routes: RouteObject[] = [
                   { path: "assistant", Component: AssistantScreen },
                   { path: "sign-in", element: <AccessScreen tab="sign-in" /> },
                   { path: "members", element: <AccessScreen tab="members" /> },
+                  { path: "groups", element: <AccessScreen tab="groups" /> },
                   { path: "activity", element: <AccessScreen tab="activity" /> },
                   { path: "api", element: <AccessScreen tab="api" /> },
                 ],

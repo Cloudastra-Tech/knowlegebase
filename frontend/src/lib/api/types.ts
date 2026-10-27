@@ -357,6 +357,8 @@ export interface Integration {
   last_sync_at?: number | null
   error?: IntegrationError | null
   access?: ConnectorAccess // who may ask about a connection's synced files
+  policy?: PermissionPolicy // the same, as a permission policy (kb/services/permissions.py)
+  policies?: PermissionPolicy[] // the policies it may have: source only when it reads them
   containers?: Container[]
   held_deletes?: number
   last_run?: SyncRun | null
@@ -374,6 +376,41 @@ export interface ConnectorOptions {
 
 // "restricted": HR and admins only (the default). "everyone": the whole workspace.
 export type ConnectorAccess = "restricted" | "everyone"
+
+// Who may ask about a connection's files: as each is shared at the source, everyone
+// in the workspace, or HR and admins (the default).
+export type PermissionPolicy = "source" | "workspace" | "restricted"
+
+// Who may see a document (access.py): "everyone", "group:<id>", "user:<username>",
+// "domain:<domain>", or "nobody" (nothing at the source matched anyone here).
+export type PrincipalKind = "everyone" | "group" | "user" | "domain" | "nobody"
+
+export interface WhoCanSee {
+  principal: string
+  kind: PrincipalKind
+  label: string
+}
+
+// One choice in an access picker (/api/access/principals).
+export interface PrincipalOption extends WhoCanSee {
+  detail?: string // a member's username
+  source?: GroupSource
+}
+
+export type GroupSource = "builtin" | "manual" | "idp" | "scim"
+
+// An access group (Access → Groups). Only manual ones can be changed here.
+export interface AccessGroup {
+  id: string
+  name: string
+  source: GroupSource
+  description: string
+  email: string | null
+  editable: boolean
+  principal: string
+  members: { username: string; name: string }[]
+  updated_at?: number | null
+}
 
 // What a token / address connector's form sends (Outline, a website).
 export interface IntegrationSetup {
@@ -639,12 +676,19 @@ export interface KnowledgeItem {
     action: "boost" | "demote" | "block"
     weight: number
   } | null
+  // HR / Admin: who can see it, grants at the source that matched no one here (left
+  // out), and whether they may search it themselves.
+  who?: WhoCanSee[]
+  dropped?: number
+  readable?: boolean
 }
 
 export interface Doc {
-  access: Access
+  access: Access // its folder: public/ when everyone may see it, else restricted/
   name: string
   size: number
+  acl?: string[] // who may see it (principals)
+  who?: WhoCanSee[]
 }
 
 // What the server takes per upload (UPLOAD_MAX_FILE_MB / UPLOAD_MAX_REQUEST_MB).

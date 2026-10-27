@@ -21,6 +21,7 @@ import { toast } from "sonner"
 
 import { ActivityView } from "@/components/activity-view"
 import { ApiAccessView } from "@/components/api-access-view"
+import { GroupsView } from "@/components/groups-view"
 import { MembersView } from "@/components/members-view"
 import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
@@ -1181,7 +1182,7 @@ function Provisioning({
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export type AccessTab = "sign-in" | "members" | "activity" | "api"
+export type AccessTab = "sign-in" | "members" | "groups" | "activity" | "api"
 
 // The Activity tab's "Sign-ins": the same events as the sign-in settings show.
 function SignInActivity() {
@@ -1213,13 +1214,18 @@ export function SignInView({
           </h2>
           <p className="text-sm text-muted-foreground">
             Who can sign in to the <span className="font-medium text-foreground">{workspace}</span>{" "}
-            workspace, and as what.
+            workspace, as what, and what they may see.
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => onTabChange(v as AccessTab)}>
+        <Tabs
+          value={tab}
+          onValueChange={(v) => onTabChange(v as AccessTab)}
+          className="max-w-full overflow-x-auto"
+        >
           <TabsList>
             <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="groups">Groups</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
             <TabsTrigger value="api">API &amp; MCP</TabsTrigger>
           </TabsList>
@@ -1230,6 +1236,8 @@ export function SignInView({
           <SignInSettingsView workspace={workspace} onOpenIntegrations={onOpenIntegrations} />
         ) : tab === "members" ? (
           <MembersView me={me} />
+        ) : tab === "groups" ? (
+          <GroupsView />
         ) : tab === "api" ? (
           <ApiAccessView />
         ) : (
