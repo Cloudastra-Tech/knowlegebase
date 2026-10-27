@@ -75,8 +75,9 @@ def fakes(monkeypatch, tmp_path):
     whose settings check out, and DNS that says yes."""
     import sso_setup
     import workspaces
-    from kb.services import indexing, sync
+    from kb.services import indexing, sync, verified
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kwargs: None)
+    monkeypatch.setattr(verified, "embed", lambda texts: [[1.0, 0.0] for _ in texts])
     monkeypatch.setattr(indexing, "schedule_retag", lambda ws, provider: None)
     monkeypatch.setattr(sync, "start_sync", lambda ws, provider, **options: None)
     monkeypatch.setattr(workspaces, "docs_root", lambda ws: str(tmp_path / ws))
@@ -148,6 +149,28 @@ def _rated(ws):
 
 def _eval_case(client, h, ws):
     r = client.post("/api/admin/eval-cases", headers=h, json={"message_id": _rated(ws)})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _verified_answer(client, h):
+    r = client.post("/api/admin/verified-answers", headers=h,
+                    json={"title": "Leave", "variants": ["How much leave?"],
+                          "answer_md": "Twenty days.", "access": "restricted"})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _term(client, h):
+    r = client.post("/api/admin/glossary", headers=h,
+                    json={"term": "PTO", "definition": "Paid time off."})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _rule(client, h):
+    r = client.post("/api/admin/doc-rules", headers=h,
+                    json={"match_type": "provider", "match_value": "notion", "action": "demote"})
     assert r.status_code == 200, r.text
     return r.json()["id"]
 
@@ -242,6 +265,37 @@ CASES = [
                       {"json": {"message_id": mid, "expected_answer": "Pay"}})),
     ("eval_case.delete", lambda c, h, ws, txt: _eval_case(c, h, ws),
      lambda ws, case_id: ("DELETE", f"/api/admin/eval-cases/{case_id}", {})),
+    ("verified_answer.create", None,
+     lambda ws, _: ("POST", "/api/admin/verified-answers",
+                    {"json": {"title": "Leave", "variants": ["How much leave?"],
+                              "answer_md": "Twenty days.", "access": "public"}})),
+    ("verified_answer.update", lambda c, h, ws, txt: _verified_answer(c, h),
+     lambda ws, aid: ("PATCH", f"/api/admin/verified-answers/{aid}",
+                      {"json": {"review_days": 30}})),
+    ("verified_answer.review", lambda c, h, ws, txt: _verified_answer(c, h),
+     lambda ws, aid: ("POST", f"/api/admin/verified-answers/{aid}/review", {})),
+    ("verified_answer.delete", lambda c, h, ws, txt: _verified_answer(c, h),
+     lambda ws, aid: ("DELETE", f"/api/admin/verified-answers/{aid}", {})),
+    ("assistant.settings", None,
+     lambda ws, _: ("PUT", "/api/admin/assistant",
+                    {"json": {"tone": "formal", "instructions": "private note"}})),
+    ("glossary.create", None,
+     lambda ws, _: ("POST", "/api/admin/glossary",
+                    {"json": {"term": "OKR", "definition": "Objectives and key results."}})),
+    ("glossary.update", lambda c, h, ws, txt: _term(c, h),
+     lambda ws, tid: ("PATCH", f"/api/admin/glossary/{tid}",
+                      {"json": {"term": "PTO", "definition": "Leave.", "synonyms": ["vacation"]}})),
+    ("glossary.delete", lambda c, h, ws, txt: _term(c, h),
+     lambda ws, tid: ("DELETE", f"/api/admin/glossary/{tid}", {})),
+    ("doc_rule.create", None,
+     lambda ws, _: ("POST", "/api/admin/doc-rules",
+                    {"json": {"match_type": "doc_key", "match_value": "public/a.txt",
+                              "action": "block"}})),
+    ("doc_rule.update", lambda c, h, ws, txt: _rule(c, h),
+     lambda ws, rid: ("PATCH", f"/api/admin/doc-rules/{rid}",
+                      {"json": {"action": "boost", "weight": 2}})),
+    ("doc_rule.delete", lambda c, h, ws, txt: _rule(c, h),
+     lambda ws, rid: ("DELETE", f"/api/admin/doc-rules/{rid}", {})),
 ]
 
 

@@ -39,7 +39,8 @@ def test_health_reports_the_toxicity_guard(api, monkeypatch, active, shown):
     monkeypatch.setattr(safety, "toxicity_guard_active", active)
     r = _client(api).get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "guards": {"toxicity": shown, "toxicity_required": False}}
+    assert r.json()["guards"] == {"toxicity": shown, "toxicity_required": False}
+    assert r.json()["ok"] is True
 
 
 def test_missing_guard_still_starts_by_default(api, monkeypatch):
@@ -106,3 +107,16 @@ def test_default_ignores_forwarded_for_from_the_internet():
     # A client connecting straight to port 8501 cannot pose as another address.
     assert _default_forwarded_allow_ips() != "*"
     assert _client_seen(_default_forwarded_allow_ips(), "198.51.100.9", "203.0.113.7") == "198.51.100.9"
+
+
+def test_health_says_which_version_runs(api, monkeypatch):
+    """The image's APP_VERSION and GIT_SHA (Dockerfile build args, set by deploy.sh
+    and the release workflow); dev / unknown outside of an image."""
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    body = _client(api).get("/api/health").json()
+    assert (body["version"], body["commit"]) == ("dev", "unknown")
+    monkeypatch.setenv("APP_VERSION", "v1.4.0")
+    monkeypatch.setenv("GIT_SHA", "0123456789abcdef")
+    body = _client(api).get("/api/health").json()
+    assert (body["version"], body["commit"]) == ("v1.4.0", "0123456789abcdef")

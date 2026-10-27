@@ -27,6 +27,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import api_keys_store
 import members_store
 import workspaces
+from kb import logs
 from kb.rate_limit import key_limit
 
 INVALID = "A valid API key is required: Authorization: Bearer kb_live_..."
@@ -126,6 +127,7 @@ def api_key(scope):
             raise HTTPException(e.status, e.message,
                                 headers={"WWW-Authenticate": "Bearer"} if e.status == 401
                                 else None)
+        logs.bind_user(principal.user)
         key_limit(principal.key_id, principal.workspace)
         return principal
     return Depends(api_key)

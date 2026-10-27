@@ -456,6 +456,15 @@ export interface ChatReply {
   standalone_question?: string | null // a follow-up as it was searched
   message_id?: string | null // saved in a conversation
   followups?: string[] // up to 3 questions to ask next (kb/services/suggestions.py)
+  verified?: VerifiedBadge | null // served from a verified answer (kb/services/verified.py)
+}
+
+// An answer served from a verified answer: "Verified by <by> · <date>".
+export interface VerifiedBadge {
+  id: string
+  title: string
+  by: string
+  at: number
 }
 
 // Events from POST /api/chat/stream (kb/routers/chat.py chat_stream).
@@ -587,6 +596,7 @@ export interface SavedMessage {
   standalone_question?: string | null
   feedback?: Feedback | null
   followups?: string[]
+  verified?: VerifiedBadge | null
   // It and the other versions of it (edits of a question, answers written again),
   // oldest first: "‹ 2 / 3 ›".
   siblings?: string[]
@@ -616,6 +626,19 @@ export interface KnowledgeItem {
   modified: number | string | null
   size: number
   chunks: number
+  // What a source rule matches on: the document's key, its provider ("uploads" or a
+  // connector) and its folder (an upload's folder, a synced file's folder at its source).
+  doc_key: string
+  provider: string
+  folder: string | null
+  // HR / Admin: the rule that decides it, if any.
+  rule?: {
+    id: number
+    match_type: "provider" | "folder" | "doc_key"
+    match_value: string
+    action: "boost" | "demote" | "block"
+    weight: number
+  } | null
 }
 
 export interface Doc {

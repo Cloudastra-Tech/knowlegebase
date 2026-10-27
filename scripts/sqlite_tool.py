@@ -7,6 +7,8 @@ so it runs on the host's python3 or inside the app image).
     python3 sqlite_tool.py check-key DB KEYFILE
                                             does the key decrypt a stored secret? (needs
                                             the cryptography package; exit 3 if missing)
+    python3 sqlite_tool.py revision DB      the database's migration (Alembic) revision,
+                                            or "none" (deploy.sh: did a deploy migrate it?)
 """
 
 import pathlib
@@ -72,6 +74,17 @@ def check_key(db, keyfile):
     return 0
 
 
+def revision(db):
+    conn = _open_ro(db)
+    try:
+        row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+    except sqlite3.OperationalError:          # from before migrations
+        row = None
+    conn.close()
+    print(row[0] if row else "none")
+    return 0
+
+
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "backup":
@@ -80,5 +93,7 @@ if __name__ == "__main__":
         sys.exit(report(*args))
     elif cmd == "check-key":
         sys.exit(check_key(*args))
+    elif cmd == "revision":
+        sys.exit(revision(*args))
     else:
         sys.exit(f"unknown command {cmd}")

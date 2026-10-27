@@ -17,6 +17,7 @@ import members_store
 import sessions_store
 import sso
 import workspaces
+from kb import logs
 
 log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 # Kept with the session (for signing out at the provider), never sent to the browser.
@@ -40,7 +41,9 @@ def current_user(authorization: str = Header(default="")):
     if not access:
         sessions_store.delete(token)
         raise HTTPException(401, "Please sign in.")
-    return {**user, **access}
+    user = {**user, **access}
+    logs.bind_user(user)               # the request's log lines say whose it is (not the email)
+    return user
 
 
 def public_user(user):

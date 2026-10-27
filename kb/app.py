@@ -12,17 +12,17 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import observability
 import safety
-from kb import jobs, mcp_server, middleware, settings, site
-from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, audit, auth, chat,
-                        conversations, docs, health, index, insights, integrations, invites,
-                        knowledge, saml, scim, shares, signup, slack, sso)
+from kb import jobs, logs, mcp_server, middleware, settings, site
+from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, assistant, audit, auth,
+                        chat, conversations, docs, health, index, insights, integrations,
+                        invites, knowledge, saml, scim, shares, signup, slack, sso, verified)
 from kb.services import indexing
 
 log = logging.getLogger("uvicorn.error")
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, shares, index, docs,
            integrations, knowledge, admin_members, invites, audit, insights, health, scim,
-           api_keys, api_v1, slack)
+           api_keys, api_v1, slack, verified, assistant)
 
 
 @contextlib.asynccontextmanager
@@ -48,6 +48,7 @@ async def _lifespan(app):
 
 
 def create_app():
+    logs.configure()                      # LOG_FORMAT=json|text (kb/logs.py)
     observability.init_error_tracking()   # only with SENTRY_DSN; before the app is made
     docs_on = settings.api_docs_on()
     app = FastAPI(title="Knowledge Assistant API", lifespan=_lifespan,
@@ -62,8 +63,9 @@ def create_app():
                        session_cookie="kb_oauth", max_age=10 * 60, same_site="lax",
                        https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
     app.add_middleware(middleware.BodyLimit)
-    # Added last, so outermost: on every answer.
     app.add_middleware(middleware.SecurityHeaders, docs_paths=(app.docs_url, app.redoc_url))
+    # Added last, so outermost: every request gets an id and a log line, even a refused one.
+    app.add_middleware(logs.RequestLog)
     for r in ROUTERS:
         app.include_router(r.router)
     mcp_server.mount(app)              # /mcp: other agents query the knowledge base

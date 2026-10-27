@@ -6,6 +6,7 @@ import { SsoTestDone } from "@/components/sso-test-done"
 import {
   AccessScreen,
   ApiKeysScreen,
+  AssistantScreen,
   DocsScreen,
   HrOnly,
   Home,
@@ -18,6 +19,7 @@ import {
   SharedScreen,
   SignInPage,
   SsoReturnPage,
+  VerifiedScreen,
 } from "@/screens"
 
 // Every screen's URL:
@@ -35,6 +37,8 @@ import {
 //   /admin/sign-in, /admin/members, /admin/activity, /admin/api   admins (the Access
 //                      screen's tabs)
 //   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
+//   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
+//   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
@@ -84,10 +88,16 @@ export const routes: RouteObject[] = [
                 ],
               },
               {
+                path: "admin/verified",
+                Component: HrOnly,
+                children: [{ index: true, Component: VerifiedScreen }],
+              },
+              {
                 path: "admin",
                 element: <HrOnly admin />,
                 children: [
                   { index: true, element: <Navigate to="sign-in" replace /> },
+                  { path: "assistant", Component: AssistantScreen },
                   { path: "sign-in", element: <AccessScreen tab="sign-in" /> },
                   { path: "members", element: <AccessScreen tab="members" /> },
                   { path: "activity", element: <AccessScreen tab="activity" /> },

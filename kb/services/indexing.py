@@ -33,13 +33,14 @@ import integrations_store
 import sync_store
 import workspaces
 from kb import jobs
+from kb.services import assistant
 
 log = logging.getLogger("uvicorn.error")
 
 KINDS = ("index", "retag")         # what the index status follows
 DROP_AFTER = 10 * 60               # seconds an old collection stays after a rebuild
 SUMMARY = ("documents", "chunks", "restricted", "embedded", "added", "changed", "retagged",
-           "removed", "failed")   # counts only: the status is shown to every member
+           "removed", "failed", "blocked")   # counts only: the status is shown to every member
 
 
 def new_index_state():
@@ -163,7 +164,8 @@ def index(ws, full=False, docs=None, progress=None):
         return _rebuild(ws, row, access, progress, info)
     result = ingest.update(progress, docs_folder=workspaces.docs_root(ws),
                            collection=row["collection"], connector_access=access,
-                           workspace=ws, only=docs, doc_info=info)
+                           workspace=ws, only=docs, doc_info=info,
+                           skip=assistant.blocker(ws))
     if any(result[k] for k in ("embedded", "deleted_chunks", "retagged", "changed")):
         _changed(ws)
     return {**result, "mode": "incremental"}
@@ -175,7 +177,8 @@ def _rebuild(ws, row, access, progress, info):
     old = row["collection"] if row else workspaces.collection(ws)
     try:
         result = ingest.main(progress, docs_folder=workspaces.docs_root(ws), collection=new,
-                             connector_access=access, workspace=ws, doc_info=info)
+                             connector_access=access, workspace=ws, doc_info=info,
+                             skip=assistant.blocker(ws))
         stored = ingest.summary(new)["chunks"]
         if stored != result["chunks"]:
             raise RuntimeError(f"the new index holds {stored} chunks, not {result['chunks']}")

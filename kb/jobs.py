@@ -42,6 +42,7 @@ import time
 import uuid
 
 import db
+from kb import logs
 from kb.settings import ON, env_int
 
 log = logging.getLogger("uvicorn.error")
@@ -159,6 +160,8 @@ def enqueue(kind, workspace=None, payload=None, lane=None, dedupe_key=None, dela
                 "run_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (kind, workspace, lane, dedupe_key, json.dumps(payload), max_attempts,
                  now + delay, now)).lastrowid
+    # With the request's id (kb/logs.py): which request queued which job.
+    log.info("Job %d (%s, workspace %s) queued", job_id, kind, workspace)
     start_in_process()
     _wake_all()
     return job_id
@@ -376,7 +379,8 @@ class Runner:
         with self._held_lock:
             self._held.add(job.id)
         try:
-            result = self.handlers[job.kind].fn(job)
+            with logs.job_context(job):          # its log lines carry job_id, job_kind
+                result = self.handlers[job.kind].fn(job)
         except Retry as e:
             log.warning("Job %d (%s, workspace %s) failed, attempt %d of %d: %s",
                         job.id, job.kind, job.workspace, job.attempts, job.max_attempts, e)
@@ -435,7 +439,7 @@ def _wake_all():
 def load_handlers():
     """Import the modules that register handlers."""
     from kb.services import (indexing, insights, retention, saml_refresh, scim,  # noqa: F401
-                             slack, sync)
+                             slack, sync, verified)
 
 
 def kinds_here():

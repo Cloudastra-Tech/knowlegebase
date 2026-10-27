@@ -24,7 +24,8 @@ const SIGNED_IN = {
 }
 
 function doc(title: string, modified: number, chunks = 3): KnowledgeItem {
-  return { title, source: "Uploaded", access: "public", url: null, modified, size: 10, chunks }
+  return { title, source: "Uploaded", access: "public", url: null, modified, size: 10, chunks,
+           doc_key: `public/${title}`, provider: "uploads", folder: "public" }
 }
 
 function sse(...events: object[]) {

@@ -263,6 +263,9 @@ class HybridRetriever:
         self.pool = max(pool or top_k, top_k)   # fused candidates a reranker scores
         self.reranker = reranker
         self.intros = {}      # source -> its first chunks (set by load_chain)
+        # SOURCE RULES (platform.md PL-28): weigh(metadata) -> (multiplier, rule).
+        # Set by the agent's builder for workspaces with rules; None = no rules.
+        self.weigh = None
 
     @staticmethod
     def _hits(retriever, query, k):
@@ -297,7 +300,14 @@ class HybridRetriever:
         Each chunk comes back as a copy whose metadata also says how it was
         found ("why this source"): rank (1 = best, after fusion and any
         rerank), dense_rank and bm25_rank (None when that search didn't return
-        it), fused_rank and rerank_score (with a reranker), and its chunk_id."""
+        it), fused_rank and rerank_score (with a reranker), and its chunk_id;
+        and the source rule that weighed it, if one did (rule, rule_weight).
+
+        SOURCE RULES (self.weigh): each chunk's fused score is multiplied by its
+        document's rule (boost > 1, demote < 1), and a blocked document's chunks
+        are dropped. The FRESHNESS boost (prefer_recent) then reorders near ties
+        with the rule's multiplier in the same score: the two compose, neither
+        replaces the other, and a reranker's order is weighed by the rules too."""
         want = k or self.top_k
         each = max(k, self.pool) if k and self.reranker else k
         # Run the searches. Each returns an ORDERED list of chunks (best first).
@@ -317,6 +327,18 @@ class HybridRetriever:
                 seen = ranks.setdefault(key, {})
                 seen[name] = min(seen.get(name, rank + 1), rank + 1)
 
+        # Source rules: multiply the fused score; a blocked document is gone.
+        rules = {}
+        if self.weigh:
+            for key in list(scores):
+                factor, rule = self.weigh(docs[key].metadata)
+                if factor <= 0:
+                    del scores[key]
+                    continue
+                scores[key] *= factor
+                if rule:
+                    rules[key] = (factor, rule)
+
         # Sort by fused score (highest first): the candidates.
         order = sorted(scores, key=scores.get, reverse=True)[: max(self.pool, want)]
         fused = {key: n for n, key in enumerate(order, 1)}
@@ -328,7 +350,8 @@ class HybridRetriever:
                                            for key in order])
             order = [d.page_content for d in ranked if d.page_content in fused]
             rerank = {d.page_content: d.metadata.get("rerank_score") for d in ranked}
-        order = prefer_recent(order, {key: docs[key].metadata for key in order}, self.rrf_k)
+        order = prefer_recent(order, {key: docs[key].metadata for key in order}, self.rrf_k,
+                              factors={k: f for k, (f, _) in rules.items()})
         best = order[:want]
         return [Document(page_content=key, id=docs[key].id, metadata={
                     **docs[key].metadata,
@@ -336,7 +359,9 @@ class HybridRetriever:
                     "rank": n, "dense_rank": ranks[key].get("dense_rank"),
                     "bm25_rank": ranks[key].get("bm25_rank"),
                     **({"fused_rank": fused[key], "rerank_score": rerank.get(key)}
-                       if self.reranker else {})})
+                       if self.reranker else {}),
+                    **({"rule": rules[key][1], "rule_weight": rules[key][0]}
+                       if key in rules else {})})
                 for n, key in enumerate(best, 1)]
 
 
@@ -351,21 +376,27 @@ def _timestamp(meta):
         return None
 
 
-def prefer_recent(order, metas, rrf_k=60, boost=None, half_life_days=None):
+def prefer_recent(order, metas, rrf_k=60, boost=None, half_life_days=None, factors=None):
     """`order` (keys, best first) with the FRESHNESS boost applied (see
     RECENCY_BOOST): each position's score 1 / (rrf_k + position) is multiplied
     by 1 + boost x freshness, freshness being 1 for the newest document among
     them and halving every half_life_days older (0 without a date). Only near
-    ties change places; the same dates everywhere change nothing."""
+    ties change places; the same dates everywhere change nothing.
+    factors: {key: multiplier}, the SOURCE RULES (HybridRetriever.weigh), which
+    multiply the same score: so freshness can't undo a demote by passing the
+    demoted chunk back over the one above it, nor a reranker a rule."""
     boost = RECENCY_BOOST if boost is None else boost
+    factors = factors or {}
     half_life = (half_life_days or RECENCY_HALF_LIFE_DAYS) * 86400
     times = {k: _timestamp(metas.get(k) or {}) for k in order}
     known = [t for t in times.values() if t is not None]
-    if not boost or len(order) < 2 or not known:
+    if len(order) < 2 or ((not boost or not known) and not factors):
         return list(order)
-    newest = max(known)
-    fresh = {k: 0.0 if t is None else 0.5 ** ((newest - t) / half_life) for k, t in times.items()}
-    score = {k: (1 + boost * fresh[k]) / (rrf_k + n) for n, k in enumerate(order)}
+    newest = max(known) if known else 0
+    fresh = {k: 0.0 if t is None or not boost else 0.5 ** ((newest - t) / half_life)
+             for k, t in times.items()}
+    score = {k: factors.get(k, 1.0) * (1 + boost * fresh[k]) / (rrf_k + n)
+             for n, k in enumerate(order)}
     return sorted(order, key=lambda k: -score[k])
 
 
@@ -482,13 +513,15 @@ def passage_text(text, meta):
     return re.sub(r"\A\[[^\]\n]*\]\n", "", text)
 
 
-def retrieve(question, retriever, llm, role="public", guard=None):
+def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
     """Retrieve: the chunks a question is answered from -> (docs, None), or
     (None, reason) when an input guard refused it. Nothing is generated here:
     the agent writes the one answer, citing these chunks (agent.py).
     guard: optional function -> (ok, message) that replaces the input check
     below. The caller runs its guards WHILE this retrieves; guard() is waited
-    on before anything found is returned."""
+    on before anything found is returned.
+    expand: optional function -> the question as searched (the workspace's
+    glossary adds the other names of its terms); the guard checks it as asked."""
 
     # Does this role get to see restricted info? (HR yes, public no.)
     allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
@@ -500,7 +533,10 @@ def retrieve(question, retriever, llm, role="public", guard=None):
         if not ok:
             return None, reason      # None = blocked by a guard (not "no results")
 
-    # ---- 0. HyDE / multi-query (optional) — enrich the MEANING search only
+    # ---- 0. GLOSSARY: "PTO" is searched as "PTO (paid time off)" too, by both
+    # searches. Then HyDE / multi-query (optional) enrich the MEANING search only.
+    if expand:
+        question = expand(question)
     queries = dense_queries(question, llm)
 
     # ---- 1. RETRIEVE (and rerank, if a reranker is plugged in: RERANKER) -
