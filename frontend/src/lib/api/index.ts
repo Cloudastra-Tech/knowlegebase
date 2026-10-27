@@ -13,12 +13,15 @@ import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 import { slackApi } from "@/lib/api/slack"
+import { workspaceApi } from "@/lib/api/workspace"
 
 export * from "@/lib/api/types"
 export type * from "@/lib/api/insights"
 export type * from "@/lib/api/api-keys"
 export type * from "@/lib/api/assistant"
 export type * from "@/lib/api/slack"
+export type * from "@/lib/api/workspace"
+export type * from "@/lib/api/operator"
 export {
   ApiError,
   session,
@@ -44,3 +47,8 @@ export const assistant = assistantApi
 export const slack = slackApi
 // Access groups (admin) and who a document can be shared with (HR / Admin).
 export const groups = groupsApi
+
+// The workspace itself: export, delete, support access, audit retention; and data
+// requests about one member (admin).
+export const workspace = workspaceApi
+export { saveFile } from "@/lib/api/workspace"

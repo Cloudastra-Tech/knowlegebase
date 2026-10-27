@@ -7,9 +7,10 @@ a deploy gate or an uptime monitor: it touches each thing a request needs.
 
     database           config/app.db opens read-only and answers a query
     search_index       the Chroma folder exists and its store opens
-    integrations_key   the encryption key loads, and decrypts a stored secret
-                       (a changed INTEGRATIONS_KEY breaks every SSO provider
-                       and integration while everything else looks fine)
+    integrations_key   the encryption key loads, and opens a workspace's data key
+                       (or an old-format stored secret): a changed
+                       INTEGRATIONS_KEY breaks every SSO provider and
+                       integration while everything else looks fine
     toxicity_guard     only with REQUIRE_TOXICITY_GUARD=1: the Guardrails Hub
                        toxicity validator is loaded (safety.guards_status())
 
@@ -23,13 +24,14 @@ import os
 import pathlib
 import sqlite3
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 import secret_box
 
 log = logging.getLogger("uvicorn.error")
 
-# Tables holding secret_box.seal()ed values; one row is enough to test the key.
+# Tables holding values sealed by the server key itself (secret_box.py's old
+# format); a wrapped data key (workspace_keys) is tried first.
 _SEALED = (("sso_connections", "secret"), ("integrations", "secret"))
 
 
@@ -63,37 +65,54 @@ def check_search_index(folder):
 
 
 def _stored_secret(db_path):
-    """Any one encrypted value from the database, or None."""
+    """(kind, blob): a wrapped data key ("wrapped"), else any one value sealed by
+    the server key itself ("legacy"), else (None, None)."""
     if not os.path.isfile(db_path):
-        return None
+        return None, None
     conn = _read_only(db_path)
     try:
+        try:
+            row = conn.execute("SELECT wrapped_dek FROM workspace_keys LIMIT 1").fetchone()
+        except sqlite3.OperationalError:           # table not made yet
+            row = None
+        if row:
+            return "wrapped", row[0]
         for table, column in _SEALED:
             try:
-                row = conn.execute(f"SELECT {column} FROM {table} "
-                                   f"WHERE {column} IS NOT NULL LIMIT 1").fetchone()
+                row = conn.execute(f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL "
+                                   f"AND substr({column}, 1, {len(secret_box.PREFIX)}) != ? "
+                                   "LIMIT 1", (secret_box.PREFIX,)).fetchone()
             except sqlite3.OperationalError:       # table not made yet
                 continue
             if row:
-                return row[0]
-        return None
+                return "legacy", row[0]
+        return None, None
     finally:
         conn.close()
 
 
 def check_integrations_key(db_path, key_path=None):
+    kind, blob = _stored_secret(db_path)
+    if os.getenv("KEK_PROVIDER", "env").strip().lower() == "kms":
+        if kind == "wrapped":
+            try:
+                secret_box.kek().unwrap(blob)
+            except Exception as e:
+                raise NotReady(f"the KMS can't open the data keys ({type(e).__name__})") from None
+        return
     key_path = key_path or secret_box.KEY_PATH
     key = os.getenv("INTEGRATIONS_KEY")
+    if not key and secret_box.hosted():
+        raise NotReady("hosted mode needs INTEGRATIONS_KEY")
     if not key and os.path.isfile(key_path):
         with open(key_path, "rb") as f:
-            key = f.read().strip()
-    blob = _stored_secret(db_path)
+            key = f.read().strip().decode()
     if not key:
         if blob:
             raise NotReady("secrets are stored but no encryption key is set")
         return                       # nothing encrypted yet; a key is made on first use
     try:
-        fernet = Fernet(key)
+        fernet = MultiFernet([Fernet(k.strip()) for k in key.split(",") if k.strip()])
     except ValueError:
         raise NotReady("the encryption key is not a valid key") from None
     if blob:

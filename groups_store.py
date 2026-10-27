@@ -1,6 +1,6 @@
 """
 groups_store.py  —  access groups and document ACLs (config/app.db, tables made
-by migrations/versions/0013_access_groups.py; what the principals mean: access.py).
+by migrations/versions/0014_access_groups.py; what the principals mean: access.py).
 
     access_groups   groups that gate content, by source:
                       manual   made and filled by an admin (Access → Groups)

@@ -538,13 +538,41 @@ def test_the_migration_fills_in_answers_audiences(tmp_path):
                      "max_access, created_at) VALUES (?, 'c', 'assistant', 'x', 'answered', ?, 0)",
                      (mid, level))
     conn.execute("UPDATE messages SET acl = NULL")
-    conn.execute("UPDATE alembic_version SET version_num = '0012'")
+    conn.execute("UPDATE alembic_version SET version_num = '0013'")
     conn.commit()
     conn.close()
     db.migrate(path)
     conn = sqlite3.connect(path)
     assert dict(conn.execute("SELECT id, acl FROM messages")) == {
         "m1": "[]", "m2": '[["group:hr"]]'}
+    # A workspace's purge deletes every table with a `workspace` column: these have one.
+    for table in ("access_groups", "group_members", "doc_acl"):
+        assert "workspace" in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    conn.close()
+
+
+def test_erasing_a_member_takes_them_out_of_groups_and_acls(org, env):  # noqa: F811
+    import db
+    import groups_store
+    import ingest
+    from kb.services import indexing
+    alice = f"alice@{org.domain}"
+    r = env.client.post(f"/api/admin/members/{alice}/erase", headers=org.admin,
+                        json={"confirm": alice})
+    assert r.status_code == 200, r.text
+    pseudonym = r.json()["pseudonym"]
+    env.wait(org.ws)
+    assert groups_store.members(org.ws, org.group["id"]) == []
+    # The document shared with her by name: no one may see it now (not her folder's default).
+    assert groups_store.doc_acl(org.ws, org.keys["alice"]) == [access.user(pseudonym)]
+    for who in (org.viewer("bob"), org.viewer("hr", "hr")):
+        assert ALICE_NOTE not in _texts(_reach(org.ws, who, ALICE_NOTE))
+    # Her address is nowhere in the index's ACLs, nor in the access tables.
+    got = ingest._store(indexing.current(org.ws)[0])._collection.get(include=["metadatas"])
+    assert alice not in json.dumps([m["acl"] for m in got["metadatas"]])
+    conn = db.connect()
+    for table in ("group_members", "doc_acl"):
+        assert alice not in json.dumps([list(r) for r in conn.execute(f"SELECT * FROM {table}")])
     conn.close()
 
 

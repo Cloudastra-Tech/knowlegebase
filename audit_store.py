@@ -18,16 +18,32 @@ keep the head hash it returns somewhere else to check against later.
 
 Rows are added under BEGIN IMMEDIATE, so two processes can't both chain onto the
 same previous row.
+
+ERASED PEOPLE (a data request, PL-12): their rows aren't edited (that would
+break the chain). The person is mapped to a pseudonym (audit_pseudonyms, by a
+hash of their username, never the name), and every read here shows the
+pseudonym instead: as the actor, the target, and any detail that was their
+username. verify() still checks the rows as hashed.
+
+RETENTION: a workspace may keep events for a number of days instead of for good
+(lifecycle_store.audit_days). purge_before() deletes the oldest ones and keeps
+the hash of the last one deleted (audit_anchors), so the chain still verifies
+from there.
+
+PLATFORM: the operator's own events (operators signing in, a workspace purged)
+are a chain of their own, workspace PLATFORM, which no workspace can be called.
 """
 
 import hashlib
 import json
+import secrets
 import threading
 import time
 
 import db
 
 GENESIS = "0" * 64
+PLATFORM = "_platform"             # the operators' chain (not a valid workspace slug)
 ACTOR_TYPES = ("user", "api_key", "scim", "system", "operator")
 FIELDS = ("workspace", "at", "actor", "actor_type", "action", "target_type", "target_id",
           "ip", "user_agent", "details", "prev_hash")
@@ -79,10 +95,51 @@ def record(workspace, action, actor=None, actor_type="user", target_type=None, t
     return {**row, "id": cur.lastrowid}
 
 
-def _event(row):
+def _actor_hash(workspace, username):
+    return hashlib.sha256(f"{workspace}\0{(username or '').strip().lower()}".encode()).hexdigest()
+
+
+def _pseudonyms(conn, workspace):
+    """{actor hash: pseudonym} of the people erased in the workspace."""
+    return {r[0]: r[1] for r in conn.execute(
+        "SELECT actor_hash, pseudonym FROM audit_pseudonyms WHERE workspace = ?", (workspace,))}
+
+
+def _shown(workspace, names):
+    """The function a value goes through on its way out: an erased person's
+    username becomes their pseudonym, anything else is itself."""
+    if not names:
+        return lambda v: v
+    return lambda v: (names.get(_actor_hash(workspace, v), v)
+                      if isinstance(v, str) and v else v)
+
+
+def _masked(value, shown):
+    if isinstance(value, dict):
+        return {k: _masked(v, shown) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_masked(v, shown) for v in value]
+    return shown(value)
+
+
+def _event(row, shown=None):
     e = dict(row)
     e["details"] = json.loads(e["details"] or "{}")
+    if shown is not None:
+        actor = shown(e["actor"])
+        if actor != e["actor"]:                 # erased: where they were isn't shown either
+            e["ip"] = e["user_agent"] = None
+        e["actor"], e["target_id"] = actor, shown(e["target_id"])
+        e["details"] = _masked(e["details"], shown)
     return e
+
+
+def _reading(conn, workspace):
+    """Ready a connection to read the workspace's events: shown_actor(actor) in SQL
+    is what the actor filter matches. Returns the function for _event()."""
+    shown = _shown(workspace, _pseudonyms(conn, workspace))
+    conn.create_function("shown_actor", 1, shown, deterministic=True)
+    return shown
 
 
 def _where(workspace, actor=None, action=None, since=None, until=None):
@@ -90,7 +147,7 @@ def _where(workspace, actor=None, action=None, since=None, until=None):
     ending in "." matches every action it starts (e.g. "member.")."""
     sql, args = ["workspace = ?"], [workspace]
     if actor:
-        sql.append("actor LIKE ? ESCAPE '\\'")
+        sql.append("shown_actor(actor) LIKE ? ESCAPE '\\'")
         args.append("%" + actor.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     if action:
         if action.endswith("."):
@@ -118,13 +175,14 @@ def list_events(workspace, actor=None, action=None, since=None, until=None, curs
     limit = max(1, min(int(limit), MAX_PAGE))
     conn = db.connect()
     try:
+        shown = _reading(conn, workspace)
         rows = conn.execute(f"SELECT * FROM audit_events WHERE {where} ORDER BY id DESC "
                             "LIMIT ?", args + [limit + 1]).fetchall()
     finally:
         conn.close()
     more = len(rows) > limit
     rows = rows[:limit]
-    return [_event(r) for r in rows], (rows[-1]["id"] if more and rows else None)
+    return [_event(r, shown) for r in rows], (rows[-1]["id"] if more and rows else None)
 
 
 def iter_events(workspace, actor=None, action=None, since=None, until=None, batch=500):
@@ -134,6 +192,7 @@ def iter_events(workspace, actor=None, action=None, since=None, until=None, batc
     while True:
         conn = db.connect()
         try:
+            shown = _reading(conn, workspace)
             rows = conn.execute(f"SELECT * FROM audit_events WHERE {where} AND id > ? "
                                 "ORDER BY id LIMIT ?", args + [after, batch]).fetchall()
         finally:
@@ -141,18 +200,100 @@ def iter_events(workspace, actor=None, action=None, since=None, until=None, batc
         if not rows:
             return
         for r in rows:
-            yield _event(r)
+            yield _event(r, shown)
         after = rows[-1]["id"]
 
 
-def verify(workspace):
-    """Walk the workspace's chain. {"ok", "count", "head", "broken_at"}: the id of
-    the first row whose hash or link doesn't match, if any."""
-    prev, count = GENESIS, 0
+def by_actor(workspace, username):
+    """Every event this person did (by their username exactly), oldest first (for
+    their own data request): others erased in them still show as pseudonyms."""
     conn = db.connect()
     try:
-        for row in conn.execute("SELECT * FROM audit_events WHERE workspace = ? ORDER BY id",
-                                (workspace,)):
+        shown = _reading(conn, workspace)
+        rows = conn.execute("SELECT * FROM audit_events WHERE workspace = ? AND lower(actor) = ? "
+                            "ORDER BY id", (workspace, (username or "").strip().lower())).fetchall()
+    finally:
+        conn.close()
+    events = [_event(r, shown) for r in rows]
+    for e in events:                                   # their own name, not a pseudonym
+        e["actor"] = username
+    return events
+
+
+def erase_actor(workspace, username):
+    """Show this person under a pseudonym from now on (their rows are untouched,
+    so the chain still verifies). Returns the pseudonym (the same one if they
+    were erased before)."""
+    h = _actor_hash(workspace, username)
+    conn = db.connect()
+    try:
+        with conn:
+            conn.execute("INSERT OR IGNORE INTO audit_pseudonyms (workspace, actor_hash, "
+                         "pseudonym, erased_at) VALUES (?, ?, ?, ?)",
+                         (workspace, h, "erased:" + secrets.token_hex(6), time.time()))
+            return conn.execute("SELECT pseudonym FROM audit_pseudonyms WHERE workspace = ? AND "
+                                "actor_hash = ?", (workspace, h)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def anchor(workspace):
+    """(last id deleted for retention, its hash), or (0, GENESIS)."""
+    conn = db.connect()
+    try:
+        row = conn.execute("SELECT last_id, last_hash FROM audit_anchors WHERE workspace = ?",
+                           (workspace,)).fetchone()
+    finally:
+        conn.close()
+    return (row[0], row[1]) if row else (0, GENESIS)
+
+
+def purge_before(workspace, before):
+    """Delete the workspace's oldest events, up to the first one at or after
+    `before` (a time): only from the start of the chain, so what's left still
+    links. The hash of the last one deleted becomes the chain's anchor. Returns
+    how many were deleted."""
+    with _lock:
+        conn = db.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            keep = conn.execute("SELECT MIN(id) FROM audit_events WHERE workspace = ? AND at >= ?",
+                                (workspace, before)).fetchone()[0]
+            sql, args = "SELECT id, hash FROM audit_events WHERE workspace = ?", [workspace]
+            if keep is not None:
+                sql, args = sql + " AND id < ?", args + [keep]
+            cut = conn.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+            if not cut:
+                conn.execute("COMMIT")
+                return 0
+            n = conn.execute("DELETE FROM audit_events WHERE workspace = ? AND id <= ?",
+                             (workspace, cut["id"])).rowcount
+            conn.execute("""INSERT INTO audit_anchors (workspace, last_id, last_hash, purged,
+                                updated_at) VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT (workspace) DO UPDATE SET last_id = excluded.last_id,
+                                last_hash = excluded.last_hash,
+                                purged = audit_anchors.purged + excluded.purged,
+                                updated_at = excluded.updated_at""",
+                         (workspace, cut["id"], cut["hash"], n, time.time()))
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return n
+
+
+def verify(workspace):
+    """Walk the workspace's chain (from its anchor, if old events were deleted for
+    retention). {"ok", "count", "head", "broken_at"}: the id of the first row whose
+    hash or link doesn't match, if any."""
+    after, prev = anchor(workspace)
+    count = 0
+    conn = db.connect()
+    try:
+        for row in conn.execute("SELECT * FROM audit_events WHERE workspace = ? AND id > ? "
+                                "ORDER BY id", (workspace, after)):
             count += 1
             if row["prev_hash"] != prev or row_hash(row) != row["hash"]:
                 return {"ok": False, "count": count, "head": None, "broken_at": row["id"]}

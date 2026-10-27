@@ -38,6 +38,8 @@ class Audit:
         """Write the event. `user` is who did it (else `actor` in `workspace`)."""
         if user is not None:
             workspace, actor = workspace or ws_of(user), actor or user["username"]
+            if user.get("impersonator"):        # Cloudastra support (kb/operators.py)
+                actor, actor_type = user["impersonator"], "operator"
         event = audit_store.record(
             workspace, action or self.action, actor=actor, actor_type=actor_type,
             target_type=target_type, target_id=target_id, details=details,
