@@ -112,6 +112,24 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/eval-cases      answers promoted to the test set            (HR / Admin)
     POST   /admin/eval-cases      {message_id, expected_answer}: promote a rated answer (admin)
     DELETE /admin/eval-cases/{id}                                              (admin)
+  verified.py
+    GET    /admin/verified-answers  every verified answer, live status, owners    (HR / Admin)
+    GET    /admin/verified-answers/draft ?message_id | ?gap_id: a new one's fields (HR / Admin)
+    POST   /admin/verified-answers  {title, variants, answer_md, sources, access, owner,
+                                  review_days, from_message?, from_gap?}          (HR / Admin)
+    PATCH  /admin/verified-answers/{id}   any of those: verified again           (HR / Admin)
+    POST   /admin/verified-answers/{id}/review   still right: verified again now  (HR / Admin)
+    DELETE /admin/verified-answers/{id}                                           (HR / Admin)
+  assistant.py
+    GET    /assistant             {assistant_name, show_steps} for the chat
+    GET    /admin/assistant       settings as applied, choices, limits, glossary  (admin)
+    PUT    /admin/assistant       {assistant_name, tone, instructions, language, allow_wikipedia,
+                                  allow_currency, show_steps, adapt_verified}     (admin)
+    POST   /admin/glossary        {term, definition, synonyms}                    (admin)
+    PATCH/DELETE /admin/glossary/{id}                                              (admin)
+    GET    /admin/doc-rules       source rules and the weights they may have       (HR / Admin)
+    POST   /admin/doc-rules       {match_type, match_value, action, weight?}: block re-indexes
+    PATCH  /admin/doc-rules/{id}  {action, weight}   DELETE /admin/doc-rules/{id}  (HR / Admin)
   scim.py      (SCIM 2.0: "Authorization: Bearer <the workspace's SCIM token>", not a session)
     /scim/v2/ServiceProviderConfig | Schemas | ResourceTypes | Users | Groups
                                   an identity provider provisions members and groups

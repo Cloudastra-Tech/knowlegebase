@@ -81,6 +81,14 @@ const STATUS: Record<VerifiedStatus, { label: string; className: string }> = {
   expired: { label: "Expired", className: "text-destructive" },
 }
 
+// The answer's Markdown as plain words, for the one-line preview.
+const plainText = (md: string) =>
+  md
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`#>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+
 function StatusBadge({ status }: { status: VerifiedStatus }) {
   return (
     <Badge variant="outline" className={`font-normal ${STATUS[status].className}`}>
@@ -152,7 +160,7 @@ function Editor({
 
   return (
     <Sheet open={editing !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full gap-0 sm:max-w-xl">
+      <SheetContent className="w-full gap-0 data-[side=right]:w-full sm:max-w-xl">
         <SheetHeader className="border-b">
           <SheetTitle>{editing?.id ? "Edit verified answer" : "New verified answer"}</SheetTitle>
           <SheetDescription>
@@ -352,7 +360,7 @@ function AnswerRow({
           </button>
           <StatusBadge status={answer.status} />
         </div>
-        <p className="line-clamp-2 text-sm text-muted-foreground">{answer.answer_md}</p>
+        <p className="line-clamp-2 text-sm text-muted-foreground">{plainText(answer.answer_md)}</p>
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           <span>
             Verified by {answer.verified_by_name} · {verifiedDate(answer.verified_at)}

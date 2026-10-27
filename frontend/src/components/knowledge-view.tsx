@@ -160,7 +160,8 @@ export function KnowledgeView() {
                 ) : (
                   <span className="truncate font-medium">{i.title}</span>
                 )}
-                {i.rule && <RuleBadge rule={i.rule} />}
+                {/* Once a blocked document is out of the index, "In search" says so. */}
+                {i.rule && (i.rule.action !== "block" || i.chunks > 0) && <RuleBadge rule={i.rule} />}
               </div>
               <span className="hidden text-muted-foreground md:block">{i.source}</span>
               <span className="hidden md:block">
