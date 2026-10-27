@@ -220,4 +220,99 @@ describe("IntegrationsView", () => {
       options: { code_extensions: [".py"] },
     })
   })
+
+  it("connects S3 with a role or access keys", async () => {
+    const sent: unknown[] = []
+    const s3 = {
+      prefix: "",
+      roles: true,
+      external_id: "kb-0123456789abcdef",
+      trust_policy: { Statement: [{ Condition: { StringEquals: { "sts:ExternalId": "kb-0123456789abcdef" } } }] },
+      read_policy: { Statement: [] },
+    }
+    const items: Integration[] = [
+      { ...base, id: "s3", name: "Amazon S3", auth: "token", picker: "tree", status: "disconnected", s3 },
+      {
+        ...base,
+        id: "linear",
+        name: "Linear",
+        auth: "oauth",
+        icon: "linear",
+        picker: "list",
+        picker_required: true,
+        status: "connected",
+        containers: [{ id: "team-eng", name: "Engineering (ENG)", kind: "team" }],
+        policies: ["source", "workspace", "restricted"],
+      },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "POST /api/integrations/s3/setup": (body: unknown) => {
+        sent.push(body)
+        return sent.length === 1
+          ? new Response(JSON.stringify({ detail: "There's no bucket by that name." }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            })
+          : { ok: true, account: "acme-handbook (key AKIA…MPLE)", choose: false }
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    const user = userEvent.setup()
+    expect(await screen.findByText("Engineering (ENG)")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Connect Amazon S3" }))
+    // The role tab first: the workspace's external ID, ready to copy.
+    expect(screen.getAllByText(/kb-0123456789abcdef/).length).toBeGreaterThan(0)
+    await user.type(screen.getByLabelText("Bucket"), "acme-handbok")
+    await user.type(screen.getByLabelText("Region"), "eu-west-1")
+    await user.type(screen.getByLabelText("Role ARN"), "arn:aws:iam::123456789012:role/kb")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("There's no bucket by that name.")
+    expect(sent[0]).toEqual({
+      bucket: "acme-handbok",
+      region: "eu-west-1",
+      prefix: "",
+      role_arn: "arn:aws:iam::123456789012:role/kb",
+    })
+    await user.click(screen.getByRole("tab", { name: "Access keys" }))
+    await user.type(screen.getByLabelText("Access key ID"), "AKIAIOSFODNN7EXAMPLE")
+    await user.type(screen.getByLabelText("Secret access key"), "secret")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    await vi.waitFor(() => expect(sent).toHaveLength(2))
+    expect(sent[1]).toMatchObject({ access_key_id: "AKIAIOSFODNN7EXAMPLE", secret_access_key: "secret" })
+    expect(sent[1]).not.toHaveProperty("role_arn")
+  }, 20_000) // a lot of typing
+
+  it("says why S3 can't follow sharing at the source, and what an empty pick syncs", async () => {
+    const items: Integration[] = [
+      {
+        ...base,
+        id: "s3",
+        name: "Amazon S3",
+        auth: "token",
+        picker: "tree",
+        status: "connected",
+        containers: [],
+        policies: ["workspace", "restricted"],
+        source_policy_note: "S3 objects carry no per-person sharing to follow, so this choice isn't available for S3.",
+        s3: { prefix: "", roles: false, read_policy: {} },
+      },
+    ]
+    mockApi({
+      "GET /api/integrations": { workspace: "acme", integrations: items },
+      "GET /api/integrations/s3/containers": {
+        items: [{ id: "handbook/", name: "handbook", kind: "folder", has_children: true }],
+        picked: [],
+      },
+    })
+    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    expect(await screen.findByText(/no per-person sharing/)).toBeInTheDocument()
+    expect(screen.queryByText(/As shared in Amazon S3/)).not.toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Narrow it down" }))
+    expect(await screen.findByRole("checkbox", { name: "Sync handbook" })).toBeInTheDocument()
+    expect(
+      screen.getByText("Nothing selected: everything under the connection's prefix is synced."),
+    ).toBeInTheDocument()
+  })
 })
