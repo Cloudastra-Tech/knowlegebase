@@ -1,4 +1,4 @@
-import { lazy, useState } from "react"
+import { lazy, useEffect, useState } from "react"
 import {
   ChevronDown,
   CreditCard,
@@ -13,12 +13,13 @@ import {
 import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
 
+import { AppBackdrop } from "@/components/ascii/app-backdrop"
 import { AppNav, type NavItem } from "@/components/app-nav"
 import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
 import { ThemeMenu } from "@/components/theme-menu"
-import { TrialBanner } from "@/components/trial-banner"
+import { ShellStrip, TrialBanner } from "@/components/trial-banner"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,10 +45,19 @@ import {
 import { api, type Role } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { IndexStatusProvider } from "@/lib/index-status"
+import { endInstantNav } from "@/lib/instant-nav"
+import { cn } from "@/lib/utils"
 
 // Each page is its own download (routes.tsx), so a visitor on the landing page doesn't
 // load the chat (markdown rendering) and a public user never loads the HR screens.
 const ChatView = lazy(() => import("@/components/chat-view").then((m) => ({ default: m.ChatView })))
+
+// The chat while another screen is open: out of sight and out of reach (inert), but
+// still laid out, so its transcript keeps its place for the way back. Its ASCII field
+// is taken out of layout, so it rests (offscreen to its loop) and the screen's own
+// AppBackdrop is the only one drawing.
+const CHAT_AWAY =
+  "pointer-events-none invisible absolute inset-0 overflow-hidden [&_[data-slot=chat-backdrop]]:hidden"
 
 // The signed-in app: the navbar, and the screen at the current URL below it (routes.tsx).
 // Signed out, it sends people to the sign-in page, and back here once they're in.
@@ -55,6 +65,16 @@ export default function App() {
   const { user, role, setRole, signedOut, leftOnPurpose } = useAuth()
   const location = useLocation()
   const [confirmSignOutAll, setConfirmSignOutAll] = useState(false)
+  // The conversation the chat was last at: Chat (the tab, the palette) goes back to it
+  // from another screen, scrolled where it was, rather than to a new chat.
+  const [chatAt, setChatAt] = useState("/chat")
+  const onChat = location.pathname === "/chat" || location.pathname.startsWith("/chat/")
+  if (onChat && location.pathname !== chatAt) setChatAt(location.pathname)
+  // A keyboard navigation (lib/instant-nav.ts) is over once its screen has painted.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => requestAnimationFrame(endInstantNav))
+    return () => cancelAnimationFrame(raf)
+  }, [location.key])
 
   if (!user) {
     return leftOnPurpose ? (
@@ -95,7 +115,7 @@ export default function App() {
     .toUpperCase()
 
   const navItems: NavItem[] = [
-    { to: "/chat", section: "/chat", label: "Chat" },
+    { to: chatAt, section: "/chat", label: "Chat" },
     { to: "/knowledge", section: "/knowledge", label: "Knowledge" },
     ...(activeRole === "hr"
       ? [
@@ -125,13 +145,25 @@ export default function App() {
   return (
     <IndexStatusProvider>
     <div className="flex h-dvh flex-col" data-print="flow">
+      {/* One ASCII field on every screen, fixed behind everything; it rests while
+          anything scrolls and under a dialog (lib/ascii-loop.ts). Not on the chat, which
+          draws its own behind its column (ChatBackdrop: faint under the text, breathing,
+          a ripple per step and a glow from the composer while the assistant works). */}
+      {!onChat && <AppBackdrop />}
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts. */}
-      <CommandPalette user={user} role={activeRole} />
-      <header data-print="hide" className="sticky top-0 z-20 border-b border-border/60 bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+      <CommandPalette user={user} role={activeRole} chatAt={chatAt} />
+      {/* Chrome-tier glass, the field blurred behind it. Nothing around it animates its
+          opacity (the backdrop-root trap, DESIGN.md "Glass"). */}
+      <header
+        data-print="hide"
+        className="glass z-20 rounded-none border-x-0 border-t-0 pt-[env(safe-area-inset-top)]"
+      >
         <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
-          <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
+          {/* Not on a phone: next to the screen menu ("Knowledge ⌄") or a member's tabs
+              it read "Knowledge Chat Knowledge". */}
+          <span className="hidden shrink-0 select-none text-sm font-semibold tracking-tight sm:inline">
             Knowledge
-            <span className="hidden font-normal text-muted-foreground sm:inline"> assistant</span>
+            <span className="font-normal text-muted-foreground"> assistant</span>
           </span>
 
           <AppNav items={navItems} current={current} />
@@ -249,14 +281,14 @@ export default function App() {
         <IndexProgressBar />
       </header>
       {user.impersonator && (
-        <div data-print="hide" className="border-b border-border/60 bg-muted px-4 py-2 text-center text-xs text-muted-foreground">
+        <ShellStrip glyph="@">
           You're in this workspace as Cloudastra support ({user.impersonator}). Every request is
           in its audit log.
-        </div>
+        </ShellStrip>
       )}
       <TrialBanner user={user} />
       {user.workspace_status === "deleting" && user.deleting_at && (
-        <div data-print="hide" className="border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-center text-xs text-destructive">
+        <ShellStrip glyph="!" tone="destructive">
           This workspace will be deleted on{" "}
           {new Date(user.deleting_at * 1000).toLocaleString(undefined, {
             dateStyle: "medium",
@@ -266,12 +298,17 @@ export default function App() {
           <Link to="/admin/data" className="font-medium underline underline-offset-2">
             Export it or cancel
           </Link>
-        </div>
+        </ShellStrip>
       )}
 
-      <main className="min-h-0 flex-1" data-print="flow">
-        {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={under("/chat") ? "h-full" : "hidden"} data-print={under("/chat") ? "flow" : "hide"}>
+      <main className="relative min-h-0 flex-1" data-print="flow">
+        {/* Keep the chat mounted so switching screens doesn't lose the conversation, nor
+            where it was scrolled to (CHAT_AWAY). */}
+        <div
+          className={cn("h-full", !under("/chat") && CHAT_AWAY)}
+          inert={!under("/chat")}
+          data-print={under("/chat") ? "flow" : "hide"}
+        >
           <LazyPage>
             <ChatView role={activeRole} />
           </LazyPage>

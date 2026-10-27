@@ -32,8 +32,11 @@ describe("AppNav", () => {
     const nav = renderNav(ADMIN, "/admin/insights")
     const menu = within(nav).getByRole("button", { name: "Insights, switch screen" })
     await userEvent.setup().click(menu)
-    const items = screen.getAllByRole("menuitem").map((i) => i.textContent)
-    expect(items).toEqual(ADMIN.map((i) => i.label))
+    // Named by the screen alone: the mono route hint beside it is aria-hidden.
+    const items = screen.getAllByRole("menuitem")
+    expect(items).toHaveLength(ADMIN.length)
+    ADMIN.forEach((item, i) => expect(items[i]).toHaveAccessibleName(item.label))
+    expect(items[0]).toHaveTextContent("~/chat")
     expect(screen.getByRole("menuitem", { name: "Insights" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -51,6 +54,16 @@ describe("AppNav", () => {
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(
       ADMIN.slice(2).map((i) => i.label),
     )
+  })
+
+  it("draws one indicator line for the open screen, hidden from assistive technology", () => {
+    const nav = renderNav(ADMIN, "/knowledge")
+    const lines = nav.querySelectorAll('[data-slot="nav-indicator"]')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toHaveAttribute("aria-hidden", "true")
+    // What it sits under: the open tab, or More while the open screen is in that menu.
+    expect(nav.querySelectorAll("[data-nav-current]")).toHaveLength(1)
+    expect(within(nav).getByRole("link", { name: "Knowledge" })).toHaveAttribute("data-nav-current")
   })
 
   it("keeps a member's two screens as plain tabs", () => {
