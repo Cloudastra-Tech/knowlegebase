@@ -1,0 +1,82 @@
+# The Knowledge assistant's Slack app (platform.md PL-22). Paste it at
+# https://api.slack.com/apps -> Create New App -> From a manifest.
+#
+# Replace https://YOUR-KNOWLEDGE-HOST with this server's PUBLIC_URL, or copy
+# the manifest from Integrations -> Slack -> "Your own app": it has this
+# server's addresses filled in (and, for your own app, its private request URLs).
+#
+# Bot scopes, each one used (deploy.md, "Slack app"):
+#   app_mentions:read  the app_mention event: "@Knowledge ..." in a channel
+#   chat:write         post and update answers (chat.postMessage, chat.update,
+#                      chat.postEphemeral)
+#   commands           the /ask command and the "Ask about this thread" shortcut
+#   im:history         the message.im event: questions sent to the bot in a DM
+#   im:write           conversations.open: the DM a restricted answer is sent to
+#   users:read         users.info: who is asking
+#   users:read.email   users.info's profile.email: the member they are
+# Not requested: im:read. Nothing here calls a method that needs it (the DM's id
+# comes from conversations.open, im:write), and the Messages tab needs only
+# chat:write and im:history (https://docs.slack.dev/surfaces/app-home).
+#
+# Optional, only for auto-answer in help channels (off by default): add the bot
+# scope channels:history and the bot event message.channels, then reinstall.
+# The shortcut reads the thread it's used on through conversations.replies when
+# the app has channels:history (groups:history for private channels); without
+# it, it reads the one message it was used on.
+
+display_information:
+  name: Knowledge
+  description: Cited answers from your company's documents, in Slack.
+  background_color: "#171717"
+  long_description: >-
+    Ask the Knowledge assistant in a DM, by mentioning @Knowledge in a channel,
+    with /ask, or with "Ask about this thread" on any message. Answers cite the
+    documents they come from. In channels it only answers from documents everyone
+    in the workspace may see; anything restricted is sent to you in a DM, and
+    only if your role in the Knowledge assistant allows it.
+
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: Knowledge
+    always_online: true
+  slash_commands:
+    - command: /ask
+      url: https://YOUR-KNOWLEDGE-HOST/api/slack/commands
+      description: Ask the Knowledge assistant (only you see the answer)
+      usage_hint: What is our refund policy?
+      should_escape: false
+  shortcuts:
+    - name: Ask about this thread
+      type: message
+      callback_id: kb_ask_thread
+      description: Answer the question in this thread from your company's documents
+
+oauth_config:
+  redirect_urls:
+    - https://YOUR-KNOWLEDGE-HOST/api/slack/oauth/callback
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - commands
+      - im:history
+      - im:write
+      - users:read
+      - users:read.email
+
+settings:
+  event_subscriptions:
+    request_url: https://YOUR-KNOWLEDGE-HOST/api/slack/events
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: true
+    request_url: https://YOUR-KNOWLEDGE-HOST/api/slack/interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
