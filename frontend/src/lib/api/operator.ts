@@ -147,6 +147,10 @@ export const operatorApi = {
       `/workspaces/${encodeURIComponent(ws)}/extend-trial`,
       post({ days }),
     ),
+  // Make a member an owner of the workspace's billing (one made before billing, or
+  // whose owner left). Audited.
+  addBillingOwner: (ws: string, email: string) =>
+    call<{ ok: boolean }>(`/workspaces/${encodeURIComponent(ws)}/billing-owner`, post({ email })),
   // A one-time code: /#sso?code=... opens the workspace as support, in this browser.
   supportSession: (ws: string) =>
     call<{ code: string }>(`/workspaces/${encodeURIComponent(ws)}/support-session`, post()),

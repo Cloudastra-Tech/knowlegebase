@@ -11,6 +11,7 @@ import {
   Search,
   ShieldCheck,
   Timer,
+  UserCog,
   Wallet,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -141,12 +142,14 @@ function WorkspaceRow({
   onAudit,
   onSpendCaps,
   onExtendTrial,
+  onBillingOwner,
 }: {
   ws: OperatorWorkspace
   onSuspend: (ws: OperatorWorkspace) => void
   onAudit: (ws: OperatorWorkspace) => void
   onSpendCaps: (ws: OperatorWorkspace) => void
   onExtendTrial: (ws: OperatorWorkspace) => void
+  onBillingOwner: (ws: OperatorWorkspace) => void
 }) {
   const queryClient = useQueryClient()
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["operator", "workspaces"] })
@@ -222,6 +225,9 @@ function WorkspaceRow({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onExtendTrial(ws)}>
               <Timer /> Extend trial…
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onBillingOwner(ws)}>
+              <UserCog /> Billing owner…
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onAudit(ws)}>
               <ScrollText /> View audit log
@@ -402,6 +408,64 @@ function ExtendTrialDialog({ ws, onClose }: { ws: OperatorWorkspace; onClose: ()
   )
 }
 
+// ---- Who owns its billing (audited) -----------------------------------------------------
+function BillingOwnerDialog({ ws, onClose }: { ws: OperatorWorkspace; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [email, setEmail] = useState("")
+  const valid = /^[^@\s]+@[^@\s]+$/.test(email.trim())
+  const add = useMutation({
+    mutationFn: () => operatorApi.addBillingOwner(ws.slug, email.trim()),
+    onSuccess: () => {
+      toast.success(`${email.trim()} now owns ${ws.name}'s billing.`)
+      void queryClient.invalidateQueries({ queryKey: ["operator", "workspaces"] })
+      onClose()
+    },
+    onError: (err) => toast.error(errorText(err)),
+  })
+  const owners = ws.plan?.owners ?? []
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{ws.name}'s billing owner</AlertDialogTitle>
+          <AlertDialogDescription>
+            Only a billing owner can pick a plan or change payment details. Make one of its
+            members an owner when it has none (it was made before billing) or its owner left.
+            It's in the workspace's audit log.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {owners.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Owners now: <span className="text-foreground">{owners.join(", ")}</span>
+          </p>
+        )}
+        <Field>
+          <FieldLabel htmlFor="billing-owner">Member's email</FieldLabel>
+          <Input
+            id="billing-owner"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="someone@company.com"
+          />
+        </Field>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!valid || add.isPending}
+            onClick={(e) => {
+              e.preventDefault()
+              add.mutate()
+            }}
+          >
+            Make owner
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 // ---- A workspace's audit log --------------------------------------------------------
 function AuditSheet({ ws, onClose }: { ws: OperatorWorkspace | null; onClose: () => void }) {
   const log = useQuery({
@@ -461,6 +525,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
   const [auditing, setAuditing] = useState<OperatorWorkspace | null>(null)
   const [capping, setCapping] = useState<OperatorWorkspace | null>(null)
   const [extending, setExtending] = useState<OperatorWorkspace | null>(null)
+  const [owning, setOwning] = useState<OperatorWorkspace | null>(null)
 
   useEffect(() => {
     if (me.isError || list.isError) onSignedOut()
@@ -534,6 +599,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
               onAudit={setAuditing}
               onSpendCaps={setCapping}
               onExtendTrial={setExtending}
+              onBillingOwner={setOwning}
             />
           ))}
           {list.data && !shown.length && (
@@ -550,6 +616,9 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
       )}
       {extending && (
         <ExtendTrialDialog key={extending.slug} ws={extending} onClose={() => setExtending(null)} />
+      )}
+      {owning && (
+        <BillingOwnerDialog key={owning.slug} ws={owning} onClose={() => setOwning(null)} />
       )}
     </div>
   )

@@ -263,6 +263,32 @@ def test_limits_are_explained_where_they_block(client, tiny, billing_on):
     assert "includes 2 questions a month" in r.json()["detail"]
 
 
+def test_plan_limits_and_the_spend_cap_both_hold(client, tiny, billing_on, monkeypatch):
+    """The plan's limits and the daily hard spend cap (kb/services/spend.py) are both
+    checks in kb/quotas.py: whichever is reached first refuses, each in its own words."""
+    org = tiny
+    h = org.login()
+    # One question, $0.15 of tokens: within the plan, past a $0.10 cap.
+    question_log_store.add(org.ws, f"founder@{org.domain}", "web", "answered",
+                           text_mode="metadata", at=time.time(), model="gpt-4o-mini",
+                           tokens_in=1_000_000, tokens_out=0)
+    monkeypatch.setenv("SPEND_HARD_USD_PER_DAY", "0.1")
+    r = client.post("/api/chat", headers=h, json={"question": "Anything?"})
+    assert r.status_code == 429 and "today's budget" in r.json()["detail"]
+    # No cap: the plan still has room for its second question.
+    monkeypatch.setenv("SPEND_HARD_USD_PER_DAY", "")
+    from kb import quotas
+    quotas.check(org.ws, "chat")
+    # Its second used up, the plan refuses without a cap; with both reached, either may.
+    question_log_store.add(org.ws, f"founder@{org.domain}", "web", "answered",
+                           text_mode="metadata")
+    r = client.post("/api/chat", headers=h, json={"question": "Anything?"})
+    assert r.status_code == 402 and "includes 2 questions a month" in r.json()["detail"]
+    monkeypatch.setenv("SPEND_HARD_USD_PER_DAY", "0.1")
+    assert client.post("/api/chat", headers=h,
+                       json={"question": "Anything?"}).status_code in (402, 429)
+
+
 # ---- Seats -------------------------------------------------------------------------------
 def test_a_seat_is_someone_active_in_the_last_30_days(org, billing_on):
     import auth
