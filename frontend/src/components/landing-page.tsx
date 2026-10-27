@@ -40,13 +40,16 @@ import {
 } from "simple-icons"
 
 import { AsciiBrain, AsciiField, AsciiTicker } from "@/components/ascii-art"
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { BrandIcon, ChatDemo, KnowledgeHub, Marquee, PermissionGate, type DemoScene } from "@/components/landing-visuals"
 import { Button } from "@/components/ui/button"
+import { useForcedDark } from "@/lib/forced-theme"
 import { cn } from "@/lib/utils"
 
 // The page tells one story: see one brain answer from everything the company
 // knows, see why it's safe, see that it fits, then start. Every claim is about
-// what the product does today; demo content is labelled as an example.
+// what the product does today; demo content is labelled as an example. Always
+// dark (lib/forced-theme.ts), whatever theme the person picked for the app.
 
 const TICKER = [
   { question: "who approves expenses over $500?", answer: "Your manager, then Finance, within 5 working days.", source: "expenses.pdf" },
@@ -171,21 +174,43 @@ const NAV = [
 
 const accent = (text: string) => <span className="font-serif font-light italic">{text}</span>
 
-function Heading({ title, body, center, className }: { title: React.ReactNode; body?: string; center?: boolean; className?: string }) {
+// A section's heading, under a mono eyebrow on a rule that matches the header's link
+// to it ("── one brain ──────").
+function Heading({
+  eyebrow,
+  title,
+  body,
+  center,
+  className,
+}: {
+  eyebrow?: string
+  title: React.ReactNode
+  body?: string
+  center?: boolean
+  className?: string
+}) {
   return (
     <div className={cn("max-w-2xl", center && "mx-auto text-center", className)}>
+      {eyebrow && (
+        <AsciiDivider
+          label={eyebrow}
+          align={center ? "center" : "start"}
+          className={cn("mb-6 text-signal/80 [&>span[aria-hidden]]:text-muted-foreground/40", center && "mx-auto max-w-md")}
+        />
+      )}
       <h2 className="text-3xl font-medium tracking-tight text-balance sm:text-5xl">{title}</h2>
       {body && <p className="mt-4 text-pretty text-muted-foreground">{body}</p>}
     </div>
   )
 }
 
-// An icon in a soft accent tile.
+// An icon in a soft signal tile; it lifts 2px while its card is hovered (only with a
+// mouse: Tailwind's hover variants are gated on (hover: hover)).
 function IconTile({ icon: Icon, className }: { icon: typeof Server; className?: string }) {
   return (
     <span
       className={cn(
-        "flex size-10 shrink-0 items-center justify-center rounded-xl border border-[var(--ascii-accent)]/25 bg-[var(--ascii-accent)]/10 text-[var(--ascii-accent)] transition-transform duration-300 group-hover:-translate-y-0.5",
+        "flex size-10 shrink-0 items-center justify-center rounded-xl border border-signal/25 bg-signal/10 text-signal transition-transform duration-180 ease-out-strong group-hover:-translate-y-0.5",
         className,
       )}
     >
@@ -201,16 +226,18 @@ export function LandingPage({
   onSignIn: () => void
   onGetStarted?: () => void // the sign-in page's Create a workspace tab
 }) {
+  useForcedDark()
   return (
-    <div className="dark min-h-svh bg-background text-foreground antialiased [--ascii-accent:oklch(0.82_0.15_160)] selection:bg-[var(--ascii-accent)]/30">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
+    <div className="min-h-svh bg-background text-foreground antialiased selection:bg-signal/30">
+      {/* The chrome glass tier, as a bar: blurred over the brain, a hairline below. */}
+      <header className="sticky top-0 z-20 border-b border-(--glass-border) bg-(--glass-bg) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturate)">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-8 px-4">
           <span className="text-sm font-semibold tracking-tight select-none">
             Knowledge<span className="font-normal text-muted-foreground"> assistant</span>
           </span>
           <nav className="hidden items-center gap-6 font-mono text-xs text-muted-foreground md:flex">
             {NAV.map(([href, label]) => (
-              <a key={href} href={href} className="transition-colors hover:text-foreground">
+              <a key={href} href={href} className="transition-colors duration-(--dur-hover) ease-hover hover:text-foreground">
                 {label}
               </a>
             ))}
@@ -234,7 +261,7 @@ export function LandingPage({
               Ask in plain language. Get a straight answer from your own documents, with the
               exact sources it came from.
             </p>
-            <AsciiTicker items={TICKER} className="mt-7 max-w-lg rounded-xl border bg-background/70 px-4 py-3 backdrop-blur-sm" />
+            <AsciiTicker items={TICKER} className="glass mt-7 max-w-lg rounded-xl px-4 py-3" />
             <div className="mt-7 flex flex-wrap gap-3">
               <Button size="lg" className="h-11 rounded-full px-6" onClick={onGetStarted}>
                 Get started <ArrowRight data-icon="inline-end" />
@@ -249,9 +276,10 @@ export function LandingPage({
 
       {/* One brain: every source feeds it, every question goes through it. */}
       <section id="how" className="relative scroll-mt-16 overflow-hidden py-24 sm:py-32">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(50%_40%_at_50%_45%,color-mix(in_oklch,var(--ascii-accent)_10%,transparent),transparent)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(50%_40%_at_50%_45%,color-mix(in_oklch,var(--signal)_10%,transparent),transparent)]" />
         <div className="relative mx-auto max-w-6xl px-4">
           <Heading
+            eyebrow="one brain"
             center
             title={<>One brain for {accent("everything your company knows.")}</>}
             body="Your wiki, drives and documents feed one assistant. Ask it anything; it reads the right sources and tells you which ones it used."
@@ -263,7 +291,7 @@ export function LandingPage({
                 <IconTile icon={icon} />
                 <div>
                   <p className="font-medium">
-                    <span className="mr-2 font-mono text-xs text-[var(--ascii-accent)]">0{i + 1}</span>
+                    <span className="mr-2 font-mono text-xs text-signal">0{i + 1}</span>
                     {title}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">{body}</p>
@@ -278,6 +306,7 @@ export function LandingPage({
       <section id="ask" className="scroll-mt-16 border-t border-border/60 py-24 sm:py-32">
         <div className="mx-auto max-w-6xl px-4">
           <Heading
+            eyebrow="ask anything"
             title={<>Ask anything. Get the answer, {accent("and where it came from.")}</>}
             body="It reads your documents first, then answers only from them. Pick a team to see a question it gets every week."
           />
@@ -299,13 +328,14 @@ export function LandingPage({
       <section id="safe" className="scroll-mt-16 border-t border-border/60 py-24 sm:py-32">
         <div className="mx-auto max-w-6xl px-4">
           <Heading
+            eyebrow="safe by design"
             title={<>Everyone sees only {accent("what they're allowed to.")}</>}
             body="Restricted documents are removed before the search, so the AI never receives what someone can't see. Same question, two people, two answers."
           />
           <PermissionGate className="mt-10" />
           <div className="mt-14 grid gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-2 lg:grid-cols-3">
             {SAFETY.map(({ icon, title, body }) => (
-              <div key={title} className="group flex flex-col gap-3 bg-background p-6 transition-colors hover:bg-muted/30">
+              <div key={title} className="group flex flex-col gap-3 bg-background p-6 transition-colors duration-(--dur-hover) ease-hover hover:bg-muted/30">
                 <IconTile icon={icon} />
                 <p className="font-medium">{title}</p>
                 <p className="text-sm text-muted-foreground">{body}</p>
@@ -319,6 +349,7 @@ export function LandingPage({
       <section id="stack" className="scroll-mt-16 border-t border-border/60 py-24 sm:py-32">
         <div className="mx-auto max-w-6xl px-4">
           <Heading
+            eyebrow="fits your stack"
             center
             title={<>Fits the stack {accent("you already have.")}</>}
             body="Answers from the tools your team already uses. Sign-in through the identity provider you already run."
@@ -332,7 +363,7 @@ export function LandingPage({
         </div>
         <div className="mx-auto mt-16 grid max-w-6xl gap-4 px-4 sm:grid-cols-3">
           {RUNS_ON.map(({ icon, title, body }) => (
-            <div key={title} className="group flex gap-4 rounded-2xl border p-5 transition-colors hover:border-[var(--ascii-accent)]/40">
+            <div key={title} className="group glass-subtle flex gap-4 rounded-2xl p-5 transition-colors duration-(--dur-hover) ease-hover hover:border-signal/40">
               <IconTile icon={icon} />
               <div>
                 <p className="font-medium">{title}</p>
@@ -352,7 +383,7 @@ export function LandingPage({
               Stop searching. {accent("Start asking.")}
             </h2>
             <ol className="relative mx-auto mt-14 grid max-w-4xl gap-10 sm:grid-cols-3">
-              <span aria-hidden className="absolute top-5 right-[16%] left-[16%] hidden border-t border-dashed border-[var(--ascii-accent)]/40 sm:block" />
+              <span aria-hidden className="absolute top-5 right-[16%] left-[16%] hidden border-t border-dashed border-signal/40 sm:block" />
               {STEPS.map(({ icon, title, body }) => (
                 <li key={title} className="group relative flex flex-col items-center gap-3 text-center">
                   <IconTile icon={icon} className="bg-background" />

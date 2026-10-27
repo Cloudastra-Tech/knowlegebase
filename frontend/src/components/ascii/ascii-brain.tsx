@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react"
 
-import { fieldChar } from "@/components/ascii/field"
-import { measureCell, runLoop, whenFontsReady } from "@/lib/ascii-loop"
+import { FIELD_RAMP, fieldValue, rampIndex } from "@/components/ascii/field"
+import { measureCell, subscribe, whenFontsReady } from "@/lib/ascii-loop"
 import { cn } from "@/lib/utils"
 
-// The landing's and sign-in's moving brain over the field, drawn into stacked <pre>s
-// (dim field, ink, accent sparks) about 30 times a second while it's on screen; with
+// The landing's and sign-in's moving brain over the field, drawn in three inks (dim
+// field, brain, signal sparks) up to 30 times a second while it's on screen; with
 // reduced motion or "Reduce effects", one still frame.
 //
 // A side view of a brain, as points on its surface: x towards the front, y up, z
@@ -102,32 +102,107 @@ const LIGHT = (() => {
   return l.map((v) => v / n)
 })()
 
+
+// Every glyph the brain draws, as a code per cell (0 is empty): the field's ramp in
+// the dim field ink, the brain's ramp in the brain ink, and the spark in the signal.
+const FIELD_CODE = 0 // + the field ramp's index (its index 0 is a space: empty)
+const INK_CODE = FIELD_RAMP.length // + the brain ramp's index
+const SPARK_CODE = INK_CODE + RAMP.length
+const GLYPHS: [string, "field" | "ink" | "signal"][] = [
+  ...[...FIELD_RAMP].map((ch) => [ch, "field"] as [string, "field"]),
+  ...[...RAMP].map((ch) => [ch, "ink"] as [string, "ink"]),
+  ["*", "signal"],
+]
+
 // "hero" puts the brain right of the headline on wide screens and above it on
-// narrow ones; "panel" centres a larger brain in the upper part of its box.
-export function AsciiBrain({ className, framing = "hero" }: { className?: string; framing?: "hero" | "panel" }) {
+// narrow ones; "panel" centres a larger brain in the upper part of its box. `fps`
+// caps its frame rate (the sign-in panel's is 24: it shares the page with a form).
+//
+// It draws on a <canvas>: the three <pre>s it had were the page's largest text, so a
+// field of dim dots, not the headline, was the landing's Largest Contentful Paint, and
+// laying out three screens of text a frame was most of a frame's cost. The glyphs are
+// drawn once into an atlas, and a frame redraws only the cells whose glyph changed.
+export function AsciiBrain({
+  className,
+  framing = "hero",
+  fps = 30,
+}: {
+  className?: string
+  framing?: "hero" | "panel"
+  fps?: number
+}) {
   const box = useRef<HTMLDivElement>(null)
-  const field = useRef<HTMLPreElement>(null)
-  const ink = useRef<HTMLPreElement>(null)
-  const sparks = useRef<HTMLPreElement>(null)
+  const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     const el = box.current
-    if (!el || !field.current || !ink.current || !sparks.current) return
-    const [fieldPre, inkPre, sparkPre] = [field.current, ink.current, sparks.current]
+    const cv = canvas.current
+    const ctx = cv?.getContext("2d", { alpha: true })
+    if (!el || !cv || !ctx) return
     const pts = brainPoints()
-    let cell = measureCell(inkPre)
+    const atlas = document.createElement("canvas")
+    const actx = atlas.getContext("2d")
+    let cell = measureCell(el)
+    let dpr = 1
     let cols = 0
     let rows = 0
+    let aw = 1 // an atlas cell, in device pixels
+    let ah = 1
+    let xs = new Int32Array(1) // each column's left edge, in whole device pixels
+    let ys = new Int32Array(1)
     let zbuf = new Float32Array(0)
     let shade = new Float32Array(0)
     let spark = new Uint8Array(0)
+    let next = new Uint8Array(0)
+    let shown = new Uint8Array(0) // what's on the canvas; 255 is "unknown, draw it"
+
+    // The inks, from the tokens (so a theme change follows), into the atlas.
+    const restyle = () => {
+      if (!actx) return
+      const s = getComputedStyle(el)
+      const probe = document.createElement("span")
+      el.appendChild(probe)
+      const ink = (token: string) => {
+        probe.style.color = `var(--ascii-${token})`
+        return getComputedStyle(probe).color
+      }
+      const colours = { field: ink("field"), ink: ink("ink"), signal: ink("signal") }
+      probe.remove()
+      atlas.width = aw * GLYPHS.length
+      atlas.height = ah
+      actx.clearRect(0, 0, atlas.width, atlas.height)
+      actx.font = `${s.fontWeight} ${parseFloat(s.fontSize) * dpr}px ${s.fontFamily}`
+      actx.textAlign = "center"
+      actx.textBaseline = "middle"
+      GLYPHS.forEach(([ch, tone], i) => {
+        if (ch === " ") return
+        actx.fillStyle = colours[tone]
+        actx.fillText(ch, i * aw + aw / 2, ah / 2)
+      })
+      shown.fill(255)
+    }
+
+    // Cells stay the font's own size (the art keeps its proportions); their edges are
+    // rounded to whole device pixels, so clearing one never leaves a seam or a sliver.
     const resize = () => {
-      cell = measureCell(inkPre)
+      cell = measureCell(el)
+      dpr = Math.min(2, window.devicePixelRatio || 1)
       cols = Math.max(1, Math.floor(el.clientWidth / cell.w))
       rows = Math.max(1, Math.floor(el.clientHeight / cell.h))
+      aw = Math.ceil(cell.w * dpr)
+      ah = Math.ceil(cell.h * dpr)
+      xs = Int32Array.from({ length: cols + 1 }, (_, c) => Math.round(c * cell.w * dpr))
+      ys = Int32Array.from({ length: rows + 1 }, (_, r) => Math.round(r * cell.h * dpr))
+      cv.width = xs[cols]
+      cv.height = ys[rows]
+      cv.style.width = `${cv.width / dpr}px`
+      cv.style.height = `${cv.height / dpr}px`
       zbuf = new Float32Array(cols * rows)
       shade = new Float32Array(cols * rows)
       spark = new Uint8Array(cols * rows)
+      next = new Uint8Array(cols * rows)
+      shown = new Uint8Array(cols * rows)
+      restyle()
     }
     resize()
 
@@ -192,52 +267,44 @@ export function AsciiBrain({ className, framing = "hero" }: { className?: string
         spark[k] = !crease && pts[i + 6] === 0 && (wave > 0.96 || flash) ? 1 : 0
       }
 
-      let fieldOut = ""
-      let inkOut = ""
-      let sparkOut = ""
+      const px = pointer.x === 0 ? -1000 : target.cx
       for (let r = 0; r < rows; r++) {
-        let f = ""
-        let a = ""
-        let s = ""
         for (let c = 0; c < cols; c++) {
           const k = r * cols + c
-          if (!zbuf[k]) {
-            f += fieldChar(c, r, t, pointer.x === 0 ? -1000 : target.cx, target.cy)
-            a += " "
-            s += " "
-          } else if (spark[k]) {
-            f += " "
-            a += " "
-            s += "*"
-          } else if (shade[k] < 0) {
-            f += " "
-            a += " " // a fold: a dark gap between gyri
-            s += " "
-          } else {
-            const v = Math.min(0.999, shade[k])
-            f += " "
-            a += RAMP[Math.floor(v * RAMP.length)]
-            s += " "
-          }
+          if (!zbuf[k]) next[k] = FIELD_CODE + rampIndex(fieldValue(c, r, t, px, target.cy), FIELD_RAMP.length)
+          else if (spark[k]) next[k] = SPARK_CODE
+          else if (shade[k] < 0) next[k] = 0 // a fold: a dark gap between gyri
+          else next[k] = INK_CODE + Math.floor(Math.min(0.999, shade[k]) * RAMP.length)
         }
-        fieldOut += f + "\n"
-        inkOut += a + "\n"
-        sparkOut += s + "\n"
       }
-      fieldPre.textContent = fieldOut
-      inkPre.textContent = inkOut
-      sparkPre.textContent = sparkOut
+      for (let k = 0; k < next.length; k++) {
+        const code = next[k]
+        if (code === shown[k]) continue
+        const c = k % cols
+        const r = (k - c) / cols
+        const x = xs[c], y = ys[r]
+        const cw = xs[c + 1] - x, ch = ys[r + 1] - y
+        ctx.clearRect(x, y, cw, ch)
+        if (code && GLYPHS[code][0] !== " ") ctx.drawImage(atlas, code * aw, 0, cw, ch, x, y, cw, ch)
+        shown[k] = code
+      }
     }
 
-    const loop = runLoop(el, draw, 2.4)
+    const loop = subscribe(el, draw, { fps, still: 2.4 })
     const ro = new ResizeObserver(() => {
       resize()
       loop.redraw()
     })
     ro.observe(el)
+    // The theme changed: the inks are other colours.
+    const mo = new MutationObserver(() => {
+      restyle()
+      loop.redraw()
+    })
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
     // Measured before Geist Mono arrived, the grid is the fallback font's: again once it has.
     let live = true
-    whenFontsReady(inkPre).then(() => {
+    whenFontsReady(el).then(() => {
       if (!live) return
       resize()
       loop.redraw()
@@ -246,16 +313,19 @@ export function AsciiBrain({ className, framing = "hero" }: { className?: string
       live = false
       loop.stop()
       ro.disconnect()
+      mo.disconnect()
       window.removeEventListener("pointermove", onMove)
     }
-  }, [framing])
+  }, [framing, fps])
 
-  const layer = "absolute inset-0 m-0 overflow-hidden font-mono text-ascii select-none"
   return (
-    <div ref={box} aria-hidden className={cn("pointer-events-none relative overflow-hidden", className)}>
-      <pre ref={field} className={cn(layer, "text-foreground/[0.16]")} />
-      <pre ref={ink} className={cn(layer, "text-foreground/85")} />
-      <pre ref={sparks} className={cn(layer, "text-[var(--ascii-accent,var(--ascii-signal))]")} />
+    <div
+      ref={box}
+      aria-hidden
+      data-slot="ascii-brain"
+      className={cn("pointer-events-none relative overflow-hidden font-mono text-ascii select-none", className)}
+    >
+      <canvas ref={canvas} className="absolute top-0 left-0" />
     </div>
   )
 }

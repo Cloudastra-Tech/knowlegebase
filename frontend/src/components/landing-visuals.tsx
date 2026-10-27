@@ -16,7 +16,7 @@ import {
   type SimpleIcon,
 } from "simple-icons"
 
-import { reducedMotion, runLoop } from "@/lib/ascii-loop"
+import { reducedMotion, subscribe } from "@/lib/ascii-loop"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
@@ -79,7 +79,7 @@ export function KnowledgeHub({ className }: { className?: string }) {
   useEffect(() => {
     const el = box.current
     if (!el) return
-    let shown = ""
+    let shown = "0:0" // the first question, being asked (the initial state)
     const draw = (t: number) => {
       const i = Math.floor(t / CYCLE) % HUB_QUESTIONS.length
       const local = t % CYCLE
@@ -116,7 +116,11 @@ export function KnowledgeHub({ className }: { className?: string }) {
         }
       })
     }
-    const loop = runLoop(el, draw, 4.5)
+    // The sources in their places before it first scrolls into view (until then the
+    // loop draws nothing, and they'd all sit in a corner); then the shared loop, at
+    // the hero's 30 fps, while it's on screen.
+    draw(0)
+    const loop = subscribe(el, draw, { fps: 30, still: 4.5 })
     return loop.stop
   }, [])
 
@@ -128,13 +132,24 @@ export function KnowledgeHub({ className }: { className?: string }) {
       <svg viewBox={`0 0 ${VB.w} ${VB.h}`} className="absolute inset-0 size-full" aria-hidden>
         <defs>
           <radialGradient id="hub-glow">
-            <stop offset="0%" stopColor="var(--ascii-accent)" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="var(--ascii-accent)" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--signal)" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="var(--signal)" stopOpacity="0" />
           </radialGradient>
         </defs>
         <ellipse cx={VB.cx} cy={VB.cy} rx={VB.rx} ry={VB.ry} fill="none" className="stroke-border" strokeDasharray="2 6" />
         <ellipse cx={VB.cx} cy={VB.cy} rx={VB.rx * 0.55} ry={VB.ry * 0.55} fill="none" className="stroke-border/60" strokeDasharray="2 8" />
-        <circle cx={VB.cx} cy={VB.cy} r={answered ? 190 : 150} fill="url(#hub-glow)" className="transition-all duration-700" />
+        {/* The glow swells as the answer comes out: a scale, not its radius, so the
+            transition is the GPU's. 700ms: explanatory marketing motion. */}
+        <circle
+          cx={VB.cx}
+          cy={VB.cy}
+          r={190}
+          fill="url(#hub-glow)"
+          className={cn(
+            "origin-[500px_350px] transition-[scale] duration-700 ease-out-strong",
+            answered ? "scale-100" : "scale-[0.79]",
+          )}
+        />
         {HUB.map((s, n) => (
           <line
             key={s.id}
@@ -143,7 +158,7 @@ export function KnowledgeHub({ className }: { className?: string }) {
             }}
             x2={VB.cx}
             y2={VB.cy}
-            className="stroke-border transition-colors duration-500 data-[cited=1]:stroke-[var(--ascii-accent)]"
+            className="stroke-border transition-colors duration-500 data-[cited=1]:stroke-signal"
             strokeWidth={1}
           />
         ))}
@@ -155,7 +170,7 @@ export function KnowledgeHub({ className }: { className?: string }) {
                 dots.current[n * 2 + k] = e
               }}
               r={3}
-              className="fill-foreground/70 data-[cited=1]:fill-[var(--ascii-accent)]"
+              className="fill-foreground/70 data-[cited=1]:fill-signal"
             />
           )),
         )}
@@ -171,7 +186,7 @@ export function KnowledgeHub({ className }: { className?: string }) {
             <circle
               r={34}
               className={cn(
-                "fill-background stroke-border transition-colors duration-500 group-data-[cited=1]:stroke-[var(--ascii-accent)]",
+                "fill-background stroke-border transition-colors duration-500 group-data-[cited=1]:stroke-signal",
                 !s.live && "opacity-60",
               )}
               strokeWidth={1.5}
@@ -179,7 +194,7 @@ export function KnowledgeHub({ className }: { className?: string }) {
             <g
               transform="translate(-12 -12)"
               className={cn(
-                "text-foreground/80 transition-colors duration-500 group-data-[cited=1]:text-[var(--ascii-accent)]",
+                "text-foreground/80 transition-colors duration-500 group-data-[cited=1]:text-signal",
                 !s.live && "text-foreground/40",
               )}
             >
@@ -195,9 +210,9 @@ export function KnowledgeHub({ className }: { className?: string }) {
 
       {/* The brain at the centre. */}
       <div className="pointer-events-none absolute top-1/2 left-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center">
-        <div className="relative flex size-20 items-center justify-center rounded-full border border-[var(--ascii-accent)]/40 bg-background sm:size-28">
-          <span className="absolute inset-0 animate-ping rounded-full border border-[var(--ascii-accent)]/30 [animation-duration:3s] motion-reduce:hidden" />
-          <Brain className="size-9 text-[var(--ascii-accent)] sm:size-12" strokeWidth={1.4} />
+        <div className="relative flex size-20 items-center justify-center rounded-full border border-signal/40 bg-background sm:size-28">
+          <span className="absolute inset-0 animate-ping rounded-full border border-signal/30 [animation-duration:3s] motion-reduce:hidden" />
+          <Brain className="size-9 text-signal sm:size-12" strokeWidth={1.4} />
         </div>
       </div>
 
@@ -227,8 +242,8 @@ export function KnowledgeHub({ className }: { className?: string }) {
               initial={{ opacity: 0, y: 10, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6 }}
-              transition={{ type: "spring", stiffness: 260, damping: 24 }}
-              className="flex max-w-xl flex-col gap-2 rounded-2xl border border-[var(--ascii-accent)]/30 bg-background/95 px-4 py-3 text-xs shadow-[0_12px_32px_-16px_rgb(0_0_0/0.7)] backdrop-blur sm:text-sm"
+              transition={{ type: "spring", duration: 0.35, bounce: 0.15 }}
+              className="flex max-w-xl flex-col gap-2 rounded-2xl border border-signal/30 bg-background/95 px-4 py-3 text-xs shadow-[0_12px_32px_-16px_rgb(0_0_0/0.7)] backdrop-blur sm:text-sm"
             >
               <span>{item.a}</span>
               <span className="flex flex-wrap gap-1.5">
@@ -236,7 +251,7 @@ export function KnowledgeHub({ className }: { className?: string }) {
                   const s = HUB.find((h) => h.id === id)!
                   return (
                     <span key={id} className="flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                      <span className="font-mono text-[var(--ascii-accent)]">{n + 1}</span>
+                      <span className="font-mono text-signal">{n + 1}</span>
                       <SourceGlyph source={s} className="size-3" />
                       {s.name}
                     </span>
@@ -281,7 +296,7 @@ function Passage({ text, cited, on }: { text: string; cited?: string; on: boolea
       <mark
         className={cn(
           "rounded-sm bg-transparent text-inherit transition-colors duration-700",
-          on && "bg-[var(--ascii-accent)]/20 text-foreground",
+          on && "bg-signal/20 text-foreground",
         )}
       >
         {cited}
@@ -367,14 +382,14 @@ function ChatRun({ scene, playing, onDone }: { scene: DemoScene; playing: boolea
         {/* The conversation. */}
         <div className="flex min-h-[340px] flex-col gap-5 p-5 sm:p-7">
           <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-            <span className="size-2 rounded-full bg-[var(--ascii-accent)]" /> knowledge assistant
+            <span className="size-2 rounded-full bg-signal" /> knowledge assistant
           </div>
           <div className="self-end rounded-2xl rounded-br-md bg-foreground px-4 py-2.5 text-sm text-background">
             {scene.question.slice(0, typed)}
             {phase === "typing" && <span className="ml-0.5 animate-pulse">▌</span>}
           </div>
           <div className="flex gap-3">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--ascii-accent)]/15 text-[var(--ascii-accent)]">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-signal/15 text-signal">
               <Brain className="size-4" />
             </div>
             <div className="flex min-w-0 flex-col gap-3 pt-1 text-sm leading-relaxed">
@@ -401,7 +416,7 @@ function ChatRun({ scene, playing, onDone }: { scene: DemoScene; playing: boolea
                         transition={{ delay: n * 0.12 }}
                         className="flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
                       >
-                        <span className="font-mono text-[var(--ascii-accent)]">{n + 1}</span>
+                        <span className="font-mono text-signal">{n + 1}</span>
                         <DocGlyph kind={d.kind} className="size-3.5" />
                         {d.title}
                       </motion.span>
@@ -423,13 +438,13 @@ function ChatRun({ scene, playing, onDone }: { scene: DemoScene; playing: boolea
                 key={d.title}
                 className={cn(
                   "relative overflow-hidden rounded-xl border bg-background p-3.5 transition-colors duration-500",
-                  isCited && "border-[var(--ascii-accent)]/50",
+                  isCited && "border-signal/50",
                 )}
               >
                 {phase === "reading" && (
                   <motion.span
                     aria-hidden
-                    className="absolute inset-y-0 w-16 bg-linear-to-r from-transparent via-[var(--ascii-accent)]/15 to-transparent"
+                    className="absolute inset-y-0 w-16 bg-linear-to-r from-transparent via-signal/15 to-transparent"
                     initial={{ left: "-20%" }}
                     animate={{ left: "110%" }}
                     transition={{ duration: 1.1, delay: n * 0.15, repeat: Infinity, ease: "easeInOut" }}
@@ -439,7 +454,7 @@ function ChatRun({ scene, playing, onDone }: { scene: DemoScene; playing: boolea
                   <DocGlyph kind={d.kind} className="size-4 text-muted-foreground" />
                   <span className="truncate">{d.title}</span>
                   {isCited && (
-                    <span className="ml-auto font-mono text-xs text-[var(--ascii-accent)]">[{citedDocs.indexOf(d) + 1}]</span>
+                    <span className="ml-auto font-mono text-xs text-signal">[{citedDocs.indexOf(d) + 1}]</span>
                   )}
                 </div>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
@@ -539,8 +554,8 @@ export function PermissionGate({ className }: { className?: string }) {
 
         {/* The filter. */}
         <div className="flex items-center gap-3 sm:flex-col sm:gap-2">
-          <div className="flex size-14 items-center justify-center rounded-2xl border border-[var(--ascii-accent)]/40 bg-background sm:size-16">
-            <ShieldCheck className="size-7 text-[var(--ascii-accent)]" strokeWidth={1.5} />
+          <div className="flex size-14 items-center justify-center rounded-2xl border border-signal/40 bg-background sm:size-16">
+            <ShieldCheck className="size-7 text-signal" strokeWidth={1.5} />
           </div>
           <span className="font-mono text-[10px] text-muted-foreground sm:max-w-20 sm:text-center">permission filter</span>
         </div>
@@ -548,7 +563,7 @@ export function PermissionGate({ className }: { className?: string }) {
         {/* What reaches the assistant, and its answer. */}
         <div className="flex flex-col gap-2.5">
           <div className="flex items-center gap-2 text-xs text-muted-foreground sm:text-sm">
-            <Brain className="size-4 text-[var(--ascii-accent)]" /> reaches the assistant
+            <Brain className="size-4 text-signal" /> reaches the assistant
           </div>
           <div className="flex flex-wrap gap-1.5">
             {GATE_DOCS.filter((d) => !d.restricted || person.hr).map((d, n) => (
@@ -607,7 +622,7 @@ export function Marquee({
           </span>
           {it.name}
           {it.tag && (
-            <span className={cn("font-mono text-[10px]", it.live ? "text-[var(--ascii-accent)]" : "text-muted-foreground/60")}>
+            <span className={cn("font-mono text-[10px]", it.live ? "text-signal" : "text-muted-foreground/60")}>
               {it.tag}
             </span>
           )}

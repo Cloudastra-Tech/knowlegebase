@@ -10,8 +10,8 @@ export function JoinRequested() {
   const navigate = useNavigate()
   return (
     <div className="flex w-full max-w-[400px] flex-col gap-6">
-      <div className="flex size-12 items-center justify-center rounded-2xl border bg-muted/40">
-        <MailCheck className="size-6 text-[var(--ascii-accent)]" />
+      <div className="flex size-12 items-center justify-center rounded-2xl border border-signal/25 bg-signal/10">
+        <MailCheck className="size-6 text-signal" />
       </div>
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl leading-tight font-medium tracking-tight text-balance md:text-4xl">
@@ -23,7 +23,7 @@ export function JoinRequested() {
           you'll get an email: then sign in the same way you just did.
         </p>
       </div>
-      <ul className="flex flex-col gap-2 rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">
+      <ul className="flex flex-col gap-2 glass-subtle rounded-xl p-4 text-sm text-muted-foreground">
         <li>Signing in again before then doesn't send another request.</li>
         <li>A request nobody answers expires after 30 days.</li>
         <li>In a hurry? Ask an admin to invite you instead.</li>

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { ArrowRight, ChevronDown, KeyRound, Loader2 } from "lucide-react"
+import { ArrowRight, ChevronDown, KeyRound } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { MotionConfig, motion, type Variants } from "motion/react"
 import { useLocation, useNavigate, useSearchParams } from "react-router"
 import { siAuth0, siAuthentik, siGoogle, siKeycloak, siOkta } from "simple-icons"
 
+import { ScrambleText } from "@/components/ascii/scramble-text"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -29,6 +30,7 @@ import {
   type SsoRoute,
   type User,
 } from "@/lib/api"
+import { spring, stagger } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -110,14 +112,16 @@ const nameFromDomain = (domain: string) =>
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ")
 
-// The auth-11 block's entrance: the form's parts rise in, one after another.
+// The auth-11 block's entrance: the form's parts rise in, one after another, on the
+// motion tokens (lib/motion.ts): 40ms apart, never more than six steps of delay (the
+// block has six parts at most), each on the app's spring.
 const list: Variants = {
   hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
+  visible: { opacity: 1, transition: { staggerChildren: stagger.each, delayChildren: stagger.each } },
 }
 const item: Variants = {
-  hidden: { opacity: 0, y: 12 },
-  visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 26 } },
+  hidden: { opacity: 0, transform: "translateY(6px)" },
+  visible: { opacity: 1, transform: "translateY(0px)", transition: spring },
 }
 
 // The block's taller, rounder controls.
@@ -173,7 +177,14 @@ function RoutePass({
   lookup: Lookup
   onCreate: (suggestedName: string) => void
 }) {
-  const frame = "rounded-xl border bg-muted/40 text-sm"
+  // The first workspace the pass finds decodes into place (a rare moment, so a little
+  // delight); any later lookup's values simply swap in.
+  const [firstFound, setFirstFound] = useState<Lookup | null>(null)
+  if (firstFound === null && lookup.state === "found" && lookup.route.workspace) setFirstFound(lookup)
+  const scramble = lookup === firstFound
+  // The subtle glass tier (no blur: nothing moves behind the form).
+  const frame =
+    "rounded-xl border border-(--glass-border) bg-(--glass-bg-subtle) text-sm shadow-[inset_0_1px_0_0_var(--glass-highlight)]"
   if (lookup.state === "idle" || lookup.state === "failed")
     return (
       <p aria-live="polite" className={cn(frame, "px-4 py-3 text-muted-foreground")}>
@@ -220,8 +231,8 @@ function RoutePass({
       aria-live="polite"
       className={cn(
         frame,
-        "flex flex-col divide-y divide-border overflow-hidden transition-colors sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)] sm:divide-x sm:divide-y-0",
-        route && "border-foreground/20 bg-muted/70",
+        "flex flex-col divide-y divide-border overflow-hidden transition-colors duration-(--dur-hover) ease-hover sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)] sm:divide-x sm:divide-y-0",
+        route && "border-signal/30 bg-muted/60",
       )}
     >
       {segments.map(([label, value, mark]) => (
@@ -239,9 +250,15 @@ function RoutePass({
               className="flex min-w-0 items-center gap-1.5 font-medium leading-snug motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 [&_svg]:size-3.5 [&_svg]:shrink-0"
             >
               {mark}
-              <span className="truncate sm:line-clamp-2 sm:whitespace-normal">
-                {value}
-              </span>
+              {scramble && value ? (
+                <ScrambleText
+                  text={value}
+                  once
+                  className="truncate sm:line-clamp-2 sm:whitespace-normal [&>span]:[white-space:inherit]"
+                />
+              ) : (
+                <span className="truncate sm:line-clamp-2 sm:whitespace-normal">{value}</span>
+              )}
             </span>
           )}
         </div>
@@ -427,9 +444,8 @@ function SignIn({
           type="submit"
           variant={emailFirst ? "secondary" : "default"}
           className={pill}
-          disabled={signingIn}
+          loading={signingIn}
         >
-          {signingIn && <Loader2 className="animate-spin" data-icon="inline-start" />}
           Sign in with password
         </Button>
       </FieldGroup>
@@ -514,14 +530,12 @@ function SignIn({
           <Button
             type="submit"
             className={cn(pill, "mt-1")}
-            disabled={going || lookup.state === "looking"}
+            loading={going}
+            disabled={lookup.state === "looking"}
           >
-            {going ? (
-              <Loader2 className="animate-spin" data-icon="inline-start" />
-            ) : (
+            {!going &&
               lookup.state === "found" &&
-              continueLabel !== "Continue" && <MethodMark route={lookup.route} />
-            )}
+              continueLabel !== "Continue" && <MethodMark route={lookup.route} />}
             {continueLabel}
           </Button>
         )}
@@ -604,7 +618,7 @@ function CreateWorkspace({
   if (sent)
     return (
       <motion.div variants={item} className="flex flex-col gap-4 text-center" role="status">
-        <p className="rounded-xl border bg-muted/40 px-4 py-3 text-sm">
+        <p className="glass-subtle rounded-xl px-4 py-3 text-sm">
           We sent a link to <span className="font-medium">{sent}</span>. Open it to confirm your
           address; it then shows the DNS record that proves your company owns its domain.
         </p>
@@ -662,13 +676,10 @@ function CreateWorkspace({
               data-method={m}
               variant={m === providers[0] ? "default" : "outline"}
               className={pill}
+              loading={going === m}
               disabled={going !== null || !ready}
             >
-              {going === m ? (
-                <Loader2 className="animate-spin" data-icon="inline-start" />
-              ) : (
-                <ProviderIcon id={m === "google" ? "google" : "microsoft"} />
-              )}
+              {going !== m && <ProviderIcon id={m === "google" ? "google" : "microsoft"} />}
               Continue with {m === "google" ? "Google Workspace" : "Microsoft 365"}
             </Button>
           ))}
@@ -702,9 +713,9 @@ function CreateWorkspace({
               data-method="email"
               variant={providers.length ? "outline" : "default"}
               className={pill}
+              loading={going === "email"}
               disabled={going !== null || !ready || !email.trim()}
             >
-              {going === "email" && <Loader2 className="animate-spin" data-icon="inline-start" />}
               Email me a link
             </Button>
             {message && <FieldError>{message}</FieldError>}

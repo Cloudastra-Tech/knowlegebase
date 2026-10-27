@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 // One line of a terminal, asking each question in turn and typing the answer (the
 // landing's hero). The typing is decoration; the questions are real text elsewhere
-// on the page. The accent is the landing's --ascii-accent, else the signal.
+// on the page. The prompt and the source are in the signal.
 export function AsciiTicker({
   items,
   className,
@@ -40,11 +40,11 @@ export function AsciiTicker({
   return (
     <div ref={box} aria-hidden className={cn("font-mono text-xs leading-relaxed sm:text-sm", className)}>
       <p className="truncate">
-        <span className="text-[var(--ascii-accent,var(--ascii-signal))]">&gt; </span>
+        <span className="text-signal">&gt; </span>
         <span ref={q} />
       </p>
       <p className="min-h-[2lh] text-muted-foreground sm:min-h-[1lh]">
-        <span ref={a} /> <span ref={src} className="text-[var(--ascii-accent,var(--ascii-signal))]" />
+        <span ref={a} /> <span ref={src} className="text-signal" />
       </p>
     </div>
   )
