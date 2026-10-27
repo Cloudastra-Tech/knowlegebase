@@ -1,0 +1,410 @@
+{
+ "_source": [
+  "https://linear.app/developers/graphql (POST https://api.linear.app/graphql, errors[] with extensions)",
+  "https://linear.app/developers/pagination (first/after, nodes, pageInfo { hasNextPage endCursor }, orderBy updatedAt)",
+  "https://linear.app/developers/filtering (DateComparator gt)",
+  "https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql (Issue, Team.members, Project.content, Document, includeArchived, trashed, archivedAt)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "members(",
+     "variables": {
+      "id": "team-eng"
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "team": {
+       "members": {
+        "nodes": [
+         {
+          "email": "Ann@Acme.example",
+          "active": true
+         },
+         {
+          "email": "bob@acme.example",
+          "active": true
+         },
+         {
+          "email": "gone@acme.example",
+          "active": false
+         }
+        ],
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        }
+       }
+      }
+     }
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "issues(",
+     "variables": {
+      "after": null,
+      "archived": false
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "issues": {
+       "nodes": [
+        {
+         "id": "iss-1",
+         "identifier": "ENG-1",
+         "title": "Rotate the API keys",
+         "description": "Keys rotate **every 90 days**.",
+         "url": "https://linear.app/acme/issue/ENG-1",
+         "createdAt": "2026-09-01T10:00:00.000Z",
+         "updatedAt": "2026-10-10T10:00:00.000Z",
+         "archivedAt": null,
+         "trashed": false,
+         "state": {
+          "name": "In Progress"
+         },
+         "team": {
+          "id": "team-eng",
+          "key": "ENG",
+          "name": "Engineering"
+         },
+         "assignee": {
+          "name": "Ann Lee"
+         },
+         "creator": {
+          "name": "Bob Roe"
+         },
+         "project": {
+          "name": "Handbook"
+         },
+         "labels": {
+          "nodes": [
+           {
+            "name": "Docs"
+           }
+          ]
+         },
+         "comments": {
+          "nodes": [
+           {
+            "body": "Done for staging.",
+            "createdAt": "2026-10-02T10:00:00.000Z",
+            "user": {
+             "name": "Bob Roe"
+            }
+           },
+           {
+            "body": "Prod next week.",
+            "createdAt": "2026-10-01T10:00:00.000Z",
+            "user": {
+             "name": "Ann Lee"
+            }
+           }
+          ],
+          "pageInfo": {
+           "hasNextPage": false,
+           "endCursor": null
+          }
+         }
+        },
+        {
+         "id": "iss-2",
+         "identifier": "ENG-2",
+         "title": "Write the on-call guide",
+         "description": "Pager rules.",
+         "url": "https://linear.app/acme/issue/ENG-2",
+         "createdAt": "2026-09-01T10:00:00.000Z",
+         "updatedAt": "2026-10-09T10:00:00.000Z",
+         "archivedAt": null,
+         "trashed": false,
+         "state": {
+          "name": "In Progress"
+         },
+         "team": {
+          "id": "team-eng",
+          "key": "ENG",
+          "name": "Engineering"
+         },
+         "assignee": {
+          "name": "Ann Lee"
+         },
+         "creator": {
+          "name": "Bob Roe"
+         },
+         "project": {
+          "name": "Handbook"
+         },
+         "labels": {
+          "nodes": [
+           {
+            "name": "Docs"
+           }
+          ]
+         },
+         "comments": {
+          "nodes": [
+           {
+            "body": "First draft is up.",
+            "createdAt": "2026-10-03T10:00:00.000Z",
+            "user": {
+             "name": "Ann Lee"
+            }
+           }
+          ],
+          "pageInfo": {
+           "hasNextPage": true,
+           "endCursor": "cm-1"
+          }
+         }
+        }
+       ],
+       "pageInfo": {
+        "hasNextPage": true,
+        "endCursor": "c-1"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "issues(",
+     "variables": {
+      "after": "c-1"
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "issues": {
+       "nodes": [
+        {
+         "id": "iss-3",
+         "identifier": "ENG-3",
+         "title": "Old idea",
+         "description": "",
+         "url": "https://linear.app/acme/issue/ENG-3",
+         "createdAt": "2026-09-01T10:00:00.000Z",
+         "updatedAt": "2026-10-08T10:00:00.000Z",
+         "archivedAt": null,
+         "trashed": true,
+         "state": {
+          "name": "In Progress"
+         },
+         "team": {
+          "id": "team-eng",
+          "key": "ENG",
+          "name": "Engineering"
+         },
+         "assignee": {
+          "name": "Ann Lee"
+         },
+         "creator": {
+          "name": "Bob Roe"
+         },
+         "project": {
+          "name": "Handbook"
+         },
+         "labels": {
+          "nodes": [
+           {
+            "name": "Docs"
+           }
+          ]
+         },
+         "comments": {
+          "nodes": [],
+          "pageInfo": {
+           "hasNextPage": false,
+           "endCursor": null
+          }
+         }
+        }
+       ],
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "projects(",
+     "variables": {
+      "after": null
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "projects": {
+       "nodes": [
+        {
+         "id": "proj-1",
+         "name": "Handbook",
+         "description": "The company handbook.",
+         "content": "## Goals\n\nOne place for policies.",
+         "url": "https://linear.app/acme/project/handbook",
+         "updatedAt": "2026-10-07T10:00:00.000Z",
+         "archivedAt": null,
+         "teams": {
+          "nodes": [
+           {
+            "id": "team-eng"
+           },
+           {
+            "id": "team-sales"
+           }
+          ]
+         }
+        },
+        {
+         "id": "proj-2",
+         "name": "Sales kickoff",
+         "description": "",
+         "content": "Secret plans.",
+         "url": "https://linear.app/acme/project/kickoff",
+         "updatedAt": "2026-10-06T10:00:00.000Z",
+         "archivedAt": null,
+         "teams": {
+          "nodes": [
+           {
+            "id": "team-sales"
+           }
+          ]
+         }
+        }
+       ],
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "documents(",
+     "variables": {
+      "after": null
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "documents": {
+       "nodes": [
+        {
+         "id": "doc-1",
+         "title": "Release checklist",
+         "content": "1. Tag\n2. Deploy",
+         "url": "https://linear.app/acme/document/release",
+         "updatedAt": "2026-10-05T10:00:00.000Z",
+         "archivedAt": null,
+         "trashed": false,
+         "team": null,
+         "project": {
+          "id": "proj-1"
+         },
+         "issue": null
+        },
+        {
+         "id": "doc-2",
+         "title": "Sales deck notes",
+         "content": "Pricing.",
+         "url": "https://linear.app/acme/document/deck",
+         "updatedAt": "2026-10-04T10:00:00.000Z",
+         "archivedAt": null,
+         "trashed": false,
+         "team": {
+          "id": "team-sales"
+         },
+         "project": null,
+         "issue": null
+        }
+       ],
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "json": {
+     "query~": "issue(id:",
+     "variables": {
+      "id": "iss-2",
+      "after": "cm-1"
+     }
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "issue": {
+       "comments": {
+        "nodes": [
+         {
+          "body": "Reviewed.",
+          "createdAt": "2026-10-04T10:00:00.000Z",
+          "user": {
+           "name": "Bob Roe"
+          }
+         }
+        ],
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ ]
+}

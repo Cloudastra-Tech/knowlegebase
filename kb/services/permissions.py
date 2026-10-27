@@ -37,6 +37,21 @@ Per source:
                  anything narrower -> the hr group (staff). Tickets lock their
                  connection to restricted (settings.access_lock).
     Notion       no permission API: the source policy can't be picked.
+    Linear       the team's members (emails); a team member who isn't a member
+                 here is dropped. Members of the Linear organisation outside the
+                 team (who can read a public team's issues there) aren't listed:
+                 never more people than the team.
+    Dropbox      the shared folder's members (emails) and groups with an
+                 external id (synced from an identity provider: matched to that
+                 IdP group); other groups and pending invitees are dropped. A
+                 file in no shared folder is its owner's only.
+    Box          accepted collaborators of the file and every folder above it
+                 (logins); Box groups have no counterpart here (dropped);
+                 an "open" shared link -> everyone, a "company" one -> every
+                 verified domain.
+    S3           no source permissions at all: the source policy can't be
+                 picked, and an S3 acl met here anyway is for no one.
+    Anything with a `via` this file doesn't know is for no one.
     Partial ACLs (a Drive file in a shared drive, a repo whose teams couldn't
     be read) keep only the grants that were read: never more people.
 
@@ -136,6 +151,9 @@ class Resolver:
             return access.clean_acl(found), dropped
         if "space_read" in acl:                                         # Confluence
             return self._confluence(acl, items or {})
+        via = acl.get("via")
+        if via is not None:
+            return VIA.get(via, _unknown_via)(self, acl)
         if "collection_permission" in acl:                              # Outline
             if acl.get("collection_permission") in ("read", "read_write"):
                 return [access.EVERYONE], 0
@@ -167,6 +185,48 @@ class Resolver:
             found = got if found is None else found & got
             dropped += lost
         return access.clean_acl(found), dropped
+
+
+    def _linear(self, acl):
+        if not acl.get("team"):
+            return [access.NOBODY], 1
+        found, dropped = self.grants({"users": acl.get("users")})
+        return access.clean_acl(found), dropped
+
+    def _dropbox(self, acl):
+        found, dropped = self.grants({"users": acl.get("users")})
+        for g in acl.get("groups") or ():
+            # Only a group synced from an identity provider (its external id) maps.
+            got = set()
+            if str(g).startswith("dropbox:ext:"):
+                got = self.groups.get(str(g).removeprefix("dropbox:ext:").strip().lower(), set())
+            found |= got
+            dropped += not got
+        dropped += len(acl.get("invitees") or ())
+        return access.clean_acl(found), dropped
+
+    def _box(self, acl):
+        link = acl.get("shared_link")
+        if link == "open":
+            return [access.EVERYONE], 0
+        found, dropped = self.grants({"users": acl.get("users"),
+                                      "organization": link == "company"})
+        dropped += len(acl.get("groups") or ())        # Box groups: no counterpart here
+        return access.clean_acl(found), dropped
+
+
+def _no_source_acl(resolver, acl):
+    """S3: the source has no permissions to follow."""
+    return [access.NOBODY], 1
+
+
+def _unknown_via(resolver, acl):
+    return [access.NOBODY], 1
+
+
+# The per-connector mappings of acls that say which connector made them (`via`).
+VIA = {"linear": Resolver._linear, "dropbox": Resolver._dropbox, "box": Resolver._box,
+       "s3": _no_source_acl}
 
 
 def policies(provider):
