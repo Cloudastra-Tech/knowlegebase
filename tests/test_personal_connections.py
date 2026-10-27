@@ -170,6 +170,42 @@ def test_insights_digests_webhooks_and_billing_never_see_it(env, citing, monkeyp
     assert {tuple(a) for k, a in acls.items() if key in k} == {(f"user:staff@{w}.example",)}
 
 
+def test_the_question_log_test_set_and_export_keep_it_out(env, citing, monkeypatch, tmp_path):  # noqa: F811,E501
+    """Insights by principals (the question log's `acl`) keeps a member's own mail
+    theirs; their thumbs-down on such an answer never becomes a test case; and the
+    workspace export holds neither their connection nor their mail as a source."""
+    import json
+    import zipfile
+
+    import access
+    import question_log_store
+    from kb.services import lifecycle, quality
+    w, admin, staff, key, _ = staff_with_mail(env, monkeypatch)
+    done = ask(env.client, staff, "What is Bob's salary?", new_chat(env.client, staff))
+    assert [s for s in done["sources"] if s["title"] == "Offer letter for Bob"]
+    (row,) = [r for r in question_log_store.rows(w) if r["question"] == "What is Bob's salary?"]
+    assert [access.user(f"staff@{w}.example")] in row["acl"]       # the asker's alone
+    assert not access.sees(access.for_role("hr"), {"acl": row["acl"], "sources": []})
+    # Its sources as logged: the handbook, never the mail (an answer's sources
+    # carry no doc_key: known by their provider).
+    assert [s["title"] for s in row["sources"]] == ["handbook.txt"]
+    report = env.client.get("/api/admin/insights", headers=admin).json()
+    assert "Offer letter" not in json.dumps(report)
+
+    assert env.client.put(f"/api/messages/{done['message_id']}/feedback", headers=staff,
+                          json={"rating": -1}).status_code == 200
+    assert quality.suggest(w)["feedback"] == 0
+
+    path = tmp_path / "export.zip"
+    lifecycle.build_export(w, str(path), f"admin@{w}.example")
+    with zipfile.ZipFile(path) as z:
+        settings = json.loads(z.read("settings.json"))
+        chats = z.read("conversations.jsonl").decode()
+    assert not [i for i in settings["integrations"] if "~" in i["provider"]]
+    assert key not in chats and "Offer letter for Bob" not in json.dumps(
+        [m["sources"] for c in map(json.loads, chats.splitlines()) for m in c["messages"]])
+
+
 def test_another_member_can_not_reach_it_through_my_connections(env, monkeypatch):  # noqa: F811
     import auth
     import members_store

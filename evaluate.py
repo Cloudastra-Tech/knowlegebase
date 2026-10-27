@@ -27,6 +27,8 @@ runs can be compared:
     python evaluate.py --compare eval/results/<earlier>.json
     python evaluate.py --ids refund-window,vpn --repeat 3
     python evaluate.py --redteam                      # the prompt-injection red team instead
+    python evaluate.py --candidates WS                # the test cases admins promoted in
+                                                      # workspace WS, over its documents
 
 It costs a few cents on gpt-4o-mini; run it by hand or nightly, not on every
 PR. The fast, keyless checks (retrieval + leak suite) run in CI: eval/harness.py.
@@ -216,7 +218,7 @@ def _git_version():
         return None
 
 
-def evaluate_row(row, agent, probe):
+def evaluate_row(row, agent, probe, corpus=harness.CORPUS):
     """Ask one golden question through the agent and score everything about it."""
     probe.reset()
     probe.active = True
@@ -243,10 +245,10 @@ def evaluate_row(row, agent, probe):
     # Retrieval: the FIRST search is the one run for the user's own words.
     first = probe.searches[0] if probe.searches else []
     if row["sources"]:
-        item["retrieval"] = harness.score_retrieval(row, first)
-    restricted = harness.restricted_lines()
-    item["leaks"] = ([harness.source_of(d) for docs in probe.searches + [probe.intros]
-                      for d in harness.leaked(docs, restricted)]
+        item["retrieval"] = harness.score_retrieval(row, first, corpus)
+    restricted = harness.restricted_lines(corpus)
+    item["leaks"] = ([harness.source_of(d, corpus) for docs in probe.searches + [probe.intros]
+                      for d in harness.leaked(docs, restricted, corpus)]
                      if row["role"] == "public" else [])
     lowered = answer.lower()
     item["must_include_ok"] = all(s.lower() in lowered for s in row.get("must_include", []))
@@ -314,6 +316,9 @@ def main(argv=None):
     parser.add_argument("--out", help="results file (default: eval/results/<time>.json)")
     parser.add_argument("--compare", help="an earlier results file to print the change against")
     parser.add_argument("--label", default="", help="a note stored in the results, e.g. 'before'")
+    parser.add_argument("--candidates", metavar="WORKSPACE",
+                        help="ask the test cases promoted in this workspace (eval_candidates, "
+                             "as golden rows) over its own documents, instead of --golden")
     parser.add_argument("--redteam", action="store_true",
                         help="run the prompt-injection red team (eval/redteam.py) instead: "
                              "exit 1 if anything is exfiltrated")
@@ -344,7 +349,13 @@ def main(argv=None):
     import rag
     from agent import build_agent
 
-    golden = harness.load_golden(args.golden)
+    corpus = harness.CORPUS
+    if args.candidates:
+        import workspaces
+        golden = harness.candidates_golden(args.candidates)
+        corpus = workspaces.docs_root(args.candidates)
+    else:
+        golden = harness.load_golden(args.golden)
     if args.ids:
         wanted = set(args.ids.split(","))
         golden = [r for r in golden if r["id"] in wanted]
@@ -352,13 +363,13 @@ def main(argv=None):
 
     items = []
     probe = _Probe()
-    with harness.fixture_index(offline=False), probe.installed():
+    with harness.fixture_index(offline=False, corpus=corpus), probe.installed():
         agents = {}
         for row in golden:
             if row["role"] not in agents:
                 agents[row["role"]] = build_agent(row["role"], harness.COLLECTION, outline=False)
             for attempt in range(args.repeat):
-                item = evaluate_row(row, agents[row["role"]], probe)
+                item = evaluate_row(row, agents[row["role"]], probe, corpus)
                 item["attempt"] = attempt
                 items.append(item)
                 j = item["judge"]
@@ -373,7 +384,8 @@ def main(argv=None):
             "label": args.label,
             "started": started.isoformat(timespec="seconds"),
             "git": _git_version(),
-            "golden": os.path.relpath(args.golden),
+            "golden": (f"eval_candidates:{args.candidates}" if args.candidates
+                       else os.path.relpath(args.golden)),
             "repeat": args.repeat,
             "judge_model": JUDGE_MODEL,
             "settings": {**{name: repr(getattr(rag, name, None))

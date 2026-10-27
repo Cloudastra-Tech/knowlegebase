@@ -150,6 +150,16 @@ def _personal(doc_key):
     return len(parts) > 2 and parts[0] == "connectors" and "~" in parts[1]
 
 
+def personal_source(s):
+    """Is this cited source from a member's own Gmail or Calendar (a personal
+    connection, connectors/base.py)? By its doc_key when it has one; an answer's
+    sources usually don't, so also by its provider: only personal connections are
+    Gmail or Google Calendar."""
+    from connectors import registry
+    return _personal(s.get("doc_key")) or s.get("provider") in {
+        c.LABEL for c in registry.PERSONAL}
+
+
 def _sources(sources):
     """One entry per document (a passage-level list cites a document once per passage).
     A file the asker attached, or keeps in their space, is theirs alone: not logged,
@@ -157,7 +167,7 @@ def _sources(sources):
     asker's own Gmail or Calendar (a personal connection: connectors/base.py)."""
     out, seen = [], set()
     for s in sources or []:
-        if s.get("attachment") or _personal(s.get("doc_key")):
+        if s.get("attachment") or personal_source(s):
             continue
         entry = _source(s)
         key = entry.get("doc_id") or entry.get("doc_key") or (entry.get("provider"),

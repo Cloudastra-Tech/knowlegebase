@@ -145,3 +145,39 @@ def test_the_job_runs_for_every_workspace_that_logged_questions():
     answer_with_feedback(ws, -1, now - 60)
     assert quality.weekly(now=now)[ws] == {"feedback": 1, "not_found": 0}
     assert json.loads(json.dumps(insights_store.candidates(ws)))[0]["origin"] == "feedback"
+
+
+# ---- The test set in the evaluations (eval/harness.py, evaluate.py) ---------------------------
+def test_the_harness_reads_the_promoted_test_cases_in_the_golden_format(docs_root, tmp_path):  # noqa: F811,E501
+    """eval_candidates, exported as golden rows (what the admin screen shows), are
+    what `python -m eval.harness --candidates WS` scores over the workspace's own
+    documents, with the leak suite; --export-candidates writes them to a file the
+    golden loader reads."""
+    from eval import harness
+    ws = new_ws()
+    root = docs_root(ws)
+    (root / "public").mkdir(parents=True)
+    (root / "public" / "handbook.txt").write_text(
+        "Refund policy\n\nRefunds are paid within thirty days of a written request.")
+    (root / "restricted").mkdir()
+    (root / "restricted" / "pay.txt").write_text(
+        "Pay bands\n\nTeachers at the academy are paid sixty thousand rupees a month.")
+    insights_store.add_candidate(ws, "m1", "How long do refunds take?", "A week.",
+                                 "Thirty days from the written request.",
+                                 [{"doc_key": "public/handbook.txt", "title": "handbook.txt"}],
+                                 ["wrong"], None, "public", "public", "ada")
+    insights_store.suggest_candidate(ws, "log:7", "Is there a gym?", None, [], ["not_found"],
+                                     "Gyms: 3 similar questions.", "public", "public",
+                                     "not_found")
+    rows = harness.candidates_golden(ws)
+    assert rows == [quality.golden(c) for c in insights_store.candidates(ws)]
+    assert {r["expect"] for r in rows} == {"answer", "not_found"}
+
+    path = tmp_path / f"{ws}.jsonl"
+    harness.main(["--export-candidates", ws, "--json", str(path)])
+    assert harness.load_golden(str(path)) == rows
+
+    report = harness.run(golden=rows, corpus=str(root))
+    assert report["summary"]["n"] == 1 and report["summary"]["hit_rate"] == 1.0
+    assert report["items"][0]["retrieved"][0] == "public/handbook.txt"
+    assert report["leaks"] == [] and not report.get("leaks_skipped")

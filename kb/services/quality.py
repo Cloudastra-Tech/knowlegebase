@@ -30,7 +30,7 @@ import db
 import insights_store
 import question_log_store as log_store
 from kb import jobs
-from kb.services import insights
+from kb.services import insights, question_log
 
 log = logging.getLogger("uvicorn.error")
 
@@ -102,7 +102,8 @@ def golden(case):
             "expect": "not_found" if not_found else "answer",
             "sources": [] if not_found else [s.get("doc_key") or s.get("title")
                                              for s in case["sources"]
-                                             if s.get("kind") != "general_knowledge"],
+                                             if s.get("kind") != "general_knowledge"
+                                             and not question_log.personal_source(s)],
             "notes": case["expected_answer"] or "", "origin": "feedback"}
 
 
@@ -120,7 +121,8 @@ def suggest(ws, now=None):
         conn.close()
     for f in downs:
         snap = json.loads(f["snapshot"] or "{}")
-        if not snap.get("question"):
+        if not snap.get("question") or any(map(question_log.personal_source, snap.get("sources") or [])):
+            # An answer from a member's own mail or calendar stays theirs: never a test case.
             continue
         level = snap.get("max_access") or "restricted"
         added["feedback"] += insights_store.suggest_candidate(
