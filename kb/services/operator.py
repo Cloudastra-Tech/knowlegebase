@@ -11,6 +11,8 @@ the tables the app already keeps: no content, only counts and states.
     connectors      how many, and the ones in error (provider and error code)
     index           the search index's status (kb/services/indexing.py)
     status          active / suspended / deleting, and support access
+    spend           today's cost and the daily spend caps (kb/services/spend.py)
+    open_alerts     the abuse and cost monitor's alerts not yet acknowledged
 """
 
 import time
@@ -18,7 +20,7 @@ import time
 import billing_store
 import db
 import lifecycle_store
-from kb.services import billing, indexing
+from kb.services import billing, indexing, spend
 
 SEAT_DAYS = billing.SEAT_DAYS
 
@@ -53,6 +55,9 @@ def overview(now=None):
                                       "WHERE workspace = ?", (ws,)).fetchall()
             st = lifecycle_store.state(ws)
             index = indexing.index_status(ws)
+            soft, hard = spend.caps(ws)
+            alerts = one("SELECT COUNT(*) FROM abuse_alerts WHERE workspace = ? AND "
+                         "acknowledged_at IS NULL", ws)
             out.append({
                 "slug": ws, "name": w["name"], "created_at": w["created_at"],
                 "plan": _plan(ws, now),
@@ -67,6 +72,9 @@ def overview(now=None):
                                      if c["status"] == "error" or c["last_error"]],
                 "index": {"status": index["status"], "message": index["message"],
                           "finished_at": index["finished_at"]},
+                "spend": {"today_usd": spend.cost(ws, spend.day_of(now)), "soft_usd": soft,
+                          "hard_usd": hard},
+                "open_alerts": alerts,
                 "status": st["status"], "suspended_reason": st["suspended_reason"],
                 "deleting_at": st["deleting_at"], "support_until": st["support_until"]})
     finally:

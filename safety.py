@@ -38,6 +38,7 @@ from guardrails.validator_base import (
 from langchain_openai import ChatOpenAI
 
 import models
+import pii
 
 # Load OPENAI_API_KEY from .env NOW, before we ever build an OpenAI client.
 load_dotenv()
@@ -228,27 +229,15 @@ def require_guards():
 
 # ----------------------------------------------------------------------------
 # PII REDACTION  (runtime guardrail #2)
-# Scrub personal data OUT of answers before they reach the user: emails, phone
-# numbers, payment cards, Aadhaar/SSN-style ids. Order matters — redact the
-# longest/most-specific patterns first so a card isn't half-eaten by the phone
-# rule. We REDACT (mask) instead of blocking, so the rest of the answer survives.
+# Scrub personal data OUT of answers before they reach the user. The rules and
+# the per-workspace policy are pii.py (emails, phones, cards with the Luhn check,
+# IBANs, US SSNs, UK NI numbers, Indian PAN and Aadhaar); this is every one of
+# them, for text no workspace policy applies to. We REDACT (mask) instead of
+# blocking, so the rest of the answer survives.
 # ----------------------------------------------------------------------------
-_PII_PATTERNS = [
-    ("EMAIL", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
-    ("CARD",  re.compile(r"\b(?:\d[ -]?){13,16}\b")),
-    ("AADHAAR", re.compile(r"\b\d{4}\s\d{4}\s\d{4}\b")),
-    ("PHONE", re.compile(r"\b(?:\+?\d{1,3}[\s-]?)?\d{10}\b")),
-]
-
-
 def redact_pii(text):
     """Mask common PII in text. Returns the cleaned text (never raises)."""
-    if not text:
-        return text
-    cleaned = text
-    for label, pattern in _PII_PATTERNS:
-        cleaned = pattern.sub(f"[REDACTED_{label}]", cleaned)
-    return cleaned
+    return pii.redact(text)
 
 
 # ----------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import logging
 import os
 
 import assistant_store
+import members_store
 import workspaces
 from agent import build_agent
 from connectors import outline as outline_connector
@@ -57,7 +58,8 @@ def _build(ws, role, index):
                        glossary=assistant.glossary(ws) or None,
                        rules=assistant.rules(ws) or None,
                        verified=verified.Matcher(ws, role, settings["adapt_verified"]),
-                       version=f"{version}" if version else None)
+                       version=f"{version}" if version else None,
+                       pii=assistant.pii_policy(ws, settings))
 
 
 def get_agent(ws, role):
@@ -65,8 +67,10 @@ def get_agent(ws, role):
     tool). Who asks is given on each call (run(principals=...)), so the agents
     are per role, never per person or group: the search filters per question."""
     # Built again when the index changes (indexing.py bumps its version) or the
-    # workspace's assistant settings, glossary or source rules do (their version).
-    key = (indexing.current(ws), assistant_store.version(ws))   # ((collection, version), n)
+    # workspace's assistant settings, glossary or source rules do (their version),
+    # or its verified domains (the emails answers may keep, pii.Policy).
+    key = (indexing.current(ws), assistant_store.version(ws),   # ((collection, version), n,
+           tuple(sorted(members_store.verified_domains(ws))))   #  domains)
     with state.agents_lock:
         built = state.agents.get((ws, role))
         if not built or built[0] != key:

@@ -14,6 +14,7 @@ import {
   FileText,
   GitBranch,
   Globe,
+  History,
   Info,
   Loader2,
   Lock,
@@ -208,7 +209,18 @@ function StepsPanel({ message }: { message: Message }) {
       </div>
     )
   }
-  if (!steps.length) return null
+  // Admins: the answer came from the answer cache (its first raw step says so).
+  const cached = (message.trace ?? []).find((t) => t.tool === "answer_cache")
+  if (!steps.length)
+    return cached ? (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" title={cached.output}>
+        <History className="size-3.5 shrink-0" aria-hidden />
+        <Badge variant="outline" className="font-normal">
+          Cached
+        </Badge>
+        <span className="truncate">Reused a recent answer for the same access · no new search</span>
+      </p>
+    ) : null
   const summary = steps.map((st) => st.label).join(" · ")
   return (
     <Collapsible>

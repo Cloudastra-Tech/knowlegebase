@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-react"
+import { BookOpen, ExternalLink, FileText, Globe, Lock, Search, ShieldAlert } from "lucide-react"
 import { siGoogledrive, siNotion } from "simple-icons"
 
 import { WhoCanSeeBadges } from "@/components/access-picker"
@@ -46,6 +46,17 @@ function WhoCanSee({ item }: { item: KnowledgeItem }) {
       <WhoCanSeeBadges who={item.who ?? []} />
       {notes.length > 0 && (
         <span className="text-xs text-muted-foreground">{notes.join(" · ")}</span>
+      )}
+      {/* Dense personal data the ingest scan found (the Assistant screen's policy
+          decides what's flagged), so they can restrict who sees it. */}
+      {item.pii && (
+        <span className="flex items-start gap-1 text-xs text-foreground">
+          <ShieldAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+          <span>
+            <span className="sr-only">Personal data: </span>
+            {item.pii.text.charAt(0).toUpperCase() + item.pii.text.slice(1)}
+          </span>
+        </span>
       )}
     </span>
   )

@@ -17,7 +17,10 @@ chain (audit_store.PLATFORM).
     POST /api/operator/workspaces/{ws}/support-session  -> a one-time code (only while
                                             the workspace's admin allows support)
     GET  /api/operator/workspaces/{ws}/audit   its audit log
+    PUT  /api/operator/workspaces/{ws}/spend-caps {soft_usd, hard_usd}  per day
     GET  /api/operator/audit                the operators' own chain
+    GET  /api/operator/alerts               the abuse and cost monitor's alerts
+    POST /api/operator/alerts/{id}/acknowledge
 """
 
 import logging
@@ -28,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
+import abuse_store
 import api_keys_store
 import audit_store
 import billing_store
@@ -41,7 +45,7 @@ from kb import operators, rate_limit
 from kb.audit import audited, client_ip
 from kb.deps import public_url
 from kb.operators import require_operator
-from kb.services import billing, indexing
+from kb.services import abuse, billing, indexing, spend
 from kb.services import operator as console
 from kb.services.sign_in import BROWSER_KEY, ProviderFailed, code_for, mark_browser, \
     provider_answer
@@ -284,3 +288,45 @@ def operator_audit(cursor: int | None = None,
     events, next_cursor = audit_store.list_events(audit_store.PLATFORM, cursor=cursor,
                                                   limit=limit)
     return {"events": events, "next_cursor": next_cursor}
+
+
+# ---- Abuse and cost monitoring (platform.md PL-36, kb/services/abuse.py) -----------------
+@router.get("/api/operator/alerts")
+def operator_alerts(open_only: bool = Query(False, alias="open"),
+                    limit: int = Query(100, ge=1, le=500), operator=Depends(require_operator)):
+    """What the abuse and cost monitor found, newest first, with its thresholds."""
+    return {"alerts": [abuse.view(a) for a in abuse_store.alerts(limit, open_only)],
+            "thresholds": abuse.thresholds()}
+
+
+@router.post("/api/operator/alerts/{alert_id}/acknowledge")
+def operator_acknowledge_alert(alert_id: int, request: Request,
+                               operator=Depends(require_operator),
+                               audit=audited("operator.alert_acknowledge")):
+    alert = abuse_store.acknowledge(alert_id, operator["username"])
+    if not alert:
+        raise HTTPException(404, "No such alert.")
+    audit_store.record(audit_store.PLATFORM, audit.action, actor=operator["username"],
+                       actor_type="operator", target_type="abuse_alert", target_id=str(alert_id),
+                       details={"kind": alert["kind"], "workspace": alert["workspace"]},
+                       ip=client_ip(request))
+    return abuse.view(alert)
+
+
+class SpendCapsIn(BaseModel):
+    # USD per day; null: the server's default (SPEND_SOFT_USD_PER_DAY / ..._HARD_...).
+    soft_usd: float | None = Field(None, gt=0, le=1_000_000)
+    hard_usd: float | None = Field(None, gt=0, le=1_000_000)
+
+
+@router.put("/api/operator/workspaces/{ws}/spend-caps")
+def operator_spend_caps(ws: str, body: SpendCapsIn, operator=Depends(require_operator),
+                        audit=audited("operator.spend_caps")):
+    """A workspace's daily spend caps: past the soft one its admins are emailed, past
+    the hard one its questions get a 429 until midnight UTC."""
+    ws = _workspace(ws)
+    if body.soft_usd and body.hard_usd and body.soft_usd > body.hard_usd:
+        raise HTTPException(400, "The soft limit can't be above the hard one.")
+    abuse_store.set_limits(ws, body.soft_usd, body.hard_usd, operator["username"])
+    _record(audit, operator, ws, {"soft_usd": body.soft_usd, "hard_usd": body.hard_usd})
+    return spend.status(ws)

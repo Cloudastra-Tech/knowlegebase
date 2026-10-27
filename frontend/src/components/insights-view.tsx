@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { DateRangePicker, type DateRange } from "@/components/date-range-picker"
 import { InsightsFeedback } from "@/components/insights-feedback"
+import { QualityTrendView } from "@/components/insights-quality"
 import { QuestionLogSettings } from "@/components/question-log-settings"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -391,6 +392,17 @@ function Overview({
             <QuestionsChart report={report} />
             <ChartKey />
           </>
+        ) : (
+          <Empty>No questions in these days yet.</Empty>
+        )}
+      </Panel>
+
+      <Panel
+        title="Quality trend"
+        description="How often questions are answered, how people rate the answers, and answers with a figure their sources don't show."
+      >
+        {t.questions && report.quality ? (
+          <QualityTrendView trend={report.quality} />
         ) : (
           <Empty>No questions in these days yet.</Empty>
         )}

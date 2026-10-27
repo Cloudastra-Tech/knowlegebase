@@ -1,8 +1,8 @@
 """
-Limits on what a workspace may use, as plug-ins: a plan's limits
-(kb/services/billing.py, only with BILLING=on), and any other kind of cap
-(spend caps, abuse limits) registers the same way, so none of the places that
-check needs to know which are in force.
+Limits on what a workspace may use, as plug-ins: today's hard spend cap
+(kb/services/spend.py) and a plan's limits (kb/services/billing.py, only with
+BILLING=on). Any other kind of cap registers the same way, so none of the places
+that check needs to know which are in force.
 
     @quotas.register
     def my_cap(ws, what, user=None, **amounts):
@@ -39,7 +39,7 @@ def _load():
     if not _loaded:
         with _lock:
             if not _loaded:
-                from kb.services import billing  # noqa: F401
+                from kb.services import billing, spend  # noqa: F401
                 _loaded = True
 
 

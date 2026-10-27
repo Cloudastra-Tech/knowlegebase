@@ -422,6 +422,12 @@ def _rate(n, total):
     return round(n / total, 4) if total else 0.0
 
 
+def _quality(ws, since_day, until_day):
+    """The quality trend (kb/services/quality.py, pipeline.md P2-3)."""
+    from kb.services import quality
+    return quality.trend(ws, since_day, until_day)
+
+
 def report(ws, role, since_day, until_day, now=None):
     """Everything the Insights screen shows for [since_day, until_day]."""
     now = time.time() if now is None else now
@@ -506,6 +512,7 @@ def report(ws, role, since_day, until_day, now=None):
         "stale": stale[:LIST_LIMIT],
         "gaps": gaps_for(ws, role, settings["mode"]),
         "connectors": connector_health(ws),
+        "quality": _quality(ws, since_day, until_day),
         "thresholds": {"never_cited_days": NEVER_CITED_DAYS, "stale_days": STALE_DAYS,
                        "stale_min_cited": STALE_MIN_CITED, "gap_min_size": GAP_MIN_SIZE},
     }

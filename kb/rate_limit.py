@@ -67,7 +67,8 @@ def rate_limit(request: Request, bucket):
 
 def user_limit(user, bucket):
     """Per person and per workspace limits (USER_LIMITS) on something costly. First
-    the workspace's own limits (kb/quotas.py: its plan's, spend caps)."""
+    the workspace's own limits, whether rate limits are on or not (kb/quotas.py: its
+    plan's, kb/services/billing.py; today's hard spend cap, kb/services/spend.py)."""
     quotas.check(ws_of(user), bucket, user=user)
     if not rate_limits_on():
         return

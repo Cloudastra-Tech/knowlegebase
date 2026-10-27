@@ -1,7 +1,7 @@
 """plans, subscriptions and billing owners; onboarding; pending sign-ups
 
-Revision ID: 0019
-Revises: 0018
+Revision ID: 0020
+Revises: 0019
 Create Date: 2026-10-27
 
 Additive only: new tables, and one row per founder in billing_owners. Nothing is
@@ -35,8 +35,8 @@ import time
 
 from alembic import op
 
-revision = "0019"
-down_revision = "0018"
+revision = "0020"
+down_revision = "0019"
 branch_labels = None
 depends_on = None
 

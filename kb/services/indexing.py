@@ -33,7 +33,7 @@ import integrations_store
 import sync_store
 import workspaces
 from kb import jobs
-from kb.services import assistant, permissions, webhooks
+from kb.services import assistant, permissions, pii_scan, webhooks
 
 log = logging.getLogger("uvicorn.error")
 
@@ -182,13 +182,16 @@ def index(ws, full=False, docs=None, progress=None):
     info = sync_store.doc_info(ws)        # synced files' titles and links
     acls = permissions.doc_acls(ws)       # who may see each document that has its own
     if full or not row or row["fingerprint"] != ingest.FINGERPRINT:
-        return _rebuild(ws, row, access, progress, info, acls)
+        result = _rebuild(ws, row, access, progress, info, acls)
+        pii_scan.scan(ws, result["collection"])  # personal data, for the Knowledge screen
+        return result
     result = ingest.update(progress, docs_folder=workspaces.docs_root(ws),
                            collection=row["collection"], connector_access=access,
                            workspace=ws, only=docs, doc_info=info,
                            skip=assistant.blocker(ws), doc_acls=acls)
     if any(result[k] for k in ("embedded", "deleted_chunks", "retagged", "changed")):
         _changed(ws)
+    pii_scan.scan(ws, row["collection"])     # what changed, for the Knowledge screen
     return {**result, "mode": "incremental"}
 
 
