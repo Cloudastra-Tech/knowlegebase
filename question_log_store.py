@@ -76,7 +76,7 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
     """Log one question. Text is stored as given: the caller has applied the mode.
     tokens_cached: how many of tokens_in OpenAI's prompt cache served (migration 0010).
     cache_hit: exact / semantic when the answer cache served it; unsupported: the
-    figures the faithfulness check didn't find; language: the question's (0018)."""
+    figures the faithfulness check didn't find; language: the question's (0019)."""
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}")
     at = time.time() if at is None else at

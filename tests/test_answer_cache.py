@@ -21,6 +21,7 @@ import answer_cache_store
 import assistant_store
 import question_log_store
 from kb.services import answer_cache, answering
+from spaces_fixtures import ask, citing, new_chat  # noqa: F401  (citing: a fixture)
 from test_group_acls import FINANCE, org  # noqa: F401  (a fixture)
 from test_indexing import env  # noqa: F401  (a fixture)
 
@@ -197,3 +198,42 @@ def test_an_erased_member_takes_their_cached_answers_with_them(org, cache_on):  
     dsar.erase_member(org.ws, f"alice@{org.domain}")
     assert {r["username"] for r in _rows(org)} == {f"bob@{org.domain}"}
     assert answer_cache_store.clear(org.ws) == 1
+
+
+# ---- Spaces and attached files (#76) ----------------------------------------------------------
+def _cached(done):
+    return bool(done["steps"]) and done["steps"][0]["tool"] == "answer_cache"
+
+
+def test_a_space_is_part_of_the_key(env, citing, cache_on):  # noqa: F811
+    from test_spaces import sales_workspace, team_space
+    w, admin, _ = sales_workspace(env)
+    sid = team_space(env, w, admin, ("folder", "public/sales"))
+    q = "What does the Pro plan cost?"
+    assert not _cached(ask(env.client, admin, q, new_chat(env.client, admin, sid)))
+    assert _cached(ask(env.client, admin, q, new_chat(env.client, admin, sid)))
+    # Outside the space, the same asker and question: another key.
+    assert not _cached(ask(env.client, admin, q, new_chat(env.client, admin)))
+    # The space changed (a source added): its older answers aren't reused.
+    env.client.post(f"/api/spaces/{sid}/sources", headers=admin,
+                    json={"match_type": "folder", "value": "public/hr"})
+    assert not _cached(ask(env.client, admin, q, new_chat(env.client, admin, sid)))
+
+
+def test_answers_with_files_attached_are_never_cached(env, citing, cache_on):  # noqa: F811
+    import db
+    from test_attachments import CONTRACT, attach, workspace
+    w, admin, _ = workspace(env)
+    q = "When does the Acme contract renew?"
+    for _ in range(2):
+        cid = new_chat(env.client, admin)
+        assert attach(env, admin, cid, ("contract.txt", CONTRACT.encode(),
+                                        "text/plain")).status_code == 200
+        done = ask(env.client, admin, q, cid)
+        assert not _cached(done) and "first of June" in done["answer"]
+    conn = db.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM answer_cache WHERE workspace = ?",
+                            (w,)).fetchone()[0] == 0
+    finally:
+        conn.close()

@@ -6,7 +6,9 @@ import {
   BookOpen,
   FileText,
   Keyboard,
+  Layers,
   MessageSquare,
+  MessageSquareText,
   PanelLeft,
   Plug,
   ShieldCheck,
@@ -26,7 +28,13 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import type { Role, User } from "@/lib/api"
-import { FOCUS_COMPOSER, MOD_KEY as MOD, tellChat as tell, TOGGLE_SIDEBAR } from "@/lib/chat-events"
+import {
+  FOCUS_COMPOSER,
+  INSERT_PROMPT,
+  MOD_KEY as MOD,
+  tellChat as tell,
+  TOGGLE_SIDEBAR,
+} from "@/lib/chat-events"
 import { splitSnippet } from "@/lib/chat-history"
 import { queries } from "@/lib/queries"
 
@@ -58,6 +66,7 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
   }, [query])
   const recent = useQuery({ ...queries.conversations(), enabled: open })
   const found = useQuery({ ...queries.conversationSearch(q), enabled: open && q.length > 0 })
+  const prompts = useQuery({ ...queries.prompts(), enabled: open, meta: { silent: true } })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -87,6 +96,8 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
   const screens = [
     { to: "/chat", label: "Chat", icon: MessageSquare },
     { to: "/knowledge", label: "Knowledge", icon: BookOpen },
+    { to: "/spaces", label: "Spaces", icon: Layers },
+    { to: "/prompts", label: "My prompts", icon: MessageSquareText },
     ...(role === "hr"
       ? [
           { to: "/documents", label: "Documents", icon: FileText },
@@ -100,6 +111,8 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
   ]
   const words = q.toLowerCase()
   const matches = (label: string) => !words || label.toLowerCase().includes(words)
+  // Saved prompts (C22): put one in the chat box, asking for its {{variables}}.
+  const savedPrompts = (prompts.data?.prompts ?? []).filter((p) => matches(p.title)).slice(0, 5)
   const chats = q
     ? (found.data ?? []).map((r) => ({ id: r.conversation_id, title: r.title, snippet: r.snippet }))
     : (recent.data?.conversations ?? []).slice(0, 6).map((c) => ({ id: c.id, title: c.title, snippet: "" }))
@@ -173,6 +186,23 @@ export function CommandPalette({ user, role }: { user: User; role: Role }) {
                       )}
                     </span>
                   )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {savedPrompts.length > 0 && (
+            <CommandGroup heading="Saved prompts">
+              {savedPrompts.map((p) => (
+                <CommandItem
+                  key={p.id}
+                  value={`prompt-${p.id}`}
+                  onSelect={() => run(() => {
+                    navigate("/chat")
+                    tell(INSERT_PROMPT, p.id)
+                  })}
+                >
+                  <MessageSquareText />
+                  <span className="truncate">{p.title}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

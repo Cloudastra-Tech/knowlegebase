@@ -1,6 +1,6 @@
 """
 abuse_store.py  —  usage, spend caps and abuse alerts (config/app.db, tables made
-by migrations/versions/0018_cache_quality_pii_abuse.py; platform.md PL-36, PL-02).
+by migrations/versions/0019_cache_quality_pii_abuse.py; platform.md PL-36, PL-02).
 
     usage_daily       questions, people, cached answers, tokens and cost per
                       workspace and day (kb/services/abuse.py rolls it up daily)

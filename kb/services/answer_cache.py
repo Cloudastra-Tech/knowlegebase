@@ -28,7 +28,10 @@ question asked without history (never a follow-up: its meaning depends on the
 conversation), written from the company's documents only (no live tool: the
 Outline wiki, exchange rates and Wikipedia change by themselves), with no figure
 the faithfulness check couldn't find, and not a verified answer (served fresh,
-it is cheap anyway). It's kept ANSWER_CACHE_TTL seconds (default 600).
+it is cheap anyway), and never in a chat with files attached (they are the
+asker's, for that chat only: kb/services/answering.py doesn't look the cache up
+there). In a space, the space, its sources and instructions are part of the key.
+It's kept ANSWER_CACHE_TTL seconds (default 600).
 
 EXACT and SEMANTIC (assistant settings, answer_cache: off / exact / semantic).
 Exact matches the normalised question. Semantic, off by default, also takes the

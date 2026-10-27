@@ -6,7 +6,7 @@ made by migrations/versions/0012_verified_answers_and_assistant_settings.py):
                         outbound tools, the steps panel and whether a verified
                         answer may be reworded (platform.md PL-29); the answer
                         cache, cross-lingual search (pipeline.md P2-2, P2-4) and
-                        the personal data policy (PL-13, pii.py; migration 0018).
+                        the personal data policy (PL-13, pii.py; migration 0019).
                         No row: today's behaviour (DEFAULTS)
     glossary            the workspace's own terms: definition and synonyms
     doc_rules           boost, demote or block documents by provider, folder or

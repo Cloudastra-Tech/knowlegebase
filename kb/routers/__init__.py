@@ -232,6 +232,24 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     POST   /operator/workspaces/{ws}/suspend | /unsuspend | /reindex | /reset-rate-limits
     POST   /operator/workspaces/{ws}/support-session   open it as support (if its admin allows)
     GET    /operator/workspaces/{ws}/audit | /operator/audit
+  spaces.py
+    GET    /spaces                your own space and the team spaces you're in
+    POST   /spaces                {name, description, instructions} a team space  (SPACES_CREATE)
+    GET    /spaces/source-options what a space can search: providers, folders, documents
+    GET    /spaces/{id}           its sources you may see, members, instructions (files: yours)
+    PATCH  /spaces/{id}           {name, description, instructions}               (its owners)
+    DELETE /spaces/{id}                                                           (its owners)
+    POST   /spaces/{id}/sources   {match_type, value}   DELETE /spaces/{id}/sources/{sid}
+    PUT    /spaces/{id}/members/{username} {role}       DELETE ... (owners; or leave)
+    POST   /spaces/{id}/files     multipart files[]: your own space's files   DELETE .../{aid}
+  attachments.py
+    GET    /attachments/limits    what may be attached (types, size, per chat, images?)
+    GET/POST /conversations/{id}/attachments   multipart files[]: read into text, this chat only
+    DELETE /conversations/{id}/attachments/{aid}
+  prompts.py
+    GET    /prompts               the workspace's saved prompts and your own
+    POST   /prompts               {title, body, workspace}   (workspace: admins)
+    PUT    /prompts/{id}          {title, body}   DELETE /prompts/{id}
 And /mcp (kb/mcp_server.py, outside /api): the MCP server, with personal API keys.
 
 Chat, uploads, re-index and sync now are rate-limited per person and per workspace

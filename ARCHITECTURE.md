@@ -354,6 +354,50 @@ and to share links:
 
 ---
 
+## 🗂️ Spaces, attached files and saved prompts
+
+A chat can be asked **in a space** (`kb/services/spaces.py`, `spaces_store.py`):
+your own ("My space": files you keep there, searched only by you) or a team's
+(owners and members, sources, optional instructions). A space's sources are
+documents, folders or providers of the workspace's index, matched as source
+rules match them. Asking in one SCOPES the search: `HybridRetriever.invoke(keep=)`
+keeps the chunks of the space's documents **among those the asker's principals
+may read** (`scope_keys`), so a space narrows a search and never widens it. A
+member who can't see a document in the space never reads it, nor sees it among
+the space's sources (only a count of hidden ones). The space's instructions go
+to the model delimited, after its rules, told they can't change them. Team
+spaces are made by HR and admins (`SPACES_CREATE=everyone` lets anyone).
+
+```
+  conversation ──space_id──► spaces.context_for ──► Context(keep, files, notes)
+                                                      │
+  agent.run(context=) ── search_docs: index search (keep ∧ principals)
+                         + the chat's attached files and your space's files
+                           (attachments.passages: BM25 + each file's start)
+                         ──► numbered [S#] together; files as source="attached_file"
+```
+
+**Attached files** (`kb/services/attachments.py`, `attachments_store.py`): a file
+attached to a chat is sniffed (its bytes must be what its name says), capped by
+`UPLOAD_MAX_FILE_MB`, read with `connectors/extract.py`, split by `chunking.py`
+and kept as text in `attachment_chunks`, **never the workspace index**: no one
+else's search, a re-index or a rebuild sees it. Its passages carry the
+uploader's user principal as their ACL, so an answer built from one is for its
+uploader alone (a share link's viewer gets it withheld), and the passage viewer
+opens `att-...` chunks for them only. Deleted with the chat (cascade) or after
+`ATTACHMENT_RETENTION_DAYS` (30). Its text is untrusted like any document's:
+spotlighted, outbound tools may not quote it, and text that reads like
+instructions is flagged on its chip. Word and Excel table rows and CSV files
+become Markdown tables, which the chat draws as tables. Images are read only
+when `ATTACHMENT_VISION_MODEL` is set (once, at upload: transcribed and
+described); otherwise refused.
+
+**Saved prompts** (`prompts_store.py`): a person's own and the workspace's (kept
+by admins), with `{{variables}}` asked for before the prompt goes in the chat
+box ("/" at its start, or ⌘K).
+
+---
+
 ## 🔌 Public API, API keys and the MCP server
 
 Every surface asks through one service, `kb/services/answering.ask()`: the web

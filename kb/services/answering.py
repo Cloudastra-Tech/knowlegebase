@@ -24,14 +24,16 @@ that role's own principals). Who may ask, and as whom, is the caller's to decide
 (a session, an API key, a Slack channel).
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 
 import access
 import language
+import spaces_store
 from agent import Cancelled  # noqa: F401  (re-exported: a stopped run raises it)
-from kb.services import agents, answer_cache, conversations, question_log
+from kb.services import agents, answer_cache, conversations, question_log, spaces
 
 log = logging.getLogger("uvicorn.error")
 
@@ -60,6 +62,17 @@ class Answer:
     cached: str | None = None                   # exact / semantic: from the answer cache
 
 
+def _space_key(ws, context):
+    """What a cached answer depends on of the space it's asked in ('' outside one):
+    the space, its instructions and its sources, so a change to it is a new key."""
+    space = context.space if context else None
+    if not space:
+        return ""
+    sources = sorted((s["match_type"], s["match_value"])
+                     for s in spaces_store.sources(ws, space["id"]))
+    return json.dumps([space["id"], space.get("instructions") or "", sources])
+
+
 def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, started):
     """A cached answer, as ask() returns one: shown, logged (no tokens), with the
     answer_cache step first in its steps."""
@@ -78,7 +91,7 @@ def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, sta
 
 
 def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None,
-        cache=True, space=None):
+        cache=True):
     """Answer `question` in workspace `ws` for `user` (a dict with "username") as
     `role` -> Answer. role: the asker as a viewer (access.Viewer: what they may
     see), or a bare role (its own principals: "public" is everyone's content
@@ -87,9 +100,11 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
     on_event / cancel: stream progress, and stop (raises Cancelled). out: the
     agent's running report (agent.run), for a caller that needs what was read so
     far after a stop. cache: False asks again without reading the answer cache
-    (retry, regenerate); the new answer still replaces the cached one. space:
-    the space the question is scoped to, if any (part of the cache key). Raises
-    Failed when answering fails."""
+    (retry, regenerate); the new answer still replaces the cached one. Raises
+    Failed when answering fails.
+    A conversation asked in a space searches only the space's sources (among
+    what the asker may see), and one with files attached reads them too
+    (spaces.context_for)."""
     if surface not in SURFACES:
         raise ValueError(f"surface must be one of: {', '.join(SURFACES)}")
     started = time.monotonic()
@@ -97,12 +112,23 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
     who, role = role, access.role_of(role)
     history_access = turn["history_access"] if turn else "public"
     asker = {"principals": who} if isinstance(who, access.Viewer) else {}
-    # ANSWER CACHE: never for a follow-up (its meaning depends on the conversation).
     try:
-        scope = None if turn and turn.get("history") else answer_cache.scope(ws, who, space)
-    except Exception:
-        log.exception("Answer cache: unavailable in workspace %s; answering as usual", ws)
-        scope = None
+        conversation = (turn or {}).get("conversation")    # a saved chat (not every surface)
+        context = spaces.context_for(ws, user, conversation) if conversation else None
+    except Exception as e:
+        log.exception("Chat: couldn't read the space of a question in workspace %s", ws)
+        raise Failed(type(e).__name__) from e
+    if context:
+        asker["context"] = context
+    # ANSWER CACHE: never for a follow-up (its meaning depends on the conversation),
+    # nor with files attached (they're the asker's, and only this chat's); in a
+    # space, keyed by the space as it is now (its sources and instructions).
+    scope = None
+    if not (turn and turn.get("history")) and not (context and context.files):
+        try:
+            scope = answer_cache.scope(ws, who, _space_key(ws, context))
+        except Exception:
+            log.exception("Answer cache: unavailable in workspace %s; answering as usual", ws)
     if scope and cache:
         hit = answer_cache.lookup(scope, question)
         if hit:

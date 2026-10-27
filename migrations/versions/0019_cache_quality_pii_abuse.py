@@ -1,7 +1,7 @@
 """answer cache, quality signals, PII policy, usage and abuse alerts
 
-Revision ID: 0018
-Revises: 0017
+Revision ID: 0019
+Revises: 0018
 Create Date: 2026-10-27
 
 Additive: new columns have defaults (existing rows keep their meaning) and the
@@ -30,8 +30,8 @@ rest is new tables.
 
 from alembic import op
 
-revision = "0018"
-down_revision = "0017"
+revision = "0019"
+down_revision = "0018"
 branch_labels = None
 depends_on = None
 

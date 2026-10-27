@@ -1,6 +1,6 @@
 """
 answer_cache_store.py  —  answers kept for a few minutes (config/app.db, table made
-by migrations/versions/0018_cache_quality_pii_abuse.py). Only SQL lives here; who
+by migrations/versions/0019_cache_quality_pii_abuse.py). Only SQL lives here; who
 may reuse which answer, and when, is kb/services/answer_cache.py.
 
     answer_cache    one row per (workspace, key): the key hashes the question with
