@@ -26,6 +26,12 @@ Every claim follows three rules:
   - a failed job is tried again after an exponential backoff, up to its
     max_attempts; then it stays `failed`, with its error, for the UI.
 
+INTERACTIVE jobs (@handler(..., interactive=True): a Slack or Teams answer, which
+someone is waiting for) never wait behind heavy ones (a re-index, a sync): every
+worker thread looks for one before anything else, and JOB_INTERACTIVE_WORKERS
+more threads (default 1) run only them, so one is free even when every other
+thread is busy indexing.
+
 Where it runs: in the API process by default (the app's lifespan starts it;
 JOBS_IN_PROCESS=off turns that off), or in a process of its own,
 `python -m kb.worker` (deploy.md, "Background jobs"). JOB_KINDS limits which
@@ -55,7 +61,7 @@ BACKOFF = 30                # first retry after about this many seconds ...
 BACKOFF_MAX = 30 * 60       # ... doubling each time, up to this
 KEEP_DAYS = 7               # finished jobs are deleted after this (the last per lane stays)
 
-Spec = collections.namedtuple("Spec", "fn max_attempts merge")
+Spec = collections.namedtuple("Spec", "fn max_attempts merge interactive", defaults=(False,))
 HANDLERS = {}               # kind -> Spec
 PERIODIC = {}               # kind -> function giving the seconds between runs
 
@@ -70,11 +76,12 @@ def _models_scope(ws):
     return models.scope_for(ws) if ws else contextlib.nullcontext()
 
 
-def handler(kind, max_attempts=3, merge=None):
+def handler(kind, max_attempts=3, merge=None, interactive=False):
     """Register how a kind of job runs. merge(queued payload, new payload): the
-    payload of two such jobs folded into one (see enqueue); default: the queued one's."""
+    payload of two such jobs folded into one (see enqueue); default: the queued one's.
+    interactive: someone is waiting for it (see the top): it goes first."""
     def register(fn):
-        HANDLERS[kind] = Spec(fn, max_attempts, merge)
+        HANDLERS[kind] = Spec(fn, max_attempts, merge, interactive)
         return fn
     return register
 
@@ -420,9 +427,15 @@ class Runner:
     """`threads` worker threads claiming jobs of the kinds in `handlers`, plus one
     that renews their leases and keeps the periodic jobs queued."""
 
-    def __init__(self, handlers=None, threads=None, lease=LEASE, poll=POLL, backoff=BACKOFF):
+    def __init__(self, handlers=None, threads=None, lease=LEASE, poll=POLL, backoff=BACKOFF,
+                 interactive_threads=None):
         self.handlers = HANDLERS if handlers is None else handlers
         self.threads = env_int("JOB_WORKERS", 2) if threads is None else threads
+        # The kinds someone is waiting for, and the threads that run only them.
+        self.interactive = [k for k, spec in self.handlers.items()
+                            if getattr(spec, "interactive", False)]
+        self.interactive_threads = (env_int("JOB_INTERACTIVE_WORKERS", 1)
+                                    if interactive_threads is None else interactive_threads)
         self.lease, self.poll, self.backoff = lease, poll, backoff
         self.worker = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
         self._stop = threading.Event()
@@ -434,6 +447,11 @@ class Runner:
     def start(self):
         for n in range(self.threads):
             t = threading.Thread(target=self._loop, name=f"jobs-{n}", daemon=True)
+            t.start()
+            self._threads.append(t)
+        for n in range(self.interactive_threads if self.interactive else 0):
+            t = threading.Thread(target=self._loop, args=(self.interactive,),
+                                 name=f"jobs-interactive-{n}", daemon=True)
             t.start()
             self._threads.append(t)
         t = threading.Thread(target=self._keep_alive, name="jobs-lease", daemon=True)
@@ -457,9 +475,14 @@ class Runner:
     def wake(self):
         self._wake.set()
 
-    def run_once(self):
-        """Claim one job and run it. False if there was none to run."""
-        job = claim(self.worker, self.handlers, self.lease)
+    def run_once(self, kinds=None):
+        """Claim one job and run it: an interactive one first, if any may start
+        (only of `kinds`, if given). False if there was none to run."""
+        job = None
+        if kinds is None and self.interactive:
+            job = claim(self.worker, self.interactive, self.lease)
+        if job is None:
+            job = claim(self.worker, self.handlers if kinds is None else kinds, self.lease)
         if job is None:
             return False
         with self._held_lock:
@@ -488,10 +511,10 @@ class Runner:
             _wake_all()             # its lane is free: a job waiting on it may start
         return True
 
-    def _loop(self):
+    def _loop(self, kinds=None):
         while not self._stop.is_set():
             try:
-                ran = self.run_once()
+                ran = self.run_once(kinds)
             except Exception:       # e.g. the database stayed locked: try again soon
                 log.exception("Jobs: couldn't claim a job")
                 ran = False

@@ -104,6 +104,16 @@ SETTINGS = (
      ("term", "definition", "synonyms", "created_by", "created_at")),
     ("source_rules", "SELECT {} FROM doc_rules WHERE workspace = ?",
      ("match_type", "match_value", "action", "weight", "created_by", "created_at")),
+    # Never a secret: not Teams' app_secret (nor app_key, the unguessable part of
+    # its messaging endpoint), not Bedrock's access_keys nor its external_id.
+    ("teams", "SELECT {} FROM teams_installs WHERE workspace = ?",
+     ("mode", "app_id", "app_tenant", "tenant_id", "status", "unknown_users",
+      "last_activity_at", "updated_by", "updated_at")),
+    ("email_in", "SELECT {} FROM email_in_settings WHERE workspace = ?",
+     ("enabled", "updated_by", "updated_at")),
+    ("model_provider", "SELECT {} FROM model_providers WHERE workspace = ?",
+     ("provider", "region", "auth", "role_arn", "chat_model", "fast_model", "embed_model",
+      "embed_dims", "tested_at", "updated_by", "updated_at")),
 )
 VERIFIED_COLUMNS = ("id", "title", "variants", "answer_md", "sources", "access", "owner",
                     "verified_by", "verified_at", "review_days", "status", "created_by",
@@ -144,8 +154,12 @@ def _settings(conn, ws):
     out = {}
     for part, sql, columns in SETTINGS:
         rows = _rows(conn, sql, columns, ws)
-        out[part] = rows[0] if part in ("workspace", "chat_settings", "api_settings", "slack",
-                                        "assistant") and rows else rows
+        out[part] = (rows[0] if part in ("workspace", "chat_settings", "api_settings", "slack",
+                                         "assistant", "teams", "email_in", "model_provider")
+                     and rows else rows)
+    # A member's own Gmail or Calendar (a personal connection) is theirs, not the
+    # workspace's: not its mailbox, not its settings.
+    out["integrations"] = [i for i in out["integrations"] if not registry.is_personal(i["provider"])]
     out["scim"] = {"tokens": conn.execute("SELECT COUNT(*) FROM scim_tokens WHERE workspace = ? "
                                           "AND revoked_at IS NULL", (ws,)).fetchone()[0],
                    "groups": [r[0] for r in conn.execute(
@@ -175,7 +189,13 @@ def _conversations(conn, ws, now):
         msgs = _rows(conn, "SELECT {} FROM messages WHERE conversation_id = ? ORDER BY created_at",
                      ("id", "parent_id", "author", "content", "state", "sources", "created_at"),
                      c["id"])
+        from kb.services import question_log
+        for m in msgs:          # never a member's own mail or events among the sources
+            if isinstance(m.get("sources"), list):
+                m["sources"] = [s for s in m["sources"]
+                                if not question_log.personal_source(s)]
         yield {**dict(c), "messages": msgs}
+
 
 
 def build_export(ws, path, by, now=None):

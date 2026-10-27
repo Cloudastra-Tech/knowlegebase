@@ -1,6 +1,7 @@
 """Outbound webhooks (platform.md PL-20; kb/services/webhooks.py), admins only:
 add one (its signing secret is shown once), choose its events, turn it off or
-on, send a test event, and see what was delivered."""
+on, send a test event, see what was delivered and send a delivery again, and
+rotate its secret (the new one shown once, the old one signing for a while)."""
 
 import json
 from urllib.parse import urlsplit
@@ -28,6 +29,11 @@ class WebhookPatch(BaseModel):
     events: list[str] | None = Field(default=None, max_length=len(webhooks.EVENTS))
     description: str | None = Field(default=None, max_length=200)
     enabled: bool | None = None
+
+
+class RotateIn(BaseModel):
+    grace_hours: int = Field(default=webhooks.ROTATE_GRACE_HOURS, ge=0,
+                             le=webhooks.ROTATE_GRACE_MAX_HOURS)
 
 
 def _events(events):
@@ -120,6 +126,35 @@ def test_webhook(hook_id: str, user=Depends(require_admin), audit=audited("webho
     audit.record("webhook", hook_id, {"status": delivery["status"],
                                       "response_code": delivery["response_code"]}, user=user)
     return {k: v for k, v in delivery.items() if k != "payload"}
+
+
+@router.post("/api/admin/webhooks/{hook_id}/secret")
+def rotate_secret(hook_id: str, body: RotateIn | None = None, user=Depends(require_admin),
+                  audit=audited("webhook.rotate_secret")):
+    """A new signing secret, shown once. The old one keeps signing alongside it for
+    `grace_hours` (default 24, 0: it stops now), so the receiver can switch over."""
+    hook = _hook(user, hook_id)
+    grace = (body or RotateIn()).grace_hours
+    hook, secret = webhooks.rotate_secret(ws_of(user), hook, grace)
+    audit.record("webhook", hook_id, {"grace_hours": grace}, user=user)
+    return {"webhook": hook, "secret": secret}
+
+
+@router.post("/api/admin/webhooks/deliveries/{delivery_id}/redeliver")
+def redeliver(delivery_id: str, user=Depends(require_admin),
+              audit=audited("webhook.redeliver")):
+    """Send a delivery again: a new delivery of the same event and body, queued now."""
+    ws = ws_of(user)
+    old = webhooks_store.delivery(ws, delivery_id)
+    if not old:
+        raise HTTPException(404, "No such delivery.")
+    hook = _hook(user, old["webhook_id"])
+    if not hook["enabled"]:
+        raise HTTPException(400, "The webhook is off. Turn it on first.")
+    new = webhooks.redeliver(ws, delivery_id)
+    audit.record("webhook", hook["id"], {"delivery": delivery_id, "new_delivery": new["id"],
+                                         "event": new["event"]}, user=user)
+    return new
 
 
 @router.get("/api/admin/webhooks/{hook_id}/deliveries")

@@ -1034,10 +1034,13 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         "If the doc doesn't cover it, say so plainly.\n"
         "   NEVER answer a wiki question from the short search snippets alone — "
         "the snippets only tell you WHICH doc to open, not the full answer.\n"
-        "- IMPORTANT: search_docs only knows base facts in RUPEES. To get a price per "
-        "year or in another currency, FIRST search_docs for the base MONTHLY rupee "
-        "price, THEN use calculator for the math, THEN convert_currency for the currency.\n"
-        "- Never ask search_docs for dollars or yearly totals directly — it can't do math.\n"
+        # No company's own facts here (which currency its prices are in, ...): the
+        # documents say that, and the workspace's preferences (preferences_block).
+        "- search_docs finds amounts as the documents state them. For an amount over "
+        "another period or in another currency, FIRST search_docs for the amount as "
+        "stated, THEN use calculator for the math, THEN convert_currency for the "
+        "currency. Never ask search_docs for converted amounts or totals directly — it "
+        "can't do math.\n"
         "- wikipedia is the LAST resort: only for public world knowledge, and only "
         "after search_docs found nothing. Never answer a company/project question "
         "from wikipedia.\n"

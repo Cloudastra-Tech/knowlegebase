@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
+import db
 import lifecycle_store
 import members_store
 import scim_store
@@ -38,6 +39,7 @@ import sessions_store
 from kb import logs
 from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
+from kb.rate_limit import count_failure, refuse_after_failures
 from kb.routers.admin_sign_in import GroupRule
 from kb.services import billing
 from kb.services import scim as protocol
@@ -53,9 +55,11 @@ class ScimJSON(JSONResponse):
     media_type = MEDIA_TYPE
 
 
-def _error(e):
-    headers = {"WWW-Authenticate": 'Bearer realm="scim"'} if e.status == 401 else None
-    return ScimJSON(e.body(), status_code=e.status, headers=headers)
+def _error(e, headers=None):
+    headers = dict(headers or {})
+    if e.status == 401:
+        headers["WWW-Authenticate"] = 'Bearer realm="scim"'
+    return ScimJSON(e.body(), status_code=e.status, headers=headers or None)
 
 
 class ScimRoute(APIRoute):
@@ -73,8 +77,8 @@ class ScimRoute(APIRoute):
                 return _error(ScimError(e.status, e.detail, e.scim_type))
             except RequestValidationError:
                 return _error(ScimError(400, "The request isn't valid JSON.", "invalidSyntax"))
-            except HTTPException as e:
-                return _error(ScimError(e.status_code, str(e.detail)))
+            except HTTPException as e:                 # e.g. 429, with Retry-After
+                return _error(ScimError(e.status_code, str(e.detail)), e.headers)
         return scim_handler
 
 
@@ -83,12 +87,20 @@ admin = APIRouter()
 
 
 def scim_token(request: Request, authorization: str = Header(default="")):
-    """The workspace whose token this is: {"workspace", "token_id", "base"}."""
+    """The workspace whose token this is: {"workspace", "token_id", "base"}.
+    An address that sent too many wrong tokens lately is refused first (429), so
+    the endpoint can't be used to guess tokens (kb/rate_limit.py)."""
+    refuse_after_failures(request, "scim")
     scheme, _, token = authorization.strip().partition(" ")
     found = scim_store.check_token(token.strip()) if scheme.lower() == "bearer" else None
     if not found:
+        count_failure(request, "scim")
         raise ScimError(401, "A valid SCIM bearer token is required.")
     workspace, token_id = found
+    # From here on the request's connections are this workspace's (row-level
+    # security on Postgres), as a signed-in request's are (kb/deps.py). The token
+    # was looked up as the platform: it is what names the workspace.
+    db.set_tenant(workspace)
     if lifecycle_store.status(workspace) != lifecycle_store.ACTIVE:
         raise ScimError(403, "This workspace is suspended or being deleted.")
     billing.require(workspace, "scim")                 # its plan includes SCIM (BILLING=on)

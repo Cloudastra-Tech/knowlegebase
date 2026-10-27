@@ -210,4 +210,5 @@ def accept_invite(body: AcceptIn, request: Request, audit=audited("invite.accept
     token = secrets.token_urlsafe(32)
     sessions_store.create(token, user, SESSION_SECONDS)
     members_store.log_event(ws, "password", email, "signed_in")
+    members_store.touch_login(email)          # a password sign-in, like /api/auth/login's
     return {"token": token, "user": user}

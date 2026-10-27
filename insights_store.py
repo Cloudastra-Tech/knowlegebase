@@ -28,9 +28,21 @@ def _db():
 
 
 # ---- insights_daily and source_stats ----------------------------------------------------
+def _json(value):
+    return None if value is None else json.dumps(value)
+
+
+def _acl_of(row):
+    """A row with its `acl` (JSON in the table) read: None on rows from before it."""
+    out = dict(row)
+    if isinstance(out.get("acl"), str):
+        out["acl"] = json.loads(out["acl"])
+    return out
+
+
 def save_day(workspace, day, totals, latency_hist, cost_usd, sources):
     """Replace one day's rollup: its totals (DAILY_COUNTS), latency histogram, cost,
-    and sources: {doc_key: {"title", "provider", "url", "access", "cited"}}."""
+    and sources: {doc_key: {"title", "provider", "url", "access", "acl", "cited"}}."""
     with _lock, _db() as conn:
         conn.execute(
             f"""INSERT OR REPLACE INTO insights_daily (workspace, day, {', '.join(DAILY_COUNTS)},
@@ -41,9 +53,10 @@ def save_day(workspace, day, totals, latency_hist, cost_usd, sources):
         conn.execute("DELETE FROM source_stats WHERE workspace = ? AND day = ?", (workspace, day))
         conn.executemany(
             "INSERT INTO source_stats (workspace, doc_key, day, title, provider, url, access, "
-            "cited) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "acl, cited) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(workspace, key, day, s.get("title"), s.get("provider"), s.get("url"),
-              s.get("access") or "restricted", s["cited"]) for key, s in sources.items()])
+              s.get("access") or "restricted", _json(s.get("acl")), s["cited"])
+             for key, s in sources.items()])
 
 
 def days(workspace, since_day, until_day):
@@ -59,11 +72,12 @@ def days(workspace, since_day, until_day):
 
 
 def cited(workspace, since_day, until_day):
-    """[{doc_key, title, provider, url, access, cited}] in the range, most cited first."""
+    """[{doc_key, title, provider, url, access, acl, cited}] in the range, most cited
+    first. (acl: the latest day's that has one.)"""
     with _db() as conn:
-        return [dict(r) for r in conn.execute(
+        return [_acl_of(r) for r in conn.execute(
             """SELECT doc_key, MAX(title) AS title, MAX(provider) AS provider, MAX(url) AS url,
-                      MAX(access) AS access, SUM(cited) AS cited
+                      MAX(access) AS access, MAX(acl) AS acl, SUM(cited) AS cited
                  FROM source_stats WHERE workspace = ? AND day >= ? AND day <= ?
                 GROUP BY doc_key ORDER BY cited DESC, doc_key""",
             (workspace, since_day, until_day))]
@@ -86,13 +100,14 @@ def save_docs(workspace, docs, now=None):
     with _lock, _db() as conn:
         conn.executemany(
             """INSERT INTO insights_docs (workspace, doc_key, title, provider, url, access,
-                   modified, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   acl, modified, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workspace, doc_key) DO UPDATE SET title = excluded.title,
                    provider = excluded.provider, url = excluded.url, access = excluded.access,
-                   modified = excluded.modified, last_seen = excluded.last_seen,
+                   acl = excluded.acl, modified = excluded.modified,
+                   last_seen = excluded.last_seen,
                    first_seen = MIN(insights_docs.first_seen, excluded.first_seen)""",
             [(workspace, key, d.get("title"), d.get("provider"), d.get("url"),
-              d.get("access") or "restricted", d.get("modified"),
+              d.get("access") or "restricted", _json(d.get("acl")), d.get("modified"),
               min(now, d.get("since") or now), now) for key, d in docs.items()])
         keys = list(docs)
         conn.execute(f"DELETE FROM insights_docs WHERE workspace = ? AND doc_key NOT IN "
@@ -101,23 +116,23 @@ def save_docs(workspace, docs, now=None):
 
 def docs(workspace):
     with _db() as conn:
-        return {r["doc_key"]: dict(r) for r in conn.execute(
+        return {r["doc_key"]: _acl_of(r) for r in conn.execute(
             "SELECT * FROM insights_docs WHERE workspace = ?", (workspace,))}
 
 
 # ---- content_gaps -----------------------------------------------------------------------
 def save_gaps(workspace, since, clusters, now=None):
     """Replace the workspace's clusters. clusters: [{"label", "size", "not_found",
-    "general_knowledge", "max_access", "log_ids"}]."""
+    "general_knowledge", "max_access", "acl", "log_ids"}]."""
     now = time.time() if now is None else now
     with _lock, _db() as conn:
         conn.execute("DELETE FROM content_gaps WHERE workspace = ?", (workspace,))
         conn.executemany(
             "INSERT INTO content_gaps (workspace, computed_at, since, label, size, not_found, "
-            "general_knowledge, max_access, log_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "general_knowledge, max_access, acl, log_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(workspace, now, since, c.get("label"), c["size"], c.get("not_found", 0),
               c.get("general_knowledge", 0), c.get("max_access") or "restricted",
-              json.dumps(c["log_ids"])) for c in clusters])
+              _json(c.get("acl")), json.dumps(c["log_ids"])) for c in clusters])
 
 
 def gaps(workspace):
@@ -125,7 +140,7 @@ def gaps(workspace):
         out = []
         for r in conn.execute("SELECT * FROM content_gaps WHERE workspace = ? "
                               "ORDER BY size DESC, id", (workspace,)):
-            row = dict(r)
+            row = _acl_of(r)
             row["log_ids"] = json.loads(row["log_ids"] or "[]")
             out.append(row)
         return out
@@ -133,42 +148,47 @@ def gaps(workspace):
 
 # ---- eval_candidates --------------------------------------------------------------------
 def _candidate(r):
-    c = dict(r)
+    c = _acl_of(r)
     c["sources"] = json.loads(c.get("sources") or "[]")
     c["reasons"] = json.loads(c.get("reasons") or "[]")
     return c
 
 
 def add_candidate(workspace, message_id, question, answer, expected_answer, sources, reasons,
-                  comment, role, max_access, created_by):
+                  comment, role, max_access, created_by, acl=None):
     """A golden-set candidate; promoting the same answer again updates it (and one the
-    weekly job suggested becomes the admin's)."""
+    weekly job suggested becomes the admin's). acl: who may read it (access.py
+    clauses: the answer's audience); None: by max_access."""
     with _lock, _db() as conn:
         conn.execute(
             """INSERT INTO eval_candidates (workspace, message_id, question, answer,
-                   expected_answer, sources, reasons, comment, role, max_access, created_by,
-                   created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   expected_answer, sources, reasons, comment, role, max_access, acl,
+                   created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workspace, message_id) DO UPDATE SET
                    expected_answer = excluded.expected_answer, created_by = excluded.created_by,
-                   created_at = excluded.created_at, origin = 'admin'""",
+                   created_at = excluded.created_at, origin = 'admin',
+                   acl = COALESCE(excluded.acl, eval_candidates.acl)""",
             (workspace, message_id, question, answer, expected_answer, json.dumps(sources),
-             json.dumps(reasons), comment, role, max_access, created_by, time.time()))
+             json.dumps(reasons), comment, role, max_access, _json(acl), created_by,
+             time.time()))
         return _candidate(conn.execute(
             "SELECT * FROM eval_candidates WHERE workspace = ? AND message_id = ?",
             (workspace, message_id)).fetchone())
 
 
 def suggest_candidate(workspace, message_id, question, answer, sources, reasons, comment,
-                      role, max_access, origin, now=None):
+                      role, max_access, origin, now=None, acl=None):
     """A candidate the weekly job suggests (origin: feedback / not_found). Never
     replaces one already there (an admin's above all). True when it's new."""
     with _lock, _db() as conn:
         return bool(conn.execute(
             """INSERT OR IGNORE INTO eval_candidates (workspace, message_id, question, answer,
-                   expected_answer, sources, reasons, comment, role, max_access, created_by,
-                   created_at, origin) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'system', ?, ?)""",
+                   expected_answer, sources, reasons, comment, role, max_access, acl,
+                   created_by, created_at, origin)
+               VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'system', ?, ?)""",
             (workspace, message_id, question, answer, json.dumps(sources), json.dumps(reasons),
-             comment, role, max_access, time.time() if now is None else now, origin)).rowcount)
+             comment, role, max_access, _json(acl), time.time() if now is None else now,
+             origin)).rowcount)
 
 
 def feedback_for(workspace, message_id):

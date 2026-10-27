@@ -72,12 +72,14 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
         message_id=None, role="public", block_reason=None, sources=(), tools=(),
         max_access="restricted", latency_ms=None, tokens_in=None, tokens_out=None,
         model=None, at=None, tokens_cached=None, cache_hit=None, unsupported=None,
-        language=None, provider=None):
+        language=None, provider=None, acl=None):
     """Log one question. Text is stored as given: the caller has applied the mode.
     tokens_cached: how many of tokens_in OpenAI's prompt cache served (migration 0010).
     cache_hit: exact / semantic when the answer cache served it; unsupported: the
     figures the faithfulness check didn't find; language: the question's (0019).
-    provider: openai / bedrock, who answered; model: the model that wrote most (0022)."""
+    provider: openai / bedrock, who answered; model: the model that wrote most (0022).
+    acl: who may read what its answer read, as access.py clauses (0024); None: by
+    max_access, as rows from before it are."""
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}")
     at = time.time() if at is None else at
@@ -86,18 +88,21 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
             """INSERT INTO question_log (workspace, at, day, user, surface, message_id, role,
                    text_mode, question, answer, outcome, block_reason, sources, tools,
                    max_access, latency_ms, tokens_in, tokens_out, model, tokens_cached,
-                   cache_hit, unsupported, language, provider)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   cache_hit, unsupported, language, provider, acl)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (workspace, at, day_of(at), user, surface, message_id, role, text_mode, question,
              answer, outcome, block_reason, json.dumps(list(sources)), json.dumps(list(tools)),
              max_access, latency_ms, tokens_in, tokens_out, model, tokens_cached, cache_hit,
-             unsupported, language, provider)).lastrowid
+             unsupported, language, provider,
+             None if acl is None else json.dumps([list(c) for c in acl]))).lastrowid
 
 
 def _row(r):
     out = {k: r[k] for k in r.keys() if k != "embedding"}
     out["sources"] = json.loads(out.get("sources") or "[]")
     out["tools"] = json.loads(out.get("tools") or "[]")
+    if isinstance(out.get("acl"), str):
+        out["acl"] = json.loads(out["acl"])
     return out
 
 

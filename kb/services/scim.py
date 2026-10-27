@@ -425,10 +425,10 @@ def anonymise(job=None):
     import audit_store
     import members_store
     done = scim_store.anonymise_due()
-    for workspace, username, scim_id in done:
+    for workspace, username, scim_id, revoked in done:
         audit_store.record(workspace, "scim.user.anonymise", actor="system",
                            actor_type="system", target_type="member", target_id=username,
-                           details={"scim_id": scim_id,
+                           details={"scim_id": scim_id, "invites_revoked": revoked,
                                     "retention_days": scim_store.retention_days()})
         members_store.log_event(workspace, members_store.SCIM_SOURCE, username, "scim",
                                 "scim_user_anonymised")

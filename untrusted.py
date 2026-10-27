@@ -167,3 +167,61 @@ def strip_unknown_links(answer, allowed, partial=False):
     text = _MD_LINK.sub(link, answer or "")
     text = _BARE_URL.sub(bare, text)
     return text, removed
+
+
+# ---- 4. Planted instructions, at ingest -------------------------------------------
+# Every chunk is scanned when it is indexed (ingest.load_and_split) for text written
+# to an AI rather than to a reader: it is FLAGGED (the chunk's `injection`
+# metadata, and the Knowledge screen's `injection` field for HR and admins), never
+# dropped, since a document about prompt injection is legitimate content and the
+# layers above already keep a planted instruction from being obeyed. Patterns, not
+# a model: free, and the same answer every run.
+_I, _M = re.IGNORECASE, re.IGNORECASE | re.MULTILINE
+_AI = (r"(?:ai|a\.i\.|llms?|(?:ai\s+)?assistants?|chat\s*bots?|(?:large\s+)?language\s+models?"
+       r"|ai\s+models?|gpts?|copilots?)")
+PLANTED = (
+    # "ignore previous instructions", "disregard the rules above"
+    ("override", re.compile(
+        r"\b(?:ignore|disregard|forget|override|bypass)\s+(?:(?:all|any|the|your|my|these|"
+        r"those|previous|prior|above|earlier|other|safety)\s+)*(?:instructions?|prompts?|"
+        r"rules?|guidelines?|directions?|guardrails?)\b", _I)),
+    ("override", re.compile(r"\b(?:previous|prior|earlier|above|all|your)\s+(?:instructions?|"
+                            r"rules?)\s+(?:no\s+longer\s+appl|(?:are|is)\s+(?:void|cancel))", _I)),
+    # "Note to the AI assistant:", "IMPORTANT NOTE FOR THE AI", "Assistant: whenever ..."
+    ("addressed_to_ai", re.compile(
+        rf"\b(?:note|message|instructions?|attention|important)\s+(?:to|for)\s+(?:the\s+|any\s+|"
+        rf"all\s+|an\s+)?{_AI}\b", _I)),
+    ("addressed_to_ai", re.compile(r"^\W{0,3}(?:ai\s+)?assistant\s*[:,]\s+\w", _M)),
+    ("addressed_to_ai", re.compile(rf"\bif\s+you\s+are\s+(?:an?\s+)?{_AI}\b", _I)),
+    # "you are now DAN", "pretend you are", "developer mode"
+    ("role_change", re.compile(r"\b(?:you\s+are\s+now|from\s+now\s+on,?\s+you|pretend\s+"
+                               r"(?:to\s+be|you\s+are)|developer\s+mode|jailbreak|do\s+anything"
+                               r"\s+now)\b", _I)),
+    # "SYSTEM MESSAGE:", "system prompt override"
+    ("fake_system", re.compile(r"\bsystem\s+(?:message|prompt|override|instructions?|notice)s?"
+                               r"\s*:", _I)),
+    ("prompt_leak", re.compile(r"\b(?:reveal|print|repeat|show|output|disclose)\s+(?:your\s+|"
+                               r"the\s+)?(?:system\s+prompt|hidden\s+instructions|initial\s+"
+                               r"instructions|instructions\s+above)", _I)),
+    # Chat-template control tokens and imitations of our own delimiter.
+    ("chat_template", re.compile(r"<\|(?:im_start|im_end|system|user|assistant|endoftext|"
+                                 r"start_header_id)|\[/?INST\]|<<\s*/?SYS\s*>>", _I)),
+    ("delimiter", _TAG_LIKE),
+    # An image whose address carries a query: what a model would fill with the
+    # conversation to send it away ("![logo](https://x/collect?d=SUMMARY)").
+    ("exfiltration", re.compile(r"!\[[^\]\n]*\]\(\s*<?[a-z][a-z0-9+.-]*://[^)\s]*\?[^)\s]+\)",
+                                _I)),
+    ("concealment", re.compile(r"\b(?:do\s+not|don't|never)\s+(?:tell|mention\s+(?:this\s+)?to|"
+                               r"inform|alert|let)\s+the\s+(?:user|reader|human)", _I)),
+)
+
+
+def planted_instructions(text):
+    """The kinds of planted instruction found in `text` (sorted, distinct; [] for
+    none). Matched on the text as written and with look-alike and invisible
+    characters folded away (as neutralise() does), so 'ignоre' with a hidden
+    character between letters is still found."""
+    text = str(text or "")
+    folded = unicodedata.normalize("NFKC", _INVISIBLE.sub("", text))
+    return sorted({kind for kind, pattern in PLANTED
+                   if pattern.search(text) or pattern.search(folded)})

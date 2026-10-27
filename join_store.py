@@ -247,7 +247,7 @@ def approve(workspace, request_id, role, by, now=None):
                         WHERE members.workspace = excluded.workspace""",
                      (row["email"], workspace, row["name"] or row["email"].split("@")[0],
                       None if role == "public" else role, now))
-        members_store._settle_role(conn, row["email"])
+        members_store._settle_role(conn, row["email"], workspace)
         conn.execute("UPDATE join_requests SET status = 'approved', role = ?, decided_at = ?, "
                      "decided_by = ? WHERE id = ?", (role, now, by, request_id))
         out = conn.execute("SELECT * FROM join_requests WHERE id = ?", (request_id,)).fetchone()
@@ -425,7 +425,7 @@ def claim(code, email, name, org, now=None):
                                 last_login_at = excluded.last_login_at
                             WHERE members.workspace = excluded.workspace""",
                          (email, workspace, name or email.split("@")[0], now, now))
-            members_store._settle_role(conn, email)
+            members_store._settle_role(conn, email, workspace)
             conn.execute("UPDATE workspaces SET join_policy = 'request' WHERE slug = ?",
                          (workspace,))
             conn.execute("UPDATE claim_codes SET revoked_at = ? WHERE workspace = ? "

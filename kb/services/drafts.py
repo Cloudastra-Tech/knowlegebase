@@ -168,19 +168,19 @@ def write_summary(ws, reader, draft):
     return summaries.summarise_folder(label, summarised), sources
 
 
-def _question_gap(ws, role, log_id):
-    """One unanswered question as a gap of one, or None (gone, or not the role's)."""
-    found = insights.find_not_found(ws, role, log_id)
+def _question_gap(ws, viewer, log_id):
+    """One unanswered question as a gap of one, or None (gone, or not the viewer's)."""
+    found = insights.find_not_found(ws, viewer, log_id)
     return found and {"label": found["question"][:200], "samples": [found["question"]]}
 
 
 def write_gap(ws, reader, draft):
     if draft["scope"].get("question_id") is not None:
-        gap = _question_gap(ws, reader.role, draft["scope"]["question_id"])
+        gap = _question_gap(ws, reader, draft["scope"]["question_id"])
         if not gap:
             raise Empty("This question is gone, or its text is no longer kept.")
     else:
-        gap = find_gap(ws, reader.role, draft["scope"].get("gap_id"))
+        gap = find_gap(ws, reader, draft["scope"].get("gap_id"))
     if not gap:
         raise Empty("This content gap is gone (gaps are worked out again weekly).")
     queries = gap["samples"][:MAX_GAP_QUERIES] or [gap["label"] or ""]
