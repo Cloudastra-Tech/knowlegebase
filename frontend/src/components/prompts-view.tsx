@@ -65,7 +65,7 @@ export function PromptsView() {
 
   // A list to act on: opaque, under a mono section label.
   const section = (title: string, list: SavedPrompt[], empty: string, note?: string) => (
-    <section>
+    <section className="min-w-0">
       <AsciiDivider as="h3" label={title} className="mb-3" />
       <Panel tone="solid" className="divide-y overflow-hidden p-0">
         {list.length ? (
@@ -99,7 +99,7 @@ export function PromptsView() {
       {!data ? (
         <Skeleton className="mt-6 h-48 rounded-2xl" />
       ) : (
-        <div className="mt-6 grid gap-6">
+        <div className="mt-6 grid grid-cols-1 gap-6">
           {section("Yours", mine, "None yet.")}
           {section(
             "Your workspace's",
