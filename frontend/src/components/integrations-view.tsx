@@ -176,7 +176,7 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
         aria-labelledby={`${ids}-label`}
         value={access}
         onValueChange={(v) => (v === "everyone" ? setConfirming(true) : save("restricted"))}
-        disabled={saving}
+        disabled={saving || !!item.access_locked}
         className="mt-2 gap-2"
       >
         <div className="flex items-center gap-2">
@@ -192,6 +192,13 @@ function AccessControl({ item, onChange }: { item: Integration; onChange: () => 
           </Label>
         </div>
       </RadioGroup>
+      {item.access_locked && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Lock className="mt-px size-3.5 shrink-0" />
+          Locked to HR and admins while {item.name} tickets are synced: they hold customers'
+          details.
+        </p>
+      )}
       {access === "everyone" && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <TriangleAlert className="mt-px size-3.5 shrink-0" />
@@ -412,6 +419,25 @@ function ConnectorCard({
                 </div>
               </div>
             ))}
+
+          {item.options?.tickets !== undefined && (
+            <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+              <p className="min-w-0 text-muted-foreground">
+                Solved tickets:{" "}
+                <span className="font-medium text-foreground">
+                  {item.options.tickets ? "synced (HR and admins only)" : "off"}
+                </span>
+              </p>
+              <Button
+                variant="link"
+                size="xs"
+                className="h-auto shrink-0 px-0"
+                onClick={() => setPickerOpen(true)}
+              >
+                Change
+              </Button>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
             <Stat label="Account" value={item.account || "—"} />
