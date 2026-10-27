@@ -18,6 +18,7 @@ import {
   Loader2,
   Plus,
   Search,
+  Users,
   X,
 } from "lucide-react"
 
@@ -58,6 +59,7 @@ export function ContainerIcon({ item, className = "size-4" }: { item: Container;
   if (item.kind === "category") return <Library className={cls} />
   if (item.kind === "section") return <BookOpen className={cls} />
   if (item.kind === "repo") return <FolderGit2 className={cls} />
+  if (item.kind === "team") return <Users className={cls} />
   if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
   if (item.mimeType === "application/pdf") return <FileType className={cls} />
   return <FileText className={cls} />
@@ -127,6 +129,34 @@ const COPY: Record<string, { title: string; description: string; root: string; e
       "Tick the repositories to sync: their READMEs and docs (Markdown, reStructuredText, text). Turn on code for a repository to sync its source files too.",
     root: "Repositories",
     empty: "No repositories are shared with the app. Add some in its installation settings on GitHub.",
+  },
+  linear: {
+    title: "Choose teams to sync",
+    description:
+      "Tick the teams to sync: their issues with comments, and their projects and documents. Nothing is synced until you pick one.",
+    root: "Teams",
+    empty: "No teams this account can see.",
+  },
+  dropbox: {
+    title: "Choose folders to sync",
+    description:
+      "Tick whole folders (sub-folders and new files included). Nothing is synced until you pick one.",
+    root: "Dropbox",
+    empty: "No folders here.",
+  },
+  box: {
+    title: "Choose folders to sync",
+    description:
+      "Tick whole folders (sub-folders and new files included). Nothing is synced until you pick one.",
+    root: "All files",
+    empty: "No folders here.",
+  },
+  s3: {
+    title: "Choose folders to sync",
+    description:
+      "Tick folders (prefixes) of the bucket to sync only those. With none ticked, everything under the connection's prefix is synced.",
+    root: "Bucket",
+    empty: "No folders here.",
   },
   outline: {
     title: "Choose collections to sync",
