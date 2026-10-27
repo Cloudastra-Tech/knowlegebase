@@ -1,0 +1,240 @@
+{
+ "_source": [
+  "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile (emailAddress, historyId)",
+  "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.threads/list (labelIds, q, maxResults, pageToken; threads[] {id, snippet, historyId}, nextPageToken)",
+  "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.threads/get (format full | minimal; messages[] {id, threadId, labelIds, payload {headers, parts, body.data base64url}})",
+  "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.history/list (startHistoryId; history[] {messagesAdded, messagesDeleted, labelsAdded, labelsRemoved}; historyId; 404 when too old)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "emailAddress": "ann@acme.example",
+     "historyId": "5000"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads",
+    "params": {
+     "labelIds": "Label_7",
+     "q": "newer_than:180d"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "threads": [
+      {
+       "id": "th1",
+       "snippet": "Offer letter for Bob",
+       "historyId": "4001"
+      }
+     ],
+     "nextPageToken": "gp-2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/th1",
+    "params": {
+     "format": "full"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "th1",
+     "historyId": "4001",
+     "messages": [
+      {
+       "id": "m1",
+       "threadId": "th1",
+       "labelIds": [
+        "Label_7"
+       ],
+       "payload": {
+        "mimeType": "multipart/mixed",
+        "headers": [
+         {
+          "name": "Subject",
+          "value": "Offer letter for Bob"
+         },
+         {
+          "name": "From",
+          "value": "hr@acme.example"
+         },
+         {
+          "name": "To",
+          "value": "ann@acme.example"
+         },
+         {
+          "name": "Date",
+          "value": "Mon, 5 Oct 2026 09:00:00 +0000"
+         }
+        ],
+        "parts": [
+         {
+          "mimeType": "text/plain",
+          "filename": "",
+          "body": {
+           "data": "Qm9iJ3Mgc2FsYXJ5IHdpbGwgYmUgOTAsMDAwLg"
+          }
+         },
+         {
+          "mimeType": "application/pdf",
+          "filename": "invoice.pdf",
+          "body": {
+           "attachmentId": "att-1",
+           "size": 1000
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "m2",
+       "threadId": "th1",
+       "labelIds": [
+        "Label_7",
+        "SENT"
+       ],
+       "payload": {
+        "mimeType": "multipart/mixed",
+        "headers": [
+         {
+          "name": "Subject",
+          "value": "Re: Offer letter for Bob"
+         },
+         {
+          "name": "From",
+          "value": "ann@acme.example"
+         },
+         {
+          "name": "To",
+          "value": "ann@acme.example"
+         },
+         {
+          "name": "Date",
+          "value": "Mon, 5 Oct 2026 09:00:00 +0000"
+         }
+        ],
+        "parts": [
+         {
+          "mimeType": "text/html",
+          "filename": "",
+          "body": {
+           "data": "PHA-QXBwcm92ZWQgJmFtcDsgc2lnbmVkLjwvcD4"
+          }
+         },
+         {
+          "mimeType": "application/pdf",
+          "filename": "invoice.pdf",
+          "body": {
+           "attachmentId": "att-1",
+           "size": 1000
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads",
+    "params": {
+     "labelIds": "Label_7",
+     "pageToken": "gp-2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "threads": [
+      {
+       "id": "th2",
+       "snippet": "Board dinner",
+       "historyId": "4002"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/th2",
+    "params": {
+     "format": "full"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "th2",
+     "historyId": "4002",
+     "messages": [
+      {
+       "id": "m3",
+       "threadId": "th2",
+       "labelIds": [
+        "Label_7"
+       ],
+       "payload": {
+        "mimeType": "multipart/mixed",
+        "headers": [
+         {
+          "name": "Subject",
+          "value": "Board dinner"
+         },
+         {
+          "name": "From",
+          "value": "ceo@acme.example"
+         },
+         {
+          "name": "To",
+          "value": "ann@acme.example"
+         },
+         {
+          "name": "Date",
+          "value": "Mon, 5 Oct 2026 09:00:00 +0000"
+         }
+        ],
+        "parts": [
+         {
+          "mimeType": "text/plain",
+          "filename": "",
+          "body": {
+           "data": "RGlubmVyIG9uIHRoZSAxMnRoLg"
+          }
+         },
+         {
+          "mimeType": "application/pdf",
+          "filename": "invoice.pdf",
+          "body": {
+           "attachmentId": "att-1",
+           "size": 1000
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

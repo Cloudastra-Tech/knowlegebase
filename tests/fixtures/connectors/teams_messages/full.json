@@ -1,0 +1,289 @@
+{
+ "_source": [
+  "https://learn.microsoft.com/en-us/graph/api/channel-list (value[] {id, displayName, membershipType standard | private | shared})",
+  "https://learn.microsoft.com/en-us/graph/api/chatmessage-delta (GET /teams/{t}/channels/{c}/messages/delta; @odata.nextLink, @odata.deltaLink; deletedDateTime)",
+  "https://learn.microsoft.com/en-us/graph/api/chatmessage-list-replies",
+  "https://learn.microsoft.com/en-us/graph/api/resources/chatmessage (messageType, body {contentType html | text, content}, from.user.displayName, webUrl, subject)",
+  "https://learn.microsoft.com/en-us/graph/api/team-list-members, https://learn.microsoft.com/en-us/graph/api/channel-list-allmembers (aadUserConversationMember: email, userId)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "19:general@thread.tacv2",
+       "displayName": "General",
+       "membershipType": "standard"
+      },
+      {
+       "id": "19:secret@thread.tacv2",
+       "displayName": "Leadership",
+       "membershipType": "private"
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/members"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "m1",
+       "displayName": "Ann",
+       "email": "Ann@acme.example",
+       "userId": "u1"
+      },
+      {
+       "id": "m2",
+       "displayName": "Bob",
+       "email": "bob@acme.example",
+       "userId": "u2"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Ageneral%40thread.tacv2/messages/delta",
+    "params": {
+     "$top": "50"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "1001",
+       "messageType": "message",
+       "createdDateTime": "2026-10-01T09:00:00Z",
+       "lastModifiedDateTime": "2026-10-01T09:00:00Z",
+       "deletedDateTime": null,
+       "subject": "VPN",
+       "webUrl": "https://teams.microsoft.com/l/message/1001",
+       "from": {
+        "user": {
+         "id": "id-Ann",
+         "displayName": "Ann"
+        }
+       },
+       "body": {
+        "contentType": "html",
+        "content": "<p>Where is the <b>VPN</b> guide?</p>"
+       }
+      },
+      {
+       "id": "1002",
+       "messageType": "systemEventMessage",
+       "createdDateTime": "2026-10-01T09:30:00Z",
+       "body": {
+        "content": ""
+       }
+      }
+     ],
+     "@odata.nextLink": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Ageneral%40thread.tacv2/messages/delta?$skiptoken=sk-2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Ageneral%40thread.tacv2/messages/1001/replies"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "1001-r2",
+       "messageType": "message",
+       "createdDateTime": "2026-10-01T10:00:00Z",
+       "lastModifiedDateTime": "2026-10-01T10:00:00Z",
+       "deletedDateTime": null,
+       "subject": null,
+       "webUrl": "https://teams.microsoft.com/l/message/1001-r2",
+       "from": {
+        "user": {
+         "id": "id-Ann",
+         "displayName": "Ann"
+        }
+       },
+       "body": {
+        "contentType": "html",
+        "content": "Thanks!"
+       }
+      },
+      {
+       "id": "1001-r1",
+       "messageType": "message",
+       "createdDateTime": "2026-10-01T09:10:00Z",
+       "lastModifiedDateTime": "2026-10-01T09:20:00Z",
+       "deletedDateTime": null,
+       "subject": null,
+       "webUrl": "https://teams.microsoft.com/l/message/1001-r1",
+       "from": {
+        "user": {
+         "id": "id-Bob",
+         "displayName": "Bob"
+        }
+       },
+       "body": {
+        "contentType": "html",
+        "content": "It's on the <i>wiki</i>, under IT."
+       }
+      },
+      {
+       "id": "1001-r3",
+       "messageType": "message",
+       "createdDateTime": "2026-10-01T10:05:00Z",
+       "lastModifiedDateTime": "2026-10-01T10:05:00Z",
+       "deletedDateTime": "2026-10-01T10:06:00Z",
+       "subject": null,
+       "webUrl": "https://teams.microsoft.com/l/message/1001-r3",
+       "from": {
+        "user": {
+         "id": "id-Bob",
+         "displayName": "Bob"
+        }
+       },
+       "body": {
+        "contentType": "html",
+        "content": ""
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Ageneral%40thread.tacv2/messages/delta",
+    "params": {
+     "$skiptoken": "sk-2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "1003",
+       "messageType": "message",
+       "createdDateTime": "2026-10-02T09:00:00Z",
+       "lastModifiedDateTime": "2026-10-02T09:00:00Z",
+       "deletedDateTime": null,
+       "subject": null,
+       "webUrl": "https://teams.microsoft.com/l/message/1003",
+       "from": {
+        "user": {
+         "id": "id-Bob",
+         "displayName": "Bob"
+        }
+       },
+       "body": {
+        "contentType": "html",
+        "content": "Lunch is at noon."
+       }
+      }
+     ],
+     "@odata.deltaLink": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Ageneral%40thread.tacv2/messages/delta?$deltatoken=dt-general-1"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Ageneral%40thread.tacv2/messages/1003/replies"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": []
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19:secret@thread.tacv2/allMembers"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "m1",
+       "displayName": "Ann",
+       "email": "ann@acme.example",
+       "userId": "u1"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Asecret%40thread.tacv2/messages/delta",
+    "params": {
+     "$top": "50"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": [
+      {
+       "id": "2001",
+       "messageType": "message",
+       "createdDateTime": "2026-10-03T09:00:00Z",
+       "lastModifiedDateTime": "2026-10-03T09:00:00Z",
+       "deletedDateTime": null,
+       "subject": null,
+       "webUrl": "https://teams.microsoft.com/l/message/2001",
+       "from": {
+        "user": {
+         "id": "id-Ann",
+         "displayName": "Ann"
+        }
+       },
+       "body": {
+        "contentType": "html",
+        "content": "The reorg is announced on Friday."
+       }
+      }
+     ],
+     "@odata.deltaLink": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Asecret%40thread.tacv2/messages/delta?$deltatoken=dt-secret-1"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/teams/11111111-2222-3333-4444-555555555555/channels/19%3Asecret%40thread.tacv2/messages/2001/replies"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "value": []
+    }
+   }
+  }
+ ]
+}

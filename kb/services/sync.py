@@ -176,6 +176,7 @@ class _Run:
         if fetched is None:
             return self.skip(item.source_id, "too_large" if item.size else "unsupported",
                              item.title, item.url)
+        meta["title"] = item.title          # (a fetch may name it better: an email's subject)
         body = fetched.body
         kind = extract.kind_of(fetched.mime, item.title)
         if kind == "pdf":

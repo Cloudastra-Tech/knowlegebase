@@ -1,0 +1,216 @@
+{
+ "_source": [
+  "https://developers.asana.com/reference/getproject (gid, name, notes, permalink_url, archived, project_brief)",
+  "https://developers.asana.com/reference/getmemberships (parent=<project>; data[].member {gid, resource_type user | team})",
+  "https://developers.asana.com/reference/getuser (data.email)",
+  "https://developers.asana.com/reference/gettasks (project, modified_since, opt_fields, limit, offset; next_page.offset)",
+  "https://developers.asana.com/reference/getstoriesfortask (resource_subtype comment_added, text, created_at, created_by.name)",
+  "https://developers.asana.com/reference/getprojectbrief (title, text, permalink_url)",
+  "https://developers.asana.com/reference/getevents (412 with a new sync token; data[] {action, resource, parent}; has_more)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/events",
+    "params": {
+     "resource": "111",
+     "sync": "ev-1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": [
+      {
+       "action": "deleted",
+       "resource": {
+        "gid": "t2",
+        "resource_type": "task"
+       }
+      },
+      {
+       "action": "changed",
+       "resource": {
+        "gid": "t1",
+        "resource_type": "task"
+       }
+      }
+     ],
+     "sync": "ev-2",
+     "has_more": false
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/projects/111"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "gid": "111",
+      "name": "Handbook",
+      "notes": "Where the team keeps its policies.",
+      "permalink_url": "https://app.asana.com/0/111/list",
+      "archived": false,
+      "modified_at": "2026-10-10T10:00:00.000Z",
+      "project_brief": {
+       "gid": "b1"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/memberships",
+    "params": {
+     "parent": "111"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": [
+      {
+       "gid": "m1",
+       "member": {
+        "gid": "u1",
+        "resource_type": "user",
+        "name": "Ann"
+       }
+      },
+      {
+       "gid": "m2",
+       "member": {
+        "gid": "u2",
+        "resource_type": "user",
+        "name": "Bob"
+       }
+      },
+      {
+       "gid": "m3",
+       "member": {
+        "gid": "t9",
+        "resource_type": "team",
+        "name": "Everyone"
+       }
+      }
+     ],
+     "next_page": null
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/users/u1",
+    "params": {
+     "opt_fields": "email"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "gid": "u1",
+      "email": "ann@acme.example"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/users/u2",
+    "params": {
+     "opt_fields": "email"
+    }
+   },
+   "response": {
+    "status": 403,
+    "json": {
+     "errors": [
+      {
+       "message": "Forbidden"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/tasks",
+    "params": {
+     "project": "111",
+     "modified_since~": "T"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": [
+      {
+       "gid": "t1",
+       "name": "Rotate the API keys",
+       "notes": "Rotate **every 30 days**.",
+       "completed": false,
+       "modified_at": "2026-10-11T09:00:00.000Z",
+       "created_at": "2026-09-01T09:00:00.000Z",
+       "due_on": "2026-11-01",
+       "permalink_url": "https://app.asana.com/0/111/t1",
+       "assignee": {
+        "gid": "u1",
+        "name": "Ann"
+       },
+       "memberships": [
+        {
+         "section": {
+          "gid": "s1",
+          "name": "Security"
+         }
+        }
+       ]
+      }
+     ],
+     "next_page": null
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/tasks/t1/stories"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": [],
+     "next_page": null
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://app.asana.com/api/1.0/project_briefs/b1"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "data": {
+      "gid": "b1",
+      "title": "Why this project",
+      "text": "One place for every policy.",
+      "permalink_url": "https://app.asana.com/0/111/brief"
+     }
+    }
+   }
+  }
+ ]
+}
