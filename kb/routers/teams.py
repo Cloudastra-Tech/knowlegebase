@@ -34,7 +34,7 @@ from starlette.concurrency import run_in_threadpool
 import teams_store
 from kb.audit import audited
 from kb.deps import public_url, require_admin, require_hr, ws_of
-from kb.services import teams
+from kb.services import billing, teams
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -84,6 +84,7 @@ def set_teams_app(body: AppIn, request: Request, user=Depends(require_admin),
     """The customer's own Azure Bot (its secret sealed), or this server's bot
     answering the customer's tenant. A tenant is answered by one workspace."""
     ws = ws_of(user)
+    billing.require(ws, "teams")
     try:
         if body.mode == "central":
             if not teams.central_app():

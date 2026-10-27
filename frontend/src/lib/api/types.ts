@@ -1,5 +1,7 @@
 // The shapes the FastAPI backend (api.py) sends and takes.
 
+import type { BillingSummary } from "@/lib/api/billing"
+
 // The role the app is VIEWED as. An admin views it as "hr" (or "public").
 export type Role = "public" | "hr"
 // What an account may do: admin is hr, plus who may sign in.
@@ -18,6 +20,8 @@ export interface User {
   // GET /auth/me: where the workspace is in its life (being deleted: admins only, until then).
   workspace_status?: "active" | "suspended" | "deleting"
   deleting_at?: number | null
+  // With BILLING=on: the plan and trial (the banner); null with it off.
+  billing?: BillingSummary | null
 }
 
 export interface AuthOptions {
@@ -29,6 +33,20 @@ export interface AuthOptions {
   signup: boolean
   // ...with an invite code.
   signup_invite: boolean
+  // How a new company may prove its domain here (none when sign-up is off).
+  signup_methods?: SignupMethod[]
+}
+
+export type SignupMethod = "google" | "microsoft365" | "email"
+
+// An email sign-up waiting for its DNS record (POST /auth/signup/email/confirm).
+export interface PendingSignup {
+  workspace_name: string
+  email: string
+  domain: string
+  txt_name: string
+  txt_value: string
+  expires_at: number
 }
 
 // What the sign-in page's route pass shows for a work email's domain.
@@ -38,6 +56,7 @@ export interface SsoRoute {
     google: boolean // "Continue with Google Workspace" works for it
     password: boolean // its people may still use a password
     roles_from: string | null // the provider whose groups set roles; null: the admin
+    microsoft365?: boolean // "Continue with Microsoft 365" works for it
   } | null
   signup?: boolean // no workspace yet: can one be created here?
 }
@@ -49,6 +68,7 @@ export interface SignInDomain {
   verified_at: number | null
   txt_name: string | null // the DNS record that proves it (null for domains set by the server)
   txt_value: string | null
+  join_policy: JoinPolicy | null // its own joining policy; null: the workspace's
 }
 
 export type Protocol = "oidc" | "saml"
@@ -210,6 +230,24 @@ export interface SignInSettings {
   password_login: boolean // the server allows passwords at all
   role_source: string | null // the one provider whose groups set roles
   group_admin_days: number // admin from groups lasts this long without a sign-in (0: forever)
+  join_policy: JoinPolicy // what happens when someone new signs in from a verified domain
+}
+
+// Joining policy (join_store.py): someone new on a verified domain is added (auto),
+// asks an admin (request) or needs an invite or SCIM (invite_only).
+export type JoinPolicy = "auto" | "request" | "invite_only"
+
+// A request to join, waiting for an admin (GET /admin/members/requests).
+export interface JoinRequest {
+  id: number
+  email: string
+  name: string | null
+  provider: string | null // what they signed in with ("Google", a provider's name, ...)
+  status: "pending" | "approved" | "denied" | "expired"
+  created_at: number
+  last_seen_at: number // their latest sign-in while it waited
+  expires_at: number
+  notified: boolean // the admins were emailed about it
 }
 
 // ---- Provisioning (SCIM): an identity provider adds and removes members ----
@@ -270,6 +308,7 @@ export interface SsoTestResult {
   role_source?: RoleSource
   groups?: string[] | null // null: the provider doesn't set roles
   new_member?: boolean
+  join_policy?: JoinPolicy | null // what the joining policy does with someone new
   sets_roles?: boolean // the provider is the role source
   sent: Record<string, string>
 }
@@ -370,6 +409,20 @@ export interface Integration {
   limits?: { max_pages: number | null; max_depth: number | null }
   base_url?: string | null // Outline, Confluence / Jira Data Center, Zendesk's subdomain
   live_search?: boolean // Outline: the server's wiki is searched live instead
+  source_policy_note?: string | null // why "as shared at the source" isn't offered (S3)
+  s3?: S3Card // Amazon S3: the bucket, and how a role would be set up
+}
+
+// Amazon S3's card and form (connectors/s3.py card()).
+export interface S3Card {
+  bucket?: string | null
+  region?: string | null
+  prefix: string
+  endpoint?: string | null
+  roles: boolean // the server can assume a role in the customer's account
+  external_id?: string | null // this workspace's, for the role's trust policy
+  trust_policy?: Record<string, unknown> | null
+  read_policy: Record<string, unknown>
 }
 
 // A connector's own options (connectors/base.py check_options): Zendesk's tickets
@@ -426,6 +479,14 @@ export interface IntegrationSetup {
   cf_client_secret?: string
   max_pages?: number
   max_depth?: number
+  // Amazon S3: the bucket, and a role to assume or an IAM user's access keys
+  bucket?: string
+  region?: string
+  prefix?: string
+  endpoint?: string
+  role_arn?: string
+  access_key_id?: string
+  secret_access_key?: string
 }
 
 // Why a passage was found (agent.py _source): its rank among the search's matches

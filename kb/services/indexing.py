@@ -96,6 +96,12 @@ def _changed(ws):
         conn.close()
 
 
+def mark_changed(ws):
+    """Chunks were changed outside an index run (the sample documents removed,
+    kb/services/onboarding.py): agents load the collection again."""
+    _changed(ws)
+
+
 # ---- Queueing ---------------------------------------------------------------------
 def _merge(queued, new):
     """Two index runs folded into one: full if either was; every document either

@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   ChevronDown,
-  Circle,
   ExternalLink,
   Globe,
   KeyRound,
@@ -23,7 +21,9 @@ import { ActivityView } from "@/components/activity-view"
 import { ApiAccessView } from "@/components/api-access-view"
 import { GroupsView } from "@/components/groups-view"
 import { MembersView } from "@/components/members-view"
+import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
+import { JoiningPolicy } from "@/components/sign-in-joining"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -790,6 +790,10 @@ function TestDialog({
                   {state.result.role_source === "groups" && " (from their groups)"}
                   {state.result.role_source === "override" && " (set by an admin)"}
                   {state.result.new_member ? ", as a new member." : "."}
+                  {state.result.new_member && state.result.join_policy === "request" &&
+                    " Under your joining policy they'd first ask to join, and wait for an admin."}
+                  {state.result.new_member && state.result.join_policy === "invite_only" &&
+                    " Under your joining policy they'd need an invite first."}
                   {state.result.sets_roles === false &&
                     " This provider doesn't set roles: signing in through it leaves theirs as it is."}
                   {state.result.groups && (
@@ -1205,14 +1209,14 @@ export function SignInView({
   me,
   tab,
   onTabChange,
-  onOpenIntegrations,
 }: {
   workspace: string
   me: string
   tab: AccessTab // each tab has its own URL (routes.tsx)
   onTabChange: (tab: AccessTab) => void
-  onOpenIntegrations?: () => void
 }) {
+  // Requests to join waiting for an admin: counted on the Members tab.
+  const waiting = useQuery(queries.joinRequests()).data?.requests.length ?? 0
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -1233,7 +1237,17 @@ export function SignInView({
         >
           <TabsList>
             <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
-            <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="members">
+              Members
+              {waiting > 0 && (
+                <Badge
+                  className="h-5 min-w-5 rounded-full px-1.5 tabular-nums"
+                  aria-label={`${waiting} waiting to join`}
+                >
+                  {waiting}
+                </Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="groups">Groups</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
             <TabsTrigger value="api">API &amp; MCP</TabsTrigger>
@@ -1244,7 +1258,7 @@ export function SignInView({
       </div>
       <div className="mt-6">
         {tab === "sign-in" ? (
-          <SignInSettingsView workspace={workspace} onOpenIntegrations={onOpenIntegrations} />
+          <SignInSettingsView />
         ) : tab === "members" ? (
           <MembersView me={me} />
         ) : tab === "groups" ? (
@@ -1263,107 +1277,7 @@ export function SignInView({
   )
 }
 
-// ---- Getting started ---------------------------------------------------------------
-// A new workspace (made at sign-up) has a verified domain and one admin. Until it
-// has a provider of its own, show what's left; it can also be put away.
-function GettingStarted({
-  settings,
-  workspace,
-  onAddProvider,
-  onOpenIntegrations,
-}: {
-  settings: SignInSettings
-  workspace: string
-  onAddProvider: () => void
-  onOpenIntegrations?: () => void
-}) {
-  const key = `kb-setup-done:${workspace}`
-  const [hidden, setHidden] = useState(() => {
-    try {
-      return localStorage.getItem(key) === "1"
-    } catch {
-      return false
-    }
-  })
-  const domains = settings.domains.filter((d) => d.verified).map((d) => d.domain)
-  if (hidden || settings.connections.length) return null
-
-  function hide() {
-    try {
-      localStorage.setItem(key, "1")
-    } catch {
-      // private window: it just comes back next time
-    }
-    setHidden(true)
-  }
-
-  const steps: { done: boolean; title: string; body: string; action?: React.ReactNode }[] = [
-    {
-      done: domains.length > 0,
-      title: domains.length ? `${domains.join(", ")} is verified` : "Verify your email domain",
-      body: domains.length
-        ? "Colleagues with an email on it can sign in with Continue with Google Workspace now."
-        : "Add it under Email domains below, then add the DNS record it shows.",
-    },
-    {
-      done: false,
-      title: "Add your company's identity provider",
-      body: "Optional. If you use Okta, Microsoft Entra ID or any SAML provider, add it so access follows your directory.",
-      action: (
-        <Button size="sm" variant="outline" onClick={onAddProvider}>
-          <Plus data-icon="inline-start" /> Add provider
-        </Button>
-      ),
-    },
-    {
-      done: false,
-      title: "Connect your documents",
-      body: "Google Drive, Notion, or files you upload: what your colleagues' questions are answered from.",
-      action: onOpenIntegrations && (
-        <Button size="sm" variant="outline" onClick={onOpenIntegrations}>
-          Open Integrations <ArrowRight data-icon="inline-end" />
-        </Button>
-      ),
-    },
-  ]
-
-  return (
-    <Section
-      title="Set up your workspace"
-      description="Your workspace is ready. Three things make it useful for everyone."
-      action={
-        <Button size="sm" variant="ghost" onClick={hide}>
-          Done
-        </Button>
-      }
-    >
-      <ol className="flex flex-col gap-4">
-        {steps.map((s) => (
-          <li key={s.title} className="flex flex-wrap items-start gap-3">
-            {s.done ? (
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Done" />
-            ) : (
-              <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="To do" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{s.title}</p>
-              <p className="text-sm text-muted-foreground">{s.body}</p>
-            </div>
-            {s.action}
-          </li>
-        ))}
-      </ol>
-    </Section>
-  )
-}
-
-function SignInSettingsView({
-  workspace,
-  onOpenIntegrations,
-}: {
-  workspace: string
-  onOpenIntegrations?: () => void
-}) {
+function SignInSettingsView() {
   const queryClient = useQueryClient()
   const settings = useQuery(queries.signInSettings()).data ?? null
   const [editing, setEditing] = useState<SignInConnection | null>(null)
@@ -1425,12 +1339,7 @@ function SignInSettingsView({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          <GettingStarted
-            settings={settings}
-            workspace={workspace}
-            onAddProvider={() => openDialog(null)}
-            onOpenIntegrations={onOpenIntegrations}
-          />
+          <OnboardingChecklist onAddProvider={() => openDialog(null)} />
           <Section title="Sign-in rules" description="How people in this workspace sign in.">
             <div className="grid grid-cols-1 gap-5">
               <SignInRules settings={settings} onChange={load} />
@@ -1440,6 +1349,13 @@ function SignInSettingsView({
                 onChange={load}
               />
             </div>
+          </Section>
+
+          <Section
+            title="Who can join"
+            description="When someone signs in for the first time with an email on a verified domain. People you invite, or provision with SCIM, always get in."
+          >
+            <JoiningPolicy settings={settings} onChange={load} />
           </Section>
 
           <Section

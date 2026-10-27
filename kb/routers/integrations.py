@@ -42,6 +42,7 @@ import workspaces
 import kb.audit
 import kb.state  # as kb.state: the callback's `state` parameter would hide it
 from connectors import base, registry
+from kb import quotas
 from kb.audit import audited
 from kb.deps import current_role, current_user, public_url, require_hr, ws_of
 from kb.rate_limit import user_limit
@@ -136,6 +137,8 @@ def _integration_info(ws, c, role):
         info["base_url"] = settings.get("base_url")
     if provider == "zendesk":
         info["base_url"] = settings.get("subdomain")
+    if provider == "s3":
+        info["s3"] = c.card(ws, settings)
     info["sign_in"] = c.can_sign_in() and c.configured()
     info["options"] = c.options_of(settings)
     info["access_locked"] = settings.get("access_lock") == "restricted"
@@ -171,6 +174,7 @@ class ConnectIn(BaseModel):
 def integration_connect(provider: str, request: Request, body: ConnectIn | None = None,
                         user=Depends(require_hr), audit=audited("integration.connect_start")):
     c = _connector(provider)
+    quotas.check(ws_of(user), "connector", user=user, provider=provider)   # the plan's limit
     if not c.can_sign_in():
         raise HTTPException(400, f"{c.LABEL} is connected with a form, not a sign-in.")
     if not c.configured():
@@ -247,6 +251,14 @@ class SetupIn(BaseModel):
     cf_client_secret: str = Field(default="", max_length=500)
     max_pages: int | None = Field(default=None, ge=1, le=100_000)
     max_depth: int | None = Field(default=None, ge=1, le=100)
+    # Amazon S3 (connectors/s3.py): the bucket, and a role to assume or access keys.
+    bucket: str = Field(default="", max_length=300)
+    region: str = Field(default="", max_length=40)
+    prefix: str = Field(default="", max_length=1024)
+    endpoint: str = Field(default="", max_length=300)
+    role_arn: str = Field(default="", max_length=2048)
+    access_key_id: str = Field(default="", max_length=128)
+    secret_access_key: str = Field(default="", max_length=256)
 
 
 @router.post("/api/integrations/{provider}/setup")
@@ -256,6 +268,7 @@ def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr),
     c = _connector(provider)
     if c.AUTH == "oauth":
         raise HTTPException(400, f"{c.LABEL} is connected by signing in to it.")
+    quotas.check(ws_of(user), "connector", user=user, provider=provider)   # the plan's limit
     user_limit(user, "sync")
     ws = ws_of(user)
     try:
@@ -264,7 +277,8 @@ def integration_setup(provider: str, body: SetupIn, user=Depends(require_hr),
         raise HTTPException(400, str(e))
     # The address is recorded; the token never is.
     audit.record("integration", provider, {"account": account,
-                                           "url": body.url.strip()[:300] or None}, user=user)
+                                           "url": (body.url or body.bucket).strip()[:300] or None},
+                 user=user)
     if sync.ready_to_sync(ws, provider):
         sync.start_sync(ws, provider)
     return {"ok": True, "account": account,

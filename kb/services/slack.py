@@ -70,7 +70,7 @@ import members_store
 import slack_store
 from kb import jobs, state
 from kb.rate_limit import user_limit
-from kb.services import answering, conversations, retrieval
+from kb.services import answering, billing, conversations, retrieval
 from untrusted import spotlight
 
 log = logging.getLogger("uvicorn.error")
@@ -800,6 +800,7 @@ def ask(install, token, p):
         reply.private(asker.refusal)
         return {"refused": True}
     try:
+        billing.require(ws, "slack")          # the workspace's plan includes Slack (BILLING=on)
         user_limit(asker.user(ws), "chat")
     except HTTPException as e:
         if not auto:

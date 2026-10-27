@@ -234,6 +234,7 @@ class Connector:
     SETUP_ENV = ""                 # env vars an oauth connector needs on the server
     NOTE = ""                      # a line the card shows before connecting, if any
     ACL = False                    # captures source permissions
+    SOURCE_POLICY_NOTE = ""        # why "as shared at the source" isn't offered (no ACL)
     CALLBACK = ""                  # the callback path's provider, if it isn't this one
                                    # (Atlassian apps have one callback URL: Jira uses
                                    # Confluence's)

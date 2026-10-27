@@ -210,7 +210,10 @@ Roles (public, hr, admin) gate **screens**. **Access groups** gate **content**
   email, name or id) and verified domains. **A grant that matches nothing here is
   dropped, never widened**; a file with nothing left is for no one. Jira issues
   with a security level, unreadable Confluence restrictions and similar fail
-  closed. Zendesk tickets lock their connection to `restricted`.
+  closed. Zendesk tickets lock their connection to `restricted`. Newer connectors
+  tag their acl with `via` (`linear`, `dropbox`, `box`, `s3`) and each has its own
+  mapping; an unknown `via` is for no one. S3 has no source permissions at all,
+  so its connections can't pick `source`.
 - **ACL drift.** Sharing is read at every sync (every 30 minutes): after each one
   a source-policy connection is re-tagged (only chunks whose ACL changed). A
   change at the source, or a new group member here, can take until the next sync;
@@ -651,7 +654,38 @@ All six tables have a `workspace` column, so a workspace's purge deletes them.
   job that suggests thumbs-down answers and not-found clusters as test cases.
 - **Abuse and spend** (`kb/services/abuse.py`, `kb/services/spend.py`): hourly
   alerts in the operator console, `usage_daily`, and daily spend caps (soft:
-  email; hard: 429 on every surface, enforced in `rate_limit.user_limit`).
+  email; hard: 429 on every surface). The hard cap is one of the checks in
+  `kb/quotas.py`, which `rate_limit.user_limit` runs for every costly request.
+
+---
+
+## 💳 Plans, billing, trials and onboarding
+
+- **Billing** (`kb/services/billing.py`, `billing_store.py`; `BILLING=off` by
+  default, and then nothing here limits anything). Plans are rows (`plans`: seat
+  price, limits and features as JSON); a workspace's `subscriptions` row holds its
+  plan, status, trial end and Stripe ids. `entitlement(ws, feature)` /
+  `require()` is one line in each gated router (SCIM, audit export, API keys, MCP,
+  Slack, Teams, own sign-in provider): a 402 with what the plan includes. Limits
+  (questions a month, documents, storage, connectors) are another `kb/quotas.py`
+  check, next to the spend cap. A workspace with no subscription is never limited.
+  Read-only (trial ended, or canceled) is enforced in `kb/deps.current_user` for
+  every change outside sign-in, billing and the workspace's export/deletion.
+- **Stripe** (`kb/services/stripe_api.py`, plain HTTPS, test keys only unless
+  allowed): Checkout, the Customer Portal and `POST /api/billing/webhook`
+  (HMAC-SHA256 signature checked, each event once in `stripe_events`). Only
+  `billing_owners` may change billing.
+- **Trial**: an hourly job (`billing_trials`) emails reminders, marks a trial
+  ended (read-only) and hands it to the workspace lifecycle for deletion 30 days
+  after it ended; the operator console extends a trial (audited).
+- **Onboarding** (`kb/services/onboarding.py`, table `onboarding`): checklist
+  steps derived from the data (and kept once done), first-run suggestions from
+  indexed titles, and the sample HR handbook (`samples/hr-handbook/`, indexed
+  under `docs/sample/`); removing it deletes its chunks and empties the answer
+  cache at once.
+- **Sign-up** (`kb/services/signup.py`, `kb/services/m365.py`): Google Workspace,
+  Microsoft 365 (Graph `organization` verified domains) or email plus a DNS TXT
+  record (`pending_signups` until it checks out), behind `WORKSPACE_SIGNUP`.
 
 ---
 

@@ -11,12 +11,12 @@ import time
 
 from fastapi import HTTPException, Request
 
-from kb import state
+from kb import quotas, state
 from kb.deps import ws_of
 from kb.settings import env_int
 
 LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20,
-          "signup": 10, "invite": 30, "extension_exchange": 20, "unsubscribe": 30}
+          "signup": 10, "claim": 10, "invite": 30, "extension_exchange": 20, "unsubscribe": 30}
 ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 # Limits on what a signed-in person can make the server do (it costs OpenAI calls
 # or indexing time), per minute: (per person, per workspace). Each can be set in
@@ -66,12 +66,10 @@ def rate_limit(request: Request, bucket):
 
 
 def user_limit(user, bucket):
-    """Per person and per workspace limits (USER_LIMITS) on something costly. A
-    question is also refused when its workspace is past today's hard spend cap
-    (kb/services/spend.py), whether rate limits are on or not."""
-    if bucket == "chat":
-        from kb.services import spend
-        spend.enforce(ws_of(user))
+    """Per person and per workspace limits (USER_LIMITS) on something costly. First
+    the workspace's own limits, whether rate limits are on or not (kb/quotas.py: its
+    plan's, kb/services/billing.py; today's hard spend cap, kb/services/spend.py)."""
+    quotas.check(ws_of(user), bucket, user=user)
     if not rate_limits_on():
         return
     per_user, per_workspace = (env_int(f"RATE_LIMIT_{bucket.upper()}_{who}", default)

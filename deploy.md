@@ -388,7 +388,8 @@ reads the old collection, which this one drops 10 minutes after its rebuild.
 ## Connectors
 
 Google Drive, Notion, Outline, Confluence and Jira (Cloud and Data Center),
-SharePoint & OneDrive, Zendesk, GitHub and websites are **connectors**
+SharePoint & OneDrive, Zendesk, GitHub, Linear, Dropbox, Box, Amazon S3 and
+websites are **connectors**
 (`connectors/registry.py`), all synced the same way (`kb/services/sync.py`): each
 run asks the source only for what changed since its last cursor (Drive's change
 feed, Notion's and Outline's newest edits, a Confluence CQL search on
@@ -492,9 +493,55 @@ articles and GitHub, which also refreshes captured permissions), to find deletio
   organisation. Customers whose policy blocks unverified apps need publisher
   verification on the registration. Change notifications (webhooks) are not
   used yet: libraries are polled with their delta link.
+- **Linear.** Create an OAuth application (Linear → Settings → API →
+  Applications): callback URL `<PUBLIC_URL>/api/integrations/linear/callback`;
+  put its client id and secret in `LINEAR_CLIENT_ID` / `LINEAR_CLIENT_SECRET`.
+  The sync asks for the `read` scope only, as the connecting user, so it sees
+  what they see (a private team they aren't in never appears). Teams are picked
+  on the card; their issues (with comments), projects, project updates and
+  documents sync as Markdown. Access tokens last 24 hours; the refresh token rotates on every
+  refresh and is saved before it's used. Each item's acl is its team's members.
+- **Dropbox.** Create a *Scoped access* app with *Full Dropbox* access in the
+  App Console (dropbox.com/developers/apps): scopes `account_info.read`,
+  `files.metadata.read`, `files.content.read`, `sharing.read`; redirect URI
+  `<PUBLIC_URL>/api/integrations/dropbox/callback`; put the app key and secret
+  in `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET`. Connecting asks for offline access
+  (a refresh token). A team member whose team has a team space syncs from it.
+  **Production approval:** a new app is in *development* status and can link up
+  to 500 users, but **once it links 50 users it has two weeks to be approved for
+  production, or linking freezes** (unlinking users doesn't unfreeze it). Apply
+  in the App Console (*Apply for production*) before the 50th workspace
+  connects. Folders are picked on the card; each file's acl is its shared
+  folder's members (or the owner only).
+- **Box.** Create a *Custom App* with *User Authentication (OAuth 2.0)* in the
+  Box Developer Console: redirect URI `<PUBLIC_URL>/api/integrations/box/callback`,
+  application scope *Read and write all files and folders stored in Box* (Box
+  documents it as required to download files; the sync only reads), and put the
+  client id and secret in `BOX_CLIENT_ID` / `BOX_CLIENT_SECRET`. In an enterprise
+  that disables unpublished apps, its admin enables the app first (Admin Console
+  → Integrations → Platform Apps Manager). Refresh tokens are single-use and last
+  60 days: a connection idle that long needs a reconnect. Server authentication
+  (JWT / Client Credentials Grant) isn't offered yet. Folders are picked on the
+  card; each sync reads the user's event stream, with a full walk once a day.
+- **Amazon S3** (and S3-compatible stores). Nothing is needed on the server for
+  **access keys**: a workspace admin enters the bucket, its region, an optional
+  prefix and an IAM user's access key (`s3:ListBucket` on the bucket,
+  `s3:GetObject` on its objects); an S3-compatible endpoint (MinIO, R2) must be a
+  public https address. The preferred way is an **IAM role** in the customer's
+  account that this server assumes with a per-workspace **external ID**: give the
+  server an IAM user allowed `sts:AssumeRole` (`S3_ROLE_ACCESS_KEY_ID` /
+  `S3_ROLE_SECRET_ACCESS_KEY`), its ARN in `S3_ROLE_PRINCIPAL_ARN` (shown in the
+  trust policy the form suggests), and a long random `S3_EXTERNAL_ID_SECRET`
+  (each workspace's external ID is derived from it and kept with the connection;
+  changing it changes the IDs shown for new connections only). Keys and the
+  role's hour-long credentials are encrypted with the workspace's key. Every sync
+  lists the bucket and fetches only objects whose ETag changed. S3 has no
+  per-person sharing, so its connections offer only *HR and admins* or
+  *Everyone*, never *As shared at the source*.
 - These capture source permissions (Confluence space permissions and page
   restrictions; Jira project browse grants and security levels; SharePoint item
-  permissions; Zendesk user segments; GitHub visibility and collaborators) into
+  permissions; Zendesk user segments; GitHub visibility and collaborators; Linear
+  team members; Dropbox shared-folder members; Box collaborations) into
   each item's `acl` for the per-user filtering to come. They are **not enforced** yet: who may ask is the
   connection's access level, as for every connector.
 - **Websites** must be https on a public address (checked again before every
@@ -534,6 +581,92 @@ the other periodic jobs if you split the work. Optional knobs:
 `INSIGHTS_NEVER_CITED_DAYS` (30), `INSIGHTS_STALE_DAYS` (180),
 `INSIGHTS_STALE_MIN_CITED` (3), `INSIGHTS_GAP_WINDOW_DAYS` (30),
 `INSIGHTS_GAP_MIN_SIZE` (3) and `INSIGHTS_GAP_SIMILARITY` (0.75).
+
+### Checking Linear, Dropbox, Box and S3 by hand (no accounts here: not run live)
+
+These four were built against Linear's, Dropbox's, Box's and AWS's documentation
+and tested with recorded answers (`tests/fixtures/connectors/`); no real account
+was available. Before telling a customer they work, run each list once with a
+test account, the server's OAuth app set up as above and `PUBLIC_URL` reachable
+by the provider (a tunnel on a laptop). Watch the API log for `Sync:` lines.
+
+**Linear**
+1. Integrations → Linear → *Connect Linear*: Linear's consent screen asks for
+   **read** access, as you; pick the Linear workspace, *Authorize*. Back on
+   Integrations, the team picker opens. Activity shows `integration.connect`.
+2. Tick one public team and one private team you belong to → *Save*. The card
+   shows *Syncing*, then a count of items. A private team you're **not** in is
+   not in the picker.
+3. Ask about an issue's description and one of its comments: the answer cites
+   `ENG-123: …` linking to the issue. Ask about a project's content, its latest
+   project update (cited as `<project>: update of <date>`, with its health) and
+   a document of one of its projects.
+4. Edit an issue's description in Linear, *Sync now*: the history shows an
+   incremental run with 1 upserted; the answer has the new text. Archive the
+   issue and sync: 1 deleted.
+5. Set the policy to *As shared in Linear*: a member who is in the team sees its
+   issues in answers; one who isn't, doesn't (Knowledge page shows who can see
+   each file).
+6. Wait a day (or set the token's `renew_at` back): the next sync refreshes the
+   token without a reconnect. In Linear, Settings → Applications → revoke the
+   app: the next sync shows *Access expired*, *Reconnect* works.
+7. *Disconnect*: the app disappears from Linear's authorised applications.
+
+**Dropbox** (with the app in development status: link only test accounts)
+1. *Connect Dropbox*: Dropbox's screen lists the four read scopes; *Allow*. With a
+   Dropbox Business account that has a team space, the picker shows the team
+   folders.
+2. Pick a folder with a Word file, a PDF, a Markdown file, a PNG and a 25 MB
+   PDF. After the sync: three files, one skipped (*too large*); the PNG isn't
+   listed.
+3. Share the folder with a colleague and a group; sync with *Sync permissions
+   now* under *As shared in Dropbox*: the colleague (if a member here) can ask
+   about it; someone else can't.
+4. Edit the Markdown file, move the PDF to a sub-folder, delete the Word file;
+   *Sync now*: 1 upserted, 1 deleted, the PDF still there (a move isn't a delete).
+5. Delete everything in the folder in Dropbox; sync: the card asks to confirm
+   removing them (the mass-delete guard).
+6. *Disconnect*: the app leaves Dropbox's Settings → Connected apps.
+7. Production approval: in the App Console, check *Development users* and apply
+   for production before 50 users are linked.
+
+**Box**
+1. *Connect Box*: Box's consent screen; *Grant access to Box*. (In an
+   enterprise with unpublished apps disabled, an admin enables the app in Admin
+   Console → Integrations → Platform Apps Manager first; until then Box refuses.)
+2. Pick a folder with a sub-folder and supported files. After the sync, check a
+   file deep in the sub-folder is there and downloads fine (the download needs
+   the read-and-write scope the app was configured with).
+3. Add a collaborator to the sub-folder and to one file; *Sync permissions now*
+   under *As shared in Box*: both are in the file's acl (Knowledge page). Make a
+   *People with the link* shared link: the file is for everyone. Note whether a
+   sub-folder's collaborations list includes the parent's collaborators (Box's
+   docs don't say; the connector reads every ancestor either way).
+4. Upload a new version of a file, trash another; *Sync now*: an incremental run
+   (no folder walk in the history counts) with 1 upserted, 1 deleted.
+5. Rename the sub-folder; *Sync now*: the run is a full one (a folder event).
+6. *Disconnect*: Box → Account Settings → Apps no longer lists it.
+
+**Amazon S3**
+1. Access keys: make a bucket with a prefix `handbook/` holding a PDF, a
+   Markdown file and an image; an IAM user with the form's read policy;
+   Integrations → Amazon S3 → *Connect*, *Access keys*, bucket, region, prefix,
+   key → *Connect*. The card syncs the two readable files; the image is skipped
+   silently. A wrong region or bucket says so in the form.
+2. Role: set `S3_ROLE_*` and `S3_EXTERNAL_ID_SECRET`, reopen the form: the *IAM
+   role* tab shows the external ID and the trust policy. Create the role with
+   them and the read policy, paste its ARN → *Connect*. Change the trust
+   policy's external ID: the next sync shows *Access expired*.
+3. Edit the Markdown object, delete the PDF; *Sync now*: 1 upserted (only it was
+   fetched again), 1 deleted.
+4. Pick a sub-folder on the card: only it is synced; objects outside it are
+   removed (that's the admin's choice, so no confirmation).
+5. The card's *Who can ask* offers HR and admins / Everyone only, with the note
+   that S3 has no per-person sharing.
+6. An S3-compatible store (MinIO on a public https address): *Access keys* with
+   the endpoint; a private address is refused.
+7. *Disconnect*: the credentials are gone from the database (and the role
+   remains in the customer's account until they delete it).
 
 ## Slack app
 
@@ -1164,6 +1297,114 @@ day; past the **hard** cap every question, on every surface, is answered with a 
 and a plain sentence until midnight UTC. Spend is the question log's tokens at list
 prices, as Insights shows it. Alerts the tenant is told about are also an
 `abuse.alert` webhook event.
+
+## Sign-up, trials and billing
+
+### Sign-up methods
+
+`WORKSPACE_SIGNUP=on` lets a new company make its own workspace from the sign-in
+page. The founder proves the company owns its email domain first, in one of three
+ways, each offered once it's set up (`WORKSPACE_SIGNUP_METHODS` narrows them):
+
+- **Google Workspace**: the Google client (`GOOGLE_CLIENT_ID`); the account's `hd`
+  must be the email's domain.
+- **Microsoft 365**: see below.
+- **Email and DNS**: anyone else. The founder gets a link, opens it, and is shown a
+  TXT record (`_knowledge-assistant.<domain>`, `kb-verify=...`) to add at their DNS
+  host. No workspace exists until the record checks out; then it's made and the
+  founder sets a password. Personal mail domains (gmail.com, outlook.com, ...) are
+  refused, and one address can start at most 3 an hour. The link needs real email
+  (`MAIL_BACKEND`, above), not `console`, in production.
+
+`WORKSPACE_SIGNUP_CODES` still gates any of them (each code makes one workspace).
+Every new workspace starts with an onboarding checklist on its Access screen,
+worked out from its data (domain verified, documents connected, first index, first
+cited answer, 3 colleagues signed in), and an "ask your first question" screen with
+an optional sample HR handbook that its admin removes in one click.
+
+### Microsoft 365 sign-up
+
+1. Entra admin center → App registrations → New registration. Supported account
+   types: **Accounts in any organizational directory (multitenant)**. Redirect URI
+   (Web): `<PUBLIC_URL>/api/auth/m365/callback`.
+2. API permissions: Microsoft Graph, delegated **User.Read** (the default). No admin
+   consent is needed in most tenants.
+3. Certificates & secrets → New client secret. Set `M365_CLIENT_ID` (the
+   application ID) and `M365_CLIENT_SECRET`, and restart.
+
+The founder's user principal name must be on a domain their tenant has verified
+(Graph's `organization` resource); guests are refused. Members of a workspace made
+this way sign in with "Microsoft 365" on the sign-in page.
+
+### Billing (Stripe)
+
+Off unless `BILLING=on`, and test mode only: a live key (`sk_live_`, `rk_live_`) is
+refused unless `STRIPE_ALLOW_LIVE=on`. With billing off nothing is limited and the
+Plan & billing screen isn't shown.
+
+With it on:
+
+- A workspace that signs up gets a `TRIAL_DAYS` (default 14) trial of the Trial
+  plan, with a countdown banner and emails 7, 3 and 1 days before it ends. After
+  it the workspace is **read-only** (people sign in, read and export; nothing new
+  is asked, uploaded or changed). 30 days after the trial ended it's deleted
+  through the workspace lifecycle (its admins are told and can still cancel).
+  Operators extend a trial in the console (row menu, Extend trial; audited).
+- Workspaces made before billing, or by the operator, have no plan and are never
+  limited until an operator gives them one (Extend trial, then the owner picks a
+  plan). Give them a billing owner first (row menu, Billing owner).
+- Plans are rows in the `plans` table (seeded: Trial, Starter, Business,
+  Enterprise), each with limits (questions a month, documents, storage, connectors)
+  and features (own sign-in provider, SCIM, audit export, API, Slack, MCP, Teams).
+  A feature the plan lacks answers 402 with what the plan includes; a limit is
+  explained where it blocks (the chat says "Your plan's limit"). They compose with
+  the spend caps above: whichever is reached first refuses.
+- Seats are members not turned off who signed in or asked something in the last 30
+  days. Checkout charges for the seats in use when it starts.
+- Only a **billing owner** (the founder, and whoever an owner adds) starts Checkout
+  or opens the Customer Portal; other admins see the screen, support never changes
+  it.
+
+Stripe setup (in test mode):
+
+1. Products: one per plan sold, each with a monthly recurring per-unit price. Put
+   each price ID in `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_BUSINESS`,
+   `STRIPE_PRICE_ENTERPRISE` (a plan without one shows "Not on sale here yet").
+2. Developers → API keys: `STRIPE_SECRET_KEY=sk_test_...` (or a restricted key with
+   Checkout Sessions, Customer Portal and Customers write).
+3. Developers → Webhooks → Add endpoint `<PUBLIC_URL>/api/billing/webhook` with
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted` and
+   `invoice.payment_failed`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
+   Every event's signature is checked, and each is applied once.
+4. Settings → Billing → Customer portal: allow changing the plan (the same
+   prices), the quantity, the payment method and cancelling.
+5. Optional: `STRIPE_TAX=on` once Stripe Tax is set up.
+
+### Checking Stripe test mode by hand
+
+Not run live here (no Stripe account); the tests replay recorded fixtures
+(`tests/fixtures/stripe/`).
+
+1. `BILLING=on`, `WORKSPACE_SIGNUP=on` and the Stripe settings above; sign up a
+   workspace. The banner shows 14 days left; Plan & billing shows the Trial plan,
+   usage against its limits and 1 seat.
+2. As its founder, Choose Business: Stripe Checkout opens for 1 seat. Pay with
+   `4242 4242 4242 4242`, any future date and CVC. Back on Plan & billing, the plan
+   is Business, active, and the banner is gone (after the webhook arrives:
+   `stripe listen --forward-to <PUBLIC_URL>/api/billing/webhook` on a laptop).
+3. "Payment details and invoices" opens the Customer Portal; cancel the
+   subscription there. The workspace turns read-only (a 402 on asking, with the
+   reason).
+4. Pick a plan again, then pay with `4000 0000 0000 0341` (attaches, then fails)
+   at the next renewal (Stripe test clock): the status is past due, with a warning,
+   and questions still work.
+5. A second admin who isn't an owner sees the screen but can't choose a plan
+   (403). An owner adds them under Billing owners; now they can.
+6. `curl -X POST <PUBLIC_URL>/api/billing/webhook -d '{}'` answers 400 (no
+   signature); `stripe trigger checkout.session.completed` is accepted.
+7. In the operator console, extend an expired trial: the workspace is writable
+   again and its scheduled deletion is cancelled; both are in its audit log.
 
 ## Answer cache, languages and personal data
 

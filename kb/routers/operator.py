@@ -12,6 +12,10 @@ chain (audit_store.PLATFORM).
     GET  /api/operator/workspaces           every workspace, with seats and usage
     POST /api/operator/workspaces/{ws}/suspend {reason} | /unsuspend
     POST /api/operator/workspaces/{ws}/reindex | /reset-rate-limits
+    POST /api/operator/workspaces/{ws}/extend-trial {days}  more trial (billing.py)
+    POST /api/operator/workspaces/{ws}/billing-owner {email}  who owns its billing
+    POST /api/operator/workspaces/{ws}/claim-code {domain} -> a one-time code to claim it
+                                            with Google Workspace (join_store.py)
     POST /api/operator/workspaces/{ws}/support-session  -> a one-time code (only while
                                             the workspace's admin allows support)
     GET  /api/operator/workspaces/{ws}/audit   its audit log
@@ -32,17 +36,20 @@ from pydantic import BaseModel, Field
 import abuse_store
 import api_keys_store
 import audit_store
+import billing_store
 import db
+import join_store
 import lifecycle_store
 import members_store
 import sessions_store
 import sso
+import sso_setup
 import workspaces
 from kb import operators, rate_limit
 from kb.audit import audited, client_ip
 from kb.deps import public_url
 from kb.operators import require_operator
-from kb.services import abuse, indexing, spend
+from kb.services import abuse, billing, indexing, spend
 from kb.services import operator as console
 from kb.services.sign_in import BROWSER_KEY, ProviderFailed, code_for, mark_browser, \
     provider_answer
@@ -214,6 +221,68 @@ def operator_reset_rate_limits(ws: str, operator=Depends(require_operator),
     n = rate_limit.reset_workspace(ws, people, keys)
     _record(audit, operator, ws, {"counters": n})
     return {"ok": True, "counters": n}
+
+
+class ExtendTrialIn(BaseModel):
+    days: int = Field(ge=1, le=90)
+
+
+@router.post("/api/operator/workspaces/{ws}/extend-trial")
+def operator_extend_trial(ws: str, body: ExtendTrialIn, operator=Depends(require_operator),
+                          audit=audited("operator.extend_trial")):
+    """More trial for a workspace: from its end, or from now if it has ended (which
+    lifts read-only, and cancels the deletion an expired trial asked for)."""
+    ws = _workspace(ws)
+    ends = billing.extend_trial(ws, body.days)
+    _record(audit, operator, ws, {"days": body.days, "trial_ends_at": ends})
+    return {"ok": True, "trial_ends_at": ends}
+
+
+class OwnerIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+@router.post("/api/operator/workspaces/{ws}/billing-owner")
+def operator_billing_owner(ws: str, body: OwnerIn, operator=Depends(require_operator),
+                           audit=audited("operator.billing_owner")):
+    """Make a member the owner of the workspace's billing (a workspace made before
+    billing, or whose owner left)."""
+    ws = _workspace(ws)
+    member = members_store.get(body.email)
+    if not member or member["workspace"] != ws or member["disabled"]:
+        raise HTTPException(404, "That person isn't a member of this workspace.")
+    billing_store.add_owner(ws, member["username"], operator["username"])
+    _record(audit, operator, ws, {"owner": member["username"]})
+    return {"ok": True}
+
+
+class ClaimCodeIn(BaseModel):
+    domain: str = Field(min_length=3, max_length=260)
+
+
+@router.post("/api/operator/workspaces/{ws}/claim-code")
+def operator_claim_code(ws: str, body: ClaimCodeIn, operator=Depends(require_operator),
+                        audit=audited("operator.claim_code")):
+    """A one-time code someone with Google Workspace on `domain` can claim the
+    workspace with (join_store.py): only for one with no verified domain and no
+    admin who can sign in. Shown once; any earlier unused code stops working."""
+    ws = _workspace(ws)
+    try:
+        domain = sso_setup.normalize_domain(body.domain)
+    except sso_setup.SetupError as e:
+        raise HTTPException(400, str(e))
+    try:
+        row, code = join_store.new_claim_code(ws, domain, operator["username"])
+    except join_store.ClaimRefused as e:
+        raise HTTPException(409, {"claim_verified": "It already has a verified domain: its "
+                                                    "own sign-in decides who gets in.",
+                                  "claim_admin": "It still has an admin who can sign in.",
+                                  "claim_taken": "Another workspace has verified that domain.",
+                                  "workspace_closed": "It's suspended or being deleted."}
+                            .get(e.reason, "It can't be claimed."))
+    _record(audit, operator, ws, {"domain": domain, "claim_code": row["id"],
+                                  "expires_at": row["expires_at"]})
+    return {"code": code, "domain": domain, "expires_at": row["expires_at"]}
 
 
 @router.post("/api/operator/workspaces/{ws}/support-session")

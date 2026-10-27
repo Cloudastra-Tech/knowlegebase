@@ -4,6 +4,7 @@ import { KeyRound, MailPlus, MoreHorizontal, Search } from "lucide-react"
 import { toast } from "sonner"
 
 import { InviteDialog, PendingInvites } from "@/components/invites"
+import { PendingRequests } from "@/components/join-requests"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -347,6 +348,7 @@ export function MembersView({ me }: { me: string }) {
           </Button>
         </div>
       </div>
+      <PendingRequests />
       <PendingInvites />
       <InviteDialog open={inviting} onOpenChange={setInviting} />
       <div className="mt-4 divide-y rounded-xl border">

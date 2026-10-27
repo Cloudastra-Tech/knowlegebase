@@ -21,6 +21,8 @@ Manage accounts and domains from a terminal:
     python auth.py domain add <domain> [--workspace <slug>]          # single sign-on for @domain
     python auth.py domain remove <domain>
     python auth.py domains
+    python auth.py joining <auto|request|invite_only> [--workspace <slug>]  # see join_store.py
+    python auth.py claim-code <domain> --workspace <slug>  # a one-time code to claim it
 `role` also works for someone who hasn't signed in yet: they're added to the
 workspace (default: "default") and get the role from their first sign-in.
 A role set here overrides the one their provider's groups give them; `groups`
@@ -200,6 +202,27 @@ def _cli(args):
         for owner in sorted(owners):
             _audit(owner, "domain.remove", domain, target_type="domain")
         print(f"Removed {args[2]}. People on it are signed out on their next request.")
+    elif len(args) == 2 and args[0] == "joining":
+        import join_store
+        if args[1] not in join_store.POLICIES:
+            sys.exit(f"Joining policy must be one of: {', '.join(join_store.POLICIES)}.")
+        join_store.set_workspace_policy(workspace, args[1])
+        _audit(workspace, "sign_in.joining", workspace, {"join_policy": args[1]},
+               target_type="workspace")
+        print(f"Joining policy of {workspace}: {args[1]}.")
+    elif len(args) == 2 and args[0] == "claim-code":
+        import join_store
+        domain = args[1].strip().lower()
+        try:
+            row, code = join_store.new_claim_code(workspace, domain, "cli")
+        except join_store.ClaimRefused as e:
+            sys.exit(f"{workspace} can't be claimed now ({e.reason}): it has a verified "
+                     "domain or an admin who can sign in, or it's suspended.")
+        _audit(workspace, "operator.claim_code", workspace,
+               {"domain": domain, "claim_code": row["id"]}, target_type="workspace")
+        print(f"Claim code for {workspace} (Google Workspace on {domain}), works once, "
+              f"for {join_store.CLAIM_CODE_HOURS} hours:\n{code}\n"
+              "They open /claim on the site, enter it and sign in with Google.")
     elif args == ["domains"]:
         domains = members_store.list_domains()
         for d in domains:

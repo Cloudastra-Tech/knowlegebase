@@ -2,3 +2,4 @@
 2082b1dd356da7b6f9ec88bdda66cbb8525a9b59:tests/test_slack.py:generic-api-key:138
 ffffe1eafac7175be989f09ffe0dc46f10c87879:secret_box.py:generic-api-key:32
 e6eec2550403b074c98b58aec7a3e8a3f476eceb:extension/src/api.test.ts:generic-api-key:15
+c79dcf7456a258030400ae10cca97cb338d89745:tests/fixtures/connectors/s3/full.json:generic-api-key:32

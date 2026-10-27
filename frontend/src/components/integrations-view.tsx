@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
+  Archive,
   FileText,
   FolderCog,
   Globe,
@@ -15,11 +16,13 @@ import {
   Users,
 } from "lucide-react"
 import {
+  siBox,
   siConfluence,
   siDropbox,
   siGithub,
   siGoogledrive,
   siJira,
+  siLinear,
   siNotion,
   siOutline,
   siZendesk,
@@ -40,6 +43,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
 import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
+import { S3ConnectDialog } from "@/components/s3-connect-dialog"
 import { SlackAppCard } from "@/components/slack-app-card"
 import { SurfaceCards } from "@/components/surface-cards"
 import { SyncHistorySheet } from "@/components/sync-history-sheet"
@@ -65,6 +69,8 @@ const BRANDS: Record<string, SimpleIcon> = {
   github: siGithub,
   dropbox: siDropbox,
   zendesk: siZendesk,
+  linear: siLinear,
+  box: siBox,
 }
 const LETTERS: Record<string, string> = { sharepoint: "S", slack: "#" }
 
@@ -78,6 +84,7 @@ function ConnectorIcon({ item }: { item: Integration }) {
     )
   if (item.id === "uploads") return <FileText className="size-5" />
   if (item.id === "website") return <Globe className="size-5" />
+  if (item.id === "s3") return <Archive className="size-5" />
   if (LETTERS[item.id]) return <span className="text-xs font-semibold">{LETTERS[item.id]}</span>
   return <Plug className="size-5" />
 }
@@ -229,6 +236,12 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
           </Label>
         </div>
       </RadioGroup>
+      {!offered.includes("source") && item.source_policy_note && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Users className="mt-px size-3.5 shrink-0" />
+          {item.source_policy_note}
+        </p>
+      )}
       {item.access_locked && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <Lock className="mt-px size-3.5 shrink-0" />
@@ -446,7 +459,9 @@ function ConnectorCard({
                     ? "Nothing is synced yet. Choose what your team should search."
                     : item.id === "zendesk"
                       ? "Every published Help Center article is synced."
-                      : "Everything shared with the integration is synced."}
+                      : item.id === "s3"
+                        ? "Every readable file in the bucket (under its prefix) is synced."
+                        : "Everything shared with the integration is synced."}
                 </p>
                 <Button size="sm" onClick={() => setPickerOpen(true)}>
                   <FolderCog /> {item.picker_required ? "Choose what to sync" : "Narrow it down"}
@@ -584,8 +599,8 @@ function ConnectorCard({
         </>
       )}
 
-      {item.auth && item.auth !== "oauth" && (
-        <IntegrationConnectDialog
+      {item.id === "s3" ? (
+        <S3ConnectDialog
           item={item}
           open={formOpen}
           onOpenChange={setFormOpen}
@@ -594,6 +609,19 @@ function ConnectorCard({
             if (choose) setPickerOpen(true)
           }}
         />
+      ) : (
+        item.auth &&
+        item.auth !== "oauth" && (
+          <IntegrationConnectDialog
+            item={item}
+            open={formOpen}
+            onOpenChange={setFormOpen}
+            onConnected={(choose) => {
+              onChange()
+              if (choose) setPickerOpen(true)
+            }}
+          />
+        )
       )}
     </Card>
   )

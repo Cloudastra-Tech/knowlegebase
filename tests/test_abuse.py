@@ -96,7 +96,9 @@ def test_many_workspaces_from_one_address():
     signups("203.0.113.9", 3, NOW - 3600)
     signups("198.51.100.1", 2, NOW - 3600)
     signups("192.0.2.7", 5, NOW - 3 * 86400)                   # not in the last day
-    ips = [s for w, kind, _, s, _ in abuse.checks(NOW, LIMITS) if kind == "signups_per_ip"]
+    seeded = ("203.0.113.9", "198.51.100.1", "192.0.2.7")      # other tests sign up too
+    ips = [s for w, kind, _, s, _ in abuse.checks(NOW, LIMITS)
+           if kind == "signups_per_ip" and s in seeded]
     assert ips == ["203.0.113.9"]
 
 

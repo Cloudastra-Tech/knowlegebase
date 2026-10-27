@@ -21,7 +21,8 @@ from kb.audit import audited
 from kb.deps import current_user, public_url, public_user
 from kb.rate_limit import rate_limit
 from kb.services.sign_in import BROWSER_KEY
-from kb.services.signup import signup_codes, signup_on
+from kb.services import billing
+from kb.services.signup import signup_codes, signup_methods, signup_on
 from kb.settings import SESSION_SECONDS
 
 router = APIRouter()
@@ -49,7 +50,8 @@ def auth_providers():
         email_sso = False
     return {"providers": [{"id": p, "name": sso.label(p)} for p in sso.configured()],
             "password": auth.password_login_on(), "email_sso": email_sso,
-            "signup": signup_on(), "signup_invite": bool(signup_codes())}
+            "signup": signup_on(), "signup_invite": bool(signup_codes()),
+            "signup_methods": signup_methods()}
 
 
 @router.post("/api/auth/login")
@@ -78,6 +80,7 @@ async def login(body: LoginIn, request: Request):
         token = secrets.token_urlsafe(32)
         sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
         members_store.log_event(user["workspace"], "password", user["username"], "signed_in")
+        members_store.touch_login(user["username"])
         return {"token": token, "user": _shown(user)}
     if member:                                 # right password, but SSO is required
         members_store.log_event(member["workspace"], "password", member["username"],
@@ -166,4 +169,19 @@ def _shown(user):
     """The user as the site gets it: with where their workspace is in its life
     (lifecycle_store: being deleted shows a banner)."""
     st = lifecycle_store.state(user["workspace"])
-    return {**user, "workspace_status": st["status"], "deleting_at": st["deleting_at"]}
+    return {**user, "workspace_status": st["status"], "deleting_at": st["deleting_at"],
+            "billing": _billing(user)}
+
+
+def _billing(user):
+    """With BILLING=on, where the workspace's plan and trial stand (the trial banner),
+    and whether they may open Plan & billing; None with it off."""
+    if not billing.billing_on():
+        return None
+    st = billing.state(user["workspace"])
+    return {"plan": st["plan"]["name"] if st else None, "status": st["status"] if st else None,
+            "trial_ends_at": st["trial_ends_at"] if st else None,
+            "trial_days_left": st["trial_days_left"] if st else None,
+            "read_only": bool(st and st["read_only"]), "expired": bool(st and st["expired"]),
+            "owner": billing.is_owner(user),
+            "can_view": user.get("role") == "admin" or billing.is_owner(user)}

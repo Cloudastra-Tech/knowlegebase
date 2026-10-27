@@ -23,6 +23,8 @@ from kb.services.sign_in import (SSO_TESTS_SESSION_KEY, TEST_STATE_PREFIX, Provi
                                  code_for, connection_or_none, finish_sso_test, log_failure,
                                  login_error, mark_browser, provider_answer, sso_test,
                                  test_failure, usable_connection)
+from kb.services import m365
+from kb.services.joining import CLAIM_KEY, CLAIM_SECONDS, finish_claim
 from kb.services.signup import SIGNUP_KEY, SIGNUP_SECONDS, finish_signup, signup_on
 
 router = APIRouter()
@@ -38,6 +40,7 @@ async def sso_start(provider: str, request: Request):
     if not c:
         return RedirectResponse("/#login?error=sso_unavailable")
     request.session.pop(SIGNUP_KEY, None)
+    request.session.pop(CLAIM_KEY, None)
     mark_browser(request)
     try:
         return await c.authorize_redirect(
@@ -54,7 +57,12 @@ async def sso_callback(provider: str, request: Request):
     if not c:
         return RedirectResponse("/#login?error=sso_unavailable")
     signup = request.session.pop(SIGNUP_KEY, None)
-    if provider == "google" and signup and time.time() - signup.get("at", 0) < SIGNUP_SECONDS:
+    claim = request.session.pop(CLAIM_KEY, None)
+    if (provider == "google" and claim
+            and time.time() - claim.get("at", 0) < CLAIM_SECONDS):   # routers/claim.py
+        return await finish_claim(c, request, claim["code"])
+    if (provider == "google" and signup and signup.get("method", "google") == "google"
+            and time.time() - signup.get("at", 0) < SIGNUP_SECONDS):
         return await finish_signup(c, request, signup["name"], signup.get("code"))
     return await _finish_sso(provider, c, request, lambda claims: sso.user_for(provider, claims))
 
@@ -152,7 +160,9 @@ def _route_for(email):
     return {"workspace": {"google": "google" in sso.configured(),
                           "password": auth.password_login_on()
                           and not members_store.requires_sso(workspace),
-                          "roles_from": conn["label"] if conn and conn["enabled"] else None}}
+                          "roles_from": conn["label"] if conn and conn["enabled"] else None,
+                          # any company's Microsoft 365 (kb/services/m365.py), when set up
+                          **({"microsoft365": True} if m365.configured() else {})}}
 
 
 @router.get("/api/auth/sso/c/{cid}/start")

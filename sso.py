@@ -11,6 +11,9 @@ That decision comes from members_store.py (the database; manage it with
   * an email on a domain a workspace has VERIFIED signs in to that workspace
   * their role is the one on their member row: public unless someone set it
     (`python auth.py role priya@cloudastra.in hr`); new people start as public
+  * someone new joins under the workspace's JOINING POLICY (join_store.py): added
+    straight away (auto), asks an admin (request), or only with an invite or
+    SCIM (invite_only); every sign-in that can add someone goes through admit()
   * anyone else is turned away — having an account at the provider is not enough
   * it's checked again on every request (api.py), so changes apply straight away
 
@@ -46,6 +49,7 @@ import time
 
 from authlib.integrations.starlette_client import OAuth
 
+import join_store
 import lifecycle_store
 import members_store
 import url_guard
@@ -161,9 +165,9 @@ def connections_for_email(email):
 
 # ---- Who gets in -------------------------------------------------------------
 def identity(provider, claims):
-    """(email, name, org) from a VERIFIED ID token. `org` is the Google Workspace
-    the account belongs to (None for other providers). Refuses addresses the
-    provider doesn't vouch for."""
+    """(email, name, org) from a VERIFIED ID token (Microsoft 365: what Graph said,
+    kb/services/m365.py). `org` is the Google Workspace the account belongs to
+    (None for other providers). Refuses addresses the provider doesn't vouch for."""
     org = None
     if provider == "google":
         email = (claims.get("email") or "").strip().lower()
@@ -182,6 +186,15 @@ def identity(provider, claims):
         # preferred_username is the UPN, which Entra only allows on the tenant's
         # verified domains. The `email` claim isn't verified, so it's never used.
         email = (claims.get("preferred_username") or "").strip().lower()
+    elif provider == "microsoft365":
+        # Any company's Microsoft 365 (kb/services/m365.py): Microsoft Graph said who
+        # they are (their UPN, which Entra allows only on its tenant's verified
+        # domains) and which domains their tenant has verified with Microsoft.
+        if claims.get("guest"):
+            raise NotAllowed("not_workspace")
+        email = (claims.get("email") or "").strip().lower()
+        if email.rpartition("@")[2] not in (claims.get("verified_domains") or ()):
+            raise NotAllowed("not_workspace")
     else:
         # Any other OpenID Connect provider: only an address it has verified.
         if str(claims.get("email_verified")).lower() != "true":
@@ -230,21 +243,35 @@ def check_open(workspace, email):
 
 
 def _added(member, via):
-    """A member this sign-in just added (their row was made by it): the
-    member.added webhook (kb/services/webhooks.py)."""
+    """A member this sign-in just added (their row was made by it, under the
+    workspace's 'auto' joining policy): in its audit log, and the member.added
+    webhook (kb/services/webhooks.py)."""
     if member.get("created_at") is not None and member["created_at"] == member.get(
             "last_login_at"):
+        import kb.audit
         from kb.services import webhooks
+        kb.audit.record(None, member["workspace"], "member.join", member["username"], "member",
+                        member["username"], {"via": via, "role": member["role"]})
         webhooks.member_added(member["workspace"], member["username"], member["role"], via)
+
+
+def admit(workspace, email, name, method):
+    """May they be added to the workspace at this sign-in? The joining policy
+    (kb/services/joining.py: auto, request or invite-only; members, invites and
+    SCIM always in). Raises NotAllowed."""
+    from kb.services import joining
+    return joining.admit(workspace, email, name, method)
 
 
 def user_for(provider, claims):
     """The session user for someone the provider just signed in. Adds them as a
-    member the first time."""
+    member the first time, if the workspace's joining policy lets them in."""
     email, name, org = identity(provider, claims)
     workspace = _workspace_for(email, org)
     if workspace:
         check_open(workspace, email)
+        admit(workspace, email, name, {"microsoft365": "Microsoft 365"}.get(provider)
+              or label(provider))
     member = members_store.record_sso_login(email, name, workspace) if workspace else None
     if not member:
         raise NotAllowed("not_allowed")
@@ -333,6 +360,9 @@ def try_connection(conn, claims):
             "role": override or group_role or "public",
             "role_source": "override" if override else "groups" if group_role else "default",
             "groups": found[0] if found else None, "new_member": member is None,
+            # What the joining policy would do with someone new (join_store.py)
+            "join_policy": None if member else join_store.policy_for(
+                conn["workspace"], email.rpartition("@")[2]),
             "sets_roles": sets_roles}
 
 
@@ -340,6 +370,7 @@ def user_for_connection(conn, claims):
     """The session user for someone a workspace's own provider just signed in."""
     email, name = check_connection_identity(conn, claims)
     check_open(conn["workspace"], email)
+    admit(conn["workspace"], email, name, conn["label"])
     member = members_store.record_sso_login(email, name, conn["workspace"],
                                             groups=groups_from(conn, claims),
                                             source=conn["id"])

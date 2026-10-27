@@ -7,6 +7,8 @@ import {
   AccessScreen,
   ApiKeysScreen,
   AssistantScreen,
+  BillingScreen,
+  ClaimPage,
   DigestsScreen,
   DocsScreen,
   ExtensionConnectScreen,
@@ -15,6 +17,7 @@ import {
   InsightsScreen,
   IntegrationsScreen,
   InvitePage,
+  JoinRequestedPage,
   KnowledgeScreen,
   OperatorScreen,
   PassageScreen,
@@ -22,6 +25,7 @@ import {
   Root,
   SharedScreen,
   SignInPage,
+  SignupVerifyPage,
   SpacesScreen,
   SsoReturnPage,
   UnsubscribePage,
@@ -53,6 +57,10 @@ import {
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)
+//   /billing           Plan & billing (BILLING=on): admins see it, billing owners change it
+//   /signup/verify     ?token=: an email sign-up's link, then its DNS record
+//   /join-requested    a sign-in that asked to join (the workspace asks its admins first)
+//   /claim             claim a workspace nobody can administer (?error=... after a failed one)
 //   /operator          the platform operators' console (their own sign-in, not a member's)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
@@ -76,6 +84,9 @@ export const routes: RouteObject[] = [
               { path: "signup", element: null },
             ],
           },
+          { path: "signup/verify", Component: SignupVerifyPage },
+          { path: "join-requested", Component: JoinRequestedPage },
+          { path: "claim", Component: ClaimPage },
           { path: "sso", Component: SsoReturnPage },
           { path: "invite/:token", Component: InvitePage },
           { path: "unsubscribe/:token", Component: UnsubscribePage },
@@ -93,6 +104,7 @@ export const routes: RouteObject[] = [
               { path: "spaces/:spaceId", Component: SpacesScreen },
               { path: "prompts", Component: PromptsScreen },
               { path: "digests", Component: DigestsScreen }, // everyone's own digests
+              { path: "billing", Component: BillingScreen },
               { path: "extension/connect", Component: ExtensionConnectScreen },
               {
                 Component: HrOnly,

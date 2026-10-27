@@ -9,6 +9,7 @@ import { AssistantMessage, BranchNav, type AnswerActions, type Message } from "@
 import { Composer } from "@/components/chat-composer"
 import { ChatSidebar } from "@/components/chat-sidebar"
 import { LoggingNotice } from "@/components/logging-notice"
+import { SampleDocsToggle } from "@/components/onboarding-checklist"
 import { usePromptPicker } from "@/components/prompt-menu"
 import { ShareDialog } from "@/components/share-dialog"
 import { SpaceChip } from "@/components/space-switcher"
@@ -178,6 +179,9 @@ export function ChatView({ role }: { role: Role }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastAnswerRef = useRef<HTMLDivElement>(null)
   const knowledge = useQuery({ ...queries.knowledge(), meta: { silent: true } })
+  // Someone who hasn't asked anything yet: "ask your first question" (the server's
+  // suggestions, from titles they may read), and HR the sample documents.
+  const welcome = useQuery({ ...queries.onboarding(), meta: { silent: true } }).data
   const list = useQuery(queries.conversations())
   // The workspace's admin may hide the steps panel from members (HR and admins keep it).
   const account = useUser()
@@ -504,6 +508,7 @@ export function ChatView({ role }: { role: Role }) {
       }))
       // The versions beside it ("‹ 2 / 3 ›") come from the saved conversation.
       if (savedIn) reload(savedIn).catch(() => {})
+      if (welcome?.first_run) void queryClient.invalidateQueries({ queryKey: ["onboarding"] })
     } catch (err) {
       if (isAbort(err) || controller.signal.aborted) {
         // Stopped: keep what was written (the server saves it the same way), and
@@ -511,9 +516,15 @@ export function ChatView({ role }: { role: Role }) {
         ended = "stopped"
         update((m) => ({ ...m, state: "stopped", streaming: false, steps: allDone(m) }))
         requestAnimationFrame(() => lastAnswerRef.current?.focus())
-      } else if (err instanceof ApiError && err.status === 429) {
-        // Nothing was asked: give the question back to send again in a moment.
-        update((m) => ({ ...m, limited: err.message, streaming: false }))
+      } else if (err instanceof ApiError && (err.status === 429 || err.status === 402)) {
+        // Nothing was asked: give the question back to send again in a moment (a
+        // rate limit), or once the plan allows it (402: the plan's limit, BILLING=on).
+        update((m) => ({
+          ...m,
+          limited: err.message,
+          limitedBy: err.status === 402 ? "plan" : "rate",
+          streaming: false,
+        }))
         if (!target && !again.edit) setInput((current) => current || q)
       } else {
         ended = "error"
@@ -587,7 +598,13 @@ export function ChatView({ role }: { role: Role }) {
   }
 
   // Starters come from the whole workspace: not offered inside a space.
-  const starters = space ? [] : startersFrom(knowledge.data?.items)
+  const firstRun = !space && !!welcome?.first_run
+  const starters = space
+    ? []
+    : firstRun && welcome.suggestions.length
+      ? welcome.suggestions
+      : startersFrom(knowledge.data?.items)
+  const offerSample = firstRun && role === "hr" && account.role !== "public"
   const outline = knowledge.data?.outline ?? false
   const empty = messages.length === 0 && !opening
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
@@ -639,7 +656,11 @@ export function ChatView({ role }: { role: Role }) {
             {empty && (
               <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
                 <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                  {space ? `Ask in ${spaceLabel(space)}` : "Ask your company docs"}
+                  {space
+                    ? `Ask in ${spaceLabel(space)}`
+                    : firstRun
+                      ? "Ask your first question"
+                      : "Ask your company docs"}
                 </h2>
                 <p className="mt-2 max-w-md text-sm text-muted-foreground">
                   {space?.kind === "personal"
@@ -654,7 +675,12 @@ export function ChatView({ role }: { role: Role }) {
                   <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
                 </p>
                 <LoggingNotice />
-                <div className="mt-8 grid w-full max-w-xl gap-2">
+                <div className="mt-8 grid w-full max-w-xl gap-2" aria-label="Suggested questions">
+                  {firstRun && (
+                    <p className="text-left text-xs font-medium text-muted-foreground">
+                      Try one of these, from your workspace's documents, or type your own.
+                    </p>
+                  )}
                   {starters.map((s) => (
                     <Button
                       key={s}
@@ -666,6 +692,16 @@ export function ChatView({ role }: { role: Role }) {
                     </Button>
                   ))}
                 </div>
+                {offerSample && (welcome.sample.available || welcome.sample.on) && (
+                  <div className="mt-6 flex max-w-xl flex-col items-center gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      {welcome.sample.on
+                        ? "The sample HR handbook is in. Remove it before colleagues ask."
+                        : "No documents yet? Try it on a made-up HR handbook first."}
+                    </p>
+                    <SampleDocsToggle sample={welcome.sample} />
+                  </div>
+                )}
               </div>
             )}
 

@@ -1,0 +1,24 @@
+Northwind Labs Employee Handbook (SAMPLE): Working at Northwind
+
+This is a sample document for trying the Knowledge assistant. Northwind Labs is a made-up company.
+
+Working hours and remote work
+Core hours are 10:00 to 16:00 in your own time zone; outside them, work when it suits you and your team. Northwind is hybrid: teams agree which day or days they meet in the office, usually one a week. Working from another country for more than 4 weeks a year needs approval from People Ops first, for tax reasons.
+
+Your first week
+On day one you get your laptop, your accounts and a buddy from another team. IT sends the laptop to remote starters three days before they start. Complete the security training in your first week; access to customer data is turned on only after it.
+
+Laptops and IT help
+Everyone gets a laptop, replaced every three years. For help, post in the #it-help channel or email it@northwind.example; urgent problems (a lost or stolen laptop) go to the IT phone line, +1 555 0100, at any time. Report a lost laptop within 24 hours.
+
+Benefits
+Health insurance for you and your family, from your first day.
+A pension or retirement plan with a 5% employer contribution.
+A learning budget of 1,000 USD a year for courses, books and conferences.
+A wellbeing allowance of 50 USD a month (gym, therapy apps, sports clubs).
+
+Performance and pay
+Reviews happen twice a year, in March and September. Pay is reviewed once a year, in March, against the published salary bands. Promotions can happen at either review.
+
+Who to ask
+People Ops (HR): people@northwind.example. Payroll: payroll@northwind.example. IT: it@northwind.example. Your manager is always a good first stop.

@@ -106,6 +106,9 @@ FINGERPRINT = fingerprint()
 # re-tagging, with no embedding call.
 CHUNK_META = 3
 UPLOADS = "Company documents"     # the provider of files uploaded on the Documents screen
+# The sample documents a new workspace can try the assistant with (kb/services/onboarding.py)
+SAMPLES = "Sample documents"
+SAMPLE_FOLDER = "sample"
 
 
 def _embeddings():
@@ -185,7 +188,8 @@ def doc_meta(docs_folder, key, connector_access, doc_info=None, doc_acls=None):
         level = (connector_access or {}).get(provider, "restricted")
     else:
         level = "restricted" if "/restricted/" in "/" + key else "public"
-        meta.update(title=os.path.basename(key), provider=UPLOADS)
+        meta.update(title=os.path.basename(key),
+                    provider=SAMPLES if key.startswith(SAMPLE_FOLDER + "/") else UPLOADS)
     acl = (doc_acls or {}).get(key)
     meta["acl"] = access.clean_acl(acl) if acl else access.level_acl(level)
     meta["access"] = access.level_of_acl(meta["acl"])

@@ -39,6 +39,7 @@ from kb import logs
 from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
 from kb.routers.admin_sign_in import GroupRule
+from kb.services import billing
 from kb.services import scim as protocol
 from kb.services import webhooks
 from kb.services.scim import ScimError
@@ -90,6 +91,7 @@ def scim_token(request: Request, authorization: str = Header(default="")):
     workspace, token_id = found
     if lifecycle_store.status(workspace) != lifecycle_store.ACTIVE:
         raise ScimError(403, "This workspace is suspended or being deleted.")
+    billing.require(workspace, "scim")                 # its plan includes SCIM (BILLING=on)
     logs.bind(workspace=workspace)
     return {"workspace": workspace, "token_id": token_id,
             "base": public_url(request, "/scim/v2")}
@@ -376,6 +378,7 @@ def scim_settings(request: Request, user=Depends(require_admin)):
 @admin.post("/api/admin/sign-in/scim/tokens")
 def create_scim_token(request: Request, user=Depends(require_admin),
                       audit=audited("scim.token.create")):
+    billing.require(ws_of(user), "scim")
     try:
         row, token = scim_store.create_token(ws_of(user), user["username"])
     except ValueError as e:

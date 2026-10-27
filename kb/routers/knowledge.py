@@ -14,7 +14,7 @@ import vector_store
 import workspaces
 from connectors import registry
 from kb.deps import current_role, current_user, current_viewer, ws_of
-from kb.services import agents, assistant, indexing, permissions, pii_scan
+from kb.services import agents, assistant, indexing, onboarding, permissions, pii_scan
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -92,6 +92,16 @@ def listing(user, role, viewer, everything=False):
                       "modified": os.path.getmtime(d["path"]),
                       "size": d["size"], "chunks": indexed(d["path"]),
                       **place(key, assistant.UPLOADS, acl, folder=key.rsplit("/", 1)[0])})
+
+    # The sample documents a new workspace can try it with (kb/services/onboarding.py):
+    # for everyone, and labelled as samples.
+    for key in onboarding.sample_keys(ws):
+        path = os.path.join(root, key)
+        items.append({"title": key.split("/", 1)[1], "source": "Sample",
+                      "url": None, "modified": os.path.getmtime(path),
+                      "size": os.path.getsize(path), "chunks": indexed(path),
+                      **place(key, ingest.SAMPLES, access.level_acl("public"),
+                              folder=onboarding.SAMPLE_FOLDER)})
 
     # Synced files: what source_items says each connector folder holds, and who
     # may see each as ingest.py tags it (its connection's policy).

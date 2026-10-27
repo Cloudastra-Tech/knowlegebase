@@ -195,6 +195,9 @@ def _copy_sso(conn, config):
         if not workspaces.valid(slug) or not isinstance(ws, dict):
             continue
         _ensure_workspace(conn, slug)
+        # Its domains let anyone on them in at their first sign-in: the 'auto'
+        # joining policy (join_store.py), as when the file was read.
+        conn.execute("UPDATE workspaces SET join_policy = 'auto' WHERE slug = ?", (slug,))
         for domain in ws.get("domains", []):
             domain = domain.strip().lower()
             # These were set by whoever runs the server, so they count as verified,
@@ -573,6 +576,13 @@ def record_sso_login(username, name, workspace, groups=None, source=None):
         _settle_role(conn, username)
         row = conn.execute("SELECT * FROM members WHERE username = ?", (username,)).fetchone()
     return _member(row) if row and row["workspace"] == workspace else None
+
+
+def touch_login(username):
+    """A password sign-in: when they last signed in (seats, onboarding)."""
+    with _lock, _db() as conn:
+        conn.execute("UPDATE members SET last_login_at = ? WHERE username = ?",
+                     (time.time(), username.strip().lower()))
 
 
 def role_for_groups(rules, groups):

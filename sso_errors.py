@@ -136,6 +136,17 @@ ERRORS = {
     "disabled": (
         "Their access has been turned off (Members)",
         "Turn their access back on under Members.", False),
+    # The joining policy (join_store.py, Access > Sign-in)
+    "invite_only": (
+        "New people join by invite only, and they had no invite",
+        "Invite them under Members, provision them with SCIM, or change the joining policy.",
+        False),
+    "join_requested": (
+        "Asked to join: their request waits for an admin",
+        "Approve or deny it under Members > Pending requests.", False),
+    "join_denied": (
+        "An admin denied their request to join recently, so they can't ask again yet",
+        "Invite them under Members if they should be let in after all.", False),
     "sso_required": (
         "Single sign-on is required, so their password can't be used",
         "They should sign in with single sign-on.", False),

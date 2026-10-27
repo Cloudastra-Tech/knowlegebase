@@ -17,6 +17,7 @@ from pydantic import BaseModel
 import api_keys_store as store
 from kb.audit import audited
 from kb.deps import current_user, public_url, require_admin, ws_of
+from kb.services import billing
 
 router = APIRouter()
 
@@ -39,6 +40,8 @@ def _urls(request):
 
 
 def _create(user, body, kind, audit):
+    if kind == "service" or not billing.entitlement(ws_of(user), "mcp"):
+        billing.require(ws_of(user), "api")   # a personal key serves the API or MCP (BILLING=on)
     settings = store.settings(ws_of(user))
     if not settings["api_enabled"] and not settings["mcp_enabled"]:
         raise HTTPException(403, "Your workspace's admins have turned the API and the MCP "
@@ -90,6 +93,9 @@ def api_settings(request: Request, user=Depends(require_admin)):
 @router.put("/api/admin/api")
 def set_api_settings(body: SettingsIn, user=Depends(require_admin),
                      audit=audited("api_settings.update")):
+    for feature in ("api", "mcp"):
+        if getattr(body, f"{feature}_enabled"):
+            billing.require(ws_of(user), feature)
     try:
         settings = store.set_settings(ws_of(user), user["username"], **body.model_dump())
     except store.Refused as e:

@@ -9,6 +9,8 @@ describe("legacyRedirect", () => {
     ["#signup", "/signup"],
     ["#signup?error=invite", "/signup?error=invite"],
     ["#sso-test", "/sso-test"],
+    ["#join-requested", "/join-requested"],
+    ["#claim?error=claim_admin", "/claim?error=claim_admin"],
     ["#integrations?connected=google_drive&choose=1", "/integrations?connected=google_drive&choose=1"],
     ["#integrations?error=access_denied", "/integrations?error=access_denied"],
   ])("sends /%s to %s", (hash, to) => {

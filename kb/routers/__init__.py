@@ -78,6 +78,8 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/sign-in/new-provider  an ID and our URLs for a provider about to be added
     PUT    /admin/sign-in/policy  {require_sso}: passwords only for admins           (admin)
     PUT    /admin/sign-in/group-admin-days {days}: how long admin from groups lasts (admin)
+    PUT    /admin/sign-in/joining {policy: auto|request|invite_only}: who joins by signing in
+    PUT    /admin/sign-in/domains/{domain}/joining {policy|null}: one domain's own (admin)
     POST   /admin/sign-in/domains {domain} -> the DNS record that proves it      (admin)
     POST   /admin/sign-in/domains/{domain}/verify   check the DNS record          (admin)
     DELETE /admin/sign-in/domains/{domain}                                         (admin)
@@ -96,6 +98,11 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PATCH  /admin/members/{username} {role: public|hr|admin|null, disabled}       (admin)
     DELETE /admin/members/{username}                                               (admin)
     POST   /admin/members/{username}/sign-out   end all their sessions                (admin)
+    GET    /admin/members/requests  requests to join waiting for an admin             (admin)
+    POST   /admin/members/requests/{id}/approve {role} | /deny                        (admin)
+  claim.py
+    POST   /auth/claim            {code} -> {domain, url}: claim a workspace nobody can administer
+    GET    /auth/claim/google/start  ... with Google Workspace (join_store.py)
   invites.py
     GET    /admin/members/invites invites not yet accepted or revoked              (admin)
     POST   /admin/members/invite  {email, role}: email someone a link to join      (admin)
@@ -231,6 +238,7 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /operator/workspaces   every workspace: seats, usage, activity, connectors, index
     POST   /operator/workspaces/{ws}/suspend | /unsuspend | /reindex | /reset-rate-limits
     POST   /operator/workspaces/{ws}/support-session   open it as support (if its admin allows)
+    POST   /operator/workspaces/{ws}/claim-code {domain}  a one-time code to claim it (claim.py)
     GET    /operator/workspaces/{ws}/audit | /operator/audit
   spaces.py
     GET    /spaces                your own space and the team spaces you're in

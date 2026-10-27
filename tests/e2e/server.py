@@ -11,6 +11,11 @@ as in production, with
       public member, made the way `python auth.py add` makes them, so the audit
       log has their rows) and a small corpus indexed: two public policies and
       one HR-only plan (docs/restricted/)
+    - BILLING=on, which leaves the default workspace alone (it has no plan), and
+      two workspaces made as sign-up makes them (TRIALS: the founder owns their
+      billing): one in its trial, one whose trial has ended (read-only). Stripe
+      has a test key and prices but is never called: the specs answer Checkout
+      in the browser (page.route)
 
 Playwright starts it (frontend/playwright.config.ts) and waits for
 /api/health/ready. Ports: E2E_PORT (default 8045) and E2E_PORT + 1.
@@ -34,6 +39,9 @@ ACCOUNTS = (("admin@e2e.example", "Ada Admin", "admin-password-1", "admin"),
             ("member@e2e.example", "Pat Member", "member-password-1", "public"))
 CORPUS = (("public", "leave_policy.txt"), ("public", "student_faq.txt"),
           ("restricted", "hiring_plan_2027.txt"))
+# Also in frontend/e2e/helpers.ts: (name, domain, founder, password, trial days left).
+TRIALS = (("Trial Co", "trial.e2e.example", "owner@trial.e2e.example", "owner-password-1", 5),
+          ("Lapsed Co", "lapsed.e2e.example", "owner@lapsed.e2e.example", "owner-password-1", -2))
 
 
 def environment(tmp):
@@ -46,7 +54,10 @@ def environment(tmp):
         RATE_LIMITS="off",                     # every test signs in from one address
         CHAT_AUTO_TITLE="off",                 # titles and follow-ups without model calls
         CHAT_FOLLOWUPS="headings",
-        REINDEX_ON_SETTINGS_CHANGE="off", RERANKER="none",
+        REINDEX_ON_SETTINGS_CHANGE="off", RERANKER="none", BILLING="on",
+        # Stripe in test mode, never called: the specs answer Checkout in the browser.
+        STRIPE_SECRET_KEY="sk_" + "test_" + "e2e", STRIPE_PRICE_STARTER="price_e2e_starter",
+        STRIPE_PRICE_BUSINESS="price_e2e_business",
         OUTLINE_API_TOKEN="", LOG_FORMAT="text")
     for name in ("INTEGRATIONS_KEY", "SENTRY_DSN"):   # a key is made in the temp config/
         os.environ.pop(name, None)
@@ -80,6 +91,14 @@ def seed(tmp):
         members_store.set_password(username, name, auth.hash_password(password),
                                    workspaces.DEFAULT, role)
         auth._audit(workspaces.DEFAULT, "member.add", username, {"role": role})
+    import billing_store
+    from kb.services import billing
+    for name, domain, founder, password, days in TRIALS:
+        ws = members_store.create_workspace(name, domain, founder, "Olive Owner")
+        members_store.set_password(founder, "Olive Owner", auth.hash_password(password), ws,
+                                   "admin")
+        billing.founded(ws, founder)                 # its owner, and its trial (BILLING=on)
+        billing_store.save_subscription(ws, trial_ends_at=time.time() + days * 86400)
     # As `python ingest.py` does: here, not as a job.
     os.environ["JOBS_IN_PROCESS"] = "off"
     from kb.services import indexing
