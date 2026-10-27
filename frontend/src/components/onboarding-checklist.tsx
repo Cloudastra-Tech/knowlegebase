@@ -1,9 +1,10 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowRight, BookOpen, CheckCircle2, Circle, Loader2, Plus, Trash2 } from "lucide-react"
+import { ArrowRight, BookOpen, Plus, Trash2 } from "lucide-react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 
+import { Panel } from "@/components/glass/panel"
 import { Button } from "@/components/ui/button"
 import { onboarding, type OnboardingStepId, type SampleDocs } from "@/lib/api"
 import { queries } from "@/lib/queries"
@@ -56,16 +57,28 @@ export function SampleDocsToggle({
   }
 
   return (
-    <Button size={size} variant="outline" onClick={toggle} disabled={busy}>
-      {busy ? (
-        <Loader2 className="animate-spin" data-icon="inline-start" />
-      ) : sample.on ? (
+    <Button size={size} variant="outline" onClick={toggle} loading={busy}>
+      {busy ? null : sample.on ? (
         <Trash2 data-icon="inline-start" />
       ) : (
         <BookOpen data-icon="inline-start" />
       )}
       {sample.on ? "Remove sample documents" : "Try it with a sample HR handbook"}
     </Button>
+  )
+}
+
+// A step's box, in mono: "[✓]" with the tick in the signal once it's done, "[ ]" until
+// then. The brackets are decoration; the box is an image named Done or To do.
+function Tick({ done }: { done: boolean }) {
+  return (
+    <span
+      role="img"
+      aria-label={done ? "Done" : "To do"}
+      className="shrink-0 font-mono text-sm leading-5 whitespace-pre text-muted-foreground select-none"
+    >
+      [<span className={done ? "text-signal" : undefined}>{done ? "✓" : " "}</span>]
+    </span>
   )
 }
 
@@ -126,30 +139,23 @@ export function OnboardingChecklist({ onAddProvider }: { onAddProvider: () => vo
   const left = checklist.steps.filter((s) => !s.optional && !s.done).length
 
   return (
-    <section
-      aria-label="Set up your workspace"
-      className="rounded-2xl border border-border/70 bg-background p-5"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">Set up your workspace</h3>
-          <p className="text-sm text-muted-foreground">
-            {left === 1 ? "One step left" : `${left} steps left`} to make it useful for everyone.
-            Each one ticks itself off when it's done.
-          </p>
-        </div>
+    <Panel
+      title="Set up your workspace"
+      className="min-w-0"
+      actions={
         <Button size="sm" variant="ghost" onClick={hide} disabled={hiding}>
           Done
         </Button>
-      </div>
+      }
+    >
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
+        {left === 1 ? "One step left" : `${left} steps left`} to make it useful for everyone.
+        Each one ticks itself off when it's done.
+      </p>
       <ol className="mt-4 flex flex-col gap-4">
         {checklist.steps.map((s) => (
           <li key={s.id} className="flex flex-wrap items-start gap-3" data-step={s.id}>
-            {s.done ? (
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Done" />
-            ) : (
-              <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="To do" />
-            )}
+            <Tick done={s.done} />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">{s.title}</p>
               {!s.done && <p className="text-sm text-muted-foreground">{STEP_COPY[s.id]}</p>}
@@ -168,6 +174,6 @@ export function OnboardingChecklist({ onAddProvider }: { onAddProvider: () => vo
           <SampleDocsToggle sample={checklist.sample} />
         </div>
       )}
-    </section>
+    </Panel>
   )
 }

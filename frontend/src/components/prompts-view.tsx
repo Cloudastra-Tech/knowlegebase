@@ -1,9 +1,13 @@
 import { useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Building2, Loader2, MessageSquareText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import { Building2, MessageSquareText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -59,37 +63,39 @@ export function PromptsView() {
     }
   }
 
-  const section = (title: string, list: SavedPrompt[], empty: string) => (
+  // A list to act on: opaque, under a mono section label.
+  const section = (title: string, list: SavedPrompt[], empty: string, note?: string) => (
     <section>
-      <h3 className="mb-2 text-sm font-medium text-muted-foreground">{title}</h3>
-      <div className="divide-y rounded-2xl border border-border/70 bg-background">
+      <AsciiDivider as="h3" label={title} className="mb-3" />
+      <Panel tone="solid" className="divide-y overflow-hidden p-0">
         {list.length ? (
           list.map((p) => (
             <PromptRow key={p.id} prompt={p} onEdit={() => setEditing(p)} onDelete={() => remove(p)} />
           ))
         ) : (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">{empty}</p>
+          <AsciiEmptyState art="inbox" size="sm" headingLevel={4} title={empty} description={note} />
         )}
-      </div>
+      </Panel>
     </section>
   )
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <MessageSquareText className="size-6" /> Saved prompts
-          </h2>
-          <p className="text-sm text-muted-foreground">
+      <ScreenHeader
+        icon={MessageSquareText}
+        title="Saved prompts"
+        description={
+          <>
             Questions you ask often. Type <kbd className="font-mono">/</kbd> in the chat box to use
             one; write <span className="font-mono">{"{{customer}}"}</span> for a part to fill in.
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setEditing("new")} disabled={!data}>
-          <Plus data-icon="inline-start" /> New prompt
-        </Button>
-      </div>
+          </>
+        }
+        actions={
+          <Button size="sm" onClick={() => setEditing("new")} disabled={!data}>
+            <Plus data-icon="inline-start" /> New prompt
+          </Button>
+        }
+      />
       {!data ? (
         <Skeleton className="mt-6 h-48 rounded-2xl" />
       ) : (
@@ -98,7 +104,8 @@ export function PromptsView() {
           {section(
             "Your workspace's",
             shared,
-            data.can_manage_workspace ? "None yet. Add one for everyone here." : "None yet.",
+            "None yet.",
+            data.can_manage_workspace ? "Add one for everyone here." : undefined,
           )}
         </div>
       )}
@@ -265,8 +272,7 @@ function PromptDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !title.trim() || !body.trim()}>
-              {busy && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={busy} disabled={!title.trim() || !body.trim()}>
               Save
             </Button>
           </DialogFooter>
