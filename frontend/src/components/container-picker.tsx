@@ -17,7 +17,6 @@ import {
   Hash,
   HardDrive,
   Library,
-  Loader2,
   Plus,
   Search,
   Tag,
@@ -25,6 +24,7 @@ import {
   X,
 } from "lucide-react"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -393,8 +393,8 @@ function TreePicker({
         </DialogHeader>
 
         {tree ? (
-          <div className="flex flex-wrap items-center gap-1 text-sm">
-            <Button variant="ghost" size="xs" onClick={() => setPath([])}>
+          <div className="flex flex-wrap items-center gap-1 font-mono text-sm">
+            <Button variant="ghost" size="xs" className="font-mono" onClick={() => setPath([])}>
               {copy.root}
             </Button>
             {path.map((p, i) => (
@@ -403,7 +403,7 @@ function TreePicker({
                 <Button
                   variant="ghost"
                   size="xs"
-                  className="max-w-40"
+                  className="max-w-40 font-mono"
                   onClick={() => setPath(path.slice(0, i + 1))}
                 >
                   <span className="truncate">{p.name}</span>
@@ -426,7 +426,7 @@ function TreePicker({
           )
         )}
 
-        <div className="h-72 overflow-y-auto rounded-xl border">
+        <div className="h-72 overflow-y-auto rounded-xl border bg-card">
           {items === null ? (
             <div className="space-y-2 p-3">
               <Skeleton className="h-8 w-full" />
@@ -434,7 +434,7 @@ function TreePicker({
               <Skeleton className="h-8 w-2/3" />
             </div>
           ) : shown.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">{copy.empty}</p>
+            <AsciiEmptyState art={filter ? "search" : "folder"} size="sm" title={filter ? "Nothing matches the filter." : copy.empty} />
           ) : (
             shown.map((f) => (
               <div
@@ -548,8 +548,7 @@ function TreePicker({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving && <Loader2 className="animate-spin" />}
+          <Button onClick={save} loading={saving}>
             Save and sync
           </Button>
         </DialogFooter>
@@ -724,8 +723,7 @@ function UrlPicker({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Save and crawl
             </Button>
           </DialogFooter>

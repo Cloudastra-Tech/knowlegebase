@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { CircleAlert, CircleCheck, Clock, ListChecks, Loader2, MoreHorizontal, RotateCcw } from "lucide-react"
+import { CircleAlert, CircleCheck, Clock, ListChecks, MoreHorizontal, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,10 +48,10 @@ const STATUS: Record<WorkspaceJob["status"], string> = {
 }
 
 function JobIcon({ status }: { status: WorkspaceJob["status"] }) {
-  if (status === "running") return <Loader2 className="size-4 animate-spin text-muted-foreground" />
+  if (status === "running") return <AsciiSpinner label="" className="text-muted-foreground" />
   if (status === "failed") return <CircleAlert className="size-4 text-destructive" />
   if (status === "queued") return <Clock className="size-4 text-muted-foreground" />
-  return <CircleCheck className="size-4 text-muted-foreground" />
+  return <CircleCheck className="size-4 text-success" />
 }
 
 function detailOf(job: WorkspaceJob) {
@@ -81,7 +83,7 @@ function JobRow({ job }: { job: WorkspaceJob }) {
           >
             {STATUS[job.status]}
           </Badge>
-          <span className="text-xs text-muted-foreground">{timeAgo(when)}</span>
+          <span className="font-mono text-xs text-muted-foreground tabular-nums">{timeAgo(when)}</span>
         </div>
         {detailOf(job) && <p className="text-sm text-muted-foreground">{detailOf(job)}</p>}
         {job.progress && <p className="text-sm text-muted-foreground">{job.progress}</p>}
@@ -134,14 +136,14 @@ export function JobsSheet({
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4">
           {isError ? (
-            <p className="py-6 text-sm text-muted-foreground">Couldn't load the jobs.</p>
+            <AsciiEmptyState art="broken" size="sm" title="Couldn't load the jobs." />
           ) : !data ? (
             <div className="space-y-3 py-4">
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
             </div>
           ) : data.length === 0 ? (
-            <p className="py-6 text-sm text-muted-foreground">No jobs yet.</p>
+            <AsciiEmptyState art="inbox" size="sm" title="No jobs yet." />
           ) : (
             <ul className="divide-y" aria-label="Jobs">
               {data.map((job) => (
@@ -204,7 +206,11 @@ export function RebuildIndexDialog({
               void rebuild()
             }}
           >
-            {busy && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            {busy && (
+              <span data-icon="inline-start" className="inline-flex">
+                <AsciiSpinner label="" size="xs" />
+              </span>
+            )}
             Rebuild from scratch
           </AlertDialogAction>
         </AlertDialogFooter>

@@ -4,8 +4,11 @@ import { BookOpen, ExternalLink, FileText, Globe, Lock, Search, ShieldAlert } fr
 import { siGoogledrive, siNotion } from "simple-icons"
 
 import { WhoCanSeeBadges } from "@/components/access-picker"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
 import { RuleActions, RuleBadge, RulesPanel } from "@/components/knowledge-rules"
 import { SummariseMenu } from "@/components/knowledge-summarise"
+import { ScreenHeader } from "@/components/screen-header"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -96,27 +99,29 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Knowledge base</h2>
-          <p className="text-sm text-muted-foreground">
+      <ScreenHeader
+        title="Knowledge base"
+        description={
+          <>
             Everything the assistant can search in the{" "}
             <span className="font-medium text-foreground">{workspace || "…"}</span> workspace.
-          </p>
-        </div>
-        {items && (
-          <div className="flex gap-6 text-sm">
-            <div>
-              <p className="text-xs text-muted-foreground">Documents</p>
-              <p className="font-semibold tabular-nums">{items.length}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Indexed chunks</p>
-              <p className="font-semibold tabular-nums">{totalChunks}</p>
-            </div>
-          </div>
-        )}
-      </div>
+          </>
+        }
+        actions={
+          items && (
+            <dl className="glass-subtle flex gap-6 rounded-xl px-4 py-2 text-sm">
+              <div>
+                <dt className="text-xs text-muted-foreground">Documents</dt>
+                <dd className="font-mono font-medium tabular-nums">{items.length}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Indexed chunks</dt>
+                <dd className="font-mono font-medium tabular-nums">{totalChunks}</dd>
+              </div>
+            </dl>
+          )
+        }
+      />
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <div className="relative min-w-60 flex-1">
@@ -143,7 +148,8 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
         )}
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-2xl border">
+      {/* A table in all but markup: opaque, and nothing staggers in. */}
+      <Panel tone="solid" aria-label="Documents" className="mt-4 overflow-hidden p-0">
         <div
           className={cn(
             "hidden gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-medium text-muted-foreground md:grid",
@@ -165,9 +171,16 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
             ))}
           </div>
         ) : visible.length === 0 ? (
-          <p className="p-10 text-center text-sm text-muted-foreground">
-            {items.length ? "Nothing matches your search." : "No documents yet. Upload files or connect Google Drive or Notion."}
-          </p>
+          items.length ? (
+            <AsciiEmptyState art="search" size="sm" title="Nothing matches your search." />
+          ) : (
+            <AsciiEmptyState
+              art="folder"
+              animate="scan"
+              title="No documents yet."
+              description="Upload files or connect Google Drive or Notion."
+            />
+          )
         ) : (
           visible.map((i) => (
             <div
@@ -189,7 +202,7 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
                     className="group flex min-w-0 items-center gap-1.5 font-medium hover:underline"
                   >
                     <span className="truncate">{i.title}</span>
-                    <ExternalLink className="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60" />
+                    <ExternalLink className="size-3 shrink-0 opacity-0 transition-opacity duration-(--dur-hover) ease-hover group-hover:opacity-60" />
                   </a>
                 ) : (
                   <span className="truncate font-medium">{i.title}</span>
@@ -220,11 +233,11 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
               <span className="hidden text-muted-foreground md:block">{when(i.modified)}</span>
               <span className="text-right">
                 {i.chunks > 0 ? (
-                  <Badge className="bg-emerald-600/10 font-normal text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
+                  <Badge variant="signal" className="font-mono font-normal">
                     {i.chunks} chunk{i.chunks === 1 ? "" : "s"}
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="font-normal text-muted-foreground">
+                  <Badge variant="mono">
                     {i.rule?.action === "block" ? "Blocked" : "Not indexed"}
                   </Badge>
                 )}
@@ -233,7 +246,7 @@ export function KnowledgeView({ onOpenDraft }: { onOpenDraft?: (id: string) => v
             </div>
           ))
         )}
-      </div>
+      </Panel>
 
       {manage && items && <RulesPanel rules={rules} items={items} />}
 

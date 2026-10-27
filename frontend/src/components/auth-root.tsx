@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Outlet, useLocation } from "react-router"
 
-import { Skeleton } from "@/components/ui/skeleton"
+import { AsciiLoader } from "@/components/ascii/ascii-loader"
 import {
   api,
   ApiError,
@@ -132,7 +132,7 @@ export function AuthRoot() {
   if (checking) {
     return (
       <div className="flex min-h-svh items-center justify-center">
-        <Skeleton className="h-10 w-48" />
+        <AsciiLoader />
       </div>
     )
   }

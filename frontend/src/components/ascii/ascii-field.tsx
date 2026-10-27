@@ -114,8 +114,11 @@ export function AsciiField({
       aria-hidden
       data-slot="ascii-field"
       data-mode={mode}
+      // The --text-ascii size as plain properties, not `text-ascii`: cn() takes that
+      // for a colour and drops it next to a tone or a text colour, and the field was
+      // drawn at 16px.
       className={cn(
-        "pointer-events-none relative overflow-hidden font-mono text-ascii select-none",
+        "pointer-events-none relative overflow-hidden font-mono [font-size:var(--text-ascii)] leading-(--text-ascii--line-height) select-none",
         tone && TONES[tone],
         MASKS[mask],
         className,

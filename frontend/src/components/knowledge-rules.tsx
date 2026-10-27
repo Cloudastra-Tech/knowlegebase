@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { ArrowDown, ArrowUp, Ban, MoreHorizontal, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { Panel } from "@/components/glass/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -158,14 +159,13 @@ export function RulesPanel({ rules, items }: { rules: DocRule[]; items: Knowledg
   const change = useRuleChange()
   if (!rules.length) return null
   return (
-    <section className="mt-6 rounded-2xl border border-border/70 bg-background p-5">
-      <h3 className="font-medium">Source rules</h3>
-      <p className="text-sm text-muted-foreground">
+    <Panel title="Source rules" className="mt-6">
+      <p className="-mt-3 text-sm text-muted-foreground">
         Boosted sources rank higher in answers, demoted ones lower; blocked ones aren't searched
         at all. Rules apply to the next question; admins see the ones used in an answer's
         technical details.
       </p>
-      <ul className="mt-4 divide-y divide-border/70 rounded-xl border border-border/70">
+      <ul className="mt-4 divide-y divide-border/70 rounded-xl border border-border/70 bg-card">
         {rules.map((r) => (
           <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 text-sm">
             <span className="min-w-0 flex-1 truncate">{matchText(r, items)}</span>
@@ -207,6 +207,6 @@ export function RulesPanel({ rules, items }: { rules: DocRule[]; items: Knowledg
           </li>
         ))}
       </ul>
-    </section>
+    </Panel>
   )
 }

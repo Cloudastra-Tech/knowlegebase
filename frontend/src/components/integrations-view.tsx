@@ -8,7 +8,6 @@ import {
   FolderCog,
   Globe,
   History,
-  Loader2,
   Lock,
   Plug,
   RefreshCw,
@@ -49,15 +48,20 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
+import { Panel } from "@/components/glass/panel"
+import { StatusDot } from "@/components/glass/status-dot"
 import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
 import { S3ConnectDialog } from "@/components/s3-connect-dialog"
 import { SalesforceConnectDialog } from "@/components/salesforce-connect-dialog"
+import { ScreenHeader } from "@/components/screen-header"
 import { SlackAppCard } from "@/components/slack-app-card"
 import { SurfaceCards } from "@/components/surface-cards"
 import { SyncHistorySheet } from "@/components/sync-history-sheet"
 import { MEMBER_OPTIONS, TICKET_OPTIONS } from "@/lib/ticket-options"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -65,7 +69,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api, type Integration, type IntegrationStatus, type PermissionPolicy } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
 import { queries } from "@/lib/queries"
-import { timeAgo } from "@/lib/utils"
+import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -130,31 +134,51 @@ const STATUS: Record<IntegrationStatus, { label: string; tone: "on" | "busy" | "
   unavailable: { label: "Not available", tone: "off" },
 }
 
+// A connection's state as a dot and its words; syncing is the ASCII spinner.
 export function StatusBadge({ status }: { status: IntegrationStatus }) {
   const { label, tone } = STATUS[status]
-  if (tone === "on")
-    return (
-      <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-        <span className="size-1.5 rounded-full bg-emerald-500" /> {label}
-      </Badge>
-    )
   if (tone === "busy")
     return (
-      <Badge variant="secondary" className="gap-1.5">
-        <Loader2 className="size-3 animate-spin" /> {label}
-      </Badge>
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap text-signal">
+        <AsciiSpinner size="xs" label="" /> {label}
+      </span>
     )
-  if (tone === "bad") return <Badge variant="destructive">{label}</Badge>
   return (
-    <Badge variant="outline" className="font-normal text-muted-foreground">
-      {label}
-    </Badge>
+    <StatusDot
+      status={tone === "on" ? "live" : tone === "bad" ? "error" : "off"}
+      label={label}
+      className={cn(
+        "shrink-0 whitespace-nowrap",
+        tone === "bad" ? "text-destructive" : tone === "off" && "text-muted-foreground",
+      )}
+    />
   )
 }
 
-export function Card({ item, children }: { item: Integration; children?: React.ReactNode }) {
+// The cards of a connector grid: the subtle glass tier (no blur: there are many of
+// them), lifted 2px under a pointer that hovers, and, the first time the grid draws,
+// faded up 40ms apart with the rest arriving with the sixth (`order`).
+const CARD_ENTER =
+  "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1.5 motion-safe:fill-mode-backwards motion-safe:duration-(--dur-reveal) motion-safe:ease-out-strong"
+const enterDelay = (order: number) => ({ animationDelay: `${Math.min(order, 5) * 40}ms` })
+
+export function Card({
+  item,
+  order,
+  children,
+}: {
+  item: Integration
+  order?: number // its place in the grid, for the first draw's stagger
+  children?: React.ReactNode
+}) {
   return (
-    <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
+    <Panel
+      className={cn(
+        "flex min-w-0 flex-col transition-transform duration-180 ease-out-strong motion-safe:hover:-translate-y-0.5",
+        order !== undefined && CARD_ENTER,
+      )}
+      style={order !== undefined ? enterDelay(order) : undefined}
+    >
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
           <ConnectorIcon item={item} />
@@ -166,7 +190,7 @@ export function Card({ item, children }: { item: Integration; children?: React.R
         <StatusBadge status={item.status} />
       </div>
       {children && <div className="mt-4 flex flex-1 flex-col">{children}</div>}
-    </div>
+    </Panel>
   )
 }
 
@@ -174,7 +198,7 @@ export function Stat({ label, value }: { label: string; value: React.ReactNode }
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-medium">{value}</p>
+      <p className="truncate font-mono text-sm tabular-nums">{value}</p>
     </div>
   )
 }
@@ -308,9 +332,10 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
             variant="outline"
             className="self-start text-foreground"
             onClick={syncPermissions}
-            disabled={syncing || item.status === "syncing"}
+            loading={syncing}
+            disabled={item.status === "syncing"}
           >
-            {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {!syncing && <RefreshCw />}
             Sync permissions now
           </Button>
         </div>
@@ -338,10 +363,12 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
 // One connector, whatever it is: drawn from its registry entry and connection state.
 function ConnectorCard({
   item,
+  order,
   onChange,
   autoOpenPicker,
 }: {
   item: Integration
+  order: number
   onChange: () => void
   autoOpenPicker?: boolean
 }) {
@@ -411,11 +438,17 @@ function ConnectorCard({
   const limit = item.last_run?.limit_reached ?? 0
 
   return (
-    <Card item={item}>
+    <Card item={item} order={order}>
       {item.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">
           The server needs an OAuth app before {item.name} can be connected
-          {item.setup_env ? ` (${item.setup_env})` : ""}. Ask your admin to set it up.
+          {item.setup_env && (
+            <>
+              {" "}
+              (<code className="font-mono text-xs break-all">{item.setup_env}</code>)
+            </>
+          )}
+          . Ask your admin to set it up.
         </p>
       )}
 
@@ -434,8 +467,7 @@ function ConnectorCard({
               Until then, this workspace searches the server's own wiki live.
             </p>
           )}
-          <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
-            {busy === "connect" && <Loader2 className="animate-spin" />}
+          <Button className="mt-4 w-fit" onClick={connect} loading={busy === "connect"} disabled={busy !== null}>
             {item.auth === "url" ? "Add a website" : `Connect ${item.name}`}
           </Button>
         </>
@@ -464,8 +496,7 @@ function ConnectorCard({
                 </p>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button size="sm" variant="outline" className="w-fit" disabled={busy !== null}>
-                      {busy === "confirm" && <Loader2 className="animate-spin" />}
+                    <Button size="sm" variant="outline" className="w-fit" loading={busy === "confirm"} disabled={busy !== null}>
                       Remove them
                     </Button>
                   </AlertDialogTrigger>
@@ -595,13 +626,10 @@ function ConnectorCard({
               size="sm"
               variant="outline"
               onClick={() => sync()}
-              disabled={busy !== null || item.status === "syncing" || nothingPicked}
+              loading={busy === "sync" || item.status === "syncing"}
+              disabled={busy !== null || nothingPicked}
             >
-              {busy === "sync" || item.status === "syncing" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <RefreshCw />
-              )}
+              {busy !== "sync" && item.status !== "syncing" && <RefreshCw />}
               Sync now
             </Button>
             <Button size="sm" variant="outline" onClick={() => setHistoryOpen(true)}>
@@ -718,13 +746,15 @@ export function IntegrationsView({
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Integrations</h2>
-        <p className="text-sm text-muted-foreground">
-          Connect the tools your team already uses. Everything is private to the{" "}
-          <span className="font-medium text-foreground">{workspace || "…"}</span> workspace.
-        </p>
-      </div>
+      <ScreenHeader
+        title="Integrations"
+        description={
+          <>
+            Connect the tools your team already uses. Everything is private to the{" "}
+            <span className="font-medium text-foreground">{workspace || "…"}</span> workspace.
+          </>
+        }
+      />
 
       {!items ? (
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -733,18 +763,27 @@ export function IntegrationsView({
         </div>
       ) : (
         <>
+          {!live.length && !uploads && (
+            <AsciiEmptyState
+              art="plug"
+              className="mt-6"
+              title="No connectors on this server."
+              description="Ask your admin which tools can be connected here."
+            />
+          )}
           <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {live.map((item) => (
+            {live.map((item, i) => (
               <ConnectorCard
                 key={item.id}
                 item={item}
+                order={i}
                 onChange={load}
                 autoOpenPicker={openPickerFor === item.id}
               />
             ))}
 
             {uploads && (
-              <Card item={uploads}>
+              <Card item={uploads} order={live.length}>
                 <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
                   <Stat label="Files" value={uploads.doc_count ?? 0} />
                 </div>
@@ -756,8 +795,8 @@ export function IntegrationsView({
           </div>
 
           <div className="mt-10">
-            <p className="text-sm font-medium">Ask from your tools</p>
-            <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <AsciiDivider as="h3" label="Ask from your tools" />
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
               <SlackAppCard />
               <SurfaceCards />
             </div>
@@ -765,8 +804,8 @@ export function IntegrationsView({
 
           {soon.length > 0 && (
             <div className="mt-10">
-              <p className="text-sm font-medium">Coming soon</p>
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <AsciiDivider as="h3" label="Coming soon" />
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {soon.map((s) => (
                   <div
                     key={s.id}

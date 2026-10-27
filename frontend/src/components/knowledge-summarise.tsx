@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { FilePen, Loader2 } from "lucide-react"
+import { FilePen } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -64,12 +64,8 @@ export function SummariseMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" disabled={start.isPending}>
-          {start.isPending ? (
-            <Loader2 className="animate-spin" data-icon="inline-start" />
-          ) : (
-            <FilePen data-icon="inline-start" />
-          )}
+        <Button variant="outline" loading={start.isPending}>
+          {!start.isPending && <FilePen data-icon="inline-start" />}
           Summarise
         </Button>
       </DropdownMenuTrigger>

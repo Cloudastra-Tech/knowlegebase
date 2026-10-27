@@ -2,6 +2,7 @@ import { useState } from "react"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
+import { MemoryRouter } from "react-router"
 
 import { AccessPicker } from "@/components/access-picker"
 import { IntegrationsView } from "@/components/integrations-view"
@@ -78,7 +79,13 @@ describe("the permission policy", () => {
       "GET /api/index/status": { status: "idle", step: 0, total: 4, message: "", pending: false,
                                  summary: null, error: null, finished_at: null },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("radio", { name: /As shared in Google Drive/ }))
     expect(sent).toEqual([{ policy: "source" }])

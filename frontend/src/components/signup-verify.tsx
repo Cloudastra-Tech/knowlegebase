@@ -1,6 +1,5 @@
 import { useRef, useState, type FormEvent } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { CopyField } from "@/components/sign-in-provider-dialog"
@@ -103,7 +102,7 @@ export function SignupVerify({
         this TXT record at your domain's DNS host, then create{" "}
         <span className="font-medium text-foreground">{p.workspace_name}</span>.
       </Heading>
-      <div className="flex flex-col gap-3 rounded-xl border bg-muted/40 p-4">
+      <div className="flex flex-col gap-3 glass-subtle rounded-xl p-4">
         <CopyField label="Name (host)" value={p.txt_name} />
         <CopyField label="Value" value={p.txt_value} />
         <p className="text-xs text-muted-foreground">
@@ -132,8 +131,7 @@ export function SignupVerify({
           </FieldDescription>
         </Field>
         {error && <FieldError>{error}</FieldError>}
-        <Button type="submit" className={pill} disabled={checking}>
-          {checking && <Loader2 className="animate-spin" data-icon="inline-start" />}
+        <Button type="submit" className={pill} loading={checking}>
           Check the record and create the workspace
         </Button>
       </FieldGroup>
