@@ -2,6 +2,8 @@
 // animated in JS keeps the same curves and timings as the CSS ones. DESIGN.md,
 // "Motion", says which to use where.
 
+import { useSyncExternalStore } from "react"
+
 // Curves, as cubic-bezier points.
 export const ease = {
   out: [0.23, 1, 0.32, 1], // enter, exit, feedback (--ease-out-strong)
@@ -25,13 +27,20 @@ export const dur = {
   screen: 0.2,
   swap: 0.15,
   reveal: 0.24,
+  // the chat (chat-and-tools plan, 3)
+  jump: 0.15, // "Jump to latest" in
+  jumpExit: 0.1, // and out
+  step: 0.18, // a step line enters
+  collapse: 0.25, // the steps fold to one line
+  pop: 0.16, // a citation chip resolves
 } as const
 
 // For anything a person can interrupt. No bounce in the app (0.15 is for marketing).
 export const spring = { type: "spring", duration: 0.35, bounce: 0 } as const
 
-// Lists on first mount: 40ms apart, the rest arriving with the sixth.
-export const stagger = { each: 0.04, max: 6 } as const
+// Lists on first mount: 40ms apart, the rest arriving with the sixth. An answer's
+// sources: 30ms apart, the first four.
+export const stagger = { each: 0.04, max: 6, sources: 0.03, sourcesMax: 4 } as const
 
 // Keyboard-driven changes are instant: call before navigate() from a shortcut or the
 // command palette; index.css turns transitions and animations off until two frames on.
@@ -39,4 +48,20 @@ export function markInstant() {
   const root = document.documentElement
   root.dataset.instant = ""
   requestAnimationFrame(() => requestAnimationFrame(() => delete root.dataset.instant))
+}
+
+// prefers-reduced-motion, following the setting live: for what JS decides (a scroll's
+// `behavior`), where CSS has motion-safe: and motion-reduce:.
+const REDUCED = "(prefers-reduced-motion: reduce)"
+function onReducedChange(onChange: () => void) {
+  const mql = window.matchMedia(REDUCED)
+  mql.addEventListener("change", onChange)
+  return () => mql.removeEventListener("change", onChange)
+}
+export function usePrefersReducedMotion() {
+  return useSyncExternalStore(
+    onReducedChange,
+    () => window.matchMedia(REDUCED).matches,
+    () => false,
+  )
 }
