@@ -229,6 +229,25 @@ export default function App() {
         </div>
         <IndexProgressBar />
       </header>
+      {user.impersonator && (
+        <div className="border-b border-border/60 bg-muted px-4 py-2 text-center text-xs text-muted-foreground">
+          You're in this workspace as Cloudastra support ({user.impersonator}). Every request is
+          in its audit log.
+        </div>
+      )}
+      {user.workspace_status === "deleting" && user.deleting_at && (
+        <div className="border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-center text-xs text-destructive">
+          This workspace will be deleted on{" "}
+          {new Date(user.deleting_at * 1000).toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}
+          .{" "}
+          <Link to="/admin/data" className="font-medium underline underline-offset-2">
+            Export it or cancel
+          </Link>
+        </div>
+      )}
 
       <main className="min-h-0 flex-1">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}

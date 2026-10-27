@@ -34,6 +34,7 @@ import os
 import secrets
 import sys
 
+import lifecycle_store
 import members_store
 import workspaces
 
@@ -74,7 +75,8 @@ def access_for(username):
     sign-in."""
     member = members_store.check_group_admin(members_store.get(username))
     if (not member or not member["password_hash"] or member["disabled"]
-            or not password_login_on() or sso_required(member)):
+            or not password_login_on() or sso_required(member)
+            or not lifecycle_store.signs_in(member["workspace"], member["role"])):
         return None
     return {"workspace": member["workspace"], "role": member["role"]}
 

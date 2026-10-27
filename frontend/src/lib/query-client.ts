@@ -18,6 +18,8 @@ export function createQueryClient() {
       // A screen that can't load says so, as every screen did before the cache.
       onError: (err, query) => {
         if (query.meta?.silent) return
+        // 423: the workspace is being deleted; the banner in App.tsx says so once.
+        if (err instanceof ApiError && err.status === 423) return
         toast.error(err instanceof Error ? err.message : "Couldn't load")
       },
     }),

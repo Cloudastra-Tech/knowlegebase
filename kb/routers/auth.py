@@ -12,10 +12,11 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import auth
+import lifecycle_store
 import members_store
 import sessions_store
 import sso
-from kb import state
+from kb import operators, state
 from kb.audit import audited
 from kb.deps import current_user, public_url, public_user
 from kb.rate_limit import rate_limit
@@ -69,12 +70,15 @@ async def login(body: LoginIn, request: Request):
     member = await run_in_threadpool(auth.check_password, body.username, body.password)
     if member and not auth.sso_required(member):
         failed_logins.pop(key, None)
-        user = {"username": member["username"], "name": member["name"],
-                **auth.access_for(member["username"])}
+        access = auth.access_for(member["username"])
+        if not access:                         # suspended, or being deleted (lifecycle_store)
+            raise HTTPException(403, "Your workspace is suspended or being deleted. Ask your "
+                                     "admin.")
+        user = {"username": member["username"], "name": member["name"], **access}
         token = secrets.token_urlsafe(32)
         sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
         members_store.log_event(user["workspace"], "password", user["username"], "signed_in")
-        return {"token": token, "user": user}
+        return {"token": token, "user": _shown(user)}
     if member:                                 # right password, but SSO is required
         members_store.log_event(member["workspace"], "password", member["username"],
                                 "refused", "sso_required")
@@ -105,11 +109,14 @@ def _sso_domain(username):
 @router.post("/api/auth/sso/exchange")
 def sso_exchange(body: CodeIn, request: Request):
     user = sso.redeem_code(body.code, request.session.get(BROWSER_KEY))
-    if not user:
+    if not user or user.get("operator"):        # an operator's code: /api/operator/...
         raise HTTPException(401, "That sign-in expired. Please sign in again.")
     token = secrets.token_urlsafe(32)
-    sessions_store.create(token, user, SESSION_SECONDS)
-    return {"token": token, "user": public_user(user)}
+    # Support opened by an operator lasts an hour at most, and never past the grant.
+    seconds = (operators.support_seconds(user["workspace"]) if user.get("impersonator")
+               else SESSION_SECONDS)
+    sessions_store.create(token, user, seconds)
+    return {"token": token, "user": _shown(public_user(user))}
 
 
 @router.post("/api/auth/logout")
@@ -152,4 +159,11 @@ def logout_everywhere(user=Depends(current_user), audit=audited("session.sign_ou
 
 @router.get("/api/auth/me")
 def me(user=Depends(current_user)):
-    return public_user(user)
+    return _shown(public_user(user))
+
+
+def _shown(user):
+    """The user as the site gets it: with where their workspace is in its life
+    (lifecycle_store: being deleted shows a banner)."""
+    st = lifecycle_store.state(user["workspace"])
+    return {**user, "workspace_status": st["status"], "deleting_at": st["deleting_at"]}

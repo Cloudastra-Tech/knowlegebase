@@ -23,6 +23,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -33,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { signIn, type AccountRole, type Member } from "@/lib/api"
+import { saveFile, signIn, workspace, type AccountRole, type Member } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
@@ -55,6 +56,8 @@ function roleNote(m: Member) {
 function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () => void }) {
   const [confirm, setConfirm] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const [confirmErase, setConfirmErase] = useState(false)
+  const [typed, setTyped] = useState("")
 
   async function save(body: { role?: AccountRole | null; disabled?: boolean }, done: string) {
     try {
@@ -70,6 +73,28 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
     try {
       await signIn.removeMember(m.username)
       toast.success(`Removed ${m.username}.`)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  // A data request (DSAR): everything held about them, as a JSON file.
+  async function downloadData() {
+    try {
+      saveFile(await workspace.exportMember(m.username))
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  // Their questions, chats, keys, sessions and the member go; the audit log keeps what
+  // happened under a pseudonym.
+  async function erase() {
+    try {
+      const { pseudonym } = await workspace.eraseMember(m.username, typed.trim())
+      toast.success(`Erased ${m.username}'s data. The audit log shows them as ${pseudonym}.`)
+      setConfirmErase(false)
       onChange()
     } catch (err) {
       toast.error(errorText(err))
@@ -168,7 +193,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem
               onSelect={() =>
                 save(
@@ -184,9 +209,19 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
             <DropdownMenuItem onSelect={() => setConfirmSignOut(true)}>
               Sign out everywhere
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={downloadData}>Download their data</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive" onSelect={() => setConfirm(true)}>
               Remove
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive"
+              onSelect={() => {
+                setTyped("")
+                setConfirmErase(true)
+              }}
+            >
+              Erase their data…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -205,6 +240,43 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={remove}>Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmErase} onOpenChange={setConfirmErase}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Erase {m.username}'s data?</AlertDialogTitle>
+            <AlertDialogDescription>
+              For a data request. Their questions, chats, feedback, API keys, invites and
+              sessions are deleted, and they're removed from the workspace. The audit log keeps
+              what happened, showing a pseudonym instead of them. This can't be undone: download
+              their data first if they asked for a copy.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Field>
+            <FieldLabel htmlFor={`erase-${m.username}`}>
+              Type <span className="font-semibold">{m.username}</span> to confirm
+            </FieldLabel>
+            <Input
+              id={`erase-${m.username}`}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+            />
+          </Field>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={typed.trim().toLowerCase() !== m.username}
+              onClick={(e) => {
+                e.preventDefault()
+                void erase()
+              }}
+            >
+              Erase
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

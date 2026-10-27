@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import invites_store
+import lifecycle_store
 import mailer
 import members_store
 import sessions_store
@@ -156,6 +157,8 @@ def _usable(token):
     if reason != "pending":
         status, message = CANT_ACCEPT[reason]
         raise HTTPException(status, message)
+    if lifecycle_store.status(invite["workspace"]) != lifecycle_store.ACTIVE:
+        raise HTTPException(403, "This workspace isn't taking new members right now.")
     return invite
 
 

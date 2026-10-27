@@ -5,8 +5,9 @@ so it runs on the host's python3 or inside the app image).
     python3 sqlite_tool.py backup SRC DST   consistent online copy (SQLite's backup API)
     python3 sqlite_tool.py report DB        "integrity ok", then "<table> <rows>" per table
     python3 sqlite_tool.py check-key DB KEYFILE
-                                            does the key decrypt a stored secret? (needs
-                                            the cryptography package; exit 3 if missing)
+                                            does the key open a workspace's data key (or
+                                            an old-format stored secret)? (needs the
+                                            cryptography package; exit 3 if missing)
     python3 sqlite_tool.py revision DB      the database's migration (Alembic) revision,
                                             or "none" (deploy.sh: did a deploy migrate it?)
 """
@@ -47,6 +48,24 @@ def report(db):
     return 0
 
 
+def _stored_secret(conn):
+    """A workspace's wrapped data key (secret_box.py), else a value sealed by the key
+    itself (the old format), else None."""
+    queries = ("SELECT wrapped_dek FROM workspace_keys LIMIT 1",
+               "SELECT secret FROM sso_connections WHERE secret IS NOT NULL "
+               "AND substr(secret, 1, 5) != X'6B6277313A' LIMIT 1",
+               "SELECT secret FROM integrations WHERE secret IS NOT NULL "
+               "AND substr(secret, 1, 5) != X'6B6277313A' LIMIT 1")
+    for sql in queries:
+        try:
+            row = conn.execute(sql).fetchone()
+        except sqlite3.OperationalError:          # a table this database doesn't have
+            continue
+        if row:
+            return bytes(row[0])
+    return None
+
+
 def check_key(db, keyfile):
     try:
         from cryptography.fernet import Fernet, InvalidToken
@@ -56,21 +75,17 @@ def check_key(db, keyfile):
     with open(keyfile, "rb") as f:
         fernet = Fernet(f.read().strip())
     conn = _open_ro(db)
-    for table in ("sso_connections", "integrations"):
-        try:
-            row = conn.execute(f"SELECT secret FROM {table} WHERE secret IS NOT NULL "
-                               "LIMIT 1").fetchone()
-        except sqlite3.OperationalError:
-            continue
-        if row:
-            try:
-                fernet.decrypt(row[0])
-            except InvalidToken:
-                print("the key does NOT decrypt the stored secrets")
-                return 1
-            print("the key decrypts the stored secrets")
-            return 0
-    print("no stored secrets to check the key against")
+    blob = _stored_secret(conn)
+    conn.close()
+    if blob is None:
+        print("no stored secrets to check the key against")
+        return 0
+    try:
+        fernet.decrypt(blob)
+    except InvalidToken:
+        print("the key does NOT decrypt the stored secrets")
+        return 1
+    print("the key decrypts the stored secrets")
     return 0
 
 

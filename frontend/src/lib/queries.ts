@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query"
 
-import { api, apiKeys, assistant, insights, session, signIn, slack } from "@/lib/api"
+import { api, apiKeys, assistant, insights, session, signIn, slack, workspace } from "@/lib/api"
 
 // Every server read the screens share, cached by TanStack Query (lib/query-client.ts).
 // After a change, invalidate the key and the screens showing it load it again.
@@ -65,6 +65,8 @@ export const queries = {
       queryFn: () => api.integrationRuns(provider),
     }),
   members: () => queryOptions({ queryKey: ["members"], queryFn: signIn.members }),
+  // The workspace's lifecycle, exports, support access and audit retention (admin).
+  workspace: () => queryOptions({ queryKey: ["workspace"], queryFn: workspace.settings }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
   // How questions are logged here (the chat's disclosure, the Insights settings).
   logSettings: () =>

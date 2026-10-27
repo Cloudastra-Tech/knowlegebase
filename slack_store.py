@@ -94,6 +94,8 @@ def _ensure(conn, workspace):
 def set_custom_app(workspace, client_id, client_secret, signing_secret, user):
     """Use the customer's own app. A new app (another client id) ends the install
     of the one before: its bot token belonged to that app."""
+    sealed = secret_box.seal({"client_secret": client_secret,
+                              "signing_secret": signing_secret}, workspace)
     with _lock, _db() as conn:
         _ensure(conn, workspace)
         row = conn.execute("SELECT * FROM slack_installs WHERE workspace = ?",
@@ -102,9 +104,7 @@ def set_custom_app(workspace, client_id, client_secret, signing_secret, user):
         conn.execute(
             "UPDATE slack_installs SET mode = 'custom', client_id = ?, app_secrets = ?, "
             "app_key = COALESCE(app_key, ?), updated_by = ?, updated_at = ? WHERE workspace = ?",
-            (client_id, secret_box.seal({"client_secret": client_secret,
-                                         "signing_secret": signing_secret}),
-             secrets.token_urlsafe(18), user, time.time(), workspace))
+            (client_id, sealed, secrets.token_urlsafe(18), user, time.time(), workspace))
         if not same:
             _forget_install(conn, workspace)
 
@@ -128,7 +128,7 @@ def app_secrets(workspace):
     with _lock, _db() as conn:
         r = conn.execute("SELECT app_secrets FROM slack_installs WHERE workspace = ?",
                          (workspace,)).fetchone()
-    return secret_box.unseal(r["app_secrets"]) if r and r["app_secrets"] else None
+    return secret_box.unseal(r["app_secrets"], workspace) if r and r["app_secrets"] else None
 
 
 class TeamTaken(Exception):
@@ -137,6 +137,7 @@ class TeamTaken(Exception):
 
 def installed(workspace, team_id, team_name, app_id, bot_user_id, bot_token, scopes, user):
     """Record a finished install (oauth.v2.access). Raises TeamTaken."""
+    sealed = secret_box.seal(bot_token, workspace)
     with _lock, _db() as conn:
         _ensure(conn, workspace)
         other = conn.execute("SELECT workspace FROM slack_installs WHERE team_id = ? AND "
@@ -148,7 +149,7 @@ def installed(workspace, team_id, team_name, app_id, bot_user_id, bot_token, sco
                 "UPDATE slack_installs SET status = 'installed', team_id = ?, team_name = ?, "
                 "app_id = ?, bot_user_id = ?, bot_token = ?, scopes = ?, installed_by = ?, "
                 "installed_at = ?, updated_by = ?, updated_at = ? WHERE workspace = ?",
-                (team_id, team_name, app_id, bot_user_id, secret_box.seal(bot_token), scopes,
+                (team_id, team_name, app_id, bot_user_id, sealed, scopes,
                  user, time.time(), user, time.time(), workspace))
         except sqlite3.IntegrityError:          # the same team, installed a moment ago
             raise TeamTaken(team_id)
@@ -158,7 +159,7 @@ def bot_token(workspace):
     with _lock, _db() as conn:
         r = conn.execute("SELECT bot_token FROM slack_installs WHERE workspace = ? AND "
                          "status = 'installed'", (workspace,)).fetchone()
-    return secret_box.unseal(r["bot_token"]) if r and r["bot_token"] else None
+    return secret_box.unseal(r["bot_token"], workspace) if r and r["bot_token"] else None
 
 
 def _forget_install(conn, workspace, status="configured"):

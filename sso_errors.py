@@ -130,6 +130,9 @@ ERRORS = {
     "not_workspace": (
         "They used a personal or guest account, not a work one",
         "They should sign in with their work account.", False),
+    "workspace_closed": (
+        "The workspace is suspended, or being deleted (only admins may sign in)",
+        "Cancel the deletion under Access > Data, or ask support about a suspension.", False),
     "disabled": (
         "Their access has been turned off (Members)",
         "Turn their access back on under Members.", False),

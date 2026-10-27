@@ -12,12 +12,15 @@ import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 import { slackApi } from "@/lib/api/slack"
+import { workspaceApi } from "@/lib/api/workspace"
 
 export * from "@/lib/api/types"
 export type * from "@/lib/api/insights"
 export type * from "@/lib/api/api-keys"
 export type * from "@/lib/api/assistant"
 export type * from "@/lib/api/slack"
+export type * from "@/lib/api/workspace"
+export type * from "@/lib/api/operator"
 export {
   ApiError,
   session,
@@ -41,3 +44,8 @@ export const apiKeys = apiKeysApi
 export const assistant = assistantApi
 // The Slack app: install, its settings (admin), and what HR may see of it.
 export const slack = slackApi
+
+// The workspace itself: export, delete, support access, audit retention; and data
+// requests about one member (admin).
+export const workspace = workspaceApi
+export { saveFile } from "@/lib/api/workspace"
