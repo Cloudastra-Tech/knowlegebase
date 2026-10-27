@@ -42,7 +42,8 @@ a near-limit answer slows this token's calls down.
 
 Cloud needs ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET (an OAuth 2.0
 integration at developer.atlassian.com/console/myapp, callback URL
-<PUBLIC_URL>/api/integrations/confluence/callback, the SCOPES below).
+<PUBLIC_URL>/api/integrations/confluence/callback, the SCOPES below). The app,
+its token rotation and the API gateway are shared with Jira: connectors/atlassian.py.
 
 API references (checked 2026-10-27):
   OAuth 2.0 (3LO)     https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/
@@ -61,24 +62,19 @@ import logging
 import os
 import re
 import time
-import urllib.parse
 from urllib.parse import parse_qsl, urlsplit
 
 import integrations_store as store
-from connectors import extract, http
-from connectors.base import (AuthExpired, ConfigError, ConnectRefused, Connector, Cursor,
-                             Fetched, FormError, Item, LimitReached, MissingScope, Skipped,
-                             Upsert)
+from connectors import atlassian, extract, http
+from connectors.base import (AuthExpired, ConfigError, Connector, Cursor, Fetched, FormError,
+                             Item, LimitReached, Skipped, Upsert)
 
 log = logging.getLogger("uvicorn.error")
 
 CLOUD = "confluence"
 DATA_CENTER = "confluence_dc"
 
-AUTH_URL = "https://auth.atlassian.com/authorize"
-TOKEN_URL = "https://auth.atlassian.com/oauth/token"
-RESOURCES_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
-API = "https://api.atlassian.com/ex/confluence"          # + /{cloudid}/wiki/...
+API = f"{atlassian.GATEWAY}/confluence"                 # + /{cloudid}/wiki/...
 # Granular read scopes, one per API the sync calls (the v2 spec's
 # x-atlassian-oauth2-scopes; the v1 search and download list these granular
 # scopes as "Beta" next to their classic ones). offline_access: a refresh token.
@@ -92,8 +88,8 @@ SCOPES = " ".join((
     "offline_access",
 ))
 
-RATE = 5                              # calls a second per token
-NEAR_LIMIT_PAUSE = 2.0                # seconds a near-limit answer holds the next call back
+RATE = atlassian.RATE                 # calls a second per token
+NEAR_LIMIT_PAUSE = atlassian.NEAR_LIMIT_PAUSE
 V2_PAGE = 250                         # v2 listings: limit max 250
 V1_PAGE = 100                         # v1 listings / CQL search
 RECONCILE = 24 * 60 * 60              # seconds between full listings (deletes, permissions)
@@ -358,52 +354,24 @@ class ConfluenceCloud(_Confluence):
     LABEL = "Confluence"
     DESCRIPTION = "Pages, blog posts and attachments from the spaces you pick"
     AUTH = "oauth"
-    SETUP_ENV = "ATLASSIAN_CLIENT_ID / ATLASSIAN_CLIENT_SECRET"
+    SETUP_ENV = atlassian.SETUP_ENV
+    CALLBACK = atlassian.CALLBACK
+    tokens = atlassian.Session(CLOUD, "Confluence")
 
     def configured(self):
-        return bool(os.getenv("ATLASSIAN_CLIENT_ID") and os.getenv("ATLASSIAN_CLIENT_SECRET"))
+        return atlassian.configured()
 
     def auth_url(self, redirect_uri, state):
-        return AUTH_URL + "?" + urllib.parse.urlencode({
-            "audience": "api.atlassian.com",
-            "client_id": os.environ["ATLASSIAN_CLIENT_ID"],
-            "scope": os.getenv("ATLASSIAN_SCOPES") or SCOPES,
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "response_type": "code",
-            "prompt": "consent",
-        })
-
-    def _token_call(self, body):
-        """POST /oauth/token. A refused refresh is 403 invalid_grant (Atlassian's
-        docs), a refused code 400 / 401."""
-        return http.request("POST", TOKEN_URL, retries=1, ok=(400, 401, 403), json={
-            **body, "client_id": os.environ.get("ATLASSIAN_CLIENT_ID", ""),
-            "client_secret": os.environ.get("ATLASSIAN_CLIENT_SECRET", "")})
+        return atlassian.authorize_url(os.getenv("ATLASSIAN_SCOPES") or SCOPES, redirect_uri,
+                                       state)
 
     def finish_connect(self, workspace, code, redirect_uri, user):
         """Swap the code for tokens, find the Confluence site they reach, save."""
-        r = self._token_call({"grant_type": "authorization_code", "code": code,
-                              "redirect_uri": redirect_uri})
-        if r.status_code >= 400:
-            raise ConfigError(f"Atlassian refused the code (HTTP {r.status_code})")
-        t = r.json()
-        if not t.get("refresh_token"):
-            raise ConfigError("Atlassian did not return a refresh token")
-        sites = http.request("GET", RESOURCES_URL, retries=1, headers={
-            "Authorization": f"Bearer {t['access_token']}", "Accept": "application/json"}).json()
-        # A token can reach several sites (and Jira ones): the first Confluence one.
-        site = next((x for x in sites if any(":confluence" in sc for sc in x.get("scopes") or [])),
-                    None)
-        if not site:
-            raise ConnectRefused("no_site", "no Confluence site in accessible-resources")
-        host = urlsplit(site.get("url") or "").hostname or site.get("name") or "Confluence"
-        account = f"{site.get('name') or host} ({host})"
+        t = atlassian.exchange(code, redirect_uri)
+        site = atlassian.first_site(t["access_token"], "confluence")
         row = store.get(workspace, CLOUD)
-        store.connect(workspace, CLOUD, account, {
-            "access_token": t["access_token"], "refresh_token": t["refresh_token"],
-            "expires_at": time.time() + int(t.get("expires_in", 3600)) - 60,
-            "cloud_id": site["id"], "site_url": (site.get("url") or "").rstrip("/")}, user)
+        store.connect(workspace, CLOUD, atlassian.account_label(site), {
+            **t, "cloud_id": site["id"], "site_url": (site.get("url") or "").rstrip("/")}, user)
         if row and (row.get("settings") or {}).get("cloud_id") != site["id"]:
             store.update(workspace, CLOUD, settings=dict(row.get("settings") or {}, spaces=[],
                                                          cloud_id=site["id"]))
@@ -411,28 +379,10 @@ class ConfluenceCloud(_Confluence):
             store.update(workspace, CLOUD, settings={"cloud_id": site["id"]})
 
     def _secret(self, workspace):
-        sec = store.secret(workspace, CLOUD)
-        if not sec or not sec.get("refresh_token"):
-            raise AuthExpired("Confluence is not connected")
-        return sec
+        return self.tokens.secret(workspace)
 
     def _access_token(self, workspace, force=False):
-        """A valid access token. Refreshing rotates the refresh token, so it runs
-        under a lock and the new one is saved before the access token is used."""
-        with http.refresh_lock(f"{CLOUD}:{workspace}"):
-            sec = self._secret(workspace)
-            if not force and sec.get("access_token") and sec.get("expires_at", 0) > time.time():
-                return sec["access_token"]
-            r = self._token_call({"grant_type": "refresh_token",
-                                  "refresh_token": sec["refresh_token"]})
-            if r.status_code >= 400:          # invalid_grant: revoked, expired, or rotated away
-                raise AuthExpired("Atlassian refused the refresh token")
-            t = r.json()
-            sec.update(access_token=t["access_token"],
-                       refresh_token=t.get("refresh_token") or sec["refresh_token"],
-                       expires_at=time.time() + int(t.get("expires_in", 3600)) - 60)
-            store.update(workspace, CLOUD, secret=sec)
-            return sec["access_token"]
+        return self.tokens.access_token(workspace, force)
 
     def _session(self, ws):
         sec = self._secret(ws)
@@ -441,25 +391,7 @@ class ConfluenceCloud(_Confluence):
                 "site": (sec.get("site_url") or "") + "/wiki"}
 
     def _get(self, ws, url, params=None, **kwargs):
-        """One call; a 401 refreshes the token once. A 401 that says "scope does not
-        match" is a missing scope, not an expired token (Atlassian answers so when
-        the app wasn't granted what the endpoint needs; reported in
-        https://jira.atlassian.com/browse/CONFCLOUD-75668, not in the reference)."""
-        bucket = http.bucket_key(CLOUD, ws)
-        for attempt in (0, 1):
-            token = self._access_token(ws, force=attempt == 1)
-            r = http.request("GET", url, params=params, ok=(401,), bucket=bucket, rate=RATE,
-                             burst=RATE, headers={"Authorization": f"Bearer {token}",
-                                                  "Accept": "application/json"}, **kwargs)
-            if r.status_code == 401:
-                if "scope does not match" in (r.text or "").lower():
-                    raise MissingScope(f"GET {http.safe_url(url)}: scope does not match")
-                if attempt == 1:
-                    raise AuthExpired(f"GET {http.safe_url(url)}: HTTP 401")
-                continue
-            if (r.headers.get("X-RateLimit-NearLimit") or "").lower() == "true":
-                http.get_bucket(bucket, RATE, RATE).pause(NEAR_LIMIT_PAUSE)
-            return r
+        return self.tokens.get(ws, url, params, **kwargs)
 
     def list_containers(self, ctx, parent=None):
         s = self._session(ctx.workspace)

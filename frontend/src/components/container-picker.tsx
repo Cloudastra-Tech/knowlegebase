@@ -10,8 +10,11 @@ import {
   FileText,
   FileType,
   Folder,
+  FolderGit2,
+  FolderKanban,
   Globe,
   HardDrive,
+  Library,
   Loader2,
   Plus,
   Search,
@@ -28,10 +31,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, type Container, type Integration } from "@/lib/api"
+import { Switch } from "@/components/ui/switch"
+import { api, type Container, type ConnectorOptions, type Integration } from "@/lib/api"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -44,6 +54,10 @@ export function ContainerIcon({ item, className = "size-4" }: { item: Container;
   if (item.kind === "site") return <Building2 className={cls} />
   if (item.kind === "onedrive") return <Cloud className={cls} />
   if (item.kind === "url") return <Globe className={cls} />
+  if (item.kind === "project") return <FolderKanban className={cls} />
+  if (item.kind === "category") return <Library className={cls} />
+  if (item.kind === "section") return <BookOpen className={cls} />
+  if (item.kind === "repo") return <FolderGit2 className={cls} />
   if (item.mimeType?.includes("spreadsheet")) return <FileSpreadsheet className={cls} />
   if (item.mimeType === "application/pdf") return <FileType className={cls} />
   return <FileText className={cls} />
@@ -85,6 +99,34 @@ const COPY: Record<string, { title: string; description: string; root: string; e
       "Tick whole sites (every document library in them, new ones included) or open a site to tick single libraries. Only what you pick is synced.",
     root: "Sites",
     empty: "No sites or libraries here.",
+  },
+  jira: {
+    title: "Choose projects to sync",
+    description:
+      "Tick the projects to sync: their issues with comments and key fields. Nothing is synced until you pick one.",
+    root: "Projects",
+    empty: "No projects this account can browse.",
+  },
+  jira_dc: {
+    title: "Choose projects to sync",
+    description:
+      "Tick the projects to sync: their issues with comments and key fields. Nothing is synced until you pick one.",
+    root: "Projects",
+    empty: "No projects this token can browse.",
+  },
+  zendesk: {
+    title: "Choose what to sync",
+    description:
+      "Tick whole categories or open one to tick sections (their sub-sections come with them). With none ticked, every published Help Center article is synced.",
+    root: "Categories",
+    empty: "No categories or sections here.",
+  },
+  github: {
+    title: "Choose repositories",
+    description:
+      "Tick the repositories to sync: their READMEs and docs (Markdown, reStructuredText, text). Turn on code for a repository to sync its source files too.",
+    root: "Repositories",
+    empty: "No repositories are shared with the app. Add some in its installation settings on GitHub.",
   },
   outline: {
     title: "Choose collections to sync",
@@ -141,6 +183,9 @@ function TreePicker({
   const [selected, setSelected] = useState<Container[]>(initial)
   const [filter, setFilter] = useState("")
   const [saving, setSaving] = useState(false)
+  // The connector's own options (Zendesk tickets, GitHub code file types), if any.
+  const [options, setOptions] = useState<ConnectorOptions | undefined>(item.options)
+  const [extensions, setExtensions] = useState("")
 
   // Each time the dialog opens: start from the saved picks, at the top level.
   const [wasOpen, setWasOpen] = useState(false)
@@ -151,8 +196,12 @@ function TreePicker({
       setPath([])
       setListing(null)
       setFilter("")
+      setOptions(item.options)
+      setExtensions((item.options?.code_extensions ?? []).join(", "))
     }
   }
+  const codeToggles = item.id === "github"
+  const anyCode = selected.some((s) => s.code)
 
   const parent = path.at(-1)?.id
   const items = listing && listing.parent === parent ? listing.items : null
@@ -179,13 +228,24 @@ function TreePicker({
   )
 
   function toggle(f: Container) {
-    setSelected((cur) => (isPicked(f) ? cur.filter((s) => s.id !== f.id) : [...cur, f]))
+    setSelected((cur) =>
+      isPicked(f) ? cur.filter((s) => s.id !== f.id) : [...cur, codeToggles ? { ...f, code: false } : f],
+    )
+  }
+
+  function setCode(f: Container, code: boolean) {
+    setSelected((cur) => cur.map((s) => (s.id === f.id ? { ...s, code } : s)))
   }
 
   async function save() {
     setSaving(true)
     try {
-      await api.setIntegrationContainers(item.id, selected)
+      const saved: ConnectorOptions | undefined = !options
+        ? undefined
+        : codeToggles
+          ? { code_extensions: extensions.split(",").map((e) => e.trim()).filter(Boolean) }
+          : options
+      await api.setIntegrationContainers(item.id, selected, undefined, saved)
       toast.success(
         selected.length
           ? `Syncing ${selected.length} item${selected.length === 1 ? "" : "s"}…`
@@ -289,12 +349,61 @@ function TreePicker({
                     className="min-w-0 flex-1 cursor-pointer truncate text-sm"
                   >
                     {f.name}
+                    {f.private && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">Private</span>
+                    )}
                   </label>
+                )}
+                {codeToggles && isPicked(f) && (
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Switch
+                      size="sm"
+                      id={`code-${f.id}`}
+                      checked={!!selected.find((s) => s.id === f.id)?.code}
+                      onCheckedChange={(v) => setCode(f, v)}
+                      aria-label={`Also sync code from ${f.name}`}
+                    />
+                    <label htmlFor={`code-${f.id}`} className="text-xs text-muted-foreground">
+                      Code
+                    </label>
+                  </div>
                 )}
               </div>
             ))
           )}
         </div>
+
+        {item.id === "zendesk" && options && (
+          <Field orientation="horizontal" className="rounded-xl border p-3">
+            <FieldContent>
+              <FieldLabel htmlFor="zendesk-tickets">Also sync solved tickets</FieldLabel>
+              <FieldDescription>
+                Solved and closed tickets with their public replies. They hold customers' details,
+                so while this is on only HR and admins can ask about anything from Zendesk.
+              </FieldDescription>
+            </FieldContent>
+            <Switch
+              id="zendesk-tickets"
+              checked={!!options.tickets}
+              onCheckedChange={(v) => setOptions({ ...options, tickets: v })}
+            />
+          </Field>
+        )}
+        {codeToggles && options && anyCode && (
+          <Field>
+            <FieldLabel htmlFor="github-extensions">Code file types</FieldLabel>
+            <Input
+              id="github-extensions"
+              value={extensions}
+              onChange={(e) => setExtensions(e.target.value)}
+              placeholder=".py, .ts, .go"
+            />
+            <FieldDescription>
+              For repositories with code on. Large files, lockfiles and vendored folders are
+              skipped.
+            </FieldDescription>
+          </Field>
+        )}
 
         <PickedChips selected={selected} onRemove={toggle} required={!!item.picker_required} />
 

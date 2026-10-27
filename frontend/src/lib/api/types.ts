@@ -332,6 +332,8 @@ export interface Container {
   mimeType?: string
   has_children?: boolean
   url?: string | null
+  private?: boolean // GitHub: a private repository
+  code?: boolean // GitHub: also sync this repository's code
 }
 
 // One card on the Integrations screen: a connector from the server's registry
@@ -350,6 +352,9 @@ export interface Integration {
   acl?: boolean
   setup_env?: string
   note?: string | null // what to know before connecting (SharePoint: needs an admin)
+  sign_in?: boolean // can be connected by signing in (Zendesk offers both)
+  options?: ConnectorOptions // the connection's own options, saved with the picker
+  access_locked?: boolean // HR and admins only, whatever the access setting (Zendesk tickets)
   doc_count?: number
   skipped_count?: number
   account?: string | null
@@ -361,8 +366,15 @@ export interface Integration {
   held_deletes?: number
   last_run?: SyncRun | null
   limits?: { max_pages: number | null; max_depth: number | null }
-  base_url?: string | null // Outline, Confluence Data Center
+  base_url?: string | null // Outline, Confluence / Jira Data Center, Zendesk's subdomain
   live_search?: boolean // Outline: the server's wiki is searched live instead
+}
+
+// A connector's own options (connectors/base.py check_options): Zendesk's tickets
+// switch, GitHub's code file types.
+export interface ConnectorOptions {
+  tickets?: boolean
+  code_extensions?: string[]
 }
 
 // "restricted": HR and admins only (the default). "everyone": the whole workspace.
@@ -372,6 +384,7 @@ export type ConnectorAccess = "restricted" | "everyone"
 export interface IntegrationSetup {
   url?: string
   token?: string
+  email?: string // Zendesk: the agent or admin the API token belongs to
   cf_client_id?: string
   cf_client_secret?: string
   max_pages?: number

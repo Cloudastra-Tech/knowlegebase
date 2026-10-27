@@ -8,7 +8,10 @@ Each connection also says WHO may ask about the files it syncs (settings["access
   restricted  HR and admins only, like docs/<workspace>/restricted/ (the default)
   everyone    everyone in the workspace
 A connection without the key (new, or made before the setting existed) is
-restricted: an admin opens it up on purpose, never by accident.
+restricted: an admin opens it up on purpose, never by accident. A connector may
+LOCK it (settings["access_lock"] = "restricted": Zendesk while it syncs
+tickets, which hold customers' personal data): then it is restricted whatever
+settings["access"] says.
 """
 
 import json
@@ -95,7 +98,10 @@ def remove(workspace, provider):
 
 def access_of(row):
     """Who may ask about a connection's files: "restricted" or "everyone"."""
-    level = ((row or {}).get("settings") or {}).get("access")
+    settings = (row or {}).get("settings") or {}
+    if settings.get("access_lock") == "restricted":
+        return "restricted"
+    level = settings.get("access")
     return level if level in ACCESS_LEVELS else DEFAULT_ACCESS
 
 

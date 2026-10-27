@@ -279,13 +279,19 @@ const CONNECT_ERRORS: Record<string, string> = {
     "An administrator of your organisation has to approve the app. Ask one to connect it.",
   missing_scope:
     "The app wasn't given every permission it needs. Connect again and approve all of them.",
-  no_site: "That Atlassian account has no Confluence site the app can reach.",
+  no_site: "That Atlassian account has no site of that product (Confluence or Jira) the app can reach.",
+  install_requested:
+    "An owner of that GitHub organisation has to approve the app. Connect again once they have.",
+  no_installation: "The GitHub app wasn't installed on an account, so nothing was connected.",
 }
 const CONNECTOR_NAMES: Record<string, string> = {
   google_drive: "Google Drive",
   notion: "Notion",
   confluence: "Confluence",
   sharepoint: "SharePoint & OneDrive",
+  jira: "Jira",
+  zendesk: "Zendesk",
+  github: "GitHub",
 }
 // Back from Slack's consent screen (kb/routers/slack.py): ?slack=installed or ?slack_error=...
 const SLACK_ERRORS: Record<string, string> = {
