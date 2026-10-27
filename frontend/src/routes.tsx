@@ -55,7 +55,8 @@ import {
 //   /admin/sign-in, /admin/members, /admin/groups, /admin/activity, /admin/api,
 //   /admin/webhooks, /admin/data   admins (the Access screen's tabs; Groups: who
 //                      may see content; Data: retention, export, support, delete)
-//   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
+//   /admin/insights, /admin/insights/not-found, /admin/insights/feedback
+//                      HR and admins, viewing the app as HR
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)
@@ -121,6 +122,7 @@ export const routes: RouteObject[] = [
                 Component: HrOnly,
                 children: [
                   { index: true, element: <InsightsScreen tab="overview" /> },
+                  { path: "not-found", element: <InsightsScreen tab="not-found" /> },
                   { path: "feedback", element: <InsightsScreen tab="feedback" /> },
                 ],
               },

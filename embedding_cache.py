@@ -11,7 +11,7 @@ this model is sent to it. Texts repeated within one batch are sent once.
                 names the embedding object itself (its class, model id and
                 dimensions, model_key()): another provider, model or size is
                 another key, never a wrong-sized or foreign vector
-    the rows    the workspace's own (embedding_cache, migration 0023): under
+    the rows    the workspace's own (embedding_cache, migration 0024): under
                 row-level security like the rest, and deleted with it
     upkeep      a hit refreshes used_at; rows unused for EMBEDDING_CACHE_DAYS
                 (default 30) are deleted by a daily job (kb/services/indexing.py)

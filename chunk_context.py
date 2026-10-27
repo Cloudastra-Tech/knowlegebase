@@ -12,7 +12,7 @@ only the document's own text (rag.passage_text).
 Off by default: it is one model call per chunk when an index is built. Each
 answer is cached in config/app.db (chunk_contexts) by a hash of the model, the
 document and the chunk, so a rebuild, or an update that leaves a chunk as it
-was, doesn't pay again. The cache is the workspace's own (migration 0023): under
+was, doesn't pay again. The cache is the workspace's own (migration 0024): under
 row-level security like its other rows, and deleted with it. A failed call gives no context line for that chunk
 (and isn't cached): indexing never fails because of it.
 """

@@ -170,7 +170,27 @@ export interface EvalCase {
   golden: Record<string, unknown> // the case as a line of eval/golden/*.jsonl
 }
 
-function range(params: { from?: string; to?: string; table?: string }) {
+// An unanswered question (the Not found tab). question: null when the retention mode
+// keeps no text. Who asked is never sent.
+export interface UnansweredQuestion {
+  id: number
+  question: string | null
+  at: number
+  day: string
+  surface: Surface
+  language: string | null
+  resolved_at: number | null
+}
+
+export interface NotFoundList {
+  from: string
+  to: string
+  text_kept: boolean
+  questions: UnansweredQuestion[]
+  hidden: number // reached documents beyond the viewer's role: not listed
+}
+
+function range(params: { from?: string; to?: string; table?: string; resolved?: string }) {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v) q.set(k, v)
   const s = q.toString()
@@ -185,6 +205,14 @@ export const insightsApi = {
     request<InsightsReport>(`/admin/insights${range({ from, to })}`),
   exportInsights: (table: InsightsTable, from?: string, to?: string) =>
     download(`/admin/insights/export${range({ table, from, to })}`),
+  notFound: (resolved: boolean, from?: string, to?: string) =>
+    request<NotFoundList>(
+      `/admin/insights/not-found${range({ from, to, resolved: resolved ? "true" : undefined })}`,
+    ),
+  resolve: (id: number) =>
+    request<{ ok: true }>(`/admin/insights/not-found/${id}/resolve`, json("POST")),
+  reopen: (id: number) =>
+    request<{ ok: true }>(`/admin/insights/not-found/${id}/resolve`, json("DELETE")),
   ratedAnswers: (rating?: 1 | -1) =>
     request<{ feedback: RatedAnswer[] }>(`/admin/feedback${rating ? `?rating=${rating}` : ""}`).then(
       (r) => r.feedback,

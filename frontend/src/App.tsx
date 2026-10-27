@@ -13,6 +13,7 @@ import {
 import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
 
+import { AppNav, type NavItem } from "@/components/app-nav"
 import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
@@ -42,7 +43,6 @@ import {
 import { api, type Role } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { IndexStatusProvider } from "@/lib/index-status"
-import { cn } from "@/lib/utils"
 
 // Each page is its own download (routes.tsx), so a visitor on the landing page doesn't
 // load the chat (markdown rendering) and a public user never loads the HR screens.
@@ -93,8 +93,7 @@ export default function App() {
     .slice(0, 2)
     .toUpperCase()
 
-  // `section`: every URL under it is this screen (Access has a tab per URL).
-  const navItems: { to: string; section: string; label: string }[] = [
+  const navItems: NavItem[] = [
     { to: "/chat", section: "/chat", label: "Chat" },
     { to: "/knowledge", section: "/knowledge", label: "Knowledge" },
     ...(activeRole === "hr"
@@ -121,45 +120,24 @@ export default function App() {
     .map((item) => item.section)
     .filter(under)
     .sort((a, b) => b.length - a.length)[0]
-  const isOpen = (section: string) => section === current
 
   return (
     <IndexStatusProvider>
-    <div className="flex h-dvh flex-col">
+    <div className="flex h-dvh flex-col" data-print="flow">
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts. */}
       <CommandPalette user={user} role={activeRole} />
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+      <header data-print="hide" className="sticky top-0 z-20 border-b border-border/60 bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="mx-auto flex h-12 max-w-6xl items-center gap-4 px-4 sm:gap-8">
           <span className="shrink-0 select-none text-sm font-semibold tracking-tight">
             Knowledge
             <span className="hidden font-normal text-muted-foreground sm:inline"> assistant</span>
           </span>
 
-          {/* On a phone the tabs scroll sideways instead of widening the page. */}
-          <nav className="flex h-full min-w-0 items-center gap-5 overflow-x-auto [scrollbar-width:none] sm:gap-6">
-            {navItems.map((item) => (
-              <Link
-                key={item.to}
-                to={item.to}
-                aria-current={isOpen(item.section) ? "page" : undefined}
-                className={cn(
-                  "relative flex h-full shrink-0 items-center whitespace-nowrap text-sm transition-colors",
-                  isOpen(item.section)
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {item.label}
-                {isOpen(item.section) && (
-                  <span className="absolute inset-x-0 bottom-0 h-px bg-foreground" />
-                )}
-              </Link>
-            ))}
-          </nav>
+          <AppNav items={navItems} current={current} />
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <div className="mr-2">
-              <IndexStatusText />
+              <IndexStatusText admin={user.role === "admin" && activeRole === "hr"} />
             </div>
             {canAdmin && (
               <DropdownMenu>
@@ -189,7 +167,7 @@ export default function App() {
               <DropdownMenuTrigger asChild>
                 <button
                   className="rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="Account"
+                  aria-label={`Account, ${initials || "?"}`}
                 >
                   <Avatar className="size-7">
                     <AvatarFallback className="bg-foreground text-[11px] font-medium text-background">
@@ -268,14 +246,14 @@ export default function App() {
         <IndexProgressBar />
       </header>
       {user.impersonator && (
-        <div className="border-b border-border/60 bg-muted px-4 py-2 text-center text-xs text-muted-foreground">
+        <div data-print="hide" className="border-b border-border/60 bg-muted px-4 py-2 text-center text-xs text-muted-foreground">
           You're in this workspace as Cloudastra support ({user.impersonator}). Every request is
           in its audit log.
         </div>
       )}
       <TrialBanner user={user} />
       {user.workspace_status === "deleting" && user.deleting_at && (
-        <div className="border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-center text-xs text-destructive">
+        <div data-print="hide" className="border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-center text-xs text-destructive">
           This workspace will be deleted on{" "}
           {new Date(user.deleting_at * 1000).toLocaleString(undefined, {
             dateStyle: "medium",
@@ -288,9 +266,9 @@ export default function App() {
         </div>
       )}
 
-      <main className="min-h-0 flex-1">
+      <main className="min-h-0 flex-1" data-print="flow">
         {/* Keep the chat mounted so switching screens doesn't lose the conversation. */}
-        <div className={under("/chat") ? "h-full" : "hidden"}>
+        <div className={under("/chat") ? "h-full" : "hidden"} data-print={under("/chat") ? "flow" : "hide"}>
           <LazyPage>
             <ChatView role={activeRole} />
           </LazyPage>

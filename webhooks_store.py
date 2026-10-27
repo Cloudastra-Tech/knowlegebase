@@ -7,7 +7,7 @@ webhooks_store.py  —  an admin's outbound webhooks and what was sent to them
                          (secret_box): shown once when it's made, then only its
                          last 4 characters. After a rotation the previous secret
                          (sealed too) still signs until previous_secret_until.
-                         failures: attempts failed in a row (migration 0023);
+                         failures: attempts failed in a row (migration 0024);
                          disabled_reason / disabled_at: turned off by the server
     webhook_deliveries   one row per event per endpoint: the body sent, its
                          status (pending, delivered, failed), attempts, when it's

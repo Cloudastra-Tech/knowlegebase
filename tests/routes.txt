@@ -3,6 +3,7 @@ DELETE /api/admin/doc-rules/{rule_id} delete_rule require_hr,audited
 DELETE /api/admin/eval-cases/{case_id} delete_eval_case require_admin,audited
 DELETE /api/admin/glossary/{term_id} delete_term require_admin,audited
 DELETE /api/admin/groups/{group_id} delete_group require_admin,audited
+DELETE /api/admin/insights/not-found/{log_id}/resolve reopen_not_found require_hr,current_viewer,audited
 DELETE /api/admin/members/invites/{invite_id} revoke_invite require_admin,audited
 DELETE /api/admin/members/{username} delete_member require_admin,audited
 DELETE /api/admin/sign-in/connections/{cid} delete_connection require_admin,audited
@@ -50,6 +51,8 @@ GET    /api/admin/feedback list_feedback require_hr,current_viewer
 GET    /api/admin/groups list_groups require_admin
 GET    /api/admin/insights get_insights require_hr,current_viewer
 GET    /api/admin/insights/export export_insights require_hr,current_viewer,audited
+GET    /api/admin/insights/not-found list_not_found require_hr,current_viewer
+GET    /api/admin/jobs list_jobs require_admin
 GET    /api/admin/members list_members require_admin
 GET    /api/admin/members/invites list_invites require_admin
 GET    /api/admin/members/requests list_join_requests require_admin
@@ -92,6 +95,7 @@ GET    /api/conversations list_conversations current_user,current_role
 GET    /api/conversations/search search_conversations current_user,current_viewer
 GET    /api/conversations/{cid} get_conversation current_user,current_role,current_viewer
 GET    /api/conversations/{cid}/attachments list_attachments current_user
+GET    /api/conversations/{cid}/export export_conversation current_user,current_viewer
 GET    /api/digests list_subscriptions current_user
 GET    /api/docs list_docs require_hr,current_viewer
 GET    /api/docs/{access}/{name} read_doc require_hr,current_viewer
@@ -100,7 +104,7 @@ GET    /api/drafts/{draft_id} read_draft require_hr,current_viewer
 GET    /api/extension extension_status current_user
 GET    /api/health health_check -
 GET    /api/health/ready ready_check -
-GET    /api/index/status index_status current_user
+GET    /api/index/status index_status current_user,current_role
 GET    /api/integrations list_integrations current_user,current_role
 GET    /api/integrations/catalog integrations_catalog -
 GET    /api/integrations/{provider}/callback integration_callback -
@@ -164,6 +168,7 @@ POST   /api/admin/doc-rules add_rule require_hr,audited
 POST   /api/admin/eval-cases add_eval_case require_admin,current_viewer,audited
 POST   /api/admin/glossary add_term require_admin,audited
 POST   /api/admin/groups create_group require_admin,audited
+POST   /api/admin/insights/not-found/{log_id}/resolve resolve_not_found require_hr,current_viewer,audited
 POST   /api/admin/members/invite create_invite require_admin,audited
 POST   /api/admin/members/invites/{invite_id}/resend resend_invite require_admin,audited
 POST   /api/admin/members/requests/{request_id}/approve approve_join_request require_admin,audited
@@ -214,6 +219,7 @@ POST   /api/digests/{sub_id}/send send_now current_user,audited
 POST   /api/docs create_doc require_hr,audited
 POST   /api/docs/upload upload_docs require_hr,audited
 POST   /api/drafts/from-gap from_gap require_hr,current_viewer,audited
+POST   /api/drafts/from-question from_question require_hr,current_viewer,audited
 POST   /api/drafts/summarise summarise require_hr,current_viewer,audited
 POST   /api/drafts/{draft_id}/publish publish_draft require_hr,current_viewer,audited
 POST   /api/email-in/postmark postmark_inbound email_in_webhook,audited
@@ -238,7 +244,8 @@ POST   /api/operator/workspaces/{ws}/support-session operator_support_session re
 POST   /api/operator/workspaces/{ws}/suspend operator_suspend require_operator,audited
 POST   /api/operator/workspaces/{ws}/unsuspend operator_unsuspend require_operator,audited
 POST   /api/prompts create_prompt current_user,current_role,audited
-POST   /api/reindex reindex require_hr,audited
+POST   /api/reindex reindex require_hr,current_role,audited
+POST   /api/shared/{token}/continue continue_share current_user,current_role,audited
 POST   /api/shares create_share current_user,current_role,audited
 POST   /api/slack/apps/{app_key}/commands slack_commands slack_signature,audited
 POST   /api/slack/apps/{app_key}/events slack_events slack_signature,audited

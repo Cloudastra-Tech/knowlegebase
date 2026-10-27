@@ -433,6 +433,18 @@ def test_unchanged_text_is_never_embedded_twice(env):
     assert sum(env.embedded) == first + 2
 
 
+def test_only_admins_rebuild_the_whole_index(env):
+    import auth
+    import members_store
+    w = env.workspace(("public", "a.txt", "Alpha handbook."))
+    members_store.set_password(f"hr@{w}.example", "HR", auth.hash_password("correct-horse"), w,
+                               "hr")
+    hr = {**env.login(w, "hr"), "X-Role": "hr"}
+    assert env.client.post("/api/reindex?full=true", headers=hr).status_code == 403
+    assert env.client.post("/api/reindex", headers=hr).status_code == 200      # a re-index
+    env.wait(w)
+
+
 class FakeEmbeddings:
     model, dimensions = "fake-model", 3
 

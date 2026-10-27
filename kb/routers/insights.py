@@ -103,6 +103,50 @@ def get_insights(since: str | None = Query(None, alias="from", pattern=DAY),
     return insights.report(ws_of(user), viewer, since, until)
 
 
+@router.get("/api/admin/insights/not-found")
+def list_not_found(since: str | None = Query(None, alias="from", pattern=DAY),
+                   until: str | None = Query(None, alias="to", pattern=DAY),
+                   resolved: bool = False, user=Depends(require_hr),
+                   viewer=Depends(current_viewer)):
+    """The questions the assistant couldn't answer from the documents in from..to,
+    newest first: open ones, or (resolved=true) those marked resolved. Their
+    text follows the retention mode and what the viewer may read (their groups);
+    who asked is never shown."""
+    since, until = _range(since, until)
+    ws = ws_of(user)
+    mode = question_log_store.settings(ws)["mode"]
+    return {"from": since, "to": until, "text_kept": mode != "metadata",
+            **insights.not_found_for(ws, viewer, mode, since, until, resolved)}
+
+
+def _not_found(user, viewer, log_id):
+    ws = ws_of(user)
+    r = question_log_store.get(ws, log_id)
+    if not r or r["outcome"] != "not_found" or not insights.readable(viewer, r):
+        raise HTTPException(404, "There's no such unanswered question.")
+    return ws
+
+
+@router.post("/api/admin/insights/not-found/{log_id}/resolve")
+def resolve_not_found(log_id: int, user=Depends(require_hr), viewer=Depends(current_viewer),
+                      audit=audited("insights.resolve")):
+    """Mark an unanswered question resolved: the documents cover it now, or it
+    needs no answer. It leaves the open list."""
+    ws = _not_found(user, viewer, log_id)
+    question_log_store.set_resolved(ws, log_id, user["username"])
+    audit.record("question", str(log_id), user=user)
+    return {"ok": True}
+
+
+@router.delete("/api/admin/insights/not-found/{log_id}/resolve")
+def reopen_not_found(log_id: int, user=Depends(require_hr), viewer=Depends(current_viewer),
+                     audit=audited("insights.reopen")):
+    ws = _not_found(user, viewer, log_id)
+    question_log_store.set_resolved(ws, log_id, None)
+    audit.record("question", str(log_id), user=user)
+    return {"ok": True}
+
+
 def _cell(value):
     if isinstance(value, list):
         value = " | ".join(map(str, value))

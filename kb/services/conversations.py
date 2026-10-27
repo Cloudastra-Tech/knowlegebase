@@ -9,6 +9,7 @@ Saved chats around the agent (conversations_store.py holds the rows):
                  edited question or a regenerated answer: a new branch (C10).
   view()         the messages shown, each with its versions (‹ 2 / 3 ›).
   markdown_of()  an answer for the clipboard, its citations as footnotes (C25).
+  export_markdown()  a whole conversation as one markdown file (C25).
   outcome()      the state an answer ends in (answered, not_found, ...) and the
                  highest access level of everything the model read for it.
 
@@ -246,6 +247,28 @@ def markdown_of(message):
     if notes:
         text += "\n\n" + "\n".join(notes)
     return text
+
+
+def export_markdown(conv, messages, reader):
+    """The conversation as shown (its current branch) as one markdown document:
+    each question under "You", each answer under "Assistant" as markdown_of()
+    writes it, its footnotes numbered apart from the other answers'. An answer
+    `reader` may not see now is replaced by a line saying so."""
+    out, answer = [f"# {conv['title'] or 'Chat'}", ""], 0
+    for m in store.path(conv["id"], conv["active_leaf_id"], messages):
+        if m["author"] == "user":
+            out += ["**You:**", "", m["content"], ""]
+            continue
+        answer += 1
+        shown = present(m, reader)
+        if shown["withheld"]:
+            body = "_This answer is hidden: it used documents you can't see now._"
+        elif shown["state"] in ("pending", "error"):
+            body = f"_{shown['content'] or 'No answer.'}_"
+        else:
+            body = re.sub(r"\[\^(\d+)\]", lambda f: f"[^{answer}-{f.group(1)}]", markdown_of(m))
+        out += ["**Assistant:**", "", body, ""]
+    return "\n".join(out).rstrip() + "\n"
 
 
 def _source_line(s):

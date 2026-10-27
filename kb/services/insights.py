@@ -17,7 +17,7 @@ retention mode kept it, never with who asked, and never when the answer read
 something the viewer can't (readable(): the principal model, access.py, so HR
 outside a group doesn't see what only that group may read). Documents are listed
 only when the viewer may read them (doc_readable(): the document's ACL). Rows from
-before ACLs were logged (migration 0023) are judged by their access level.
+before ACLs were logged (migration 0024) are judged by their access level.
 
 Days are UTC days (YYYY-MM-DD).
 """
@@ -472,6 +472,32 @@ def gaps_for(ws, viewer, mode):
                     "general_knowledge": g["general_knowledge"], "samples": samples,
                     "computed_at": g["computed_at"]})
     return out
+
+
+def not_found_for(ws, viewer, mode, since_day, until_day, resolved=False):
+    """The questions the assistant couldn't answer, newest first, as `viewer` (an
+    access.Viewer, or a bare role) may see them (the Not found tab): a question
+    whose search reached documents beyond them (readable(): their groups) is left
+    out (counted in `hidden`), and its text shows only while the retention mode
+    keeps any (else None)."""
+    rows, hidden = [], 0
+    for r in log_store.not_found(ws, since_day, until_day, resolved):
+        if not readable(viewer, r):
+            hidden += 1
+            continue
+        rows.append({"id": r["id"], "question": r["question"] if mode != "metadata" else None,
+                     "at": r["at"], "day": r["day"], "surface": r["surface"],
+                     "language": r.get("language"), "resolved_at": r.get("resolved_at")})
+    return {"questions": rows, "hidden": hidden}
+
+
+def find_not_found(ws, viewer, log_id):
+    """One unanswered question `viewer` may see (readable()), with its text, or None."""
+    r = log_store.get(ws, log_id)
+    if (not r or r["outcome"] != "not_found" or not r["question"]
+            or not readable(viewer, r)):
+        return None
+    return r
 
 
 # ---- Connectors -----------------------------------------------------------------------------

@@ -61,6 +61,13 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { WebhooksView } from "@/components/webhooks-view"
 import { WorkspaceDataView } from "@/components/workspace-data-view"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
@@ -1197,6 +1204,16 @@ export type AccessTab =
   | "webhooks"
   | "data"
 
+const ACCESS_TABS: [AccessTab, string][] = [
+  ["sign-in", "Sign-in"],
+  ["members", "Members"],
+  ["groups", "Groups"],
+  ["activity", "Activity"],
+  ["api", "API & MCP"],
+  ["webhooks", "Webhooks"],
+  ["data", "Data"],
+]
+
 // The Activity tab's "Sign-ins": the same events as the sign-in settings show.
 function SignInActivity() {
   const settings = useQuery(queries.signInSettings()).data
@@ -1230,29 +1247,40 @@ export function SignInView({
             workspace, as what, and what they may see.
           </p>
         </div>
+        {/* Seven tabs don't fit a phone: there it's a picker instead of a sideways scroll. */}
+        <Select value={tab} onValueChange={(v) => onTabChange(v as AccessTab)}>
+          <SelectTrigger aria-label="Access section" className="w-full sm:hidden">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ACCESS_TABS.map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+                {value === "members" && waiting > 0 && ` (${waiting} waiting to join)`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Tabs
+          panels={false}
           value={tab}
           onValueChange={(v) => onTabChange(v as AccessTab)}
-          className="max-w-full overflow-x-auto"
+          className="hidden max-w-full sm:flex"
         >
           <TabsList>
-            <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
-            <TabsTrigger value="members">
-              Members
-              {waiting > 0 && (
-                <Badge
-                  className="h-5 min-w-5 rounded-full px-1.5 tabular-nums"
-                  aria-label={`${waiting} waiting to join`}
-                >
-                  {waiting}
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="groups">Groups</TabsTrigger>
-            <TabsTrigger value="activity">Activity</TabsTrigger>
-            <TabsTrigger value="api">API &amp; MCP</TabsTrigger>
-            <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
-            <TabsTrigger value="data">Data</TabsTrigger>
+            {ACCESS_TABS.map(([value, label]) => (
+              <TabsTrigger key={value} value={value}>
+                {label}
+                {value === "members" && waiting > 0 && (
+                  <Badge
+                    className="h-5 min-w-5 rounded-full px-1.5 tabular-nums"
+                    aria-label={`${waiting} waiting to join`}
+                  >
+                    {waiting}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </Tabs>
       </div>

@@ -1,7 +1,7 @@
 """group ACLs in insights, per-workspace caches, webhook upkeep
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-10-27
 
     acl columns         question_log, eval_candidates, content_gaps, insights_docs
@@ -32,8 +32,8 @@ from alembic import op
 
 from migrations import dialect
 
-revision = "0023"
-down_revision = "0022"
+revision = "0024"
+down_revision = "0023"
 branch_labels = None
 depends_on = None
 

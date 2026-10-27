@@ -12,7 +12,7 @@ import integrations_store
 from kb.audit import audited
 from kb.deps import current_viewer, require_hr, ws_of
 from kb.rate_limit import user_limit
-from kb.services import audience, drafts, permissions
+from kb.services import audience, drafts, insights, permissions
 
 router = APIRouter()
 
@@ -24,6 +24,10 @@ class SummariseIn(BaseModel):
 
 class GapIn(BaseModel):
     gap_id: int
+
+
+class QuestionIn(BaseModel):
+    question_id: int
 
 
 class DraftPatch(BaseModel):
@@ -78,12 +82,27 @@ def from_gap(body: GapIn, user=Depends(require_hr), viewer=Depends(current_viewe
              audit=audited("draft.from_gap")):
     """Draft a document for a content gap (Insights)."""
     ws = ws_of(user)
-    gap = drafts.find_gap(ws, viewer.role, body.gap_id)
+    gap = drafts.find_gap(ws, viewer, body.gap_id)
     if not gap:
         raise HTTPException(404, "No such content gap.")
     user_limit(user, "draft")
     draft = drafts.start_gap(ws, user, gap)
     audit.record("draft", draft["id"], {"kind": "gap", "gap_id": body.gap_id}, user=user)
+    return drafts.view(draft)
+
+
+@router.post("/api/drafts/from-question")
+def from_question(body: QuestionIn, user=Depends(require_hr), viewer=Depends(current_viewer),
+                  audit=audited("draft.from_question")):
+    """Draft a document answering one unanswered question (Insights > Not found)."""
+    ws = ws_of(user)
+    question = insights.find_not_found(ws, viewer, body.question_id)
+    if not question:
+        raise HTTPException(404, "There's no such unanswered question, or its text isn't kept.")
+    user_limit(user, "draft")
+    draft = drafts.start_question(ws, user, question)
+    audit.record("draft", draft["id"], {"kind": "gap", "question_id": body.question_id},
+                 user=user)
     return drafts.view(draft)
 
 

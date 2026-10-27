@@ -78,7 +78,7 @@ def add(workspace, user, surface, outcome, *, text_mode, question=None, answer=N
     cache_hit: exact / semantic when the answer cache served it; unsupported: the
     figures the faithfulness check didn't find; language: the question's (0019).
     provider: openai / bedrock, who answered; model: the model that wrote most (0022).
-    acl: who may read what its answer read, as access.py clauses (0023); None: by
+    acl: who may read what its answer read, as access.py clauses (0024); None: by
     max_access, as rows from before it are."""
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}")
@@ -128,6 +128,35 @@ def get_many(ids):
     with _db() as conn:
         return {r["id"]: _row(r) for r in conn.execute(
             f"SELECT * FROM question_log WHERE id IN ({','.join('?' * len(ids))})", ids)}
+
+
+def not_found(workspace, since_day, until_day, resolved=False, limit=500):
+    """The questions in [since_day, until_day] the assistant couldn't answer from
+    the documents, newest first: still open, or (resolved) the ones marked
+    resolved (migration 0023)."""
+    with _db() as conn:
+        return [_row(r) for r in conn.execute(
+            "SELECT * FROM question_log WHERE workspace = ? AND outcome = 'not_found' AND "
+            f"day >= ? AND day <= ? AND resolved_at IS {'NOT ' if resolved else ''}NULL "
+            "ORDER BY at DESC, id DESC LIMIT ?", (workspace, since_day, until_day, int(limit)))]
+
+
+def get(workspace, log_id):
+    """One of the workspace's rows, or None."""
+    with _db() as conn:
+        r = conn.execute("SELECT * FROM question_log WHERE id = ? AND workspace = ?",
+                         (log_id, workspace)).fetchone()
+    return _row(r) if r else None
+
+
+def set_resolved(workspace, log_id, username=None):
+    """Mark a row resolved by `username`, or open again (None). False if the
+    workspace has no such row."""
+    with _lock, _db() as conn:
+        return conn.execute(
+            "UPDATE question_log SET resolved_at = ?, resolved_by = ? WHERE id = ? AND "
+            "workspace = ?", (time.time() if username else None, username, log_id,
+                              workspace)).rowcount > 0
 
 
 def active_users(workspace, since_day, until_day):
