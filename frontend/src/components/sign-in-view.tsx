@@ -7,7 +7,6 @@ import {
   ExternalLink,
   Globe,
   KeyRound,
-  Loader2,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -19,12 +18,17 @@ import { toast } from "sonner"
 
 import { ActivityView } from "@/components/activity-view"
 import { ApiAccessView } from "@/components/api-access-view"
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
+import { Panel } from "@/components/glass/panel"
 import { GroupsView } from "@/components/groups-view"
 import { MembersView } from "@/components/members-view"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
 import { JoiningPolicy } from "@/components/sign-in-joining"
-import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
+import { ScreenHeader } from "@/components/screen-header"
+import { CopyField, Notice, ProviderDialog } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -81,6 +85,7 @@ import {
   type SignInSettings,
   type SsoTestResult,
 } from "@/lib/api"
+import { isInstant, markInstantNav } from "@/lib/instant-nav"
 import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
@@ -117,28 +122,20 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        {action}
-      </div>
+    <Panel title={title} actions={action}>
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">{description}</p>
       <div className="mt-4">{children}</div>
-    </section>
+    </Panel>
   )
 }
 
 function OnBadge({ on, onLabel, offLabel }: { on: boolean; onLabel: string; offLabel: string }) {
   return on ? (
-    <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-      <span className="size-1.5 rounded-full bg-emerald-500" /> {onLabel}
+    <Badge variant="signal" className="gap-1.5">
+      <span aria-hidden className="size-1.5 rounded-full bg-signal" /> {onLabel}
     </Badge>
   ) : (
-    <Badge variant="outline" className="font-normal text-muted-foreground">
-      {offLabel}
-    </Badge>
+    <Badge variant="mono">{offLabel}</Badge>
   )
 }
 
@@ -260,8 +257,7 @@ function GroupAdminExpiry({
             />
             <span>days without a sign-in through the role source</span>
             {valid && n !== settings.group_admin_days && (
-              <Button type="submit" size="sm" variant="outline" disabled={saving}>
-                {saving && <Loader2 className="animate-spin" />}
+              <Button type="submit" size="sm" variant="outline" loading={saving}>
                 Save
               </Button>
             )}
@@ -304,12 +300,11 @@ function DomainRow({ domain, onChange }: { domain: SignInDomain; onChange: () =>
     <div className="rounded-xl border p-4">
       <div className="flex flex-wrap items-center gap-3">
         <Globe className="size-4 text-muted-foreground" />
-        <span className="font-medium">{domain.domain}</span>
+        <span className="min-w-0 font-mono text-sm font-medium break-all">{domain.domain}</span>
         <OnBadge on={domain.verified} onLabel="Verified" offLabel="Waiting for DNS" />
         <div className="ml-auto flex gap-2">
           {!domain.verified && (
-            <Button size="sm" onClick={check} disabled={checking}>
-              {checking && <Loader2 className="animate-spin" />}
+            <Button size="sm" onClick={check} loading={checking}>
               Check DNS
             </Button>
           )}
@@ -377,8 +372,8 @@ function AddDomain({ onAdded }: { onAdded: () => void }) {
         className="max-w-xs"
         required
       />
-      <Button type="submit" variant="outline" disabled={adding}>
-        {adding ? <Loader2 className="animate-spin" /> : <Plus />}
+      <Button type="submit" variant="outline" loading={adding}>
+        {!adding && <Plus />}
         Add domain
       </Button>
     </form>
@@ -389,7 +384,8 @@ function AddDomain({ onAdded }: { onAdded: () => void }) {
 // "kb-admins → Admin, …"
 const ruleText = (conn: SignInConnection) =>
   conn.group_rules.map((r) => `${r.group} → ${ROLE_LABEL[r.role]}`).join(", ")
-const AMBER = "bg-amber-500/10 text-amber-800 dark:text-amber-300"
+// A warning badge: the token on a hairline, unfilled, so small text keeps its contrast.
+const WARN = "border-warning/40 bg-transparent text-warning"
 const CERT_WARN_DAYS = 30 // red from 7
 const daysUntil = (epoch: number) => Math.floor((epoch - Date.now() / 1000) / 86400)
 
@@ -430,7 +426,7 @@ function CertificateBadge({ conn }: { conn: SignInConnection }) {
     ? "Its metadata URL is checked daily, so the new certificate is picked up as soon as your provider publishes it."
     : "Its metadata was pasted or typed in, so it can't update by itself: once your provider has the new certificate, give it here (Edit)."
   return (
-    <HintBadge className={days < 7 ? "bg-destructive/10 text-destructive" : AMBER} hint={hint}>
+    <HintBadge className={days < 7 ? "bg-destructive/10 text-destructive" : WARN} hint={hint}>
       <AlertTriangle /> {label}
     </HintBadge>
   )
@@ -499,23 +495,17 @@ function ProviderRow({
         <div className="min-w-0 flex-1 basis-56">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{conn.label}</span>
-            <Badge variant="secondary" className="font-normal">
-              {PROTOCOL[conn.protocol]}
-            </Badge>
+            <Badge variant="mono">{PROTOCOL[conn.protocol]}</Badge>
             <OnBadge on={conn.enabled} onLabel="On" offLabel="Off" />
             {conn.health.status === "failing" && (
               <Badge variant="destructive" className="gap-1.5">
-                <span className="size-1.5 rounded-full bg-destructive" /> Failing
+                <span aria-hidden className="size-1.5 rounded-full bg-destructive" /> Failing
               </Badge>
             )}
-            {isSource && (
-              <Badge variant="secondary" className="font-normal">
-                Role source
-              </Badge>
-            )}
+            {isSource && <Badge variant="mono">Role source</Badge>}
             {conn.needs_review && (
               <HintBadge
-                className={AMBER}
+                className={WARN}
                 hint={`New metadata from your provider wasn't applied: ${conn.review_reason}. If that's right, load it again (Edit → Metadata URL).`}
               >
                 <AlertTriangle /> Needs review
@@ -524,7 +514,8 @@ function ProviderRow({
             <CertificateBadge conn={conn} />
           </div>
           <p className="truncate text-sm text-muted-foreground">
-            {conn.issuer} · last sign-in {timeAgo(conn.last_login_at)}
+            <span className="font-mono text-xs">{conn.issuer}</span> · last sign-in{" "}
+            {timeAgo(conn.last_login_at)}
           </p>
           <p className="text-xs text-muted-foreground">
             {isSource
@@ -662,9 +653,9 @@ function HealthAlert({
             variant="outline"
             className="mt-2 text-foreground"
             onClick={onRefresh}
-            disabled={refreshing}
+            loading={refreshing}
           >
-            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {!refreshing && <RefreshCw />}
             Refresh metadata
           </Button>
         )}
@@ -776,7 +767,7 @@ function TestDialog({
 
         {state.phase === "waiting" && (
           <div className="flex items-center gap-3 rounded-lg bg-muted/40 p-4 text-sm">
-            <Loader2 className="size-4 animate-spin" />
+            <AsciiSpinner label="" className="text-signal" />
             Waiting for you to sign in in the test window…
           </div>
         )}
@@ -789,8 +780,8 @@ function TestDialog({
         {state.phase === "done" && (
           <>
             {state.result.ok ? (
-              <div className="flex items-start gap-3 rounded-lg bg-emerald-600/10 p-4 text-sm text-emerald-800 dark:text-emerald-300">
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+              <div className="flex items-start gap-3 rounded-lg border border-success/30 bg-success/5 p-4 text-sm">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                 <p>
                   <span className="font-medium">{state.result.name}</span> ({state.result.email}) would
                   sign in as <span className="font-medium">{ROLE_LABEL[state.result.role ?? "public"]}</span>
@@ -834,7 +825,7 @@ function TestDialog({
             {sent.length > 0 && (
               <div className="grid grid-cols-1 gap-2">
                 <p className="text-sm font-medium">What the provider sent</p>
-                <dl className="grid grid-cols-[minmax(0,10rem)_1fr] gap-x-3 gap-y-1 rounded-lg border p-3 text-xs">
+                <dl className="grid grid-cols-[minmax(0,10rem)_1fr] gap-x-3 gap-y-1 rounded-lg border bg-card p-3 text-xs">
                   {sent.map(([key, value]) => (
                     <div key={key} className="contents">
                       <dt className="truncate text-muted-foreground" title={key}>
@@ -860,14 +851,14 @@ function TestDialog({
 
 // ---- Recent sign-ins -----------------------------------------------------------------
 const OUTCOME: Record<SignInEvent["outcome"], { label: string; className: string }> = {
-  signed_in: { label: "Signed in", className: "text-emerald-700 dark:text-emerald-400" },
+  signed_in: { label: "Signed in", className: "text-success" },
   refused: { label: "Turned away", className: "text-destructive" },
   failed: { label: "Failed", className: "text-destructive" },
   test: { label: "Test", className: "text-muted-foreground" },
-  warning: { label: "Warning", className: "text-amber-700 dark:text-amber-400" },
+  warning: { label: "Warning", className: "text-warning" },
   updated: { label: "Updated", className: "text-muted-foreground" },
-  attention: { label: "Needs a look", className: "text-amber-700 dark:text-amber-400" },
-  scim: { label: "SCIM", className: "text-sky-700 dark:text-sky-400" },
+  attention: { label: "Needs a look", className: "text-warning" },
+  scim: { label: "SCIM", className: "text-foreground" },
 }
 // A SCIM request that was turned away (it has a fix: sso_errors.py).
 const SCIM_REFUSED = { label: "Refused", className: "text-destructive" }
@@ -877,13 +868,21 @@ const ABOUT_PROVIDER: SignInEvent["outcome"][] = ["updated", "attention"]
 function Events({
   events,
   empty = "Nobody has signed in through your providers yet.",
+  plain = false,
 }: {
   events: SignInEvent[]
   empty?: string
+  plain?: boolean // on the Activity tab: a log, so no ASCII even when empty
 }) {
-  if (!events.length) return <p className="text-sm text-muted-foreground">{empty}</p>
+  if (!events.length)
+    return plain ? (
+      <p className="rounded-xl border bg-card px-4 py-6 text-center text-sm text-muted-foreground">{empty}</p>
+    ) : (
+      <AsciiEmptyState art="inbox" size="sm" headingLevel={4} title={empty} />
+    )
+  // A log: opaque, mono times, nothing staggers in.
   return (
-    <div className="divide-y rounded-xl border">
+    <div className="divide-y rounded-xl border bg-card">
       {events.map((e, i) => {
         const look = e.outcome === "scim" && e.fix ? SCIM_REFUSED : OUTCOME[e.outcome]
         return (
@@ -896,7 +895,7 @@ function Events({
               {ABOUT_PROVIDER.includes(e.outcome) ? "" : "via "}
               {e.connection ?? "a deleted provider"}
             </span>
-            <span className="ml-auto text-xs text-muted-foreground">{timeAgo(e.at)}</span>
+            <span className="ml-auto font-mono text-xs text-muted-foreground tabular-nums">{timeAgo(e.at)}</span>
             {(e.reason || e.ref) && (
               <div className="basis-full text-xs break-words text-muted-foreground sm:pl-27">
                 <p>
@@ -1005,7 +1004,7 @@ function TokenRow({ token, onRevoke }: { token: ScimToken; onRevoke: () => void 
   const [confirm, setConfirm] = useState(false)
   const revoked = token.revoked_at !== null
   return (
-    <div className={cn("flex flex-wrap items-center gap-3 rounded-xl border p-3", revoked && "opacity-60")}>
+    <div className={cn("flex flex-wrap items-center gap-3 rounded-xl border bg-card p-3", revoked && "opacity-60")}>
       <KeyRound className="size-4 text-muted-foreground" />
       <div className="min-w-0 flex-1 basis-48">
         <p className="text-sm">
@@ -1053,13 +1052,12 @@ function NewTokenDialog({ token, onClose }: { token: string | null; onClose: () 
             (Entra ID).
           </DialogDescription>
         </DialogHeader>
-        <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200">
-          <TriangleAlert />
-          <AlertTitle>Copy it now</AlertTitle>
-          <AlertDescription className="text-amber-900/90 dark:text-amber-200/90">
+        <Notice>
+          <p className="font-medium">Copy it now</p>
+          <p className="text-muted-foreground">
             It won't be shown again. If it's lost, make a new one and revoke this one.
-          </AlertDescription>
-        </Alert>
+          </p>
+        </Notice>
         {token && <CopyField label="Token" value={token} />}
         <DialogFooter>
           <Button onClick={onClose}>Done</Button>
@@ -1117,8 +1115,8 @@ function Provisioning({
       title="Provisioning (SCIM)"
       description="Your identity provider adds people, updates them, and turns them off here as soon as it does there."
       action={
-        <Button size="sm" onClick={create} disabled={creating || !scim || active.length >= scim.max_tokens}>
-          {creating ? <Loader2 className="animate-spin" /> : <Plus />}
+        <Button size="sm" onClick={create} loading={creating} disabled={!scim || active.length >= scim.max_tokens}>
+          {!creating && <Plus />}
           New token
         </Button>
       }
@@ -1134,7 +1132,9 @@ function Provisioning({
               {scim.last_sync_at ? `Last sync ${timeAgo(scim.last_sync_at)}` : "No sync yet"}
             </span>
             <span>
-              {scim.users} {scim.users === 1 ? "person" : "people"} and {scim.groups}{" "}
+              <span className="font-mono tabular-nums">{scim.users}</span>{" "}
+              {scim.users === 1 ? "person" : "people"} and{" "}
+              <span className="font-mono tabular-nums">{scim.groups}</span>{" "}
               {scim.groups === 1 ? "group" : "groups"} provisioned
             </span>
           </div>
@@ -1144,9 +1144,13 @@ function Provisioning({
               <TokenRow key={t.id} token={t} onRevoke={() => revoke(t)} />
             ))}
             {!scim.tokens.length && (
-              <p className="text-sm text-muted-foreground">
-                No token yet. Make one, then give it and the URL above to your identity provider.
-              </p>
+              <AsciiEmptyState
+                art="key"
+                size="sm"
+                headingLevel={4}
+                title="No token yet."
+                description="Make one, then give it and the URL above to your identity provider."
+              />
             )}
           </div>
 
@@ -1154,11 +1158,7 @@ function Provisioning({
             <div className="min-w-0 flex-1 basis-56">
               <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                 Roles from SCIM groups
-                {isSource && (
-                  <Badge variant="secondary" className="font-normal">
-                    Role source
-                  </Badge>
-                )}
+                {isSource && <Badge variant="mono">Role source</Badge>}
               </p>
               <p className="text-xs text-muted-foreground">
                 {isSource
@@ -1184,7 +1184,7 @@ function Provisioning({
           <SetupNotes baseUrl={scim.base_url} />
 
           <div className="grid grid-cols-1 gap-2">
-            <p className="text-sm font-medium">Recent SCIM events</p>
+            <AsciiDivider as="h4" label="Recent SCIM events" />
             <Events events={scim.events} empty="Your identity provider hasn't changed anything yet." />
           </div>
         </div>
@@ -1218,7 +1218,7 @@ const ACCESS_TABS: [AccessTab, string][] = [
 function SignInActivity() {
   const settings = useQuery(queries.signInSettings()).data
   if (!settings) return <Skeleton className="h-48 rounded-2xl" />
-  return <Events events={settings.events} />
+  return <Events events={settings.events} plain />
 }
 
 export function SignInView({
@@ -1237,16 +1237,69 @@ export function SignInView({
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <ShieldCheck className="size-6" /> Access
-          </h2>
-          <p className="text-sm text-muted-foreground">
+      <ScreenHeader
+        title="Access"
+        icon={ShieldCheck}
+        description={
+          <>
             Who can sign in to the <span className="font-medium text-foreground">{workspace}</span>{" "}
             workspace, as what, and what they may see.
-          </p>
-        </div>
+          </>
+        }
+        actions={<AccessTabs tab={tab} waiting={waiting} onTabChange={onTabChange} />}
+        className="[&>div:last-child]:w-full sm:[&>div:last-child]:w-auto"
+      />
+      <div className="mt-6">
+        <TabSwap key={tab}>
+          {tab === "sign-in" ? (
+            <SignInSettingsView />
+          ) : tab === "members" ? (
+            <MembersView me={me} />
+          ) : tab === "groups" ? (
+            <GroupsView />
+          ) : tab === "api" ? (
+            <ApiAccessView />
+          ) : tab === "webhooks" ? (
+            <WebhooksView />
+          ) : tab === "data" ? (
+            <WorkspaceDataView />
+          ) : (
+            <ActivityView signIns={<SignInActivity />} />
+          )}
+        </TabSwap>
+      </div>
+    </div>
+  )
+}
+
+// A tab's content arriving: a 150ms fade, opacity only (no slide), and none at all
+// when the tab was picked from the keyboard. Nothing in a tab is blurred glass, so the
+// fade can't make a backdrop root of anything.
+function TabSwap({ children }: { children: React.ReactNode }) {
+  const [fade] = useState(() => !isInstant())
+  return (
+    <div
+      data-slot="tab-swap"
+      className={cn(fade && "animate-in duration-(--dur-swap) ease-out-strong fade-in")}
+    >
+      {children}
+    </div>
+  )
+}
+
+const TAB_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"])
+
+function AccessTabs({
+  tab,
+  waiting,
+  onTabChange,
+}: {
+  tab: AccessTab
+  waiting: number
+  onTabChange: (tab: AccessTab) => void
+}) {
+  return (
+    <>
         {/* Seven tabs don't fit a phone: there it's a picker instead of a sideways scroll. */}
         <Select value={tab} onValueChange={(v) => onTabChange(v as AccessTab)}>
           <SelectTrigger aria-label="Access section" className="w-full sm:hidden">
@@ -1267,13 +1320,14 @@ export function SignInView({
           onValueChange={(v) => onTabChange(v as AccessTab)}
           className="hidden max-w-full sm:flex"
         >
-          <TabsList>
+          {/* Arrow keys switch tabs: from the keyboard, the new one lands without a fade. */}
+          <TabsList onKeyDownCapture={(e) => TAB_KEYS.has(e.key) && markInstantNav()}>
             {ACCESS_TABS.map(([value, label]) => (
               <TabsTrigger key={value} value={value}>
                 {label}
                 {value === "members" && waiting > 0 && (
                   <Badge
-                    className="h-5 min-w-5 rounded-full px-1.5 tabular-nums"
+                    className="h-5 min-w-5 rounded-full px-1.5 font-mono tabular-nums"
                     aria-label={`${waiting} waiting to join`}
                   >
                     {waiting}
@@ -1283,25 +1337,7 @@ export function SignInView({
             ))}
           </TabsList>
         </Tabs>
-      </div>
-      <div className="mt-6">
-        {tab === "sign-in" ? (
-          <SignInSettingsView />
-        ) : tab === "members" ? (
-          <MembersView me={me} />
-        ) : tab === "groups" ? (
-          <GroupsView />
-        ) : tab === "api" ? (
-          <ApiAccessView />
-        ) : tab === "webhooks" ? (
-          <WebhooksView />
-        ) : tab === "data" ? (
-          <WorkspaceDataView />
-        ) : (
-          <ActivityView signIns={<SignInActivity />} />
-        )}
-      </div>
-    </div>
+    </>
   )
 }
 
@@ -1409,9 +1445,7 @@ function SignInSettingsView() {
           >
             <div className="grid grid-cols-1 gap-3">
               {!verified && (
-                <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
-                  Verify a domain first: providers only sign in people with an email on one.
-                </p>
+                <Notice>Verify a domain first: providers only sign in people with an email on one.</Notice>
               )}
               {settings.connections.map((c) => (
                 <ProviderRow
@@ -1425,10 +1459,13 @@ function SignInSettingsView() {
                 />
               ))}
               {!settings.connections.length && (
-                <p className="text-sm text-muted-foreground">
-                  No provider yet. Add your Okta, Entra ID, Google Workspace or any other OpenID
-                  Connect or SAML provider.
-                </p>
+                <AsciiEmptyState
+                  art="plug"
+                  size="sm"
+                  headingLevel={4}
+                  title="No provider yet."
+                  description="Add your Okta, Entra ID, Google Workspace or any other OpenID Connect or SAML provider."
+                />
               )}
             </div>
           </Section>

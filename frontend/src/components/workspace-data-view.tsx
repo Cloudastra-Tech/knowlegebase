@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Download, LifeBuoy, Loader2, Package, TriangleAlert } from "lucide-react"
+import { Download, LifeBuoy, Package, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
+import { Panel } from "@/components/glass/panel"
 import { QuestionLogSettings } from "@/components/question-log-settings"
 import {
   AlertDialog,
@@ -34,7 +36,7 @@ import {
   type WorkspaceSettings,
 } from "@/lib/api"
 import { queries } from "@/lib/queries"
-import { timeAgo } from "@/lib/utils"
+import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -50,7 +52,9 @@ const CHAT_KEEP = [
 
 const years = (days: number) => `${Math.round(days / 365)} year${days >= 730 ? "s" : ""}`
 
-function Panel({
+// The danger zone keeps the destructive token on its edge and title, and nothing on it
+// moves.
+function DataPanel({
   title,
   description,
   children,
@@ -62,17 +66,13 @@ function Panel({
   danger?: boolean
 }) {
   return (
-    <section
-      className={
-        danger
-          ? "rounded-2xl border border-destructive/40 bg-background p-5"
-          : "rounded-2xl border border-border/70 bg-background p-5"
-      }
+    <Panel
+      title={danger ? <span className="text-destructive">{title}</span> : title}
+      className={danger ? "border border-destructive/40" : undefined}
     >
-      <h3 className={danger ? "font-medium text-destructive" : "font-medium"}>{title}</h3>
-      <p className="text-sm text-muted-foreground">{description}</p>
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">{description}</p>
       <div className="mt-4">{children}</div>
-    </section>
+    </Panel>
   )
 }
 
@@ -101,7 +101,7 @@ function Retention({ settings }: { settings: WorkspaceSettings }) {
   const locked = settings.support_session
 
   return (
-    <Panel
+    <DataPanel
       title="Retention"
       description="How long this workspace keeps what people do here. Nightly jobs delete what's older."
     >
@@ -156,7 +156,7 @@ function Retention({ settings }: { settings: WorkspaceSettings }) {
           </FieldDescription>
         </Field>
       </div>
-    </Panel>
+    </DataPanel>
   )
 }
 
@@ -191,31 +191,39 @@ function ExportPanel({ settings }: { settings: WorkspaceSettings }) {
   }
 
   return (
-    <Panel
+    <DataPanel
       title="Export"
       description={`A ZIP of members, the audit log, uploaded documents, chats and settings (never secrets such as tokens or keys). Downloadable for ${settings.export_hours} hours.`}
     >
       <Button
         variant="outline"
         onClick={() => start.mutate()}
-        disabled={busy || start.isPending || settings.support_session}
+        loading={busy || start.isPending}
+        disabled={settings.support_session}
       >
-        {busy || start.isPending ? (
-          <Loader2 className="animate-spin" data-icon="inline-start" />
-        ) : (
-          <Package data-icon="inline-start" />
-        )}
+        {!(busy || start.isPending) && <Package data-icon="inline-start" />}
         Export workspace
       </Button>
       {settings.exports.length > 0 && (
-        <div className="mt-4 divide-y rounded-xl border">
+        <div className="mt-4 divide-y rounded-xl border bg-card">
           {settings.exports.map((e) => (
             <div key={e.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
               <div className="min-w-0 flex-1 basis-48">
                 <p className="truncate text-sm font-medium">
-                  {timeAgo(e.created_at)} · {e.requested_by}
+                  <span className="font-mono tabular-nums">{timeAgo(e.created_at)}</span> ·{" "}
+                  {e.requested_by}
                 </p>
-                <p className="truncate text-xs text-muted-foreground">{exportNote(e)}</p>
+                <p
+                  className={cn(
+                    "flex items-center gap-1.5 truncate text-xs text-muted-foreground",
+                    e.status === "failed" && "text-destructive",
+                  )}
+                >
+                  {(e.status === "queued" || e.status === "running") && (
+                    <AsciiSpinner size="xs" label="" className="text-signal" />
+                  )}
+                  {exportNote(e)}
+                </p>
               </div>
               {e.status === "done" && (
                 <Button size="sm" variant="ghost" onClick={() => download(e.id)}>
@@ -226,7 +234,7 @@ function ExportPanel({ settings }: { settings: WorkspaceSettings }) {
           ))}
         </div>
       )}
-    </Panel>
+    </DataPanel>
   )
 }
 
@@ -250,13 +258,13 @@ function SupportPanel({ settings }: { settings: WorkspaceSettings }) {
   })
 
   return (
-    <Panel
+    <DataPanel
       title="Cloudastra support"
       description="Let support open this workspace as an admin for a while, to help with a problem. Everything they do is in the audit log, and they can't delete the workspace or anyone's data."
     >
       {settings.support_until ? (
         <div className="flex flex-wrap items-center gap-3">
-          <Badge variant="secondary" className="font-normal">
+          <Badge variant="signal">
             <LifeBuoy /> Allowed until {when(settings.support_until)}
           </Badge>
           <span className="text-xs text-muted-foreground">by {settings.support_granted_by}</span>
@@ -265,7 +273,7 @@ function SupportPanel({ settings }: { settings: WorkspaceSettings }) {
             size="sm"
             className="sm:ml-auto"
             onClick={() => revoke.mutate()}
-            disabled={revoke.isPending}
+            loading={revoke.isPending}
           >
             End access now
           </Button>
@@ -290,13 +298,14 @@ function SupportPanel({ settings }: { settings: WorkspaceSettings }) {
           <Button
             variant="outline"
             onClick={() => grant.mutate()}
-            disabled={grant.isPending || settings.support_session}
+            loading={grant.isPending}
+            disabled={settings.support_session}
           >
-            <LifeBuoy data-icon="inline-start" /> Allow support
+            {!grant.isPending && <LifeBuoy data-icon="inline-start" />} Allow support
           </Button>
         </div>
       )}
-    </Panel>
+    </DataPanel>
   )
 }
 
@@ -326,21 +335,20 @@ function DangerZone({ settings }: { settings: WorkspaceSettings }) {
 
   if (settings.status === "deleting" && settings.deleting_at) {
     return (
-      <Panel
+      <DataPanel
         danger
         title="This workspace is being deleted"
         description={`On ${when(settings.deleting_at)} its documents, chats, members, settings and connections are deleted for good, and its keys destroyed. Until then only admins can sign in. ${settings.delete_requested_by ? `Asked by ${settings.delete_requested_by}.` : ""}`}
       >
-        <Button onClick={() => cancel.mutate()} disabled={cancel.isPending}>
-          {cancel.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+        <Button onClick={() => cancel.mutate()} loading={cancel.isPending}>
           Cancel the deletion
         </Button>
-      </Panel>
+      </DataPanel>
     )
   }
 
   return (
-    <Panel
+    <DataPanel
       danger
       title="Danger zone"
       description={`Delete this workspace and everything in it. People are signed out now; it's purged ${settings.grace_days} days later, and until then an admin can still cancel. Export it first if you need a copy.`}
@@ -397,7 +405,7 @@ function DangerZone({ settings }: { settings: WorkspaceSettings }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Panel>
+    </DataPanel>
   )
 }
 

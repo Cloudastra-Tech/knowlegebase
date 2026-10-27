@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { KeyRound, MailPlus, MoreHorizontal, Search } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
 import { InviteDialog, PendingInvites } from "@/components/invites"
 import { PendingRequests } from "@/components/join-requests"
 import {
@@ -65,7 +67,7 @@ function ScimBadge() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Badge variant="outline" className="cursor-default font-normal" tabIndex={0}>
+        <Badge variant="mono" className="cursor-default" tabIndex={0}>
           SCIM
         </Badge>
       </TooltipTrigger>
@@ -143,7 +145,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
       <div className="min-w-0 flex-1 basis-56">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{m.name}</span>
-          {me && <Badge variant="secondary" className="font-normal">You</Badge>}
+          {me && <Badge variant="mono">You</Badge>}
           {m.scim_managed && <ScimBadge />}
           {m.disabled && <Badge variant="destructive">Access off</Badge>}
           {m.has_password && (
@@ -191,7 +193,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
             <p
               className={cn(
                 "text-xs",
-                m.admin_kept ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+                m.admin_kept ? "text-warning" : "text-muted-foreground",
               )}
               title={
                 m.admin_kept
@@ -359,44 +361,43 @@ export function MembersView({ me }: { me: string }) {
   if (!members) return <Skeleton className="h-48 rounded-2xl" />
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">Members</h3>
-          <p className="text-sm text-muted-foreground">
-            Everyone who has signed in or been given a role. A role you pick here wins over
-            their groups.
-          </p>
-        </div>
-        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          <div className="relative min-w-0 flex-1 sm:flex-none">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              aria-label="Search members"
-              placeholder="Search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full pl-8 sm:w-56"
-            />
-          </div>
-          <Button onClick={() => setInviting(true)}>
-            <MailPlus data-icon="inline-start" /> Invite
-          </Button>
-        </div>
+    <Panel
+      title="Members"
+      actions={
+        <Button onClick={() => setInviting(true)}>
+          <MailPlus data-icon="inline-start" /> Invite
+        </Button>
+      }
+    >
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
+        Everyone who has signed in or been given a role. A role you pick here wins over their
+        groups.
+      </p>
+      <div className="relative mt-4 sm:max-w-xs">
+        <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label="Search members"
+          placeholder="Search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="w-full pl-8"
+        />
       </div>
       <PendingRequests />
       <PendingInvites />
       <InviteDialog open={inviting} onOpenChange={setInviting} />
-      <div className="mt-4 divide-y rounded-xl border">
+      {/* A table in all but markup: opaque, and nothing staggers in. */}
+      <div className="mt-4 divide-y rounded-xl border bg-card">
         {shown.map((m) => (
           <MemberRow key={m.username} m={m} me={m.username === me} onChange={load} />
         ))}
-        {!shown.length && (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            {members.length ? "Nobody matches." : "Nobody yet."}
-          </p>
-        )}
+        {!shown.length &&
+          (members.length ? (
+            <AsciiEmptyState art="search" size="sm" headingLevel={4} title="Nobody matches." />
+          ) : (
+            <AsciiEmptyState art="inbox" size="sm" headingLevel={4} title="Nobody yet." />
+          ))}
       </div>
-    </section>
+    </Panel>
   )
 }

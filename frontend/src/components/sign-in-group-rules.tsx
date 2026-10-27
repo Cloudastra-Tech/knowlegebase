@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { Loader2, Plus, X } from "lucide-react"
+import { Plus, X } from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -12,6 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Notice } from "@/components/sign-in-provider-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -156,10 +157,10 @@ export function GroupRulesDialog({
           </DialogHeader>
 
           {otherSource ? (
-            <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
+            <Notice>
               Roles currently come from {otherSource.label}. A workspace takes roles from one
               provider: saving rules here switches it to {conn?.label}.
-            </p>
+            </Notice>
           ) : (
             !isSource && (
               <p className="rounded-lg bg-muted/40 p-3 text-sm text-muted-foreground">
@@ -241,8 +242,7 @@ export function GroupRulesDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Save
             </Button>
           </DialogFooter>

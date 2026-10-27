@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react"
-import { Check, Copy, Loader2 } from "lucide-react"
+import { useEffect, useState, type FormEvent, type ReactNode } from "react"
+import { Check, Copy } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -31,6 +31,7 @@ import {
   type SamlConnectionInput,
   type SignInConnection,
 } from "@/lib/api"
+import { cn } from "@/lib/utils"
 
 // A value someone copies into their identity provider's setup page.
 export function CopyField({ label, value }: { label: string; value: string }) {
@@ -64,6 +65,22 @@ export function CopyField({ label, value }: { label: string; value: string }) {
           {copied ? <Check /> : <Copy />}
         </Button>
       </div>
+    </div>
+  )
+}
+
+// Something to know before going on, in the warning token: a mono "!" (a colour never
+// stands alone) beside words in the body colour, which keep their contrast on glass.
+export function Notice({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      data-slot="notice"
+      className={cn("flex gap-2.5 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm", className)}
+    >
+      <span aria-hidden className="font-mono leading-5 font-medium text-warning select-none">
+        !
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   )
 }
@@ -236,6 +253,7 @@ export function ProviderDialog({
                   <Input
                     id="provider-issuer"
                     type="url"
+                    className="font-mono"
                     placeholder="https://your-company.okta.com"
                     value={issuer}
                     onChange={(e) => setIssuer(e.target.value)}
@@ -249,6 +267,7 @@ export function ProviderDialog({
                   <FieldLabel htmlFor="provider-client-id">Client ID</FieldLabel>
                   <Input
                     id="provider-client-id"
+                    className="font-mono"
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
                     required
@@ -284,7 +303,8 @@ export function ProviderDialog({
                         <FieldDescription>
                           Signing out here also ends their {editing.label} session, which
                           signs them out of other apps that use it too. Register this sign-out
-                          redirect URI there: {editing.post_logout_redirect_uri}
+                          redirect URI there:{" "}
+                          <span className="font-mono text-xs break-all">{editing.post_logout_redirect_uri}</span>
                         </FieldDescription>
                       </div>
                     </div>
@@ -319,6 +339,7 @@ export function ProviderDialog({
                     <Input
                       id="saml-metadata-url"
                       type="url"
+                      className="font-mono"
                       placeholder="https://your-company.okta.com/app/…/sso/saml/metadata"
                       value={metadataUrl}
                       onChange={(e) => setMetadataUrl(e.target.value)}
@@ -346,6 +367,7 @@ export function ProviderDialog({
                       <FieldLabel htmlFor="saml-entity-id">Identity provider entity ID (issuer)</FieldLabel>
                       <Input
                         id="saml-entity-id"
+                        className="font-mono"
                         value={entityId}
                         onChange={(e) => setEntityId(e.target.value)}
                         required
@@ -356,6 +378,7 @@ export function ProviderDialog({
                       <Input
                         id="saml-sso-url"
                         type="url"
+                        className="font-mono"
                         value={ssoUrl}
                         onChange={(e) => setSsoUrl(e.target.value)}
                         required
@@ -396,8 +419,7 @@ export function ProviderDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || (adding && !planned)}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving} disabled={adding && !planned}>
               {adding ? "Add provider" : "Save"}
             </Button>
           </DialogFooter>
