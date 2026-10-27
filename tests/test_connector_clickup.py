@@ -156,11 +156,11 @@ def test_membership_maps_onto_members_and_fails_closed(env):
     import auth
     import members_store
     from kb.services import permissions
-    members_store.set_password("ann@acme.example", "Ann", auth.hash_password("x" * 12),
+    members_store.set_password(f"ann@{env.ws}.example", "Ann", auth.hash_password("x" * 12),
                                env.ws, "public")
     r = permissions.Resolver(env.ws)
-    assert r.resolve({"via": "clickup", "list": "l1", "users": ["ann@acme.example"]})[0] == [
-        access.user("ann@acme.example")]
+    assert r.resolve({"via": "clickup", "list": "l1", "users": [f"ann@{env.ws}.example"]})[0] == [
+        access.user(f"ann@{env.ws}.example")]
     assert r.resolve({"via": "clickup", "list": None, "partial": True}) == ([access.NOBODY], 1)
     assert r.resolve({"via": "clickup", "list": "l1", "partial": True}) == ([access.NOBODY], 1)
 
