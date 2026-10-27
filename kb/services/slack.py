@@ -453,7 +453,7 @@ def answer_blocks(done, message_id, base_url=None, open_url=None):
               for piece in _pieces(text)][:40]
     if done.sources:
         items = []
-        for i, s in enumerate(done.sources, 1):
+        for s in done.sources:
             n = s.get("n") if isinstance(s.get("n"), int) else None
             url = source_link(s, base_url)
             title = _link_label(" ".join(str(s.get("title") or "Untitled").split())[:150])
@@ -479,7 +479,8 @@ def answer_blocks(done, message_id, base_url=None, open_url=None):
                         "text": {"type": "plain_text", "text": "Open in the app"}})
     if buttons:
         blocks.append({"type": "actions", "block_id": "kb_feedback", "elements": buttons})
-    return plain(done.answer)[:3000] or "(no answer)", blocks
+    # Escaped too: the fallback is Slack markup as well, and must not mention anyone.
+    return _escape(plain(done.answer))[:3000] or "(no answer)", blocks
 
 
 def question_of(text, bot_user_id=None):
@@ -867,8 +868,10 @@ def request_path(install):
 
 
 def manifest(base_url, install=None):
-    """slack/manifest.yml with this server's addresses filled in."""
+    """slack/manifest.yml with this server's addresses filled in, without the
+    notes at its top (they're for someone reading the file in the repo)."""
     with open(MANIFEST, encoding="utf-8") as f:
         text = f.read()
+    text = text[text.index("display_information:"):]
     text = text.replace(f"{PLACEHOLDER}/api/slack/oauth/", f"{base_url}/api/slack/oauth/")
     return text.replace(f"{PLACEHOLDER}/api/slack/", f"{base_url}{request_path(install)}/")

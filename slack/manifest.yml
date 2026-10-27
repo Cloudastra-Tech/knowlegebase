@@ -1,8 +1,8 @@
 # The Knowledge assistant's Slack app (platform.md PL-22). Paste it at
 # https://api.slack.com/apps -> Create New App -> From a manifest.
 #
-# Replace https://YOUR-KNOWLEDGE-HOST with this server's PUBLIC_URL, or download
-# the manifest from Integrations -> Slack -> "Download manifest": it has this
+# Replace https://YOUR-KNOWLEDGE-HOST with this server's PUBLIC_URL, or copy
+# the manifest from Integrations -> Slack -> "Your own app": it has this
 # server's addresses filled in (and, for your own app, its private request URLs).
 #
 # Bot scopes, each one used (deploy.md, "Slack app"):

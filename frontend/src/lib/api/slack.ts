@@ -24,7 +24,12 @@ export interface SlackApp {
   auto_answer_channels: string[]
   scopes: string[]
   // Where Slack sends requests (the manifest has them too).
-  urls: { events: string; commands: string; interactions: string; redirect: string }
+  urls: {
+    events: string
+    commands: string
+    interactions: string
+    redirect: string
+  }
 }
 
 export interface SlackAppIn {

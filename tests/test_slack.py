@@ -304,19 +304,16 @@ def test_a_public_member_in_a_channel_gets_no_dm(slack):
     assert SECRET_WORDS not in everything_posted(slack.fake)
 
 
-def test_hr_asking_about_public_things_in_a_channel_gets_no_dm(slack):
+def test_hr_asking_about_public_things_in_a_channel_gets_no_dm(slack, monkeypatch):
     slack.send_event(event("app_mention", "U_HR", f"<@{BOT}> What is the refund policy?"))
-    slack.fake.calls.clear()
-    # (the contract still matches loosely, so make the search find only public passages)
-    import kb.services.slack as s
-    original = s.retrieval.search
-    s.retrieval.search = lambda ws, role, q, k=5: [p for p in original(ws, role, q, k)
-                                                   if p["access"] == "public"]
-    try:
-        [result] = slack.run_jobs()
-    finally:
-        s.retrieval.search = original
+    # (two documents match anything here, so make the search as HR find public ones only)
+    original = slack_service.retrieval.search
+    monkeypatch.setattr(slack_service.retrieval, "search",
+                        lambda ws, role, q, k=5: [p for p in original(ws, role, q, k)
+                                                  if p["access"] == "public"])
+    [result] = slack.run_jobs()
     assert result["answered"] == "channel" and not slack.fake.calls_to("chat.postEphemeral")
+    assert not slack.fake.calls_to("conversations.open")
 
 
 def test_a_shared_channel_gets_no_answer_in_it(slack):
@@ -450,6 +447,7 @@ def test_answers_render_as_block_kit_with_numbered_source_links():
     assert [(b["action_id"], b["value"]) for b in buttons] == [("kb_feedback_up", "m-1"),
                                                                ("kb_feedback_down", "m-1")]
     assert "[S1]" not in text and text.startswith("## Refunds")       # the plain fallback
+    assert "&lt;script&gt;&amp;co" in text and "<script>" not in text    # escaped too
 
 
 def test_long_answers_and_many_sources_stay_within_slacks_limits():

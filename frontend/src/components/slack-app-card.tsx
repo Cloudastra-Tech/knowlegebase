@@ -151,8 +151,10 @@ function OwnAppDialog({
           <DialogHeader>
             <DialogTitle>Use your own Slack app</DialogTitle>
             <DialogDescription>
-              The app lives in your Slack and stays internal to it. Its secrets are stored
-              encrypted and never shown again.
+              The app lives in your Slack and stays internal to it. Its secrets are stored encrypted
+              and never shown again.
+              {app.status === "installed" &&
+                " Saving a different app removes the one installed now: install the new one after."}
             </DialogDescription>
           </DialogHeader>
           <ol className="grid min-w-0 gap-3 text-sm">
@@ -181,8 +183,8 @@ function OwnAppDialog({
               </a>
             </li>
             <li>
-              <span className="font-medium">3.</span> From its Basic Information page, paste the
-              app credentials:
+              <span className="font-medium">3.</span> From its Basic Information page, paste the app
+              credentials:
             </li>
           </ol>
           <FieldGroup className="gap-3">
@@ -351,7 +353,10 @@ function SlackSettings({ app, onSaved }: { app: SlackApp; onSaved: (app: SlackAp
 // how it answers. In channels it only ever answers from public documents.
 export function SlackAppCard() {
   const queryClient = useQueryClient()
-  const { data: app, isError } = useQuery({ ...queries.slackApp(), retry: false })
+  const { data: app, isError } = useQuery({
+    ...queries.slackApp(),
+    retry: false,
+  })
   const [busy, setBusy] = useState<"install" | "uninstall" | "mode" | null>(null)
   const [ownOpen, setOwnOpen] = useState(false)
 
@@ -380,7 +385,7 @@ export function SlackAppCard() {
     }
   }
 
-  async function useCentral() {
+  async function switchToCentral() {
     setBusy("mode")
     try {
       update(await slack.setApp({ mode: "central" }))
@@ -413,16 +418,16 @@ export function SlackAppCard() {
         <div className="mt-4 flex flex-1 flex-col">
           <ul className="grid gap-1 text-sm">
             {HOW_TO_ASK.map(([how, what]) => (
-              <li key={how} className="flex min-w-0 gap-1.5">
-                <span className="shrink-0 font-medium">{how}</span>
-                <span className="truncate text-muted-foreground">· {what}</span>
+              <li key={how} className="min-w-0">
+                <span className="font-medium">{how}</span>{" "}
+                <span className="text-muted-foreground">· {what}</span>
               </li>
             ))}
           </ul>
           <p className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
             <Lock className="mt-px size-3.5 shrink-0" />
-            Answers posted where others can read them use public documents only. If you could
-            see more, the rest comes to you in a DM.
+            Answers posted where others can read them use public documents only. If you could see
+            more, the rest comes to you in a DM.
           </p>
 
           {app.status === "revoked" && (
@@ -439,11 +444,7 @@ export function SlackAppCard() {
                 <Stat label="App" value={app.mode === "custom" ? "Your own" : "This server's"} />
                 <Stat label="Installed" value={timeAgo(app.installed_at)} />
               </div>
-              <SlackSettings
-                key={app.auto_answer_channels.join(",")}
-                app={app}
-                onSaved={update}
-              />
+              <SlackSettings key={app.auto_answer_channels.join(",")} app={app} onSaved={update} />
             </>
           ) : (
             app.can_manage && (
@@ -454,7 +455,7 @@ export function SlackAppCard() {
                 <RadioGroup
                   aria-labelledby="slack-app-label"
                   value={app.mode}
-                  onValueChange={(v) => (v === "central" ? useCentral() : setOwnOpen(true))}
+                  onValueChange={(v) => (v === "central" ? switchToCentral() : setOwnOpen(true))}
                   disabled={busy !== null}
                   className="mt-2 gap-2"
                 >
@@ -527,8 +528,8 @@ export function SlackAppCard() {
                       <AlertDialogTitle>Remove the app from Slack?</AlertDialogTitle>
                       <AlertDialogDescription>
                         Its access to {app.team_name || "your Slack"} is revoked and it stops
-                        answering there. Answers already posted stay in Slack; chats saved here
-                        stay too.
+                        answering there. Answers already posted stay in Slack; chats saved here stay
+                        too.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

@@ -8,6 +8,7 @@ import {
   useSearchParams,
   type Location,
 } from "react-router"
+import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 
 import type { InsightsTab } from "@/components/insights-view"
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api, type User } from "@/lib/api"
 import { useActiveRole, useAuth, useUser } from "@/lib/auth-context"
 import { legacyRedirect, type SsoReturn } from "@/lib/legacy-hash"
+import { queries } from "@/lib/queries"
 
 // What each URL shows (routes.tsx has the list of them).
 
@@ -34,6 +36,9 @@ const ApiKeysView = lazy(() =>
 )
 const KnowledgeView = lazy(() =>
   import("@/components/knowledge-view").then((m) => ({ default: m.KnowledgeView })),
+)
+const SourceSheet = lazy(() =>
+  import("@/components/citations").then((m) => ({ default: m.SourceSheet })),
 )
 const SharedView = lazy(() =>
   import("@/components/shared-view").then((m) => ({ default: m.SharedView })),
@@ -198,6 +203,32 @@ export function SharedScreen() {
   )
 }
 
+// /passages/:chunkId: one cited passage, opened from a link outside the app (a Slack
+// answer's source with no link of its own). The server checks the role, as always.
+export function PassageScreen() {
+  const { chunkId = "" } = useParams()
+  const navigate = useNavigate()
+  const passage = useQuery(queries.passage(chunkId))
+  const source = passage.data ? { ...passage.data, chunk_id: chunkId } : null
+  return (
+    <Screen>
+      <div className="mx-auto max-w-xl px-4 py-10 text-sm text-muted-foreground">
+        {passage.isPending ? (
+          <Skeleton className="h-5 w-48" />
+        ) : passage.isError ? (
+          <p>
+            This passage can't be opened: it's no longer in the knowledge base, or your role can't
+            see it.
+          </p>
+        ) : (
+          <p>Showing a cited passage.</p>
+        )}
+      </div>
+      <SourceSheet source={source} onOpenChange={(open) => !open && navigate("/chat")} />
+    </Screen>
+  )
+}
+
 const CONNECT_ERRORS: Record<string, string> = {
   access_denied: "Access was not granted.",
   consent_denied: "Access was not granted, so nothing was connected.",
@@ -208,6 +239,16 @@ const CONNECT_ERRORS: Record<string, string> = {
   connect_failed: "Couldn't finish connecting. Please try again.",
 }
 const CONNECTOR_NAMES: Record<string, string> = { google_drive: "Google Drive", notion: "Notion" }
+// Back from Slack's consent screen (kb/routers/slack.py): ?slack=installed or ?slack_error=...
+const SLACK_ERRORS: Record<string, string> = {
+  consent_denied: "The app wasn't allowed in Slack, so nothing was installed.",
+  cancelled: "Installing in Slack was cancelled.",
+  expired: "The install request expired. Please try again.",
+  org_install: "Install the app in one Slack workspace, not across a whole Enterprise org.",
+  team_taken: "That Slack workspace is already connected to another workspace here.",
+  not_configured: "Choose the Slack app first.",
+  connect_failed: "Couldn't finish installing in Slack. Please try again.",
+}
 
 // Back from a provider's consent screen: /integrations?connected=... or ?error=...
 export function IntegrationsScreen() {
@@ -224,6 +265,11 @@ export function IntegrationsScreen() {
     shown.current = true
     const connected = params.get("connected")
     const error = params.get("error")
+    const slackDone = params.get("slack") === "installed"
+    const slackError = params.get("slack_error")
+    if (slackDone) toast.success("Installed in Slack. Try it: DM the app, or /ask.")
+    if (slackError) toast.error(SLACK_ERRORS[slackError] ?? SLACK_ERRORS.connect_failed)
+    if (slackDone || slackError) setParams({}, { replace: true })
     if (!connected && !error) return
     if (connected) {
       const name = CONNECTOR_NAMES[connected] ?? "The integration"
