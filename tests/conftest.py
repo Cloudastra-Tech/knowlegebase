@@ -52,6 +52,19 @@ if os.getenv("KB_TEST_PLAN"):
         monkeypatch.setattr(billing_store, "subscription", subscription)
 
 
+@pytest.fixture(autouse=True)
+def no_data_keys_kept_between_tests():
+    """secret_box keeps unwrapped data keys in memory for a minute. Tests that point
+    db.DB_PATH at a database of their own (test_members_store, test_migrations, ...)
+    would leave that database's keys cached for a workspace like "acme", and a test
+    that seals for acme in the next minute would use a key the shared database
+    doesn't have: unreadable once the cache expires. Drop them after every test."""
+    yield
+    import sys
+    if "secret_box" in sys.modules:
+        sys.modules["secret_box"].forget()
+
+
 @pytest.fixture
 def jobs_paused(monkeypatch):
     """No job runner in this process: jobs stay queued until the test runs them
