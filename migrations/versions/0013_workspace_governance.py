@@ -1,7 +1,7 @@
 """workspace lifecycle, DSAR, operator support access and per-workspace keys
 
 Revision ID: 0013
-Revises: 0011
+Revises: 0012
 Create Date: 2026-10-27
 
 Governance (platform.md PL-05, PL-06, PL-12, PL-18). New columns on workspaces,
@@ -28,7 +28,7 @@ good and gives support no access), and new tables:
 from alembic import op
 
 revision = "0013"
-down_revision = "0011"
+down_revision = "0012"
 branch_labels = None
 depends_on = None
 

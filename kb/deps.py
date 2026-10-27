@@ -13,28 +13,38 @@ import sqlite3
 from fastapi import Depends, Header, HTTPException, Request
 
 import auth
+import lifecycle_store
 import members_store
 import sessions_store
 import sso
 import workspaces
-from kb import logs
+from kb import logs, operators
 
 log = logging.getLogger("uvicorn.error")   # shows in the uvicorn console
 # Kept with the session (for signing out at the provider), never sent to the browser.
 PRIVATE_USER_KEYS = ("id_token",)
 
 
-def current_user(authorization: str = Header(default="")):
+# While a workspace is being deleted its admins may still sign in, but only to
+# export it, cancel the deletion, or sign out (lifecycle_store.py).
+WHILE_DELETING = ("/api/auth/", "/api/admin/workspace", "/api/index/status",
+                  "/api/question-log/settings", "/api/chat-settings")
+
+
+def current_user(request: Request, authorization: str = Header(default="")):
     token = authorization.removeprefix("Bearer ").strip()
     user = sessions_store.get(token)
-    if not user:
+    if not user or user.get("operator"):          # an operator's session isn't a member's
         raise HTTPException(401, "Please sign in.")
     # Workspace and role are looked up again on EVERY request, so removing someone
     # (or their HR role) takes effect now, not when their 12-hour session ends.
     try:
-        access = (sso.access_for(user["username"], user.get("org"), user.get("connection"))
-                  if user.get("provider")
-                  else auth.access_for(user["username"]))
+        if user.get("impersonator"):
+            access = operators.support_access(user)
+        else:
+            access = (sso.access_for(user["username"], user.get("org"), user.get("connection"))
+                      if user.get("provider")
+                      else auth.access_for(user["username"]))
     except (OSError, sqlite3.Error):         # e.g. the database can't be read
         log.exception("Couldn't read the sign-in settings")
         raise HTTPException(503, "Sign-in settings can't be read. Please tell your admin.")
@@ -43,6 +53,12 @@ def current_user(authorization: str = Header(default="")):
         raise HTTPException(401, "Please sign in.")
     user = {**user, **access}
     logs.bind_user(user)               # the request's log lines say whose it is (not the email)
+    if lifecycle_store.status(user["workspace"]) == lifecycle_store.DELETING and not \
+            request.url.path.startswith(WHILE_DELETING):
+        raise HTTPException(423, "This workspace is being deleted. Export it or cancel the "
+                                 "deletion under Access > Data.")
+    if user.get("impersonator"):
+        operators.audit_request(user, request)
     return user
 
 
@@ -69,6 +85,15 @@ def require_admin(user=Depends(current_user), role=Depends(current_role)):
         raise HTTPException(403, "Switch to HR / Admin to change sign-in settings."
                             if user["role"] == "admin" else
                             "Only admins can change sign-in settings.")
+    return user
+
+
+def require_tenant_admin(user=Depends(require_admin)):
+    """An admin of the workspace itself, not Cloudastra support opened as one: for
+    what support must never do (delete the workspace, grant itself access, erase
+    someone's data)."""
+    if user.get("impersonator"):
+        raise HTTPException(403, "Support can't do this: ask one of the workspace's admins.")
     return user
 
 

@@ -12,23 +12,26 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import observability
 import safety
+import secret_box
 from kb import jobs, logs, mcp_server, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, assistant, audit, auth,
-                        chat, conversations, docs, health, index, insights, integrations,
-                        invites, knowledge, saml, scim, shares, signup, slack, sso, verified)
-from kb.services import indexing
+                        chat, conversations, docs, dsar, health, index, insights, integrations,
+                        invites, knowledge, operator, saml, scim, shares, signup, slack, sso,
+                        verified, workspace)
+from kb.services import indexing, keys
 
 log = logging.getLogger("uvicorn.error")
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, shares, index, docs,
            integrations, knowledge, admin_members, invites, audit, insights, health, scim,
-           api_keys, api_v1, slack, verified, assistant)
+           api_keys, api_v1, slack, verified, assistant, workspace, dsar, operator)
 
 
 @contextlib.asynccontextmanager
 async def _lifespan(app):
     """Background jobs that run for the life of the server."""
     safety.require_guards()          # REQUIRE_TOXICITY_GUARD=1: refuse to start without it
+    secret_box.require_key()         # hosted: refuse to start without INTEGRATIONS_KEY / a KMS
     # Bring the database up to date now (db.py migrates on its first connection),
     # so a failing migration stops the start instead of the first request.
     db.connect().close()
@@ -41,6 +44,11 @@ async def _lifespan(app):
         indexing.schedule_stale()
     except Exception:
         log.exception("Index: couldn't check which indexes need rebuilding")
+    # Secrets still sealed by the server key itself move under their workspace's own.
+    try:
+        keys.schedule_reseal()
+    except Exception:
+        log.exception("Keys: couldn't check for secrets to re-seal")
     # The MCP server's requests run in its session manager's task group.
     async with app.state.mcp.running():
         yield

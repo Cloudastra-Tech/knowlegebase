@@ -39,6 +39,7 @@ from starlette.concurrency import run_in_threadpool
 
 import kb.audit
 import kb.state
+import lifecycle_store
 import slack_store
 from kb.audit import audited
 from kb.deps import public_url, require_admin, require_hr, ws_of
@@ -235,9 +236,13 @@ class SlackRequest:
         that team; for the central app, the workspace that installed it there."""
         if self.custom:
             i = self.install
-            return i if i and i["status"] == "installed" and i["team_id"] == team_id else None
-        i = slack_store.by_team(team_id)
-        return i if i and i["mode"] == "central" else None
+            i = i if i and i["status"] == "installed" and i["team_id"] == team_id else None
+        else:
+            i = slack_store.by_team(team_id)
+            i = i if i and i["mode"] == "central" else None
+        # A suspended workspace, or one being deleted, takes nothing from Slack.
+        return i if i and lifecycle_store.status(i["workspace"]) == lifecycle_store.ACTIVE \
+            else None
 
 
 async def slack_signature(request: Request):

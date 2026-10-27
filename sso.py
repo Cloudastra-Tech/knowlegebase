@@ -46,6 +46,7 @@ import time
 
 from authlib.integrations.starlette_client import OAuth
 
+import lifecycle_store
 import members_store
 import url_guard
 
@@ -214,7 +215,18 @@ def access_for(email, org=None, connection=None):
     if not member or member["workspace"] != workspace or member["disabled"]:
         return None
     member = members_store.check_group_admin(member)
+    if not lifecycle_store.signs_in(workspace, member["role"]):
+        return None                    # suspended, or being deleted (admins only)
     return {"workspace": workspace, "role": member["role"]}
+
+
+def check_open(workspace, email):
+    """NotAllowed("workspace_closed") if `email` may not sign in to the workspace
+    now: it's suspended, or being deleted and they aren't one of its admins."""
+    member = members_store.get(email)
+    role = member["role"] if member and member["workspace"] == workspace else "public"
+    if not lifecycle_store.signs_in(workspace, role):
+        raise NotAllowed("workspace_closed")
 
 
 def user_for(provider, claims):
@@ -222,6 +234,8 @@ def user_for(provider, claims):
     member the first time."""
     email, name, org = identity(provider, claims)
     workspace = _workspace_for(email, org)
+    if workspace:
+        check_open(workspace, email)
     member = members_store.record_sso_login(email, name, workspace) if workspace else None
     if not member:
         raise NotAllowed("not_allowed")
@@ -315,6 +329,7 @@ def try_connection(conn, claims):
 def user_for_connection(conn, claims):
     """The session user for someone a workspace's own provider just signed in."""
     email, name = check_connection_identity(conn, claims)
+    check_open(conn["workspace"], email)
     member = members_store.record_sso_login(email, name, conn["workspace"],
                                             groups=groups_from(conn, claims),
                                             source=conn["id"])

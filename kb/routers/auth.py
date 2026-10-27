@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import auth
+import lifecycle_store
 import members_store
 import sessions_store
 import sso
@@ -105,7 +106,7 @@ def _sso_domain(username):
 @router.post("/api/auth/sso/exchange")
 def sso_exchange(body: CodeIn, request: Request):
     user = sso.redeem_code(body.code, request.session.get(BROWSER_KEY))
-    if not user:
+    if not user or user.get("operator"):        # an operator's code: /api/operator/...
         raise HTTPException(401, "That sign-in expired. Please sign in again.")
     token = secrets.token_urlsafe(32)
     sessions_store.create(token, user, SESSION_SECONDS)
@@ -152,4 +153,7 @@ def logout_everywhere(user=Depends(current_user), audit=audited("session.sign_ou
 
 @router.get("/api/auth/me")
 def me(user=Depends(current_user)):
-    return public_user(user)
+    """Who's signed in, and where their workspace is in its life (lifecycle_store)."""
+    st = lifecycle_store.state(user["workspace"])
+    return {**public_user(user), "workspace_status": st["status"],
+            "deleting_at": st["deleting_at"]}
