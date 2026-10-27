@@ -17,10 +17,15 @@ import {
   Users,
 } from "lucide-react"
 import {
+  siAsana,
   siBox,
+  siClickup,
+  siCoda,
   siConfluence,
   siDropbox,
   siGithub,
+  siGmail,
+  siGooglecalendar,
   siGoogledrive,
   siHubspot,
   siIntercom,
@@ -51,7 +56,7 @@ import { SalesforceConnectDialog } from "@/components/salesforce-connect-dialog"
 import { SlackAppCard } from "@/components/slack-app-card"
 import { SurfaceCards } from "@/components/surface-cards"
 import { SyncHistorySheet } from "@/components/sync-history-sheet"
-import { TICKET_OPTIONS } from "@/lib/ticket-options"
+import { MEMBER_OPTIONS, TICKET_OPTIONS } from "@/lib/ticket-options"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -78,6 +83,11 @@ const BRANDS: Record<string, SimpleIcon> = {
   box: siBox,
   intercom: siIntercom,
   hubspot: siHubspot,
+  asana: siAsana,
+  clickup: siClickup,
+  coda: siCoda,
+  gmail: siGmail,
+  googlecalendar: siGooglecalendar,
 }
 // What a connection with an optional picker syncs while nothing is picked.
 const UNPICKED: Record<string, string> = {
@@ -88,9 +98,14 @@ const UNPICKED: Record<string, string> = {
   salesforce: "Every published Knowledge article is synced.",
   s3: "Every readable file in the bucket (under its prefix) is synced.",
 }
-const LETTERS: Record<string, string> = { sharepoint: "S", slack: "#", freshdesk: "F" }
+const LETTERS: Record<string, string> = {
+  sharepoint: "S",
+  slack: "#",
+  freshdesk: "F",
+  teams_messages: "T",
+}
 
-function ConnectorIcon({ item }: { item: Integration }) {
+export function ConnectorIcon({ item }: { item: Integration }) {
   const brand = item.icon ? BRANDS[item.icon] : undefined
   if (brand)
     return (
@@ -115,7 +130,7 @@ const STATUS: Record<IntegrationStatus, { label: string; tone: "on" | "busy" | "
   unavailable: { label: "Not available", tone: "off" },
 }
 
-function StatusBadge({ status }: { status: IntegrationStatus }) {
+export function StatusBadge({ status }: { status: IntegrationStatus }) {
   const { label, tone } = STATUS[status]
   if (tone === "on")
     return (
@@ -137,7 +152,7 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
   )
 }
 
-function Card({ item, children }: { item: Integration; children?: React.ReactNode }) {
+export function Card({ item, children }: { item: Integration; children?: React.ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
       <div className="flex items-start gap-3">
@@ -155,7 +170,7 @@ function Card({ item, children }: { item: Integration; children?: React.ReactNod
   )
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+export function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -262,9 +277,15 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
       {item.access_locked && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <Lock className="mt-px size-3.5 shrink-0" />
-          Locked to HR and admins while {item.name}{" "}
-          {(TICKET_OPTIONS[item.id]?.label ?? "tickets").toLowerCase()} are synced: they hold
-          customers' details.
+          {MEMBER_OPTIONS[item.id] ? (
+            MEMBER_OPTIONS[item.id].locked
+          ) : (
+            <>
+              Locked to HR and admins while {item.name}{" "}
+              {(TICKET_OPTIONS[item.id]?.label ?? "tickets").toLowerCase()} are synced: they
+              hold customers' details.
+            </>
+          )}
         </p>
       )}
       {policy === "workspace" && (
@@ -332,6 +353,7 @@ function ConnectorCard({
   const unit = item.unit ?? "items"
   const hasPicker = !!item.picker && item.picker !== "none"
   const tickets = TICKET_OPTIONS[item.id]
+  const members = MEMBER_OPTIONS[item.id]
   const nothingPicked = !!item.picker_required && picks.length === 0
 
   // Just connected and nothing picked yet: open the picker (once per arrival).
@@ -515,6 +537,25 @@ function ConnectorCard({
                 {tickets.label}:{" "}
                 <span className="font-medium text-foreground">
                   {item.options[tickets.key] ? "synced (HR and admins only)" : "off"}
+                </span>
+              </p>
+              <Button
+                variant="link"
+                size="xs"
+                className="h-auto shrink-0 px-0"
+                onClick={() => setPickerOpen(true)}
+              >
+                Change
+              </Button>
+            </div>
+          )}
+
+          {members && item.options?.members !== undefined && (
+            <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+              <p className="min-w-0 text-muted-foreground">
+                {members.label}:{" "}
+                <span className="font-medium text-foreground">
+                  {item.options.members ? "yes" : "no (HR and admins only)"}
                 </span>
               </p>
               <Button

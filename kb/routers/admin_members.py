@@ -14,7 +14,7 @@ import members_store
 import sessions_store
 from kb.audit import audited
 from kb.deps import require_admin, ws_of
-from kb.services import joining, webhooks
+from kb.services import joining, sync, webhooks
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -82,6 +82,8 @@ def delete_member(username: str, user=Depends(require_admin), audit=audited("mem
     member = _workspace_member(user, username)
     members_store.remove(member["username"], member["workspace"])
     sessions_store.delete_user(member["username"], member["workspace"])
+    # Their own Gmail / Calendar go with them (kb/services/sync.py disconnect_member).
+    sync.disconnect_member(member["workspace"], member["username"])
     audit.record("member", member["username"], {"role": member["role"]}, user=user)
     _tell_removed(member)
     return {"ok": True}

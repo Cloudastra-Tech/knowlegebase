@@ -1,0 +1,48 @@
+{
+ "_source": [
+  "https://developers.google.com/workspace/calendar/api/v3/reference/calendarList/list (items[] {id, summary, accessRole, primary})",
+  "https://developers.google.com/workspace/calendar/api/v3/reference/events/list (syncToken, pageToken, nextPageToken, nextSyncToken, showDeleted; 410 when the token is gone)",
+  "https://developers.google.com/workspace/calendar/api/v3/reference/events (id, status, summary, description, location, start, end, organizer, attendees[] {email, displayName, responseStatus}, updated, htmlLink, recurrence)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/calendars/ann%40acme.example/events",
+    "params": {
+     "syncToken": "cs-1",
+     "showDeleted": "true"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "items": [
+      {
+       "id": "ev1",
+       "status": "confirmed",
+       "summary": "Salary review with Bob (moved)",
+       "updated": "2026-10-21T08:00:00.000Z",
+       "htmlLink": "https://www.google.com/calendar/event?eid=ev1",
+       "start": {
+        "dateTime": "2026-11-04T10:00:00Z"
+       },
+       "end": {
+        "dateTime": "2026-11-04T10:30:00Z"
+       },
+       "organizer": {
+        "email": "ann@acme.example",
+        "displayName": "Ann"
+       }
+      },
+      {
+       "id": "ev2",
+       "status": "cancelled"
+      }
+     ],
+     "nextSyncToken": "cs-2"
+    }
+   }
+  }
+ ]
+}

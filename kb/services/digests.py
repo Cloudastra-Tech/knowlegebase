@@ -245,6 +245,8 @@ def sources_for(ws, member):
     out = [{"id": audience.UPLOADS, "label": source_label(audience.UPLOADS)}]
     reader = audience.viewer_of(member)
     for row in sorted(integrations_store.list_for(ws), key=lambda r: r["provider"]):
+        if registry.is_personal(row["provider"]):
+            continue                    # a member's own mail or calendar: no digests
         policy = integrations_store.policy_of(row)
         level = "public" if policy == "workspace" else "restricted"
         if policy == "source" or audience.may_read(reader, access.level_acl(level)):

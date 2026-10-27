@@ -1,0 +1,110 @@
+{
+ "_source": [
+  "https://developers.google.com/workspace/calendar/api/v3/reference/calendarList/list (items[] {id, summary, accessRole, primary})",
+  "https://developers.google.com/workspace/calendar/api/v3/reference/events/list (syncToken, pageToken, nextPageToken, nextSyncToken, showDeleted; 410 when the token is gone)",
+  "https://developers.google.com/workspace/calendar/api/v3/reference/events (id, status, summary, description, location, start, end, organizer, attendees[] {email, displayName, responseStatus}, updated, htmlLink, recurrence)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/calendars/ann%40acme.example/events",
+    "params": {
+     "showDeleted": "false"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "items": [
+      {
+       "id": "ev1",
+       "status": "confirmed",
+       "summary": "Salary review with Bob",
+       "updated": "2026-10-20T08:00:00.000Z",
+       "htmlLink": "https://www.google.com/calendar/event?eid=ev1",
+       "start": {
+        "dateTime": "2026-11-03T10:00:00Z"
+       },
+       "end": {
+        "dateTime": "2026-11-03T10:30:00Z"
+       },
+       "organizer": {
+        "email": "ann@acme.example",
+        "displayName": "Ann"
+       },
+       "description": "Discuss the <b>raise</b>.",
+       "location": "Room 4",
+       "attendees": [
+        {
+         "email": "bob@acme.example",
+         "displayName": "Bob",
+         "responseStatus": "accepted"
+        },
+        {
+         "email": "ann@acme.example",
+         "responseStatus": "accepted"
+        }
+       ]
+      }
+     ],
+     "nextPageToken": "cp-2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/calendars/ann%40acme.example/events",
+    "params": {
+     "pageToken": "cp-2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "items": [
+      {
+       "id": "ev2",
+       "status": "confirmed",
+       "summary": "Weekly 1:1",
+       "updated": "2026-01-01T08:00:00.000Z",
+       "htmlLink": "https://www.google.com/calendar/event?eid=ev2",
+       "start": {
+        "dateTime": "2026-01-05T09:00:00Z"
+       },
+       "end": {
+        "dateTime": "2026-01-05T09:30:00Z"
+       },
+       "organizer": {
+        "email": "ann@acme.example",
+        "displayName": "Ann"
+       },
+       "recurrence": [
+        "RRULE:FREQ=WEEKLY;BYDAY=MO"
+       ]
+      },
+      {
+       "id": "ev3",
+       "status": "confirmed",
+       "summary": "Offsite 2019",
+       "updated": "2019-04-01T08:00:00.000Z",
+       "htmlLink": "https://www.google.com/calendar/event?eid=ev3",
+       "start": {
+        "dateTime": "2019-05-01T09:00:00Z"
+       },
+       "end": {
+        "dateTime": "2019-05-01T17:00:00Z"
+       },
+       "organizer": {
+        "email": "ann@acme.example",
+        "displayName": "Ann"
+       }
+      }
+     ],
+     "nextSyncToken": "cs-1"
+    }
+   }
+  }
+ ]
+}

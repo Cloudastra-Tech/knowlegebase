@@ -196,8 +196,13 @@ def _tell_webhooks(ws, docs, result):
     """document.indexed (kb/services/webhooks.py): which documents, and counts only."""
     counts = {k: result[k] for k in ("added", "changed", "removed", "embedded", "chunks")
               if isinstance(result.get(k), int)}
-    if docs is not None and not docs:
-        return
+    if docs is not None:
+        # A member's own mail and events (personal connections, "connectors/<p>~<h>/")
+        # never go to the workspace's webhooks.
+        docs = [d for d in docs if not ingest._connector_of(d) or
+                "~" not in ingest._connector_of(d)]
+        if not docs:
+            return
     webhooks.emit(ws, "document.indexed", {"mode": result.get("mode"),
                                            "documents": None if docs is None else docs[:200],
                                            "counts": counts})

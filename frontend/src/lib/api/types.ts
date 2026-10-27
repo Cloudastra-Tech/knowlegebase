@@ -392,6 +392,7 @@ export interface Integration {
   setup_env?: string
   note?: string | null // what to know before connecting (SharePoint: needs an admin)
   sign_in?: boolean // can be connected by signing in (Zendesk offers both)
+  personal?: boolean // each member connects their own (Gmail, Calendar: My connections)
   options?: ConnectorOptions // the connection's own options, saved with the picker
   access_locked?: boolean // HR and admins only, whatever the access setting (Zendesk tickets)
   doc_count?: number
@@ -432,6 +433,7 @@ export interface S3Card {
 export interface ConnectorOptions {
   tickets?: boolean // Zendesk, Freshdesk
   conversations?: boolean // Intercom
+  members?: boolean // Teams messages: members may ask (off: HR and admins only)
   code_extensions?: string[]
 }
 

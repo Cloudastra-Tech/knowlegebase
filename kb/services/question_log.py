@@ -144,13 +144,19 @@ def _source(s):
     return {k: s[k] for k in keep if s.get(k) not in (None, "")}
 
 
+def _personal(doc_key):
+    parts = (doc_key or "").split("/")
+    return len(parts) > 2 and parts[0] == "connectors" and "~" in parts[1]
+
+
 def _sources(sources):
     """One entry per document (a passage-level list cites a document once per passage).
     A file the asker attached, or keeps in their space, is theirs alone: not logged,
-    so its name never reaches Insights."""
+    so its name never reaches Insights. Nor does a message or event from the
+    asker's own Gmail or Calendar (a personal connection: connectors/base.py)."""
     out, seen = [], set()
     for s in sources or []:
-        if s.get("attachment"):
+        if s.get("attachment") or _personal(s.get("doc_key")):
             continue
         entry = _source(s)
         key = entry.get("doc_id") or entry.get("doc_key") or (entry.get("provider"),

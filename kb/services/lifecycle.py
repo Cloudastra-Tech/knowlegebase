@@ -346,11 +346,11 @@ def _revoke_outside(ws):
     and stop the other ways in: the Teams bot, email-in."""
     done = []
     for row in integrations_store.list_for(ws):
-        c = registry.CONNECTORS.get(row["provider"])
+        c = registry.connector_of(row["provider"])      # members' own connections too
         if c is None:
             continue
         try:
-            c.disconnect(ws)
+            c.revoke(ws, row["provider"])
             done.append(row["provider"])
         except Exception:
             log.exception("Purge: %s couldn't revoke its access for workspace %s",
