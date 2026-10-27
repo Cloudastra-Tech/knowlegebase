@@ -27,6 +27,9 @@ and how its models are made is its entry in REGISTRY (Provider, register()):
                streaming and tool calls), embeddings through InvokeModel (Titan
                Text Embeddings V2 by default). Documents and questions never
                reach OpenAI.
+    anthropic  Claude through Anthropic's API (langchain-anthropic ChatAnthropic:
+               streaming, tool calls, images): ANTHROPIC_CHAT_MODEL (Sonnet) and
+               ANTHROPIC_FAST_MODEL (Haiku). Chat only: no embeddings.
 
 CHAT AND EMBEDDINGS are chosen apart (Spec.provider, Spec.embed_provider), since
 not every provider has embeddings: "Claude for chat, OpenAI or Bedrock for the
@@ -60,7 +63,9 @@ passages found). prompt_cache_key() groups requests that share that prefix, so
 OpenAI routes them to the same cache: one key per workspace and role keeps one
 workspace's traffic from probing another's cache. On Bedrock, caching is opt-in
 per request: a cachePoint after the system prompt (BedrockChat), for the models
-that support it (BEDROCK_PROMPT_CACHE). The tokens served from the cache are
+that support it (BEDROCK_PROMPT_CACHE). On Anthropic, a cache_control breakpoint
+after the agent's rules (AnthropicChat; ANTHROPIC_PROMPT_CACHE): tools render
+before the system prompt, so it caches both. The tokens served from the cache are
 logged per question (question_log tokens_cached), from any provider.
 """
 
@@ -93,6 +98,13 @@ EMBED_DIMENSIONS = {"amazon.titan-embed-text-v2:0": (1024, 512, 256),
                     "cohere.embed-english-v3": (1024,),
                     "cohere.embed-multilingual-v3": (1024,)}
 EMBED_CONCURRENCY = 4         # Titan embeds one text per call: this many at once
+
+# Anthropic's defaults (deploy.md, "Anthropic"): the current Sonnet writes answers,
+# the current Haiku does the small jobs. Claude has no embeddings: an Anthropic
+# workspace's come from another provider (EMBED_PROVIDER, or the workspace's own).
+ANTHROPIC_CHAT = "claude-sonnet-5-5"
+ANTHROPIC_FAST = "claude-haiku-5-5"
+ANTHROPIC_MIN_TOKENS = 1024
 
 # What a value may look like (they go into AWS endpoints and ARNs, so nothing else).
 REGION = re.compile(r"^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$")
@@ -683,11 +695,16 @@ def forget(workspace=None):
 
 
 def _aws_error(e):
-    """An AWS error's code and message, without anything secret in it."""
-    response = getattr(e, "response", None) or {}
-    err = response.get("Error") or {}
+    """An AWS error's code and message, without anything secret in it. Another
+    provider's API error (Anthropic's, OpenAI's): its class, type and message."""
+    response = getattr(e, "response", None)
+    err = (response.get("Error") or {}) if isinstance(response, dict) else {}
     if err:
         return f"{err.get('Code', 'Error')}: {err.get('Message', '')}".strip()
+    body = getattr(e, "body", None)
+    detail = body.get("error") if isinstance(body, dict) else None
+    if isinstance(detail, dict) and detail.get("message"):
+        return f"{type(e).__name__} ({detail.get('type', 'error')}): {detail['message']}"
     return f"{type(e).__name__}: {e}"
 
 
@@ -765,17 +782,102 @@ _made = {}
 
 
 def _cls(name):
-    """BedrockChat / BedrockEmbed, made on first use: importing this file never
-    needs langchain-aws or boto3 (an OpenAI-only server)."""
+    """BedrockChat / BedrockEmbed / AnthropicChat, made on first use: importing
+    this file never needs langchain-aws, boto3 or langchain-anthropic (an
+    OpenAI-only server)."""
     if name not in _made:
-        _made[name] = (_make_bedrock_chat if name == "BedrockChat" else _make_bedrock_embed)()
+        _made[name] = {"BedrockChat": _make_bedrock_chat, "BedrockEmbed": _make_bedrock_embed,
+                       "AnthropicChat": _make_anthropic_chat}[name]()
     return _made[name]
 
 
 def __getattr__(name):
-    if name in ("BedrockChat", "BedrockEmbed"):
+    if name in ("BedrockChat", "BedrockEmbed", "AnthropicChat"):
         return _cls(name)
     raise AttributeError(name)
+
+
+# ---- Anthropic: the models -----------------------------------------------------------------
+def _make_anthropic_chat():
+    from langchain_anthropic import ChatAnthropic
+    from langchain_core.messages import AIMessage, SystemMessage
+    from langchain_core.outputs import ChatGenerationChunk, ChatResult
+
+    class AnthropicChat(ChatAnthropic):
+        """ChatAnthropic whose replies are plain text, as OpenAI's are (tool calls
+        stay in .tool_calls), with the stable prompt marked for Anthropic's prompt
+        cache when prompt_cache is on.
+
+        A reply's own content blocks (thinking, tool_use) are kept in
+        additional_kwargs[KEPT] and given back to Claude when the reply is part
+        of the next request (the agent's tool loop): Claude needs its thinking
+        blocks back unchanged, the rest of the app reads text."""
+        prompt_cache: bool = False
+
+        def _prepared(self, messages):
+            out = []
+            for m in messages:
+                if isinstance(m, AIMessage) and m.additional_kwargs.get(KEPT) is not None:
+                    m = m.model_copy(update={"content": m.additional_kwargs[KEPT]})
+                out.append(m)
+            # The leading system messages as one: the agent's rules (the same for
+            # every question) first, then what this question adds (glossary
+            # notes, ...). The cache breakpoint goes after the rules: with the tool
+            # list before them, that is the prefix every question shares.
+            lead = 0
+            while lead < len(out) and isinstance(out[lead], SystemMessage):
+                lead += 1
+            if not lead:
+                return out
+            marked = any(isinstance(b, dict) and "cache_control" in b for m in out[:lead]
+                         if isinstance(m.content, list) for b in m.content)
+            blocks = []
+            for i, m in enumerate(out[:lead]):
+                part = ([{"type": "text", "text": m.content}] if isinstance(m.content, str)
+                        else [dict(b) if isinstance(b, dict) else {"type": "text", "text": b}
+                              for b in m.content])
+                part = [b for b in part if b.get("type") != "text" or b.get("text")]
+                if i == 0 and self.prompt_cache and part and not marked:
+                    part[-1] = {**part[-1], "cache_control": {"type": "ephemeral"}}
+                blocks += part
+            return [SystemMessage(content=blocks), *out[lead:]]
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            # No system prompt but tools (rare here): the breakpoint after them.
+            tools = payload.get("tools")
+            if self.prompt_cache and tools and not payload.get("system"):
+                payload["tools"] = [*tools[:-1], {**tools[-1],
+                                                  "cache_control": {"type": "ephemeral"}}]
+            return payload
+
+        @staticmethod
+        def _plain(message):
+            if isinstance(message.content, list):
+                message.additional_kwargs[KEPT] = message.content
+                message.content = text_of(message.content)
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            result = super()._generate(self._prepared(messages), stop, run_manager, **kwargs)
+            for g in result.generations:
+                self._plain(g.message)
+            return ChatResult(generations=result.generations, llm_output=result.llm_output)
+
+        def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+            # The tokens are announced here, as text (ChatAnthropic announces only
+            # string chunks, and with tools bound its chunks are content blocks).
+            for chunk in super()._stream(self._prepared(messages), stop, None, **kwargs):
+                message = chunk.message
+                self._plain(message)
+                chunk = ChatGenerationChunk(message=message, generation_info=chunk.generation_info)
+                if run_manager:
+                    run_manager.on_llm_new_token(message.content, chunk=chunk)
+                yield chunk
+
+    return AnthropicChat
+
+
+KEPT = "anthropic_content"
 
 
 # ---- Bedrock: what the admin sets up, and checking it ---------------------------------------
@@ -912,4 +1014,48 @@ register(Provider(
     name="bedrock", label="AWS Bedrock", make_chat=_bedrock_make_chat,
     make_embeddings=_bedrock_make_embeddings, defaults=_bedrock_defaults, vision=True,
     prompt_caching="marked", tool_calls=True, in_house=True))
+
+
+def _anthropic_make_chat(on, model, openai=None, cache_key=None, temperature=None,
+                         max_tokens=None, timeout=None, max_retries=None):
+    """Claude through Anthropic's API (langchain-anthropic): the workspace's own key,
+    else the server's ANTHROPIC_API_KEY; neither fails closed. temperature is not
+    sent: current Claude models refuse sampling settings other than their own.
+    A small max_tokens is raised to ANTHROPIC_MIN_TOKENS, since thinking counts
+    toward it and a one-word classifier's reply mustn't be cut off by it."""
+    key = on.api_key("anthropic") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        raise ProviderError("Anthropic is selected but no API key is set (ANTHROPIC_API_KEY, "
+                            "or the workspace's own on the Assistant screen).")
+    kwargs = {"model": model, "api_key": key, "prompt_cache": anthropic_prompt_cache_on(model)}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max(max_tokens, ANTHROPIC_MIN_TOKENS)
+    if timeout is not None:
+        kwargs["default_request_timeout"] = timeout
+    if max_retries is not None:
+        kwargs["max_retries"] = max_retries
+    effort = (os.getenv("ANTHROPIC_FAST_EFFORT") or "").strip().lower()
+    if effort and model == on.fast_name and model != on.answer_name:
+        kwargs["effort"] = effort
+    return _cls("AnthropicChat")(**kwargs)
+
+
+def _anthropic_defaults():
+    return {"chat_model": (os.getenv("ANTHROPIC_CHAT_MODEL") or "").strip() or ANTHROPIC_CHAT,
+            "fast_model": (os.getenv("ANTHROPIC_FAST_MODEL") or "").strip() or ANTHROPIC_FAST,
+            "embed_model": None, "embed_dims": None}
+
+
+def anthropic_prompt_cache_on(model):
+    """ANTHROPIC_PROMPT_CACHE: on (the default) marks the stable prompt for every
+    Claude model; off for none. A prompt shorter than the model's minimum (512 to
+    4,096 tokens) just isn't cached."""
+    mode = (os.getenv("ANTHROPIC_PROMPT_CACHE") or "on").strip().lower()
+    return mode not in ("0", "off", "false", "no")
+
+
+register(Provider(
+    name="anthropic", label="Anthropic", make_chat=_anthropic_make_chat,
+    defaults=_anthropic_defaults, vision=True, prompt_caching="marked", tool_calls=True,
+    api_key_env="ANTHROPIC_API_KEY"))
 PROVIDERS = tuple(REGISTRY)
