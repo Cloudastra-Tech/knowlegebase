@@ -12,6 +12,7 @@ integrations_store.py, agent.py, ingest.py, connectors/, ...).
     deps.py        who is asking: current_user, current_role, require_hr / _admin
     rate_limit.py  per-address and per-person limits
     middleware.py  security headers, request body limit
+    logs.py        LOG_FORMAT (json / text), request ids, one log line per request
     site.py        the built React app (frontend/dist)
     jobs.py        the background job queue (a table in config/app.db) and its workers
     worker.py      `python -m kb.worker`: the jobs in a process of their own

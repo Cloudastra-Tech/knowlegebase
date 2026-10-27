@@ -405,8 +405,11 @@ database is. Back up first (`scripts/backup.sh`): there's no automatic way down.
    `migrations/legacy.py` or `0001_baseline.py`: databases already ran them.
 4. Keep it **expand / contract**: add the new column or table and start writing
    it; switch reads in a later release; drop the old one later still. The previous
-   release must keep working on the upgraded schema, so a rollback is just
-   deploying the old image.
+   release's code must keep working on the upgraded schema. Alembic still won't
+   start an older image on a database at a revision it doesn't know, so going
+   back across a migration means putting back the database from before it:
+   `scripts/deploy.sh` does that itself when a new version fails its health check,
+   and `--rollback --restore-db` later on (deploy.md, "Deploying").
 5. Test it: `tests/test_migrations.py` upgrades an empty database and every
    pre-Alembic fixture in `tests/fixtures/legacy_dbs/` to the newest migration and
    checks every row survives and the schema matches a new database's. Add a test

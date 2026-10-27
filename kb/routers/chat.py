@@ -3,6 +3,7 @@ passages as [S1], [S2], ... Streamed questions can belong to a saved conversatio
 (kb/routers/conversations.py). A cited passage opens through /api/passages."""
 
 import asyncio
+import contextvars
 import json
 import logging
 import threading
@@ -120,7 +121,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
     if turn and turn["first_question"]:
         def make_title():
             title["text"] = suggestions.chat_title(question)
-        titling = threading.Thread(target=make_title, daemon=True)
+        titling = threading.Thread(target=contextvars.copy_context().run, args=(make_title,),
+                                   daemon=True)
         titling.start()
 
     loop = asyncio.get_running_loop()
@@ -211,7 +213,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         put({"type": "conversation", "id": conv["id"], "title": conv["title"],
              "user_message_id": turn["user_message_id"], "message_id": turn["message_id"],
              "new_conversation": turn["new_conversation"]})
-    threading.Thread(target=work, daemon=True).start()
+    # In its own thread, with the request's id and user on its log lines (kb/logs.py).
+    threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
 
     async def sse():
         try:

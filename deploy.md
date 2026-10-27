@@ -241,7 +241,9 @@ cd genai && docker compose ps              # STATUS: Up
 | View logs | `docker compose logs -f` (Docker keeps the last 5 × 10 MB per container: `logging` in `docker-compose.yml`) |
 | Stop | `docker compose down` |
 | Restart | `docker compose restart` |
-| Deploy new code | `git pull && docker compose up -d --build` (no local patch to re-apply; the Guardrails token comes from step 4's `COMPOSE_FILE`) |
+| Deploy new code | `scripts/deploy.sh main` or a release tag, `scripts/deploy.sh v0.2.0`: backup, build, health gate, automatic rollback ([Deploying](#deploying)) |
+| Go back to the version before | `scripts/deploy.sh --rollback` ([Deploying](#deploying)) |
+| Which version runs | `curl -fsS http://localhost:8501/api/health` (`version`, `commit`); `cat .deploy/current .deploy/history` |
 | Rebuild vector DB from scratch | `docker compose down -v && docker compose up -d --build` |
 | Re-index after editing `docs/` by hand | **Re-index** on the Documents screen (only changed files are embedded again), or a full rebuild: `docker compose exec knowledgebase python ingest.py` |
 | See the background jobs | `docker compose exec knowledgebase python -c "import db; [print(tuple(r)) for r in db.connect().execute('SELECT id, kind, workspace, status, attempts, error FROM jobs ORDER BY id DESC LIMIT 20')]"` |
@@ -262,6 +264,104 @@ too). The log says `Database upgraded from 0001 to 0002` (and, once, `Bringing a
 database from before migrations to the baseline`) when it does. Take a backup (`scripts/backup.sh`) before deploying
 a release that adds a migration: there is no automatic way back down. How
 migrations work and how to add one: [ARCHITECTURE.md](ARCHITECTURE.md), "Database migrations".
+
+## Deploying
+
+`scripts/deploy.sh` deploys one version and checks it can serve before calling it
+done. Run it as root in the app folder:
+
+```bash
+scripts/deploy.sh --dry-run main     # every step it would take; changes nothing
+scripts/deploy.sh main               # the newest main (or a tag: v0.2.0, or a commit)
+```
+
+What it does, in order (the header of `scripts/deploy.sh` has every option):
+
+1. `git fetch`, and which commit the branch, tag or commit you named is.
+2. `scripts/backup.sh` (with `BACKUP_ENV_FILE`, as cron runs it: export it first),
+   plus a quick copy of `config/app.db` into `.deploy/db/`.
+3. Checks the commit out (detached `HEAD`). If local changes to tracked files would
+   be overwritten (the old Guardrails hand patch, step 4) it stops here and the old
+   version keeps running. Then `docker compose build`, with the Guardrails secret
+   from step 4's `COMPOSE_FILE`; the image is tagged
+   `cloudastra-knowledgebase:<first 12 characters of the commit>`.
+4. `docker compose up -d` with that tag, and waits (`--timeout`, default 300 s) for
+   `/api/health/ready` to answer 200.
+5. Ready: records it in `.deploy/current`, `.deploy/previous` and `.deploy/history`,
+   tags it `:latest` (so a plain `docker compose up -d` keeps it), and removes all
+   but the last few older image tags (`KEEP_IMAGES`, default 3).
+   **Not ready** (or it didn't start): stops it, puts back the database copy from
+   step 2 if its migrations changed `config/app.db`, checks the previous commit out
+   and starts the previous image, which is still there, so no rebuild. It exits 1
+   with the previous version running, or 3 if even that failed (look at
+   `docker compose logs` now).
+
+Downtime is the restart, a few seconds (one container: sign-in codes and running
+answers in memory are lost, as before). A failed build changes nothing that runs.
+If the database is put back, anything written between the new version starting and
+the rollback is lost; the backup from step 2 still has the state before the deploy.
+
+**Going back later**: `scripts/deploy.sh --rollback` starts the version before the
+current one (`.deploy/previous`). If the current version migrated the database,
+the older one can't start on it (Alembic refuses a revision it doesn't know), so the
+script stops and asks for `--rollback --restore-db`, which puts back the copy taken
+just before the current version was deployed: everything written since is lost.
+Prefer fixing forward when that is more than a few minutes of use.
+
+**First deploy with the script on an existing server**: drop the Guardrails hand
+patch first (step 4, "Upgrading a server that has the old hand-applied patch").
+The running image is tagged after the current commit so the first deploy can go
+back to it. The server's checkout is on a detached `HEAD` from then on: deploy with
+`scripts/deploy.sh <branch or tag>`, not `git pull`.
+
+**Images from the registry.** A release tag also builds an image on GHCR,
+`ghcr.io/cloudastra-tech/knowlegebase:<version>` (`.github/workflows/release.yml`).
+It is built **without the Guardrails Hub token**: installing the toxicity validator
+writes the token into the image (`/root/.guardrailsrc`), and an image in a registry
+must never carry it, so the workflow checks that it doesn't. Such an image runs
+without the toxicity check (`/api/health` says `"toxicity": "missing"`); with
+`REQUIRE_TOXICITY_GUARD=1` it refuses to start, and the deploy goes back. So
+production keeps **building on the server** (`scripts/deploy.sh v0.2.0`), with the
+token, until the validator gets its token at run time instead.
+`scripts/deploy.sh --image 0.2.0` runs a registry image (pulled, tagged and rolled
+back the same way, the code checked out at its tag) where the toxicity check isn't
+needed, e.g. a staging box. If the package is private (the org's Packages
+settings), `docker login ghcr.io` with a token that can read packages first.
+
+**Deploying from GitHub Actions** is not wired up: deploys stay manual until the
+owner adds the secrets. The sketch at the bottom of `.github/workflows/release.yml`
+is the whole job: a `production` environment with required reviewers, a deploy key
+that may only run `scripts/deploy.sh` (`command=` in `authorized_keys`), and the
+host, user, key and `known_hosts` as environment secrets. The job then runs
+`scripts/deploy.sh <tag>` over SSH after the image is built, once a reviewer approves.
+
+## Releases
+
+`main` is production and only moves by promotion:
+
+1. Features merge into `dev` (squash; CI runs `backend`, `frontend`, `e2e`,
+   `docker`, `scan`).
+2. **Promote**: when the owner says so, a PR from `dev` into `main`, merged with a
+   merge commit (not squash, so the two histories don't drift).
+3. **Release PR**: on every push to `main`, release-please
+   (`.github/workflows/release-please.yml`) opens or updates
+   "chore(main): release X.Y.Z", whose `CHANGELOG.md` entry lists the `feat:` and
+   `fix:` commits since the last release (version rules: Conventional Commits;
+   before 1.0 a `feat` bumps the minor version, a `fix` the patch).
+4. Merging it tags `vX.Y.Z`, publishes a GitHub release and builds the registry
+   image. Deploy that tag: `scripts/deploy.sh vX.Y.Z` (above).
+5. **Back-merge**: a PR from `main` into `dev`, so the release commit
+   (`CHANGELOG.md`, `version.txt`) is on `dev` too.
+
+Hotfixes branch from `main`, go by PR into `main` (release PR, tag, deploy as
+above), and are merged back into `dev` the same way.
+
+GitHub runs no workflows for PRs or tags made with the default `GITHUB_TOKEN`, so
+the release PR gets no CI checks unless the repo secret `RELEASE_PLEASE_TOKEN` (a
+fine-grained token or GitHub App token with contents and pull-request write) is
+set; without it, close and reopen the release PR to run them. The image is built
+either way. Config: `release-please-config.json`, `.release-please-manifest.json`
+(0.1.0 stands for what production ran before releases were tagged).
 
 ## Background jobs
 
@@ -529,11 +629,33 @@ laptop a tunnel, e.g. `cloudflared tunnel --url http://localhost:5180` with
   Point an external uptime monitor (Better Stack, UptimeRobot, Uptime Kuma on
   another host) at `https://<your domain>/api/health/ready`, and check it after
   every deploy: `curl -fsS http://localhost:8501/api/health/ready`.
+- Logs: `docker compose logs` has one JSON object per line (`LOG_FORMAT=json`,
+  set by `docker-compose.yml`; `text` is the default outside Docker), ready for a
+  log shipper. Every request gets an id, the proxy's `X-Request-ID` if it sends
+  one (nginx: `proxy_set_header X-Request-ID $request_id;`), sent back in the
+  `X-Request-ID` response header, and one line when it ends:
+
+  ```json
+  {"ts": "2026-10-27T10:00:00.123Z", "level": "INFO", "logger": "kb.request",
+   "msg": "POST /api/chat/stream 200 5321ms", "request_id": "9f1c…",
+   "workspace": "acme", "user": "u_3f2a9c0d1e2b4a57", "method": "POST",
+   "route": "/api/chat/stream", "status": 200, "duration_ms": 5321}
+  ```
+
+  Every other line logged while serving that request carries the same
+  `request_id`, `workspace` and `user`; a background job's lines carry `job_id` and
+  `job_kind` instead. `user` is a keyed hash of the account, never the email (set
+  `LOG_USER_KEY`, or `SESSION_SECRET` is used); find someone's with
+  `docker compose exec knowledgebase python -m kb.logs user-id someone@example.com`.
+  Lines never hold a question, an answer, a query string or a token from a path
+  (routes are logged as their template, `/s/{token}`). `LOG_LEVEL` (default `INFO`).
 - Errors: failed chat answers, re-indexes, connector syncs and agent tool calls
   are logged (`docker compose logs`) with their workspace, never with the
   question. Set `SENTRY_DSN` (Sentry, or a self-hosted GlitchTip) and `APP_ENV`
   in `.env` to also send them to an error tracker; request bodies, query strings,
   cookies and `Authorization` headers are scrubbed first (`observability.py`).
+  Each event is tagged with the `request_id` (or `job_id`) of its log lines, and
+  its release is the image's version.
 
 ## Backups and restore
 
