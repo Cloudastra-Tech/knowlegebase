@@ -137,9 +137,13 @@ def _source(s):
 
 
 def _sources(sources):
-    """One entry per document (a passage-level list cites a document once per passage)."""
+    """One entry per document (a passage-level list cites a document once per passage).
+    A file the asker attached, or keeps in their space, is theirs alone: not logged,
+    so its name never reaches Insights."""
     out, seen = [], set()
     for s in sources or []:
+        if s.get("attachment"):
+            continue
         entry = _source(s)
         key = entry.get("doc_id") or entry.get("doc_key") or (entry.get("provider"),
                                                               entry.get("title"))

@@ -71,8 +71,12 @@ def test_an_attached_pdf_is_cited_for_its_chat_only(env, citing):  # noqa: F811
     assert attach(env, admin, cid, ("x.txt", b"hello", "text/plain")).status_code == 404
     assert env.client.delete(f"/api/conversations/{cid}/attachments/{row['id']}",
                              headers=admin).status_code == 404
-    # Never in the workspace's index.
+    # Never in the workspace's index, nor named in the question log (Insights).
     assert all(not k.startswith("attachments") for k, _ in env.chunks(w).values())
+    with db.connect() as conn:
+        logged = [r[0] for r in conn.execute("SELECT sources FROM question_log WHERE "
+                                             "workspace = ?", (w,))]
+    assert logged and not any("contract.pdf" in s for s in logged)
 
 
 def test_an_answer_from_an_attachment_is_for_its_uploader_alone(env, citing):  # noqa: F811
