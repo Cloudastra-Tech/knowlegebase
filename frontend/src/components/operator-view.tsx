@@ -10,6 +10,7 @@ import {
   ScrollText,
   Search,
   ShieldCheck,
+  Timer,
   Wallet,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -33,7 +34,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Field, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
@@ -76,6 +77,17 @@ function StatusBadge({ ws }: { ws: OperatorWorkspace }) {
       {STATUS_LABEL[ws.status]}
     </Badge>
   )
+}
+
+// The plan, and where its trial stands: "Trial · 5 days left", "Business · past due".
+function planText(plan: OperatorWorkspace["plan"], now = Date.now() / 1000) {
+  if (!plan) return "—"
+  if (plan.status === "trialing") {
+    if (plan.trial_expired || plan.trial_ends_at === null) return `${plan.name} · trial ended`
+    const days = Math.ceil((plan.trial_ends_at - now) / 86400)
+    return `${plan.name} · ${days} day${days === 1 ? "" : "s"} left`
+  }
+  return `${plan.name} · ${{ active: "active", past_due: "past due", canceled: "canceled" }[plan.status]}`
 }
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
@@ -128,11 +140,13 @@ function WorkspaceRow({
   onSuspend,
   onAudit,
   onSpendCaps,
+  onExtendTrial,
 }: {
   ws: OperatorWorkspace
   onSuspend: (ws: OperatorWorkspace) => void
   onAudit: (ws: OperatorWorkspace) => void
   onSpendCaps: (ws: OperatorWorkspace) => void
+  onExtendTrial: (ws: OperatorWorkspace) => void
 }) {
   const queryClient = useQueryClient()
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["operator", "workspaces"] })
@@ -206,6 +220,9 @@ function WorkspaceRow({
             <DropdownMenuItem onSelect={() => onSpendCaps(ws)}>
               <Wallet /> Spend caps…
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onExtendTrial(ws)}>
+              <Timer /> Extend trial…
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onAudit(ws)}>
               <ScrollText /> View audit log
             </DropdownMenuItem>
@@ -217,8 +234,18 @@ function WorkspaceRow({
         </DropdownMenu>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-7">
-        <Stat label="Plan" value={ws.plan ?? "—"} />
-        <Stat label="Seats (30 d)" value={`${ws.seats} of ${ws.members}`} />
+        <Stat
+          label="Plan"
+          value={
+            <span className={cn(ws.plan && (ws.plan.trial_expired || ws.plan.status !== "active" && ws.plan.status !== "trialing") && "text-destructive")}>
+              {planText(ws.plan)}
+            </span>
+          }
+        />
+        <Stat
+          label="Seats (30 d)"
+          value={`${ws.seats} of ${ws.members}${ws.plan?.seats_paid ? ` · ${ws.plan.seats_paid} paid` : ""}`}
+        />
         <Stat
           label="Questions (30 d)"
           value={`${ws.usage.questions} · $${ws.usage.cost_usd.toFixed(2)}`}
@@ -312,6 +339,69 @@ function SuspendDialog({ ws, onClose }: { ws: OperatorWorkspace | null; onClose:
   )
 }
 
+// ---- More trial (audited) ---------------------------------------------------------------
+function ExtendTrialDialog({ ws, onClose }: { ws: OperatorWorkspace; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [days, setDays] = useState("14")
+  const n = Number(days)
+  const valid = Number.isInteger(n) && n >= 1 && n <= 90
+  const extend = useMutation({
+    mutationFn: () => operatorApi.extendTrial(ws.slug, n),
+    onSuccess: (r) => {
+      toast.success(
+        `${ws.name}'s trial now ends on ${new Date(r.trial_ends_at * 1000).toLocaleDateString(undefined, { dateStyle: "medium" })}.`,
+      )
+      void queryClient.invalidateQueries({ queryKey: ["operator", "workspaces"] })
+      onClose()
+    },
+    onError: (err) => toast.error(errorText(err)),
+  })
+  const ended = !!ws.plan?.trial_expired
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Extend {ws.name}'s trial</AlertDialogTitle>
+          <AlertDialogDescription>
+            {ended
+              ? "Its trial has ended: the days count from now, it stops being read-only, and the deletion the expired trial asked for is cancelled."
+              : ws.plan?.status === "trialing"
+                ? "The days are added to the end of its trial."
+                : "It goes back on a trial for these days."}{" "}
+            It's in the workspace's audit log.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Field data-invalid={!valid || undefined}>
+          <FieldLabel htmlFor="extend-days">Days</FieldLabel>
+          <Input
+            id="extend-days"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={90}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            aria-invalid={!valid || undefined}
+          />
+          <FieldDescription>From 1 to 90.</FieldDescription>
+        </Field>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!valid || extend.isPending}
+            onClick={(e) => {
+              e.preventDefault()
+              extend.mutate()
+            }}
+          >
+            Extend
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 // ---- A workspace's audit log --------------------------------------------------------
 function AuditSheet({ ws, onClose }: { ws: OperatorWorkspace | null; onClose: () => void }) {
   const log = useQuery({
@@ -370,6 +460,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
   const [suspending, setSuspending] = useState<OperatorWorkspace | null>(null)
   const [auditing, setAuditing] = useState<OperatorWorkspace | null>(null)
   const [capping, setCapping] = useState<OperatorWorkspace | null>(null)
+  const [extending, setExtending] = useState<OperatorWorkspace | null>(null)
 
   useEffect(() => {
     if (me.isError || list.isError) onSignedOut()
@@ -442,6 +533,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
               onSuspend={setSuspending}
               onAudit={setAuditing}
               onSpendCaps={setCapping}
+              onExtendTrial={setExtending}
             />
           ))}
           {list.data && !shown.length && (
@@ -455,6 +547,9 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
       <AuditSheet ws={auditing} onClose={() => setAuditing(null)} />
       {capping && (
         <SpendCapsDialog key={capping.slug} ws={capping} onClose={() => setCapping(null)} />
+      )}
+      {extending && (
+        <ExtendTrialDialog key={extending.slug} ws={extending} onClose={() => setExtending(null)} />
       )}
     </div>
   )

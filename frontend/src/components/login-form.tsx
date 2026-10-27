@@ -21,8 +21,10 @@ import {
   api,
   session,
   signupStartUrl,
+  m365StartUrl,
   ssoStartUrl,
   type AuthOptions,
+  type SignupMethod,
   type SsoConnection,
   type SsoRoute,
   type User,
@@ -134,7 +136,9 @@ function methodOf(route: SsoRoute) {
   const n = route.connections.length
   if (n === 1) return route.connections[0].name
   if (n > 1) return `${n} options`
+  if (route.workspace.google && route.workspace.microsoft365) return "2 options"
   if (route.workspace.google) return "Google Workspace"
+  if (route.workspace.microsoft365) return "Microsoft 365"
   if (route.workspace.password) return "Password"
   return "None yet"
 }
@@ -151,9 +155,11 @@ function MethodMark({ route }: { route: SsoRoute }) {
   const kind =
     route.connections.length === 1
       ? route.connections[0].kind
-      : !route.connections.length && route.workspace?.google
+      : !route.connections.length && route.workspace?.google && !route.workspace.microsoft365
         ? "google"
-        : null
+        : !route.connections.length && route.workspace?.microsoft365 && !route.workspace.google
+          ? "microsoft"
+          : null
   return kind && PROVIDER_PATHS[kind] ? <ProviderIcon id={kind} /> : null
 }
 
@@ -331,8 +337,23 @@ function SignIn({
         window.location.assign(route.connections[0].url)
         return                                   // keep the spinner while the page leaves
       }
+      const google = route.workspace?.google && providers.some((p) => p.id === "google")
       if (route.connections.length > 1) setChoices(route.connections)
-      else if (route.workspace?.google && providers.some((p) => p.id === "google")) {
+      else if (google && route.workspace?.microsoft365) {
+        // Any company's Google Workspace or Microsoft 365: theirs is one of them.
+        setChoices([
+          { id: "google", name: "Google Workspace", url: ssoStartUrl("google"), kind: "google" },
+          {
+            id: "microsoft365",
+            name: "Microsoft 365",
+            url: m365StartUrl(email.trim()),
+            kind: "microsoft",
+          },
+        ])
+      } else if (route.workspace?.microsoft365) {
+        window.location.assign(m365StartUrl(email.trim()))
+        return
+      } else if (google) {
         window.location.assign(ssoStartUrl("google"))
         return
       } else if (route.workspace?.password && options.password) {
@@ -528,30 +549,70 @@ function CreateWorkspace({
   name,
   setName,
   needsCode,
+  methods,
   error,
   onSignIn,
 }: {
   name: string
   setName: (name: string) => void
   needsCode: boolean
+  methods: SignupMethod[]
   error: ReturnType<typeof errorFromUrl>
   onSignIn: () => void
 }) {
   const [code, setCode] = useState("")
-  const [going, setGoing] = useState(false)
+  const [email, setEmail] = useState("")
+  const [going, setGoing] = useState<SignupMethod | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [sent, setSent] = useState<string | null>(null)
 
   useEffect(() => {
-    const reset = (e: PageTransitionEvent) => e.persisted && setGoing(false)
+    const reset = (e: PageTransitionEvent) => e.persisted && setGoing(null)
     window.addEventListener("pageshow", reset)
     return () => window.removeEventListener("pageshow", reset)
   }, [])
 
-  function start(e: FormEvent) {
+  // Google Workspace and Microsoft 365 prove the domain at the provider; with only a
+  // work email, a link is emailed and the domain proved with a DNS record after.
+  async function start(e: FormEvent) {
     e.preventDefault()
-    setGoing(true)
-    window.location.assign(signupStartUrl(name.trim(), needsCode ? code.trim() : ""))
+    const method = ((e.nativeEvent as SubmitEvent).submitter?.dataset.method ??
+      methods[0]) as SignupMethod
+    setMessage(null)
+    if (method !== "email") {
+      setGoing(method)
+      window.location.assign(signupStartUrl(name.trim(), needsCode ? code.trim() : "", method))
+      return
+    }
+    if (!EMAIL.test(email.trim())) {
+      setMessage("Enter your work email address.")
+      return
+    }
+    setGoing("email")
+    try {
+      const out = await api.signupEmail(name.trim(), email.trim(), needsCode ? code.trim() : "")
+      setSent(out.email)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Couldn't start the sign-up.")
+    }
+    setGoing(null)
   }
 
+  if (sent)
+    return (
+      <motion.div variants={item} className="flex flex-col gap-4 text-center" role="status">
+        <p className="rounded-xl border bg-muted/40 px-4 py-3 text-sm">
+          We sent a link to <span className="font-medium">{sent}</span>. Open it to confirm your
+          address; it then shows the DNS record that proves your company owns its domain.
+        </p>
+        <Button type="button" variant="outline" className={pill} onClick={() => setSent(null)}>
+          Use another email
+        </Button>
+      </motion.div>
+    )
+
+  const ready = !!name.trim() && (!needsCode || !!code.trim())
+  const providers = methods.filter((m) => m !== "email")
   return (
     <motion.form variants={item} onSubmit={start} className="flex flex-col gap-5">
       <Field data-invalid={error?.code === "name" || undefined}>
@@ -589,25 +650,68 @@ function CreateWorkspace({
           Sign in instead
         </Button>
       )}
-      <Field className="gap-2">
-        <Button
-          type="submit"
-          className={pill}
-          disabled={going || !name.trim() || (needsCode && !code.trim())}
-        >
-          {going ? (
-            <Loader2 className="animate-spin" data-icon="inline-start" />
-          ) : (
-            <ProviderIcon id="google" />
-          )}
-          Continue with Google Workspace
-        </Button>
-        <FieldDescription className="text-xs">
-          Your company Google account proves you own its domain, so colleagues can sign in straight
-          away. You'll be the workspace's admin; add Okta, Entra ID or SAML after. Personal Gmail
-          can't create a workspace.
-        </FieldDescription>
-      </Field>
+      {providers.length > 0 && (
+        <Field className="gap-2">
+          {providers.map((m) => (
+            <Button
+              key={m}
+              type="submit"
+              data-method={m}
+              variant={m === providers[0] ? "default" : "outline"}
+              className={pill}
+              disabled={going !== null || !ready}
+            >
+              {going === m ? (
+                <Loader2 className="animate-spin" data-icon="inline-start" />
+              ) : (
+                <ProviderIcon id={m === "google" ? "google" : "microsoft"} />
+              )}
+              Continue with {m === "google" ? "Google Workspace" : "Microsoft 365"}
+            </Button>
+          ))}
+          <FieldDescription className="text-xs">
+            Your company account proves you own its domain, so colleagues can sign in straight
+            away. You'll be the workspace's admin; add Okta, Entra ID or SAML after.
+            {providers.includes("google") && " Personal Gmail can't create a workspace."}
+          </FieldDescription>
+        </Field>
+      )}
+      {methods.includes("email") && (
+        <>
+          {providers.length > 0 && <FieldSeparator>Or with your work email</FieldSeparator>}
+          <Field data-invalid={!!message || undefined} className="gap-2">
+            <FieldLabel htmlFor="signup-email">Work email</FieldLabel>
+            <Input
+              id="signup-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              className={control}
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                setMessage(null)
+              }}
+              aria-invalid={!!message || undefined}
+            />
+            <Button
+              type="submit"
+              data-method="email"
+              variant={providers.length ? "outline" : "default"}
+              className={pill}
+              disabled={going !== null || !ready || !email.trim()}
+            >
+              {going === "email" && <Loader2 className="animate-spin" data-icon="inline-start" />}
+              Email me a link
+            </Button>
+            {message && <FieldError>{message}</FieldError>}
+            <FieldDescription className="text-xs">
+              For any other email host. You'll prove the domain with a DNS TXT record; the
+              workspace is made once it checks out.
+            </FieldDescription>
+          </Field>
+        </>
+      )}
     </motion.form>
   )
 }
@@ -676,6 +780,7 @@ export function LoginForm({
                 name={workspaceName}
                 setName={setWorkspaceName}
                 needsCode={options.signup_invite}
+                methods={options.signup_methods ?? ["google"]}
                 error={error}
                 onSignIn={() => changeMode("sign-in")}
               />

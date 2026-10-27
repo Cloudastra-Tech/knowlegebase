@@ -12,6 +12,7 @@ import {
   CornerDownRight,
   ExternalLink,
   FileText,
+  Gauge,
   GitBranch,
   Globe,
   History,
@@ -80,6 +81,7 @@ export interface Message {
   withheld?: boolean
   feedback?: Feedback | null
   limited?: string // turned away by a rate limit: the server's words
+  limitedBy?: "rate" | "plan" // a rate limit or spend cap (429), or the plan's (402)
   streaming?: boolean
   status?: string
   steps?: LiveStep[]
@@ -275,12 +277,13 @@ function StepsPanel({ message }: { message: Message }) {
 }
 
 // Too many questions in the last minute: a pause, not a failure, so no red.
-function LimitNotice({ text }: { text: string }) {
+function LimitNotice({ text, plan = false }: { text: string; plan?: boolean }) {
+  const Icon = plan ? Gauge : Clock
   return (
     <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
-      <Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 space-y-0.5">
-        <p className="font-medium">Give it a moment</p>
+        <p className="font-medium">{plan ? "Your plan's limit" : "Give it a moment"}</p>
         <p className="text-muted-foreground">{text}</p>
       </div>
     </div>
@@ -812,7 +815,9 @@ export function AssistantMessage({
         </div>
         <div className="min-w-0 flex-1 space-y-3 pt-1">
           {!actions.hideSteps && <StepsPanel message={message} />}
-          {message.limited && <LimitNotice text={message.limited} />}
+          {message.limited && (
+            <LimitNotice text={message.limited} plan={message.limitedBy === "plan"} />
+          )}
           {!message.limited && (message.streaming ? message.text && <Markdown text={message.text} streaming /> : <AnswerBody message={message} actions={actions} />)}
 
           {sources.length > 0 && (

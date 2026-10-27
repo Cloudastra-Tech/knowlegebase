@@ -1,14 +1,24 @@
 // Signing in and out (/api/auth/*).
 
 import { json, request } from "@/lib/api/client"
-import type { AuthOptions, InviteAccepted, InviteInfo, SsoRoute, User } from "@/lib/api/types"
+import type {
+  AuthOptions,
+  InviteAccepted,
+  InviteInfo,
+  PendingSignup,
+  SsoRoute,
+  User,
+} from "@/lib/api/types"
 
 // A full-page navigation (not fetch): the server redirects to Google / Microsoft.
 export const ssoStartUrl = (provider: string) => `/api/auth/sso/${provider}/start`
-// Sign-up: name the workspace, then confirm with Google Workspace.
-export const signupStartUrl = (name: string, code = "") =>
-  `/api/auth/signup/google/start?name=${encodeURIComponent(name)}` +
+// Sign-up: name the workspace, then confirm with Google Workspace or Microsoft 365.
+export const signupStartUrl = (name: string, code = "", method: "google" | "microsoft365" = "google") =>
+  `/api/auth/signup/${method === "google" ? "google" : "microsoft"}/start?name=${encodeURIComponent(name)}` +
   (code ? `&code=${encodeURIComponent(code)}` : "")
+// Signing in with any company's Microsoft 365 (a workspace made with it).
+export const m365StartUrl = (email = "") =>
+  `/api/auth/m365/start${email ? `?login_hint=${encodeURIComponent(email)}` : ""}`
 
 export const authApi = {
   authOptions: () => request<AuthOptions>("/auth/providers"),
@@ -35,6 +45,19 @@ export const authApi = {
   logoutEverywhere: () =>
     request<{ ok: boolean; ended: number }>("/auth/logout-everywhere", { method: "POST" }),
   me: () => request<User>("/auth/me"),
+  // Sign-up with a work email and a DNS TXT record: emailed link, then the record.
+  signupEmail: (name: string, email: string, code = "") =>
+    request<{ ok: boolean; email: string; expires_at: number }>(
+      "/auth/signup/email",
+      json("POST", { name, email, code }),
+    ),
+  signupEmailConfirm: (token: string) =>
+    request<PendingSignup>("/auth/signup/email/confirm", json("POST", { token })),
+  signupEmailComplete: (token: string, password: string) =>
+    request<{ token: string; user: User }>(
+      "/auth/signup/email/complete",
+      json("POST", { token, password }),
+    ),
   // The accept page (/invite/:token). The token goes in the body, not a URL.
   inviteLookup: (token: string) =>
     request<InviteInfo>("/auth/invite/lookup", json("POST", { token })),

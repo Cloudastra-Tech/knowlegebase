@@ -1,6 +1,6 @@
 """
 onboarding_store.py  —  a new workspace's first steps, and sign-ups still waiting
-on DNS (config/app.db, see db.py; tables made by migrations/versions/0019_billing_onboarding.py).
+on DNS (config/app.db, see db.py; tables made by migrations/versions/0020_billing_onboarding.py).
 
     onboarding        when each onboarding step was first seen done; the steps
                       themselves are worked out from the data (kb/services/onboarding.py)

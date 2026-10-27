@@ -1,6 +1,6 @@
 """
 billing_store.py  —  plans, subscriptions and who owns a workspace's billing
-(config/app.db, see db.py; tables made by migrations/versions/0019_billing_onboarding.py).
+(config/app.db, see db.py; tables made by migrations/versions/0020_billing_onboarding.py).
 
     plans            what can be bought: a seat price, limits and features (JSON)
     subscriptions    one per workspace that billing applies to: its plan, status,

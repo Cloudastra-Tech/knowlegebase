@@ -7,6 +7,7 @@ import {
   AccessScreen,
   ApiKeysScreen,
   AssistantScreen,
+  BillingScreen,
   DigestsScreen,
   DocsScreen,
   ExtensionConnectScreen,
@@ -22,6 +23,7 @@ import {
   Root,
   SharedScreen,
   SignInPage,
+  SignupVerifyPage,
   SpacesScreen,
   SsoReturnPage,
   UnsubscribePage,
@@ -53,6 +55,8 @@ import {
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)
+//   /billing           Plan & billing (BILLING=on): admins see it, billing owners change it
+//   /signup/verify     ?token=: an email sign-up's link, then its DNS record
 //   /operator          the platform operators' console (their own sign-in, not a member's)
 // The old hash addresses (/#login, /#sso?code=..., ...) redirect here (Root).
 export const routes: RouteObject[] = [
@@ -76,6 +80,7 @@ export const routes: RouteObject[] = [
               { path: "signup", element: null },
             ],
           },
+          { path: "signup/verify", Component: SignupVerifyPage },
           { path: "sso", Component: SsoReturnPage },
           { path: "invite/:token", Component: InvitePage },
           { path: "unsubscribe/:token", Component: UnsubscribePage },
@@ -93,6 +98,7 @@ export const routes: RouteObject[] = [
               { path: "spaces/:spaceId", Component: SpacesScreen },
               { path: "prompts", Component: PromptsScreen },
               { path: "digests", Component: DigestsScreen }, // everyone's own digests
+              { path: "billing", Component: BillingScreen },
               { path: "extension/connect", Component: ExtensionConnectScreen },
               {
                 Component: HrOnly,

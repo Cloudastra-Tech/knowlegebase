@@ -1,6 +1,7 @@
 import { lazy, useState } from "react"
 import {
   ChevronDown,
+  CreditCard,
   KeyRound,
   Layers,
   LogOut,
@@ -14,6 +15,7 @@ import { toast } from "sonner"
 import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar, IndexStatusText } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
+import { TrialBanner } from "@/components/trial-banner"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -223,6 +225,13 @@ export default function App() {
                     <Mail /> Digests
                   </Link>
                 </DropdownMenuItem>
+                {user.billing?.can_view && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/billing">
+                      <CreditCard /> Plan &amp; billing
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut}>
                   <LogOut /> Sign out
@@ -258,6 +267,7 @@ export default function App() {
           in its audit log.
         </div>
       )}
+      <TrialBanner user={user} />
       {user.workspace_status === "deleting" && user.deleting_at && (
         <div className="border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-center text-xs text-destructive">
           This workspace will be deleted on{" "}

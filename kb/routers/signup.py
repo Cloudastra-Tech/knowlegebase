@@ -22,7 +22,6 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 import audit_store
-import lifecycle_store
 import members_store
 import sso
 import sso_errors
@@ -188,6 +187,5 @@ def signup_email_complete(body: CompleteIn, request: Request,
     out = service.complete_email_signup(request, body.token, body.password)
     user = out["user"]
     _platform(audit, None, user["username"], {"workspace": user["workspace"]})
-    st = lifecycle_store.state(user["workspace"])
-    return {"token": out["token"],
-            "user": {**user, "workspace_status": st["status"], "deleting_at": st["deleting_at"]}}
+    from kb.routers.auth import _shown        # as signing in shows it (the trial too)
+    return {"token": out["token"], "user": _shown(user)}

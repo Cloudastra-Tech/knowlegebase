@@ -4,12 +4,14 @@ import {
   api,
   apiKeys,
   assistant,
+  billing,
   digests,
   drafts,
   emailIn,
   extension,
   groups,
   insights,
+  onboarding,
   session,
   signIn,
   slack,
@@ -28,6 +30,11 @@ export const queries = {
   // What's searchable depends on the role the app is viewed as (the X-Role header).
   knowledge: () => queryOptions({ queryKey: ["knowledge", session.role], queryFn: api.knowledge }),
   docs: () => queryOptions({ queryKey: ["docs"], queryFn: api.listDocs }),
+  // The first run's suggestions and the checklist depend on the role viewed as.
+  onboarding: () =>
+    queryOptions({ queryKey: ["onboarding", session.role], queryFn: onboarding.get }),
+  // Plan & billing (BILLING=on): { on: false } with it off.
+  billing: () => queryOptions({ queryKey: ["billing"], queryFn: billing.get }),
   // Drafts the assistant wrote (HR).
   drafts: () => queryOptions({ queryKey: ["drafts"], queryFn: drafts.list }),
   draft: (id: string) => queryOptions({ queryKey: ["drafts", id], queryFn: () => drafts.get(id) }),

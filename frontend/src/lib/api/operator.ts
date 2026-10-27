@@ -59,13 +59,24 @@ export interface Operator {
   provider: string | null
 }
 
+// A workspace's plan and trial (kb/services/billing.py); null: billing doesn't apply.
+export interface OperatorPlan {
+  id: string
+  name: string
+  status: "trialing" | "active" | "past_due" | "canceled"
+  trial_ends_at: number | null
+  trial_expired: boolean
+  seats_paid: number
+  owners: string[] // who may change its billing
+}
+
 export interface OperatorWorkspace {
   slug: string
   name: string
   created_at: number
-  plan: string | null // billing isn't there yet
+  plan: OperatorPlan | null
   members: number
-  seats: number // members active in the last 30 days
+  seats: number // members not turned off who were active in the last 30 days
   usage: { questions: number; tokens: number; cost_usd: number } // last 30 days
   last_activity: number | null
   connectors: number
@@ -129,6 +140,12 @@ export const operatorApi = {
     call<{ ok: boolean; counters: number }>(
       `/workspaces/${encodeURIComponent(ws)}/reset-rate-limits`,
       post(),
+    ),
+  // More trial: from its end, or from now if it ended (lifts read-only). Audited.
+  extendTrial: (ws: string, days: number) =>
+    call<{ ok: boolean; trial_ends_at: number }>(
+      `/workspaces/${encodeURIComponent(ws)}/extend-trial`,
+      post({ days }),
     ),
   // A one-time code: /#sso?code=... opens the workspace as support, in this browser.
   supportSession: (ws: string) =>
