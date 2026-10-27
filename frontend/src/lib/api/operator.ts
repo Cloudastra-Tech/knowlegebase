@@ -151,6 +151,13 @@ export const operatorApi = {
   // whose owner left). Audited.
   addBillingOwner: (ws: string, email: string) =>
     call<{ ok: boolean }>(`/workspaces/${encodeURIComponent(ws)}/billing-owner`, post({ email })),
+  // A one-time code someone with Google Workspace on `domain` can claim the workspace
+  // with (only one with no verified domain and no admin who can sign in). Audited.
+  claimCode: (ws: string, domain: string) =>
+    call<{ code: string; domain: string; expires_at: number }>(
+      `/workspaces/${encodeURIComponent(ws)}/claim-code`,
+      post({ domain }),
+    ),
   // A one-time code: /#sso?code=... opens the workspace as support, in this browser.
   supportSession: (ws: string) =>
     call<{ code: string }>(`/workspaces/${encodeURIComponent(ws)}/support-session`, post()),

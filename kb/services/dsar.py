@@ -4,12 +4,12 @@ workspace holds about them, and erasing it.
 
 EXPORT: their member row (never the password hash), the questions they asked
 (the question log, text as the workspace keeps it), their chats with every
-message, the feedback they gave, their API keys and invites, the spaces they're
+message, the feedback they gave, their API keys, invites and requests to join, the spaces they're
 in, the files they attached or keep (names, not text), their saved prompts, and
 the audit events where they are the actor.
 
 ERASE: deletes their questions, chats (messages, feedback on them, share
-links), folders, feedback, sign-in events, invites to them, API keys, sessions,
+links), folders, feedback, sign-in events, invites to them, requests to join, API keys, sessions,
 their place in access groups and team spaces, their own space, the files they
 attached or kept, their saved prompts, and the member itself. Documents shared with them
 by name keep that grant under their pseudonym (no one holds it: fails closed),
@@ -29,7 +29,7 @@ import members_store
 # Columns that name the member who did something, in tables with a workspace column.
 PERSON_COLUMNS = ("created_by", "updated_by", "installed_by", "connected_by", "invited_by",
                   "requested_by", "revoked_by", "verified_by", "owner", "delete_requested_by",
-                  "suspended_by", "support_granted_by")
+                  "suspended_by", "support_granted_by", "decided_by", "used_by")
 
 
 def _dicts(conn, sql, *args, drop=()):
@@ -70,6 +70,9 @@ def export_member(ws, username):
                "invites": _dicts(conn, "SELECT email, role, invited_by, created_at, accepted_at, "
                                        "revoked_at FROM invites WHERE workspace = ? AND email = ?",
                                  ws, u),
+               "join_requests": _dicts(conn, "SELECT name, provider, status, role, created_at, "
+                                             "last_seen_at, decided_at FROM join_requests "
+                                             "WHERE workspace = ? AND email = ?", ws, u),
                "access_groups": _dicts(conn, "SELECT g.name, g.source, m.added_at FROM "
                                              "group_members m JOIN access_groups g ON "
                                              "g.workspace = m.workspace AND g.id = m.group_id "
@@ -148,6 +151,8 @@ def erase_member(ws, username):
             ws, u)
         run("prompts", "DELETE FROM prompt_templates WHERE workspace = ? AND owner = ?", ws, u)
         run("invites", "DELETE FROM invites WHERE workspace = ? AND lower(email) = ?", ws, u)
+        run("join_requests", "DELETE FROM join_requests WHERE workspace = ? AND lower(email) = ?",
+            ws, u)
         run("api_keys", "DELETE FROM api_keys WHERE workspace = ? AND created_by = ?", ws, u)
         run("sessions", "DELETE FROM sessions WHERE username = ?", u)
         run("member", "DELETE FROM members WHERE username = ? AND workspace = ?", u, ws)

@@ -14,6 +14,8 @@ chain (audit_store.PLATFORM).
     POST /api/operator/workspaces/{ws}/reindex | /reset-rate-limits
     POST /api/operator/workspaces/{ws}/extend-trial {days}  more trial (billing.py)
     POST /api/operator/workspaces/{ws}/billing-owner {email}  who owns its billing
+    POST /api/operator/workspaces/{ws}/claim-code {domain} -> a one-time code to claim it
+                                            with Google Workspace (join_store.py)
     POST /api/operator/workspaces/{ws}/support-session  -> a one-time code (only while
                                             the workspace's admin allows support)
     GET  /api/operator/workspaces/{ws}/audit   its audit log
@@ -36,10 +38,12 @@ import api_keys_store
 import audit_store
 import billing_store
 import db
+import join_store
 import lifecycle_store
 import members_store
 import sessions_store
 import sso
+import sso_setup
 import workspaces
 from kb import operators, rate_limit
 from kb.audit import audited, client_ip
@@ -250,6 +254,35 @@ def operator_billing_owner(ws: str, body: OwnerIn, operator=Depends(require_oper
     billing_store.add_owner(ws, member["username"], operator["username"])
     _record(audit, operator, ws, {"owner": member["username"]})
     return {"ok": True}
+
+
+class ClaimCodeIn(BaseModel):
+    domain: str = Field(min_length=3, max_length=260)
+
+
+@router.post("/api/operator/workspaces/{ws}/claim-code")
+def operator_claim_code(ws: str, body: ClaimCodeIn, operator=Depends(require_operator),
+                        audit=audited("operator.claim_code")):
+    """A one-time code someone with Google Workspace on `domain` can claim the
+    workspace with (join_store.py): only for one with no verified domain and no
+    admin who can sign in. Shown once; any earlier unused code stops working."""
+    ws = _workspace(ws)
+    try:
+        domain = sso_setup.normalize_domain(body.domain)
+    except sso_setup.SetupError as e:
+        raise HTTPException(400, str(e))
+    try:
+        row, code = join_store.new_claim_code(ws, domain, operator["username"])
+    except join_store.ClaimRefused as e:
+        raise HTTPException(409, {"claim_verified": "It already has a verified domain: its "
+                                                    "own sign-in decides who gets in.",
+                                  "claim_admin": "It still has an admin who can sign in.",
+                                  "claim_taken": "Another workspace has verified that domain.",
+                                  "workspace_closed": "It's suspended or being deleted."}
+                            .get(e.reason, "It can't be claimed."))
+    _record(audit, operator, ws, {"domain": domain, "claim_code": row["id"],
+                                  "expires_at": row["expires_at"]})
+    return {"code": code, "domain": domain, "expires_at": row["expires_at"]}
 
 
 @router.post("/api/operator/workspaces/{ws}/support-session")

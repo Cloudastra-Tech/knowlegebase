@@ -361,7 +361,23 @@ CASES = [
      lambda ws, wid: ("POST", f"/api/admin/webhooks/{wid}/test", {})),
     ("webhook.delete", lambda c, h, ws, txt: _webhook(c, h),
      lambda ws, wid: ("DELETE", f"/api/admin/webhooks/{wid}", {})),
+    ("sign_in.joining", None,
+     lambda ws, _: ("PUT", "/api/admin/sign-in/joining", {"json": {"policy": "invite_only"}})),
+    ("domain.joining", lambda c, h, ws, txt: c.post("/api/admin/sign-in/domains", headers=h,
+                                                    json={"domain": f"{ws}.example"}),
+     lambda ws, _: ("PUT", f"/api/admin/sign-in/domains/{ws}.example/joining",
+                    {"json": {"policy": "auto"}})),
+    ("join_request.approve", lambda c, h, ws, txt: _join_request(ws),
+     lambda ws, rid: ("POST", f"/api/admin/members/requests/{rid}/approve",
+                      {"json": {"role": "hr"}})),
+    ("join_request.deny", lambda c, h, ws, txt: _join_request(ws),
+     lambda ws, rid: ("POST", f"/api/admin/members/requests/{rid}/deny", {})),
 ]
+
+
+def _join_request(ws):
+    import join_store
+    return join_store.request(ws, f"asker@{ws}.example", "Asker", "Google")[0]["id"]
 
 
 @pytest.mark.parametrize("action,setup,call", CASES, ids=[c[0] for c in CASES])

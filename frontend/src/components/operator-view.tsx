@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   Building2,
+  KeyRound,
   LifeBuoy,
   LogOut,
   MoreHorizontal,
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertsPanel, SpendCapsDialog } from "@/components/operator-alerts"
+import { CopyField } from "@/components/sign-in-provider-dialog"
 import { operatorApi, operatorSession, type OperatorWorkspace } from "@/lib/api/operator"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -143,6 +145,7 @@ function WorkspaceRow({
   onSpendCaps,
   onExtendTrial,
   onBillingOwner,
+  onClaimCode,
 }: {
   ws: OperatorWorkspace
   onSuspend: (ws: OperatorWorkspace) => void
@@ -150,6 +153,7 @@ function WorkspaceRow({
   onSpendCaps: (ws: OperatorWorkspace) => void
   onExtendTrial: (ws: OperatorWorkspace) => void
   onBillingOwner: (ws: OperatorWorkspace) => void
+  onClaimCode: (ws: OperatorWorkspace) => void
 }) {
   const queryClient = useQueryClient()
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["operator", "workspaces"] })
@@ -228,6 +232,9 @@ function WorkspaceRow({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onBillingOwner(ws)}>
               <UserCog /> Billing owner…
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onClaimCode(ws)}>
+              <KeyRound /> Claim code…
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onAudit(ws)}>
               <ScrollText /> View audit log
@@ -466,6 +473,68 @@ function BillingOwnerDialog({ ws, onClose }: { ws: OperatorWorkspace; onClose: (
   )
 }
 
+// ---- A code to claim a workspace nobody can administer (audited) -----------------------
+function ClaimCodeDialog({ ws, onClose }: { ws: OperatorWorkspace; onClose: () => void }) {
+  const [domain, setDomain] = useState("")
+  const [issued, setIssued] = useState<{ code: string; domain: string; expires_at: number } | null>(
+    null,
+  )
+  const issue = useMutation({
+    mutationFn: () => operatorApi.claimCode(ws.slug, domain.trim()),
+    onSuccess: setIssued,
+    onError: (err) => toast.error(errorText(err)),
+  })
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Claim code for {ws.name}</AlertDialogTitle>
+          <AlertDialogDescription>
+            For a workspace with no verified domain and no admin who can still sign in. Whoever
+            you give it to opens /claim and signs in with a Google Workspace account on the
+            domain: it's verified for the workspace and they become its admin. Check who's asking
+            first. It works once, for 72 hours, and is in both audit logs (never the code).
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {issued ? (
+          <div className="flex flex-col gap-2">
+            <CopyField label={`Code for ${issued.domain}`} value={issued.code} />
+            <p className="text-xs text-muted-foreground">
+              Shown once. Expires {new Date(issued.expires_at * 1000).toLocaleString()}; any
+              earlier code for this workspace stopped working.
+            </p>
+          </div>
+        ) : (
+          <Field>
+            <FieldLabel htmlFor="claim-domain">Their Google Workspace domain</FieldLabel>
+            <Input
+              id="claim-domain"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="company.com"
+              autoComplete="off"
+            />
+          </Field>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>{issued ? "Done" : "Cancel"}</AlertDialogCancel>
+          {!issued && (
+            <AlertDialogAction
+              disabled={!domain.trim() || issue.isPending}
+              onClick={(e) => {
+                e.preventDefault()
+                issue.mutate()
+              }}
+            >
+              Issue code
+            </AlertDialogAction>
+          )}
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 // ---- A workspace's audit log --------------------------------------------------------
 function AuditSheet({ ws, onClose }: { ws: OperatorWorkspace | null; onClose: () => void }) {
   const log = useQuery({
@@ -526,6 +595,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
   const [capping, setCapping] = useState<OperatorWorkspace | null>(null)
   const [extending, setExtending] = useState<OperatorWorkspace | null>(null)
   const [owning, setOwning] = useState<OperatorWorkspace | null>(null)
+  const [claiming, setClaiming] = useState<OperatorWorkspace | null>(null)
 
   useEffect(() => {
     if (me.isError || list.isError) onSignedOut()
@@ -600,6 +670,7 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
               onSpendCaps={setCapping}
               onExtendTrial={setExtending}
               onBillingOwner={setOwning}
+              onClaimCode={setClaiming}
             />
           ))}
           {list.data && !shown.length && (
@@ -619,6 +690,9 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
       )}
       {owning && (
         <BillingOwnerDialog key={owning.slug} ws={owning} onClose={() => setOwning(null)} />
+      )}
+      {claiming && (
+        <ClaimCodeDialog key={claiming.slug} ws={claiming} onClose={() => setClaiming(null)} />
       )}
     </div>
   )

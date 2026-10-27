@@ -23,6 +23,7 @@ import { GroupsView } from "@/components/groups-view"
 import { MembersView } from "@/components/members-view"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { GroupRulesDialog, type RulesTarget } from "@/components/sign-in-group-rules"
+import { JoiningPolicy } from "@/components/sign-in-joining"
 import { CopyField, ProviderDialog } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -789,6 +790,10 @@ function TestDialog({
                   {state.result.role_source === "groups" && " (from their groups)"}
                   {state.result.role_source === "override" && " (set by an admin)"}
                   {state.result.new_member ? ", as a new member." : "."}
+                  {state.result.new_member && state.result.join_policy === "request" &&
+                    " Under your joining policy they'd first ask to join, and wait for an admin."}
+                  {state.result.new_member && state.result.join_policy === "invite_only" &&
+                    " Under your joining policy they'd need an invite first."}
                   {state.result.sets_roles === false &&
                     " This provider doesn't set roles: signing in through it leaves theirs as it is."}
                   {state.result.groups && (
@@ -1210,6 +1215,8 @@ export function SignInView({
   tab: AccessTab // each tab has its own URL (routes.tsx)
   onTabChange: (tab: AccessTab) => void
 }) {
+  // Requests to join waiting for an admin: counted on the Members tab.
+  const waiting = useQuery(queries.joinRequests()).data?.requests.length ?? 0
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -1230,7 +1237,17 @@ export function SignInView({
         >
           <TabsList>
             <TabsTrigger value="sign-in">Sign-in</TabsTrigger>
-            <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="members">
+              Members
+              {waiting > 0 && (
+                <Badge
+                  className="h-5 min-w-5 rounded-full px-1.5 tabular-nums"
+                  aria-label={`${waiting} waiting to join`}
+                >
+                  {waiting}
+                </Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="groups">Groups</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
             <TabsTrigger value="api">API &amp; MCP</TabsTrigger>
@@ -1332,6 +1349,13 @@ function SignInSettingsView() {
                 onChange={load}
               />
             </div>
+          </Section>
+
+          <Section
+            title="Who can join"
+            description="When someone signs in for the first time with an email on a verified domain. People you invite, or provision with SCIM, always get in."
+          >
+            <JoiningPolicy settings={settings} onChange={load} />
           </Section>
 
           <Section

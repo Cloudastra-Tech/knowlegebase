@@ -163,10 +163,20 @@ def accept(token, name, password_hash=None):
     `password_hash` (None: single sign-on only), all or nothing. Returns the
     invite. Raises InviteError: its status, "invalid" (no such link), or
     "member" / "taken" (see _check_address)."""
+    return _accept("token_hash = ?", _hash(token or ""), name, password_hash)
+
+
+def accept_id(invite_id, name):
+    """The same for a single sign-on that finds a pending invite to its workspace
+    (join_store.take_invite): their provider proved the address, so no link is
+    needed, and no password is set."""
+    return _accept("id = ?", invite_id, name, None)
+
+
+def _accept(where, value, name, password_hash):
     now = time.time()
     with members_store._lock, members_store._db() as conn:
-        row = conn.execute("SELECT * FROM invites WHERE token_hash = ?",
-                           (_hash(token or ""),)).fetchone()
+        row = conn.execute(f"SELECT * FROM invites WHERE {where}", (value,)).fetchone()
         if not row:
             raise InviteError("invalid")
         if status(row, now) != "pending":

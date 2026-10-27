@@ -30,6 +30,7 @@ from kb.deps import public_url
 from kb.rate_limit import rate_limit
 from kb.services import m365
 from kb.services import signup as service
+from kb.services.joining import CLAIM_KEY
 from kb.services.sign_in import ProviderFailed, code_for, login_error, mark_browser
 from kb.services.signup import SIGNUP_KEY, SIGNUP_SECONDS, signup_codes, signup_methods
 
@@ -50,6 +51,7 @@ def _check_start(request, method, name, code):
     if codes and (code not in codes or members_store.signup_code_used(code)):
         return RedirectResponse("/#signup?error=invite")
     mark_browser(request)
+    request.session.pop(CLAIM_KEY, None)
     request.session[SIGNUP_KEY] = {"name": name, "code": code if codes else None,
                                    "method": method, "at": time.time()}
     return None

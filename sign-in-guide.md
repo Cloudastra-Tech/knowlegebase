@@ -65,6 +65,35 @@ Add every domain your people's emails use, one at a time (a subdomain such as
 `eu.example.com` is a separate domain). A domain can be verified by one
 workspace only.
 
+### Who can join
+
+**Access → Sign-in → Who can join** decides what happens the first time someone
+signs in with an email on a verified domain (any provider: Google, Microsoft,
+Microsoft 365, your own OpenID Connect or SAML provider):
+
+| Policy | What happens |
+|---|---|
+| **Ask an admin** (new workspaces start here) | Nobody is added. They see *Your request was sent to your admins*, your admins get an email, and the request waits under **Access → Members → Pending requests**: **Approve** (pick their role) or **Deny**. A denied person can't ask again for 30 days (`JOIN_DENY_DAYS`); a request nobody answers expires after 30 days (`JOIN_REQUEST_DAYS`). Admins get at most 5 of these emails an hour (`JOIN_NOTICES_PER_HOUR`). |
+| **Join automatically** | They're added as a member (role Public, or what their groups give). Workspaces made before this setting existed were set to this, which is how they always worked. |
+| **Invite only** | They're turned away unless you invited them or SCIM provisioned them. |
+
+A verified domain can have its own policy (*Per domain*), e.g. your contractors'
+domain invite only. People who are already members, were invited (a pending
+invite is used up by their sign-in) or were provisioned by SCIM always get in.
+Every request, approval, denial and expiry is in the audit log.
+
+### A workspace nobody can administer
+
+A workspace made by hand before sign-up existed may have no verified domain and
+no admin who can still sign in. Whoever runs the server can issue a one-time
+**claim code** for it and one domain (operator console → the workspace → *Claim
+code…*, or `python auth.py claim-code <domain> --workspace <slug>`). The person
+opens `/claim`, enters it and signs in with a Google Workspace account whose
+primary domain is that domain: the domain is verified for the workspace, they
+become its admin, and its policy is set to *Ask an admin*. It never works for a
+workspace that has a verified domain, or an admin with a password or who signed
+in within 90 days (`CLAIM_ADMIN_IDLE_DAYS`).
+
 ## 2. Add your provider
 
 **Access → Sign-in → Identity providers → Add provider**. Pick **OpenID
@@ -218,7 +247,9 @@ in the SAML app's attribute mapping.
   updated 12 d ago*).
 - **Turn access off**: they can't sign in, and they're signed out on their next
   click. Use this to keep someone out. **Remove** only deletes their record:
-  if your provider still lets them sign in, they come back as a new member.
+  if your provider still lets them sign in, they come back as someone new, under
+  your joining policy (*Who can join*, above).
+- **Pending requests**: people who asked to join (policy *Ask an admin*).
 - You can't change your own access; ask another admin. So there's always at
   least one admin.
 
