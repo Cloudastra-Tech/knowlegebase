@@ -29,8 +29,9 @@ KEY ROTATION
                         under it; the old version is retired (it still opens
                         anything a busy moment sealed under it, and the next
                         rotation moves that too)
-    rewrap()            after a new server key: INTEGRATIONS_KEY="<new>,<old>"
-                        (the first seals, all of them open), then every data key
+    rewrap()            after a new server key: INTEGRATIONS_KEY lists the new
+                        key, a comma, then the old one (the first seals, all of
+                        them open), then every data key
                         is wrapped again, and old-format values re-sealed, under
                         the new one; then drop the old key from the list
 
