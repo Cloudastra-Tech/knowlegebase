@@ -1742,6 +1742,37 @@ Not run live here (no Stripe account); the tests replay recorded fixtures
   `requirements.txt`. If it isn't installed or fails, the rules alone apply (one
   warning in the log).
 
+## Model providers
+
+The chat models (answer and FAST) and the embeddings are chosen apart, since not
+every provider has embeddings. `models.py` keeps a registry of what each provider
+offers:
+
+| Provider | Chat | Embeddings | Images | Prompt caching | Key |
+|---|---|---|---|---|---|
+| `openai` (default) | yes | yes | yes (`ATTACHMENT_VISION_MODEL`) | automatic | `OPENAI_API_KEY` |
+| `bedrock` | yes | yes | yes (the chat model) | `cachePoint` marker | the AWS credentials below |
+
+The server's providers, in `.env`:
+
+- `MODEL_PROVIDER` sets both, as it always has: unset, everything is OpenAI's.
+- `CHAT_PROVIDER` and `EMBED_PROVIDER` override one side each, e.g.
+  `CHAT_PROVIDER=bedrock` with `EMBED_PROVIDER=openai`.
+- Without `EMBED_PROVIDER`, embeddings come from `MODEL_PROVIDER`, else from the chat
+  provider when it has them. A chat provider without embeddings and nothing else set
+  is an error naming `EMBED_PROVIDER`: the server never sends documents to OpenAI
+  because nobody said otherwise.
+- A name that isn't known, or an embeddings provider without embeddings, is refused
+  (every model call fails with the reason), never read as `openai`.
+
+A workspace's admin can choose its own on **Assistant → Models**
+(`PUT /api/admin/assistant/models`: `chat_provider`, `embed_provider`, each `default`
+for the server's, and `api_keys: {provider: key}`). A key is sealed under the
+workspace's key, never returned (only `api_keys_saved`) and never in the audit log; a
+provider chosen there must have the workspace's own key, never the server's. Keys of
+providers the workspace stops using are deleted. Only an embeddings change (provider,
+model or size) rebuilds the index; moving only the chat provider doesn't.
+
 ## AWS Bedrock
 
 Every model the assistant uses can run on **Amazon Bedrock** instead of OpenAI: the

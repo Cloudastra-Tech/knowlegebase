@@ -90,11 +90,15 @@ def _row(ws):
 
 
 def fingerprint(ws, on=None):
-    """The FINGERPRINT the workspace's index must have: ingest.FINGERPRINT on OpenAI,
-    and on Bedrock one with its embedding and FAST models in it, so switching them
-    rebuilds the index (a shadow rebuild: questions keep the old one meanwhile)."""
+    """The FINGERPRINT the workspace's index must have: ingest.FINGERPRINT with the
+    server's OpenAI models, else one with its embedding and FAST models in it, so
+    switching them rebuilds the index (a shadow rebuild: questions keep the old
+    one meanwhile). Another chat provider with the same embeddings comes out the
+    same unless chunk contexts are written by the FAST model (RAG_CHUNK_SUMMARY)."""
     on = on or models.for_workspace(ws)
-    return ingest.fingerprint(on) if on.bedrock else ingest.FINGERPRINT
+    if on.embed_name == ingest.EMBED_MODEL and on.fast_name == models.fast_model():
+        return ingest.FINGERPRINT
+    return ingest.fingerprint(on)
 
 
 def embeddings_of(ws):

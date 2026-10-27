@@ -8,10 +8,14 @@ again on the next question (assistant_store.version). A rule that blocks, or
 stops blocking, queues an incremental re-index: blocked documents' chunks are
 removed from the index, unblocked ones are added back.
 
-The model provider (admins; models.py, model_providers_store.py): the server's, or
-AWS Bedrock in the company's own account ("Bring your own AWS"), with Test
-connection. Switching the embedding provider or model rebuilds the index (a
-shadow rebuild: questions keep the old one meanwhile), so it must be confirmed."""
+The model providers (admins; models.py, model_providers_store.py): the server's,
+or the workspace's own, for chat and for embeddings apart: a provider with the
+workspace's API key, or AWS Bedrock in the company's own account ("Bring your
+own AWS"), with Test connection. Switching the embedding provider or model
+rebuilds the index (a shadow rebuild: questions keep the old one meanwhile), so
+it must be confirmed."""
+
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel
@@ -43,7 +47,10 @@ class SettingsIn(BaseModel):
 
 
 class ProviderIn(BaseModel):
-    provider: str | None = None              # default / bedrock
+    provider: str | None = None              # default / bedrock: both sides (as before)
+    chat_provider: str | None = None         # default / openai / bedrock / ...
+    embed_provider: str | None = None        # default / a provider with embeddings
+    api_keys: dict[str, str | None] | None = None   # {provider: key}, write-only, sealed
     region: str | None = None
     auth: str | None = None                  # role / keys
     role_arn: str | None = None
@@ -136,14 +143,17 @@ def _provider_view(ws):
         server = models.server_spec()
     except models.ProviderError:
         server = None
-    spec = on.spec if on.bedrock and not on.spec.error else model_providers_store._spec_of(
-        {**view, "provider": "bedrock", "region": view["region"] or models.server_region()},
-        None, ws)
+    spec = model_providers_store.bedrock_preview(ws, model_providers_store.ensure(ws))
     return {**view,
-            "effective": {"provider": on.provider, "chat_model": on.answer_name,
-                          "fast_model": on.fast_name, "embed_model": on.embed_name},
+            "effective": {"provider": on.provider, "embed_provider": on.embed_provider,
+                          "chat_model": on.answer_name, "fast_model": on.fast_name,
+                          "embed_model": on.embed_name},
             "server": {"provider": server.provider if server else None,
+                       "chat_provider": server.provider if server else None,
+                       "embed_provider": server.embeddings_provider if server else None,
                        "region": models.server_region()},
+            "providers": [p.describe() for p in models.REGISTRY.values()],
+            "provider_defaults": {name: p.defaults() for name, p in models.REGISTRY.items()},
             "defaults": {"chat_model": spec.chat_model, "fast_model": spec.fast_model,
                          "embed_model": spec.embed_model, "embed_dims": spec.embed_dims},
             "embed_dimensions": {k: list(v) for k, v in models.EMBED_DIMENSIONS.items()},
@@ -155,10 +165,13 @@ def _provider_view(ws):
 def _provider_details(change, view):
     """What the audit log keeps of a change: never a key, only that keys changed."""
     out = {k: v for k, v in change.items()
-           if k not in ("access_key_id", "secret_access_key", "confirm_reindex")}
+           if k not in ("access_key_id", "secret_access_key", "confirm_reindex", "api_keys")}
     if change.get("access_key_id") or change.get("secret_access_key"):
         out["access_keys"] = "replaced"
         out["access_key_hint"] = view.get("access_key_hint")
+    if change.get("api_keys"):
+        out["api_keys"] = {p: "replaced" if k else "removed"
+                           for p, k in change["api_keys"].items()}
     return out
 
 
@@ -180,11 +193,8 @@ def save_provider(body: ProviderIn, user=Depends(require_admin),
         if not confirmed:
             # Would this switch the embeddings? Then the admin is asked first.
             before = models.for_workspace(ws).embed_name
-            draft = (model_providers_store.draft(ws, change)
-                     if change.get("provider", model_providers_store.ensure(ws)["provider"])
-                     == "bedrock" else None)
-            after = models.Models(draft).embed_name if draft else models.Models(
-                models.server_spec()).embed_name
+            draft = model_providers_store.draft(ws, change)
+            after = models.Models(draft or models.server_spec()).embed_name
             if indexing.embeddings_of(ws) is not None and after != before:
                 raise HTTPException(409, "This changes the embedding model: the workspace's "
                                          "index will be rebuilt. Confirm to go ahead.")
@@ -204,16 +214,24 @@ def save_provider(body: ProviderIn, user=Depends(require_admin),
 @router.post("/api/admin/assistant/models/test")
 def test_provider(body: ProviderIn, user=Depends(require_admin),
                   audit=audited("model_provider.test")):
-    """Test connection: one tiny Converse call to the chat model and one embedding,
-    with the settings as typed (saved or not), so a role can be checked before
-    switching to it. {"ok", ...} or {"ok": false, "error"}: AWS's reason."""
+    """Test connection: one tiny call to the chat model and one embedding, with the
+    settings as typed (saved or not), so a role or a key can be checked before
+    switching to it. {"ok", ...} or {"ok": false, "error"}: the provider's reason.
+    Without chat_provider / embed_provider it tests the providers saved, or
+    Bedrock for both when the workspace is on the server's (the Bring your own
+    AWS form, as before)."""
     ws = ws_of(user)
     change = body.model_dump(exclude_unset=True)
     change.pop("confirm_reindex", None)
-    change.pop("provider", None)
+    legacy = change.pop("provider", None)
+    if "chat_provider" not in change and "embed_provider" not in change:
+        saved = model_providers_store.sides(model_providers_store.ensure(ws))
+        if legacy == "bedrock" or saved == ("default", "default"):
+            change.update(chat_provider="bedrock", embed_provider="bedrock")
     try:
-        spec = model_providers_store.draft(ws, change)
-    except model_providers_store.Invalid as e:
+        spec = (model_providers_store.draft(ws, change)
+                or replace(models.server_spec(), workspace=ws))
+    except (model_providers_store.Invalid, models.ProviderError) as e:
         raise HTTPException(400, str(e))
     try:
         result = {"ok": True, **models.test_connection(spec)}
@@ -222,7 +240,9 @@ def test_provider(body: ProviderIn, user=Depends(require_admin),
         result = {"ok": False, "error": str(e)[:500]}
     finally:
         models.forget(ws)                  # nothing typed here stays in a cached client
-    audit.record("workspace", ws, {"ok": result["ok"], "region": spec.region,
+    audit.record("workspace", ws, {"ok": result["ok"], "provider": spec.provider,
+                                   "embed_provider": spec.embeddings_provider,
+                                   "region": spec.region,
                                    "auth": spec.auth, "chat_model": spec.chat_model,
                                    "embed_model": spec.embed_model,
                                    **({} if result["ok"] else {"error": result["error"][:200]})},

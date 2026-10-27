@@ -179,12 +179,8 @@ def _describe_image(data, mime):
     """What the vision model reads in an image (transcription and description)."""
     from langchain_core.messages import HumanMessage
     on = models.current()          # the workspace attaching it (models.scope)
-    if on.bedrock:                 # Converse takes the image's bytes
-        image = {"type": "image", "source_type": "base64", "mime_type": mime,
-                 "data": base64.b64encode(data).decode()}
-    else:
-        url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-        image = {"type": "image_url", "image_url": {"url": url}}
+    # OpenAI takes a data URL; Bedrock (Converse) and the others the image's bytes.
+    image = on.image_block(mime, base64.b64encode(data).decode())
     reply = on.vision(vision_model(), temperature=0).invoke([HumanMessage(content=[
         {"type": "text", "text": VISION_PROMPT}, image])])
     return str(models.text_of(reply.content) or "").strip()
