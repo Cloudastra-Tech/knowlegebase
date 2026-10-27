@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router"
 import { describe, expect, it } from "vitest"
 
 import { DigestsView } from "@/components/digests-view"
@@ -50,7 +51,7 @@ describe("DigestsView: folders", () => {
         return SUB
       },
     })
-    render(withProviders(<DigestsView />))
+    render(withProviders(<MemoryRouter><DigestsView /></MemoryRouter>))
     const folders = await screen.findByRole("group", { name: "Folders" })
     // Only Notion's: the digest follows Notion.
     expect(within(folders).getAllByRole("checkbox")).toHaveLength(1)
@@ -68,7 +69,7 @@ describe("DigestsView: folders", () => {
         return SUB
       },
     })
-    render(withProviders(<DigestsView />))
+    render(withProviders(<MemoryRouter><DigestsView /></MemoryRouter>))
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "New digest" }))
     const folders = await screen.findByRole("group", { name: "Folders" })

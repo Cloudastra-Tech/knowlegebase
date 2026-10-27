@@ -1,14 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, CreditCard, ExternalLink, Loader2, Minus, Trash2, TriangleAlert } from "lucide-react"
+import { Check, CreditCard, ExternalLink, Minus, Trash2, TriangleAlert } from "lucide-react"
 import { useSearchParams } from "react-router"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiProgress } from "@/components/ascii/ascii-progress"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { billing, type Billing, type BillingStatus, type Plan } from "@/lib/api"
 import { queries } from "@/lib/queries"
@@ -61,9 +65,8 @@ function statusLine(b: On) {
 // What the workspace uses of each of its plan's limits.
 function Usage({ b }: { b: On }) {
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <h3 className="font-medium">Usage</h3>
-      <p className="text-sm text-muted-foreground">
+    <Panel title="Usage" className="min-w-0">
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
         Questions start again on {new Date(`${b.resets_on}T00:00:00Z`).toLocaleDateString(undefined, { dateStyle: "medium" })}.
         Sample documents don't count.
       </p>
@@ -83,10 +86,10 @@ function Usage({ b }: { b: On }) {
               {u.limit === null ? (
                 <p className="mt-1 text-xs text-muted-foreground">No limit on your plan</p>
               ) : (
-                <Progress
+                <AsciiProgress
                   value={share}
                   className="mt-2"
-                  aria-label={`${u.label}: ${u.used} of ${u.limit}`}
+                  label={`${u.label}: ${u.used} of ${u.limit}`}
                 />
               )}
             </li>
@@ -106,7 +109,7 @@ function Usage({ b }: { b: On }) {
           </p>
         </li>
       </ul>
-    </section>
+    </Panel>
   )
 }
 
@@ -124,17 +127,17 @@ function PlanCard({
   return (
     <li
       className={cn(
-        "flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5",
-        plan.current && "border-foreground/40",
+        "glass-subtle flex min-w-0 flex-col rounded-2xl p-5",
+        plan.current && "border-signal/40",
       )}
       aria-label={`${plan.name} plan`}
     >
       <div className="flex items-center justify-between gap-2">
-        <h4 className="font-medium">{plan.name}</h4>
-        {plan.current && <Badge variant="secondary">Current plan</Badge>}
+        <h4 className="font-semibold tracking-tight">{plan.name}</h4>
+        {plan.current && <Badge variant="signal">Current plan</Badge>}
       </div>
       <p className="mt-1 text-2xl font-semibold tracking-tight">
-        {money(plan.seat_price, plan.currency)}
+        <span className="font-mono font-medium tabular-nums">{money(plan.seat_price, plan.currency)}</span>
         <span className="text-sm font-normal text-muted-foreground"> a seat / month</span>
       </p>
       <ul className="mt-4 flex flex-1 flex-col gap-1.5 text-sm">
@@ -162,10 +165,10 @@ function PlanCard({
         <Button
           className="mt-5"
           variant={plan.id === "business" ? "default" : "outline"}
-          disabled={!canBuy || !plan.available || choosing}
+          disabled={!canBuy || !plan.available}
+          loading={choosing}
           onClick={onChoose}
         >
-          {choosing && <Loader2 className="animate-spin" data-icon="inline-start" />}
           {plan.available ? `Choose ${plan.name}` : "Not on sale here yet"}
         </Button>
       )}
@@ -200,9 +203,8 @@ function Owners({ b }: { b: On }) {
   }
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <h3 className="font-medium">Billing owners</h3>
-      <p className="text-sm text-muted-foreground">
+    <Panel title="Billing owners" className="min-w-0">
+      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
         Only they can change the plan or payment details. Admins see this page; Cloudastra support
         never changes it.
       </p>
@@ -235,13 +237,17 @@ function Owners({ b }: { b: On }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
-          <Button type="submit" variant="outline" disabled={!email.trim() || busy !== null}>
-            {busy === "add" && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button
+            type="submit"
+            variant="outline"
+            loading={busy === "add"}
+            disabled={!email.trim() || busy !== null}
+          >
             Add owner
           </Button>
         </form>
       )}
-    </section>
+    </Panel>
   )
 }
 
@@ -275,12 +281,11 @@ export function BillingView() {
   const b = query.data
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-        <CreditCard className="size-6" /> Plan &amp; billing
-      </h2>
-      <p className="text-sm text-muted-foreground">
-        Your workspace's plan, what it uses of it, and who pays.
-      </p>
+      <ScreenHeader
+        icon={CreditCard}
+        title="Plan & billing"
+        description="Your workspace's plan, what it uses of it, and who pays."
+      />
 
       {!b && (
         <div className="mt-6 grid gap-4">
@@ -289,16 +294,18 @@ export function BillingView() {
         </div>
       )}
       {b && !b.on && (
-        <p className="mt-6 text-sm text-muted-foreground">Billing isn't turned on on this server.</p>
+        <Panel className="mt-6">
+          <AsciiEmptyState art="plug" title="Billing isn't turned on on this server." />
+        </Panel>
       )}
       {b?.on && !b.managed && (
-        <section className="mt-6 rounded-2xl border border-border/70 bg-background p-5 text-sm">
-          <h3 className="font-medium">No plan to manage</h3>
-          <p className="text-muted-foreground">
-            This workspace isn't on a paid plan or a trial here, so nothing is limited. Cloudastra
-            sets its plan if that changes.
-          </p>
-        </section>
+        <Panel className="mt-6">
+          <AsciiEmptyState
+            art="inbox"
+            title="No plan to manage"
+            description="This workspace isn't on a paid plan or a trial here, so nothing is limited. Cloudastra sets its plan if that changes."
+          />
+        </Panel>
       )}
       {b?.on && b.managed && b.plan && b.status && (
         <div className="mt-6 flex flex-col gap-6">
@@ -312,7 +319,7 @@ export function BillingView() {
               </AlertDescription>
             </Alert>
           )}
-          <section className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-border/70 bg-background p-5">
+          <Panel className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-lg font-semibold tracking-tight">{b.plan.name}</h3>
@@ -326,23 +333,20 @@ export function BillingView() {
               <Button
                 variant="outline"
                 disabled={going !== null}
+                loading={going === "portal"}
                 onClick={() => go("portal", billing.portal)}
               >
-                {going === "portal" ? (
-                  <Loader2 className="animate-spin" data-icon="inline-start" />
-                ) : (
-                  <ExternalLink data-icon="inline-start" />
-                )}
+                {going !== "portal" && <ExternalLink data-icon="inline-start" />}
                 Payment details and invoices
               </Button>
             )}
-          </section>
+          </Panel>
 
           <Usage b={b} />
 
-          <section>
-            <h3 className="font-medium">Plans</h3>
-            <p className="text-sm text-muted-foreground">
+          <section aria-labelledby="billing-plans">
+            <AsciiDivider as="h3" id="billing-plans" label="Plans" />
+            <p className="mt-3 text-sm text-pretty text-muted-foreground">
               {b.is_owner
                 ? `Billed monthly for each seat in use (${Math.max(1, b.seats.used)} now), through Stripe.`
                 : `Only a billing owner (${b.owners.map((o) => o.username).join(", ") || "none yet"}) can change the plan.`}

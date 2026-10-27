@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router"
 import { describe, expect, it } from "vitest"
 
 import { ApiKeysView } from "@/components/api-keys-view"
@@ -52,7 +53,7 @@ describe("ApiKeysView", () => {
         return { ...KEY, key: secret }
       },
     })
-    render(withProviders(<ApiKeysView />))
+    render(withProviders(<MemoryRouter><ApiKeysView /></MemoryRouter>))
     const user = userEvent.setup()
 
     expect(await screen.findByText(/No keys yet/)).toBeInTheDocument()
@@ -87,7 +88,7 @@ describe("ApiKeysView", () => {
         return { ...KEY, status: "revoked" }
       },
     })
-    render(withProviders(<ApiKeysView />))
+    render(withProviders(<MemoryRouter><ApiKeysView /></MemoryRouter>))
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Revoke" }))
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))

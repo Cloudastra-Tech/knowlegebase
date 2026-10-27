@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router"
 import { describe, expect, it } from "vitest"
 
 import { InsightsView } from "@/components/insights-view"
@@ -87,7 +88,13 @@ const REPORT = {
 describe("InsightsView", () => {
   it("shows the totals, gaps and sources, and lets only admins change the logging", async () => {
     mockApi({ "GET /api/admin/insights": REPORT })
-    render(withProviders(<InsightsView tab="overview" canEdit={false} onTabChange={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <InsightsView tab="overview" canEdit={false} onTabChange={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
 
     expect(await screen.findByText("Parental leave in Germany")).toBeInTheDocument()
     expect(screen.getByText("75%")).toBeInTheDocument()
@@ -115,7 +122,13 @@ describe("InsightsView", () => {
         return { mode: "metadata", days: 90, logged: false }
       },
     })
-    render(withProviders(<InsightsView tab="overview" canEdit onTabChange={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <InsightsView tab="overview" canEdit onTabChange={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     await userEvent.click(await screen.findByRole("combobox", { name: "Text kept" }))
     await userEvent.click(await screen.findByRole("option", { name: "Metadata only" }))
     await userEvent.click(screen.getByRole("button", { name: "Save" }))

@@ -7,7 +7,6 @@ import {
   FileText,
   Folder,
   Layers,
-  Loader2,
   MessageSquare,
   Plug,
   Plus,
@@ -17,6 +16,9 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import { SpaceIcon } from "@/components/space-switcher"
 import {
   AlertDialog,
@@ -96,31 +98,27 @@ function SpaceList() {
   const [creating, setCreating] = useState(false)
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <Layers className="size-6" /> Spaces
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Ask in a space to search only its sources. Being in one never shows you a document you
-            can't otherwise see.
-          </p>
-        </div>
-        {data?.can_create && (
-          <Button size="sm" onClick={() => setCreating(true)}>
-            <Plus data-icon="inline-start" /> New team space
-          </Button>
-        )}
-      </div>
+      <ScreenHeader
+        icon={Layers}
+        title="Spaces"
+        description="Ask in a space to search only its sources. Being in one never shows you a document you can't otherwise see."
+        actions={
+          data?.can_create && (
+            <Button size="sm" onClick={() => setCreating(true)}>
+              <Plus data-icon="inline-start" /> New team space
+            </Button>
+          )
+        }
+      />
       {!data ? (
         <Skeleton className="mt-6 h-48 rounded-2xl" />
       ) : (
-        <section className="mt-6 divide-y rounded-2xl border border-border/70 bg-background">
+        <Panel tone="solid" className="mt-6 divide-y overflow-hidden p-0">
           {data.spaces.map((s) => (
             <Link
               key={s.id}
               to={`/spaces/${s.id}`}
-              className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50"
+              className="flex items-center gap-3 px-4 py-3 transition-colors duration-(--dur-hover) ease-hover hover:bg-muted/40"
             >
               <SpaceIcon space={s} className="size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
@@ -139,7 +137,7 @@ function SpaceList() {
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
             </Link>
           ))}
-        </section>
+        </Panel>
       )}
       <NewSpaceDialog open={creating} onOpenChange={setCreating} />
     </div>
@@ -209,8 +207,7 @@ function NewSpaceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !name.trim()}>
-              {busy && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={busy} disabled={!name.trim()}>
               Create space
             </Button>
           </DialogFooter>
@@ -234,29 +231,30 @@ function SpaceScreen({ spaceId }: { spaceId: string }) {
         </Link>
       </Button>
       {space.isError ? (
-        <p className="text-sm text-muted-foreground">
-          That space doesn't exist, or you're not in it.
-        </p>
+        <AsciiEmptyState art="search" title="That space doesn't exist, or you're not in it." />
       ) : !data ? (
         <Skeleton className="h-48 rounded-2xl" />
       ) : (
         <>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-                <SpaceIcon space={data} className="size-6 shrink-0" />
-                <span className="truncate">{spaceLabel(data)}</span>
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                {data.kind === "personal"
-                  ? "Only you can search your space: your files, and any sources you add."
-                  : data.description || "A team space: its sources, for its members."}
-              </p>
-            </div>
-            <Button size="sm" onClick={() => askIn(data.id)}>
-              <MessageSquare data-icon="inline-start" /> Ask in this space
-            </Button>
-          </div>
+          <ScreenHeader
+            eyebrow={`~/spaces/${spaceLabel(data).toLowerCase().replace(/\s+/g, "-")}`}
+            title={
+              <>
+                <SpaceIcon space={data} className="size-5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{spaceLabel(data)}</span>
+              </>
+            }
+            description={
+              data.kind === "personal"
+                ? "Only you can search your space: your files, and any sources you add."
+                : data.description || "A team space: its sources, for its members."
+            }
+            actions={
+              <Button size="sm" onClick={() => askIn(data.id)}>
+                <MessageSquare data-icon="inline-start" /> Ask in this space
+              </Button>
+            }
+          />
           <Tabs defaultValue={data.kind === "personal" ? "files" : "sources"} className="mt-6">
             <TabsList>
               {data.kind === "personal" && <TabsTrigger value="files">Files</TabsTrigger>}
@@ -326,13 +324,13 @@ function FilesTab({ space }: { space: SpaceDetail }) {
   }
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background">
+    <Panel tone="solid" className="overflow-hidden p-0">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
         <p className="text-sm text-muted-foreground">
           Kept as text for your questions in this space, never added to the company's search.
         </p>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => input.current?.click()}>
-          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
+        <Button size="sm" variant="outline" loading={busy} onClick={() => input.current?.click()}>
+          {!busy && <Upload data-icon="inline-start" />}
           Add files
         </Button>
         <Input
@@ -370,11 +368,15 @@ function FilesTab({ space }: { space: SpaceDetail }) {
           ))}
         </div>
       ) : (
-        <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-          No files yet. Add PDFs, Word, Excel, PowerPoint or text files.
-        </p>
+        <AsciiEmptyState
+          art="folder"
+          size="sm"
+          title="No files yet."
+          description="Add PDFs, Word, Excel, PowerPoint or text files."
+          className="px-4"
+        />
       )}
-    </section>
+    </Panel>
   )
 }
 
@@ -391,7 +393,7 @@ function SourcesTab({ space, owner }: { space: SpaceDetail; owner: boolean }) {
   }
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background">
+    <Panel tone="solid" className="overflow-hidden p-0">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
         <p className="text-sm text-muted-foreground">
           {space.kind === "personal"
@@ -429,11 +431,17 @@ function SourcesTab({ space, owner }: { space: SpaceDetail; owner: boolean }) {
           })}
         </div>
       ) : (
-        <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-          {space.kind === "personal"
-            ? "None: questions here search only your files."
-            : "No sources yet, so questions here find nothing."}
-        </p>
+        <AsciiEmptyState
+          art="plug"
+          size="sm"
+          title={space.kind === "personal" ? "No company sources." : "No sources yet."}
+          description={
+            space.kind === "personal"
+              ? "Questions here search only your files."
+              : "Until one is added, questions here find nothing."
+          }
+          className="px-4"
+        />
       )}
       {space.hidden_sources > 0 && (
         <p className="border-t border-border/70 px-4 py-2.5 text-xs text-muted-foreground">
@@ -442,7 +450,7 @@ function SourcesTab({ space, owner }: { space: SpaceDetail; owner: boolean }) {
           {space.hidden_sources === 1 ? " it" : " them"} for you.
         </p>
       )}
-    </section>
+    </Panel>
   )
 }
 
@@ -529,32 +537,36 @@ function InstructionsTab({ space, owner }: { space: SpaceDetail; owner: boolean 
   }
 
   return (
-    <form onSubmit={save} className="rounded-2xl border border-border/70 bg-background p-5">
-      <Field>
-        <FieldLabel htmlFor="space-instructions">How the assistant answers in this space</FieldLabel>
-        <Textarea
-          id="space-instructions"
-          rows={5}
-          readOnly={!owner}
-          maxLength={INSTRUCTIONS_CHARS}
-          placeholder={owner ? "Answer as a sales engineer. Keep answers short." : "None."}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <FieldDescription>
-          Added after the assistant's own rules, which it keeps: it still cites its sources and never
-          shows anyone what they may not see. {text.length} / {INSTRUCTIONS_CHARS}
-        </FieldDescription>
-      </Field>
-      {owner && (
-        <div className="mt-4 flex justify-end">
-          <Button type="submit" size="sm" disabled={busy || !changed}>
-            {busy && <Loader2 className="animate-spin" data-icon="inline-start" />}
-            Save
-          </Button>
-        </div>
-      )}
-    </form>
+    <Panel>
+      <form onSubmit={save}>
+        <Field>
+          <FieldLabel htmlFor="space-instructions">How the assistant answers in this space</FieldLabel>
+          <Textarea
+            id="space-instructions"
+            rows={5}
+            readOnly={!owner}
+            maxLength={INSTRUCTIONS_CHARS}
+            placeholder={owner ? "Answer as a sales engineer. Keep answers short." : "None."}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <FieldDescription>
+            Added after the assistant's own rules, which it keeps: it still cites its sources and never
+            shows anyone what they may not see.{" "}
+            <span className="font-mono text-xs tabular-nums">
+              {text.length} / {INSTRUCTIONS_CHARS}
+            </span>
+          </FieldDescription>
+        </Field>
+        {owner && (
+          <div className="mt-4 flex justify-end">
+            <Button type="submit" size="sm" loading={busy} disabled={!changed}>
+              Save
+            </Button>
+          </div>
+        )}
+      </form>
+    </Panel>
   )
 }
 
@@ -604,7 +616,7 @@ function MembersTab({ space, owner }: { space: SpaceDetail; owner: boolean }) {
   }
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background">
+    <Panel tone="solid" className="overflow-hidden p-0">
       {owner && (
         <form onSubmit={add} className="flex flex-wrap items-end gap-2 border-b border-border/70 px-4 py-3">
           <Field className="min-w-48 flex-1">
@@ -669,7 +681,7 @@ function MembersTab({ space, owner }: { space: SpaceDetail; owner: boolean }) {
           </div>
         ))}
       </div>
-    </section>
+    </Panel>
   )
 }
 
