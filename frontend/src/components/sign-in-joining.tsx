@@ -89,7 +89,7 @@ export function JoiningPolicy({
       </RadioGroup>
 
       {verified.length > 0 && (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <AsciiDivider as="h4" label="Per domain" />
           <p className="text-sm text-muted-foreground">
             A domain can have its own policy, e.g. contractors' domain invite only.

@@ -140,7 +140,7 @@ export function ApiAccessView() {
               onCheckedChange={(on) => save({ mcp_enabled: on })}
             />
           </Field>
-          <div className="grid gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <AsciiDivider as="h4" label="Tools agents get" />
             {data.tools.map((tool) => (
               <Field key={tool} orientation="horizontal" data-disabled={!settings.mcp_enabled || undefined}>

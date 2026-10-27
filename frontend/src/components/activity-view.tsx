@@ -102,6 +102,13 @@ const ACTION: Record<string, string> = {
   "insights.export": "Exported insights",
   "eval_case.create": "Added an answer to the test set",
   "eval_case.delete": "Removed an answer from the test set",
+  "webhook.create": "Added a webhook",
+  "webhook.update": "Changed a webhook",
+  "webhook.delete": "Deleted a webhook",
+  "webhook.test": "Sent a webhook a test event",
+  "webhook.rotate_secret": "Rotated a webhook's secret",
+  "webhook.redeliver": "Sent a webhook delivery again",
+  "webhook.auto_disabled": "Turned a failing webhook off",
 }
 
 // The action filter: every action under a prefix.
@@ -122,6 +129,7 @@ const KINDS: [string, string][] = [
   ["question_log.", "Question logging"],
   ["insights.", "Insights"],
   ["eval_case.", "Test set"],
+  ["webhook.", "Webhooks"],
 ]
 
 function details(e: AuditEvent) {

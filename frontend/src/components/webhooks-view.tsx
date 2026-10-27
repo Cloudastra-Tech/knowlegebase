@@ -291,7 +291,7 @@ function DeliveryRow({ d, last, hook }: { d: WebhookDelivery; last: boolean; hoo
             ? ` · next try ${new Date(d.next_at * 1000).toLocaleTimeString(undefined, { timeStyle: "short" })}`
             : ""}
         </p>
-        {d.error && d.status !== "delivered" && (
+        {d.error && d.status !== "delivered" && d.error !== `HTTP ${d.response_code}` && (
           <p className="mt-0.5 text-xs break-words text-destructive">{d.error}</p>
         )}
         {d.status === "failed" && (
@@ -353,12 +353,13 @@ function DeliveriesSheet({ hook, onClose }: { hook: Webhook | null; onClose: () 
   )
 }
 
-// What the webhook is doing, as a dot with words (StatusDot).
-function hookStatus(hook: Webhook): { status: StatusDotProps["status"]; label: string } {
+// Trouble with the webhook, as a dot with words (StatusDot); nothing when it's fine
+// or an admin turned it off (its switch says so).
+function hookStatus(hook: Webhook): { status: StatusDotProps["status"]; label: string } | null {
   if (hook.disabled_reason) return { status: "error", label: "Turned off by the server" }
-  if (!hook.enabled) return { status: "off", label: "Off" }
-  if (hook.failures) return { status: "warning", label: `Failing (${hook.failures} in a row)` }
-  return { status: "live", label: "On" }
+  if (hook.enabled && hook.failures)
+    return { status: "warning", label: `Failing (${hook.failures} in a row)` }
+  return null
 }
 
 // Until when the secret a rotation replaced still signs, if it still does.
@@ -481,7 +482,9 @@ function WebhookCard({
             {hook.description ? `${hook.description} · ` : ""}secret{" "}
             <span className="font-mono">…{hook.secret_hint}</span> · added {timeAgo(hook.created_at)}
           </p>
-          <StatusDot status={state.status} label={state.label} className="mt-1.5 text-muted-foreground" />
+          {state && (
+            <StatusDot status={state.status} label={state.label} className="mt-1.5 text-muted-foreground" />
+          )}
         </div>
         <Field orientation="horizontal" className="w-auto">
           <Switch
