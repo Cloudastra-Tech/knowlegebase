@@ -243,20 +243,126 @@ describe("the shared ASCII loop", () => {
     expect(ambient.mock.calls.length).toBeGreaterThan(open)
   })
 
-  it("steps the frame rate down when drawing keeps taking more than 4ms", async () => {
+  it("steps the background field down when it keeps taking more than 4ms, and back up", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    const { subscribe } = await load()
+    let cost = 5
+    const field = vi.fn(() => {
+      clock += cost // a slow frame
+    })
+    const el = box()
+    subscribe(el, field, { still: 0, fps: 12, priority: "ambient" })
+    show(el)
+
+    step(300) // warm-up, then 30 slow frames at 12 fps: down to 6
+    field.mockClear()
+    step(120) // two seconds
+    expect(field.mock.calls.length).toBeLessThanOrEqual(13)
+    expect(field.mock.calls.length).toBeGreaterThan(8)
+
+    step(300) // 30 slow frames at 6 fps: still
+    expect(frames.size).toBe(0)
+
+    cost = 0.5 // cheap again: after a wait it moves at 6 fps, then back at 12
+    vi.advanceTimersByTime(10_000)
+    expect(frames.size).toBe(1)
+    step(330)
+    field.mockClear()
+    step(120)
+    expect(field.mock.calls.length).toBeGreaterThan(20)
+  })
+
+  it("waits longer each time the field has to stop again", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    const { subscribe } = await load()
+    const field = vi.fn(() => {
+      clock += 5
+    })
+    const el = box()
+    subscribe(el, field, { still: 0, fps: 12, priority: "ambient" })
+    show(el)
+    step(600) // down to still
+    expect(frames.size).toBe(0)
+
+    vi.advanceTimersByTime(10_000) // tries again at 6 fps, still too slow
+    step(330)
+    expect(frames.size).toBe(0)
+    vi.advanceTimersByTime(10_000)
+    expect(frames.size).toBe(0) // the second wait is twice as long
+    vi.advanceTimersByTime(10_000)
+    expect(frames.size).toBe(1)
+  })
+
+  it("lets the landing's hero spend up to 8ms a frame at 30 fps", async () => {
     const { subscribe } = await load()
     const hero = vi.fn(() => {
-      clock += 6 // a slow frame
+      clock += 6 // over the app's 4ms, inside the hero's 8
     })
     const el = box()
     subscribe(el, hero, { still: 0 })
     show(el)
 
-    step(60) // 30 slow frames at 30 fps: over budget
+    step(240)
+    hero.mockClear()
+    step(60)
+    expect(hero.mock.calls.length).toBeGreaterThanOrEqual(25)
+  })
+
+  it("drops the hero to 20 fps past 8ms, and brings it back once frames are cheap", async () => {
+    const { subscribe } = await load()
+    let cost = 10
+    const hero = vi.fn(() => {
+      clock += cost
+    })
+    const el = box()
+    subscribe(el, hero, { still: 0 })
+    show(el)
+
+    step(100) // warm-up, then 30 slow frames
     hero.mockClear()
     step(60)
     expect(hero.mock.calls.length).toBeLessThanOrEqual(20)
     expect(hero.mock.calls.length).toBeGreaterThan(12)
+
+    cost = 2
+    step(120) // 30 cheap frames at 20 fps
+    hero.mockClear()
+    step(60)
+    expect(hero.mock.calls.length).toBeGreaterThanOrEqual(28)
+  })
+
+  it("doesn't count a piece's first frames against the budget", async () => {
+    const { subscribe } = await load()
+    let n = 0
+    const hero = vi.fn(() => {
+      if (++n <= 10) clock += 40 // cold code, a font arriving
+    })
+    const el = box()
+    subscribe(el, hero, { still: 0 })
+    show(el)
+
+    step(120)
+    hero.mockClear()
+    step(60)
+    expect(hero.mock.calls.length).toBeGreaterThanOrEqual(28)
+  })
+
+  it('starts still when the page already says "Reduce effects", and keeps the choice', async () => {
+    document.documentElement.dataset.effects = "reduced"
+    const { subscribe, setEffects, getEffects } = await load()
+    const draw = vi.fn()
+    const el = box()
+    subscribe(el, draw, { still: 7 })
+    show(el)
+    step(10)
+    expect(draw).toHaveBeenCalledTimes(1)
+    expect(draw).toHaveBeenCalledWith(7)
+    expect(getEffects()).toBe("reduced")
+
+    setEffects("full")
+    expect(localStorage.getItem("effects")).toBeNull()
+    setEffects("reduced")
+    expect(localStorage.getItem("effects")).toBe("reduced")
   })
 
   it("keeps runLoop as the landing calls it: 30 frames a second", async () => {

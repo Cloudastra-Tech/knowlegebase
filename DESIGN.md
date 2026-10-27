@@ -94,10 +94,10 @@ pages) is always dark, with the ASCII brain, larger type, pill buttons and a ser
 The working register (chat, knowledge, admin) uses 32px controls, 14px body text and one 24px
 title per screen.
 
-**Status.** The token layer, the theme, print, the motion tokens and the shared ASCII loop are
-in place. The primitives, the ASCII and glass components (`components/ascii/*`,
-`components/glass/*`, `ScreenHeader`) and the screens move over in the changes that follow, so
-parts of the app still show the older, plainer styling.
+**Status.** The token layer, the theme, print, the motion tokens, the shared ASCII loop and the
+ASCII and glass kit (`components/ascii/*`, `components/glass/*`, `ScreenHeader`, the account
+menu's theme items) are in place. The primitives and the screens move over in the changes that
+follow, so parts of the app still show the older, plainer styling.
 
 ## Theme
 
@@ -258,9 +258,13 @@ loading, an animation that blocks a click.
   (`priority: "ambient"`), while the page scrolls (150ms) and while a dialog holds the page
   (Radix's `data-scroll-locked` on `<body>`); `pauseFor(ms)` rests it on demand.
 - **Still frame** with reduced motion or `setEffects("reduced")`, following a change live.
-- **Budget:** 4ms of drawing per frame in total. When the 95th percentile of 30 frames is over,
-  it steps down: the field to 6 fps and the hero to 20, then the field still. In development it
-  warns once when frames overrun three in a row.
+- **Budget:** the app's pieces (the field, spinners, the thinking line) get 4ms of drawing per
+  frame between them. When the 95th percentile of 30 drawn frames is over, the field steps down
+  to 6 fps, then still; under 2ms it steps back up, and a still field tries moving again after
+  10s (doubling, up to 160s, each time it has to stop again). The landing's hero gets 8ms: it is
+  alone on its page, and a lower frame rate can't make a draw cheaper. Past 8ms it runs at 20
+  fps until draws are under 6ms. A piece's first 10 frames don't count. In development it warns
+  once when frames overrun three in a row.
 - **Fonts:** measure the cell with `whenFontsReady(el)`; measured earlier it is the fallback
   font's. Re-measure on resize.
 
@@ -294,8 +298,18 @@ Borders are 1px hairlines.
 - **Route pass** (sign-in): as a work email is typed, a strip under the field resolves the
   workspace, the sign-in method and where roles come from; `aria-live="polite"`, debounced 350ms;
   values rise in 300ms, motion-safe only.
-- **Kit:** `/__kit` (development only) shows the tokens and glass tiers in either theme; the ASCII
-  and glass components join it as they're built.
+- **Kit:** `/__kit` (development only) shows every piece in either theme over the app's field;
+  `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
+- **Screen shell:** `ScreenHeader` (path eyebrow, the `h2`, description, actions) and `Panel`
+  (`subtle` by default; `glass` straight on the field; `solid` for reading and tables).
+  `GlassPanel` is a bare surface of one tier.
+- **ASCII pieces** (`components/ascii/*`): `AsciiField`, `AppBackdrop`, `AsciiSpinner` (for
+  `Loader2`), `AsciiThinking`, `ScrambleText`, `AsciiEmptyState`, `AsciiDivider`,
+  `AsciiProgress`, `AsciiLoader`. New fields draw on canvas: axe weighs `aria-hidden` text on
+  contrast too, and a dim `<pre>` with nothing over it fails. Art in empty states uses the full
+  `muted-foreground` for the same reason.
+- **Reduce effects** is kept in `localStorage` (`effects`) and applied before the first paint
+  by `theme-init.js`.
 
 ## Do's and Don'ts
 

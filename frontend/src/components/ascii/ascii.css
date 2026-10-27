@@ -1,0 +1,107 @@
+/* The ASCII kit's own CSS (components/ascii/*): the field's masks and the few pieces
+   that move with CSS rather than lib/ascii-loop.ts, because they only step a
+   transform or an opacity (DESIGN.md, "Motion"): the spinner's frames, the empty
+   state's scan line and cursor. Each has a still form for reduced motion and for
+   "Reduce effects" (:root[data-effects="reduced"]). */
+
+/* The field fades out under content: full strength in the gutters, about 15% under
+   the centre column (as wide as the widest screen, max-w-6xl). */
+.ascii-mask-reading-column {
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(50% - 40rem),
+    rgb(0 0 0 / 15%) calc(50% - 30rem),
+    rgb(0 0 0 / 15%) calc(50% + 30rem),
+    #000 calc(50% + 40rem),
+    #000 100%
+  );
+}
+.ascii-mask-radial {
+  mask-image: radial-gradient(closest-side, #000 30%, transparent);
+}
+.ascii-mask-bottom-fade {
+  mask-image: linear-gradient(to bottom, #000 40%, transparent);
+}
+
+/* The spinner: a column of frames stepped through a one-line window. */
+@keyframes ascii-spin {
+  to {
+    transform: translateY(-100%);
+  }
+}
+.ascii-spin-frames {
+  animation: ascii-spin calc(var(--ascii-frames) * 80ms) steps(var(--ascii-frames)) infinite;
+}
+/* Still: "•••" with a slow opacity pulse instead. */
+@keyframes ascii-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+.ascii-spin-still {
+  display: none;
+  animation: ascii-pulse 1.6s ease-in-out infinite;
+}
+
+/* The empty state's scan line: down the art once every 4s. */
+@keyframes ascii-scan {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  45% {
+    transform: translateY(var(--ascii-scan-to));
+    opacity: 1;
+  }
+  50%,
+  100% {
+    transform: translateY(var(--ascii-scan-to));
+    opacity: 0;
+  }
+}
+.ascii-scan {
+  animation: ascii-scan 4s steps(var(--ascii-rows)) infinite;
+}
+/* A cursor, on and off every 2s. */
+@keyframes ascii-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.ascii-blink {
+  animation: ascii-blink 2s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ascii-spin-frames {
+    display: none;
+  }
+  .ascii-spin-still {
+    display: inline;
+  }
+  .ascii-scan {
+    display: none;
+  }
+  .ascii-blink {
+    animation: none;
+  }
+}
+:root[data-effects="reduced"] .ascii-spin-frames,
+:root[data-effects="reduced"] .ascii-scan {
+  display: none;
+}
+:root[data-effects="reduced"] .ascii-spin-still {
+  display: inline;
+}
+:root[data-effects="reduced"] .ascii-blink {
+  animation: none;
+}
+@media print {
+  .ascii-scan {
+    display: none;
+  }
+}
