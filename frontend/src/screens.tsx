@@ -15,7 +15,7 @@ import type { InsightsTab } from "@/components/insights-view"
 import { LazyPage } from "@/components/lazy-page"
 import type { AccessTab } from "@/components/sign-in-view"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, type User } from "@/lib/api"
+import { api, drafts, type User } from "@/lib/api"
 import { useActiveRole, useAuth, useUser } from "@/lib/auth-context"
 import { legacyRedirect, type SsoReturn } from "@/lib/legacy-hash"
 import { queries } from "@/lib/queries"
@@ -67,6 +67,12 @@ const SignInView = lazy(() =>
 const LoginPage = lazy(() => import("@/components/login-page").then((m) => ({ default: m.LoginPage })))
 const InviteAccept = lazy(() =>
   import("@/components/invite-accept").then((m) => ({ default: m.InviteAccept })),
+)
+const DigestsView = lazy(() =>
+  import("@/components/digests-view").then((m) => ({ default: m.DigestsView })),
+)
+const DigestUnsubscribe = lazy(() =>
+  import("@/components/digest-unsubscribe").then((m) => ({ default: m.DigestUnsubscribe })),
 )
 const OperatorView = lazy(() =>
   import("@/components/operator-view").then((m) => ({ default: m.OperatorView })),
@@ -138,6 +144,19 @@ export function InvitePage() {
     <LazyPage fullScreen>
       <LoginPage onBack={() => navigate("/")}>
         <InviteAccept token={token} onJoined={(u, t) => signedIn(u, t)} />
+      </LoginPage>
+    </LazyPage>
+  )
+}
+
+// /unsubscribe/:token: the one-click link in a digest email (no sign-in needed).
+export function UnsubscribePage() {
+  const navigate = useNavigate()
+  const { token = "" } = useParams()
+  return (
+    <LazyPage fullScreen>
+      <LoginPage onBack={() => navigate("/")}>
+        <DigestUnsubscribe token={token} />
       </LoginPage>
     </LazyPage>
   )
@@ -220,6 +239,15 @@ export function AssistantScreen() {
   )
 }
 
+// /digests: everyone's own digests of what changed.
+export function DigestsScreen() {
+  return (
+    <Screen>
+      <DigestsView />
+    </Screen>
+  )
+}
+
 export function ApiKeysScreen() {
   return (
     <Screen>
@@ -250,9 +278,13 @@ export function PromptsScreen() {
 
 export function KnowledgeScreen() {
   const activeRole = useActiveRole()
+  const navigate = useNavigate()
   return (
     <Screen>
-      <KnowledgeView key={activeRole} />
+      <KnowledgeView
+        key={activeRole}
+        onOpenDraft={(id) => navigate(`/documents?draft=${id}`)}
+      />
     </Screen>
   )
 }
@@ -426,6 +458,15 @@ export function InsightsScreen({ tab }: { tab: InsightsTab }) {
           navigate(next === "overview" ? "/admin/insights" : "/admin/insights/feedback")
         }
         onAddVerified={(gapId) => navigate(`/admin/verified?from_gap=${gapId}`)}
+        onDraftDoc={async (gapId) => {
+          try {
+            const draft = await drafts.fromGap(gapId)
+            toast.success("Writing a draft. It's in Documents, under Drafts.")
+            navigate(`/documents?draft=${draft.id}`)
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Couldn't start the draft.")
+          }
+        }}
       />
     </Screen>
   )

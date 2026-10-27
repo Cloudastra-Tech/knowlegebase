@@ -59,6 +59,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import { WebhooksView } from "@/components/webhooks-view"
 import { WorkspaceDataView } from "@/components/workspace-data-view"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -1183,7 +1184,14 @@ function Provisioning({
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export type AccessTab = "sign-in" | "members" | "groups" | "activity" | "api" | "data"
+export type AccessTab =
+  | "sign-in"
+  | "members"
+  | "groups"
+  | "activity"
+  | "api"
+  | "webhooks"
+  | "data"
 
 // The Activity tab's "Sign-ins": the same events as the sign-in settings show.
 function SignInActivity() {
@@ -1229,6 +1237,7 @@ export function SignInView({
             <TabsTrigger value="groups">Groups</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
             <TabsTrigger value="api">API &amp; MCP</TabsTrigger>
+            <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
             <TabsTrigger value="data">Data</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -1242,6 +1251,8 @@ export function SignInView({
           <GroupsView />
         ) : tab === "api" ? (
           <ApiAccessView />
+        ) : tab === "webhooks" ? (
+          <WebhooksView />
         ) : tab === "data" ? (
           <WorkspaceDataView />
         ) : (

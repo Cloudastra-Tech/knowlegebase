@@ -1,7 +1,7 @@
 """spaces, chat attachments and saved prompts
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0018
+Revises: 0017
 Create Date: 2026-10-27
 
 Additive only: new tables. Existing rows and columns stay as they are
@@ -34,8 +34,8 @@ Every table has a `workspace` column, so deleting a workspace deletes them
 
 from alembic import op
 
-revision = "0017"
-down_revision = "0016"   # another in flight (digests) re-points to the newest at merge
+revision = "0018"
+down_revision = "0017"
 branch_labels = None
 depends_on = None
 

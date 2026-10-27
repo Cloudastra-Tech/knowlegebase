@@ -29,12 +29,13 @@ import os
 import re
 import time
 
+import access
 import integrations_store
 import sync_store
 import workspaces
 from connectors import base, extract, registry
 from kb import jobs
-from kb.services import indexing
+from kb.services import digests, indexing, permissions, webhooks
 from kb.settings import env_int
 
 log = logging.getLogger("uvicorn.error")
@@ -89,6 +90,16 @@ def _remove(folder, name):
         pass
 
 
+class _Acls:
+    """{source id: its source acl} of a run's items, as Resolver.resolve reads them."""
+
+    def __init__(self, items):
+        self.items = items
+
+    def get(self, source_id, default=None):
+        return (self.items.get(source_id) or {}).get("acl", default)
+
+
 class _Run:
     """One sync run's bookkeeping."""
 
@@ -100,6 +111,11 @@ class _Run:
         self.counts = {"upserted": 0, "deleted": 0, "skipped": 0, "unchanged": 0}
         self.deletes = []
         self.cursor, self.full, self.limit = None, full, 0
+        # Who may read its files: the change feed keeps it with each change.
+        row = integrations_store.get(ws, provider)
+        self.policy = integrations_store.policy_of(row) if row else "restricted"
+        self.level = integrations_store.chunk_access_levels(ws).get(provider, "restricted")
+        self._resolver = None
 
     def key(self, name):
         return f"connectors/{self.provider}/{name}"
@@ -108,6 +124,19 @@ class _Run:
         if row and row.get("file_name"):
             _remove(self.folder, row["file_name"])
             self.changed.add(self.key(row["file_name"]))
+
+    def acl_of(self, source_acl):
+        """An item's ACL as the index tags it (kb/services/permissions.py)."""
+        if self.policy != "source":
+            return access.level_acl(self.level)
+        if self._resolver is None:
+            self._resolver = permissions.Resolver(self.ws)
+        return self._resolver.resolve(source_acl, _Acls(self.items))[0]
+
+    def note(self, name, change, title, folder=None, version=None, source_acl=None):
+        """The change feed's row for a digest (kb/services/digests.py)."""
+        digests.record(self.ws, self.key(name), change, title=title, folder=folder,
+                       acl=self.acl_of(source_acl), version=version)
 
     def upsert(self, c, ctx, item):
         row = self.items.get(item.source_id)
@@ -149,12 +178,15 @@ class _Run:
             body, ext = f"{item.title}\n\n{text}".encode("utf-8"), ".txt"
         name = _file_name(item.source_id, ext)
         digest = hashlib.sha256(body).hexdigest()
+        had_copy = bool(row and row.get("file_name"))
         if row and row.get("file_name") and row["file_name"] != name:
             self._drop_file(row)                       # e.g. was a PDF, now exported as text
         unchanged = (row and row.get("content_hash") == digest and row.get("file_name") == name
                      and os.path.exists(os.path.join(self.folder, name)))
         if not unchanged:
             _write(self.folder, name, body)
+            self.note(name, "modified" if had_copy else "added", item.title, item.parent_id,
+                      digest, item.acl)
         if not unchanged or (row.get("title"), row.get("url")) != (item.title, item.url):
             self.changed.add(self.key(name))
         sync_store.save_item(self.ws, self.provider, item.source_id, file_name=name,
@@ -167,6 +199,9 @@ class _Run:
 
     def skip(self, source_id, reason, title="", url=""):
         row = self.items.get(source_id)
+        if row and row.get("file_name"):           # its copy is gone from search
+            self.note(row["file_name"], "removed", title or row.get("title"),
+                      row.get("parent_id"), source_acl=row.get("acl"))
         self._drop_file(row)
         sync_store.save_item(self.ws, self.provider, source_id, file_name=None, version=None,
                              content_hash=None, skipped_reason=reason, title=title or None,
@@ -188,7 +223,11 @@ class _Run:
         if not allow_mass and len(targets) >= floor and len(targets) * 100 > synced * percent:
             return len(targets)
         for source_id in targets:
-            self._drop_file(self.items.pop(source_id))
+            row = self.items.pop(source_id)
+            if row.get("file_name"):
+                self.note(row["file_name"], "removed", row.get("title"), row.get("parent_id"),
+                          source_acl=row.get("acl"))
+            self._drop_file(row)
             sync_store.delete_item(self.ws, self.provider, source_id)
         self.counts["deleted"] = len(targets)
         return 0
@@ -242,6 +281,8 @@ def sync(ws, provider, full=False, confirm_deletes=False):
         synced, _ = sync_store.counts(ws, provider)
         integrations_store.update(ws, provider, status="error", last_error=code,
                                   doc_count=synced)
+        webhooks.emit(ws, "integration.sync_failed", {"provider": provider, "run_id": run_id,
+                                                      "error_code": code})
         _reindex(ws, run)
         raise
     now = time.time()

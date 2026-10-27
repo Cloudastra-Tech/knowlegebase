@@ -7,6 +7,7 @@ import {
   AccessScreen,
   ApiKeysScreen,
   AssistantScreen,
+  DigestsScreen,
   DocsScreen,
   ExtensionConnectScreen,
   HrOnly,
@@ -23,6 +24,7 @@ import {
   SignInPage,
   SpacesScreen,
   SsoReturnPage,
+  UnsubscribePage,
   VerifiedScreen,
 } from "@/screens"
 
@@ -35,15 +37,18 @@ import {
 //   /api-keys          their own API keys (the public API and the MCP server)
 //   /spaces, /spaces/:spaceId   their own space and team spaces (sources, members, files)
 //   /prompts           their saved prompts and the workspace's
+//   /digests           their own digests of what changed (by email or Slack)
+//   /unsubscribe/:token  a digest email's one-click unsubscribe (signed in or not)
 //   /chat/:id          one of their saved conversations
 //   /s/:token          a chat or answer shared by someone in their workspace
 //   /passages/:chunkId one cited passage (where a Slack answer's source links)
 //   /extension/connect ?redirect=: the browser extension signing in (chrome.identity)
 //   /documents, /integrations        HR and admins, viewing the app as HR
+//                      (/documents?draft=<id>: one of the assistant's drafts)
 //                      (not /docs: that is FastAPI's API reference, api.py)
 //   /admin/sign-in, /admin/members, /admin/groups, /admin/activity, /admin/api,
-//   /admin/data        admins (the Access screen's tabs; Groups: who may see content;
-//                      Data: retention, export, support, delete)
+//   /admin/webhooks, /admin/data   admins (the Access screen's tabs; Groups: who
+//                      may see content; Data: retention, export, support, delete)
 //   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
@@ -73,6 +78,7 @@ export const routes: RouteObject[] = [
           },
           { path: "sso", Component: SsoReturnPage },
           { path: "invite/:token", Component: InvitePage },
+          { path: "unsubscribe/:token", Component: UnsubscribePage },
           {
             Component: App,
             children: [
@@ -86,6 +92,7 @@ export const routes: RouteObject[] = [
               { path: "spaces", Component: SpacesScreen },
               { path: "spaces/:spaceId", Component: SpacesScreen },
               { path: "prompts", Component: PromptsScreen },
+              { path: "digests", Component: DigestsScreen }, // everyone's own digests
               { path: "extension/connect", Component: ExtensionConnectScreen },
               {
                 Component: HrOnly,
@@ -118,6 +125,7 @@ export const routes: RouteObject[] = [
                   { path: "groups", element: <AccessScreen tab="groups" /> },
                   { path: "activity", element: <AccessScreen tab="activity" /> },
                   { path: "api", element: <AccessScreen tab="api" /> },
+                  { path: "webhooks", element: <AccessScreen tab="webhooks" /> },
                   { path: "data", element: <AccessScreen tab="data" /> },
                 ],
               },

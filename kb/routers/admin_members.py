@@ -12,6 +12,7 @@ import members_store
 import sessions_store
 from kb.audit import audited
 from kb.deps import require_admin, ws_of
+from kb.services import webhooks
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -68,6 +69,8 @@ def edit_member(username: str, body: MemberPatch, user=Depends(require_admin),
         if body.disabled:          # out now, on every device, not at their next click
             sessions_store.delete_user(member["username"], ws)
     audit.record("member", member["username"], body.model_dump(exclude_unset=True), user=user)
+    if body.disabled and not member["disabled"]:
+        webhooks.member_disabled(ws, member["username"], "admin")
     m = next(x for x in members_store.list_members(ws) if x["username"] == member["username"])
     return _member_out(m)
 

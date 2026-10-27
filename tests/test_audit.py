@@ -74,14 +74,25 @@ def fakes(monkeypatch, tmp_path):
     """Nothing indexed or synced, documents in a temporary folder, a provider
     whose settings check out, and DNS that says yes."""
     import sso_setup
+    import url_guard
     import workspaces
-    from kb.services import indexing, sync, verified
+    from kb.services import drafts, indexing, sync, verified, webhooks
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kwargs: None)
     monkeypatch.setattr(verified, "embed", lambda texts: [[1.0, 0.0] for _ in texts])
     monkeypatch.setattr(indexing, "schedule_retag", lambda ws, provider: None)
     monkeypatch.setattr(sync, "start_sync", lambda ws, provider, **options: None)
     monkeypatch.setattr(workspaces, "docs_root", lambda ws: str(tmp_path / ws))
     monkeypatch.setattr(sso_setup, "normalize_issuer", lambda issuer: issuer)
+    # Drafts aren't written (a job would call the model); webhooks go nowhere.
+    monkeypatch.setattr(drafts, "_queue", lambda ws, draft: None)
+    monkeypatch.setattr(drafts, "find_gap", lambda ws, role, gap_id: {
+        "id": gap_id, "label": "Leave", "samples": [], "hidden": False} if gap_id == 7 else None)
+    monkeypatch.setattr(url_guard, "_resolve", lambda host, port: [(2, 1, 6, "",
+                                                                   ("93.184.216.34", port))])
+
+    class Answered:
+        status_code = 200
+    monkeypatch.setattr(webhooks, "post", lambda url, body, headers: Answered())
     monkeypatch.setattr(sso_setup, "oidc_metadata", lambda issuer: {
         "issuer": issuer, "authorization_endpoint": issuer + "/auth",
         "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/certs"})
@@ -173,6 +184,31 @@ def _rule(client, h):
                     json={"match_type": "provider", "match_value": "notion", "action": "demote"})
     assert r.status_code == 200, r.text
     return r.json()["id"]
+
+
+def _digest(client, h):
+    r = client.post("/api/digests", headers=h, json={"frequency": "weekly", "channel": "email"})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _draft(ws):
+    """A finished draft written from public documents."""
+    import drafts_store
+    d = drafts_store.create(ws, "summary", "Summary", {"provider": "uploads"},
+                            f"admin@{ws}.example")
+    drafts_store.write_text(ws, d["id"], "A summary [1].")
+    drafts_store.update(ws, d["id"], status="draft", max_access="public", audience=[],
+                        sources=[{"doc_key": "public/a.txt", "title": "a.txt",
+                                  "acl": ["everyone"]}])
+    return d["id"]
+
+
+def _webhook(client, h):
+    r = client.post("/api/admin/webhooks", headers=h,
+                    json={"url": "https://hooks.example/kb", "events": ["member.added"]})
+    assert r.status_code == 200, r.text
+    return r.json()["webhook"]["id"]
 
 
 def _verify_setup(client, h, ws, txt):
@@ -296,6 +332,35 @@ CASES = [
                       {"json": {"action": "boost", "weight": 2}})),
     ("doc_rule.delete", lambda c, h, ws, txt: _rule(c, h),
      lambda ws, rid: ("DELETE", f"/api/admin/doc-rules/{rid}", {})),
+    ("digest.subscribe", None,
+     lambda ws, _: ("POST", "/api/digests", {"json": {"frequency": "daily", "channel": "email"}})),
+    ("digest.update", lambda c, h, ws, txt: _digest(c, h),
+     lambda ws, sid: ("PATCH", f"/api/digests/{sid}", {"json": {"frequency": "daily"}})),
+    ("digest.send", lambda c, h, ws, txt: _digest(c, h),
+     lambda ws, sid: ("POST", f"/api/digests/{sid}/send", {})),
+    ("digest.unsubscribe", lambda c, h, ws, txt: _digest(c, h),
+     lambda ws, sid: ("DELETE", f"/api/digests/{sid}", {})),
+    ("draft.summarise", lambda c, h, ws, txt: _doc(c, h),
+     lambda ws, _: ("POST", "/api/drafts/summarise", {"json": {"provider": "uploads"}})),
+    ("draft.from_gap", None, lambda ws, _: ("POST", "/api/drafts/from-gap",
+                                            {"json": {"gap_id": 7}})),
+    ("draft.update", lambda c, h, ws, txt: _draft(ws),
+     lambda ws, did: ("PATCH", f"/api/drafts/{did}", {"json": {"content": "private note"}})),
+    ("draft.publish", lambda c, h, ws, txt: _draft(ws),
+     lambda ws, did: ("POST", f"/api/drafts/{did}/publish",
+                      {"json": {"acl": ["everyone"], "name": "summary.txt"}})),
+    ("draft.delete", lambda c, h, ws, txt: _draft(ws),
+     lambda ws, did: ("DELETE", f"/api/drafts/{did}", {})),
+    ("webhook.create", None,
+     lambda ws, _: ("POST", "/api/admin/webhooks",
+                    {"json": {"url": "https://hooks.example/kb?token=s3cret",
+                              "events": ["audit.event"]}})),
+    ("webhook.update", lambda c, h, ws, txt: _webhook(c, h),
+     lambda ws, wid: ("PATCH", f"/api/admin/webhooks/{wid}", {"json": {"enabled": False}})),
+    ("webhook.test", lambda c, h, ws, txt: _webhook(c, h),
+     lambda ws, wid: ("POST", f"/api/admin/webhooks/{wid}/test", {})),
+    ("webhook.delete", lambda c, h, ws, txt: _webhook(c, h),
+     lambda ws, wid: ("DELETE", f"/api/admin/webhooks/{wid}", {})),
 ]
 
 

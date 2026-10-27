@@ -581,6 +581,52 @@ Admins shape answers in three ways, all per workspace:
 
 ---
 
+## 📰 Digests, drafts and webhooks
+
+Three things the app does without anyone asking a question (platform.md PL-30,
+PL-31, PL-20). Who may read what is access.py's rule throughout, through
+`kb/services/audience.py`.
+
+- **Change feed** (`doc_changes`, `digests_store.py`). Uploads, edits, deletes, a
+  published draft and every connector sync (`kb/services/sync.py`) add a row:
+  added / modified / removed, with the title and the document's **ACL at that
+  moment**.
+- **Digests** (`/digests`, everyone's own; `kb/services/digests.py`). Daily or
+  weekly, of some sources (none: all), by email or Slack DM. The hourly
+  `digests_due` job queues a `digest` job per subscription that's due; it folds
+  the changes per document and keeps one only if the recipient's principals, looked
+  up then, meet **every ACL it had in the window and the one it has now** (a
+  removed one: the ones it had). Filtered per recipient, never per workspace: a
+  document shared with one group is never listed, nor summarised, for anyone
+  outside it. Each kept document gets a 2-3 sentence summary on FAST_MODEL,
+  cached per version (`doc_summaries`). Every email has a one-click unsubscribe
+  link (`/unsubscribe/<token>`, no sign-in; the token is sealed in the database
+  and looked up by its hash).
+- **Drafts** (`kb/services/drafts.py`, HR / Admin). "Summarise" on Knowledge (a
+  source or a folder: each readable document summarised, then one cited overview)
+  and "Draft a doc" on an Insights content gap (its questions searched as the
+  requester, a document drafted from the passages, cited; gaps become "TO
+  CONFIRM:" lines). Written by a `draft` job into `<docs>/drafts/<id>.txt`, a
+  folder `ingest.doc_files` never reads, so a draft is in no index. Its audience
+  is its sources' ACLs as clauses: only someone meeting every one may open it,
+  and Publish (the documents' access picker) only accepts principals that do;
+  the published copy lists its sources, gets that ACL (`doc_acl`) and is indexed.
+- **Webhooks** (Access → Webhooks, admins; `kb/services/webhooks.py`).
+  `document.indexed`, `integration.sync_failed`, `question.unanswered` (the text
+  only as the question log keeps it), `member.added`, `member.disabled`,
+  `sso.metadata_changed` and `audit.event` (every audit event, details left out:
+  `audit_store.listen`). Each event is a row per subscribed endpoint
+  (`webhook_deliveries`), POSTed by a `webhooks` job with `X-KB-Timestamp` and
+  `X-KB-Signature: v1=<HMAC-SHA256 of "<timestamp>.<body>">` (the secret sealed
+  under the workspace's key, shown once). Non-2xx is retried after 30 s, 1, 2, 4 …
+  minutes (at most an hour apart) until 24 h after the event. Addresses pass
+  `url_guard.check_connector` when saved and on every request (https, public IPs
+  only). Payloads carry IDs and a few fields, never document text.
+
+All six tables have a `workspace` column, so a workspace's purge deletes them.
+
+---
+
 ## 🗄️ Database migrations
 
 Accounts, sign-in providers, sessions and integrations live in one SQLite file,

@@ -26,6 +26,7 @@ import sessions_store
 from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
 from kb.rate_limit import rate_limit, user_limit
+from kb.services import webhooks
 from kb.settings import SESSION_SECONDS
 
 router = APIRouter()
@@ -198,6 +199,7 @@ def accept_invite(body: AcceptIn, request: Request, audit=audited("invite.accept
     audit.record("invite", invite["id"], {"email": email, "role": invite["role"],
                                           "method": method},
                  workspace=ws, actor=email)
+    webhooks.member_added(ws, email, invite["role"], "invite")
     if method == "sso":
         return {"sso": True, "email": email}
     access = auth.access_for(email)
