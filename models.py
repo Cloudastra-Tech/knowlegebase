@@ -15,7 +15,9 @@ gpt-5-nano) is the likely saving; check the leak and injection suites before
 switching (python -m eval.harness --gate; python evaluate.py --redteam), since
 the guards' classifiers run on it.
 
-PROVIDERS. Every model is made here, through a workspace's Models (for_workspace):
+PROVIDERS. Every model is made here, through a workspace's Models (for_workspace).
+What each provider offers (chat, embeddings, images, prompt caching, tool calls)
+and how its models are made is its entry in REGISTRY (Provider, register()):
 
     openai     OpenAI (the default): ANSWER_MODEL, FAST_MODEL, text-embedding-3-small.
                Made exactly as before: each caller passes its own ChatOpenAI /
@@ -25,23 +27,36 @@ PROVIDERS. Every model is made here, through a workspace's Models (for_workspace
                streaming and tool calls), embeddings through InvokeModel (Titan
                Text Embeddings V2 by default). Documents and questions never
                reach OpenAI.
-    (azure_openai, later: a Spec.provider value and a branch in Models.chat /
-               Models.embeddings, like bedrock's.)
+    anthropic  Claude through Anthropic's API (langchain-anthropic ChatAnthropic:
+               streaming, tool calls, images): ANTHROPIC_CHAT_MODEL (Sonnet) and
+               ANTHROPIC_FAST_MODEL (Haiku). Chat only: no embeddings.
+    local      embeddings only, on the server's CPU (fastembed, ONNX Runtime):
+               LOCAL_EMBED_MODEL, downloaded on first use into LOCAL_EMBED_CACHE.
+               What a chat provider without embeddings gets when none is set.
 
-The server's provider is MODEL_PROVIDER (openai unless set) with its AWS_REGION and
-BEDROCK_* models, using the server's own AWS credentials (boto3's default chain:
-an instance role, AWS_PROFILE, AWS_ACCESS_KEY_ID...). A workspace's admin can bring
-their own AWS instead (model_providers_store.py, the Assistant screen): a role in
-THEIR account the server assumes (STS AssumeRole with the ExternalId this app
-generated for them; credentials kept until they expire) or access keys sealed
-under the workspace's key (secret_box).
+CHAT AND EMBEDDINGS are chosen apart (Spec.provider, Spec.embed_provider), since
+not every provider has embeddings: "Claude for chat, OpenAI or Bedrock for the
+index" is a valid workspace. Adding a provider is a register(Provider(...)) with
+its make_chat (and make_embeddings, if it has them), at the end of this file.
 
-FAIL CLOSED. A workspace on Bedrock never falls back to OpenAI: a model that can't
-be made (no region, a role that can't be assumed) raises ProviderError, and the
-caller fails as it would with OpenAI down. The code that runs for a workspace
-runs inside scope(its Models) (agent.run, an index run, a job), so the layers
-that don't know the workspace (the guards, HyDE, chunk context) still ask for
-ITS models: current().
+The server's providers come from .env: MODEL_PROVIDER (openai unless set) sets
+both, as it always has; CHAT_PROVIDER and EMBED_PROVIDER override one each. An
+embeddings provider must have embeddings, and one that isn't known is refused,
+never read as openai. Bedrock uses AWS_REGION and BEDROCK_* models with the
+server's own AWS credentials (boto3's default chain: an instance role,
+AWS_PROFILE, AWS_ACCESS_KEY_ID...). A workspace's admin can bring their own
+instead (model_providers_store.py, the Assistant screen): a provider for chat and
+one for embeddings, an API key per provider sealed under the workspace's key
+(secret_box), or their own AWS: a role in THEIR account the server assumes (STS
+AssumeRole with the ExternalId this app generated for them; credentials kept
+until they expire) or access keys, sealed too.
+
+FAIL CLOSED. A workspace never falls back to another provider: a model that can't
+be made (no region, a role that can't be assumed, no API key) raises
+ProviderError, and the caller fails as it would with OpenAI down. The code that
+runs for a workspace runs inside scope(its Models) (agent.run, an index run, a
+job), so the layers that don't know the workspace (the guards, HyDE, chunk
+context) still ask for ITS models: current().
 
 PROMPT CACHING. OpenAI caches the longest repeated PREFIX of a prompt
 automatically once a prompt is long enough (1,024 tokens on current models), at
@@ -51,8 +66,10 @@ passages found). prompt_cache_key() groups requests that share that prefix, so
 OpenAI routes them to the same cache: one key per workspace and role keeps one
 workspace's traffic from probing another's cache. On Bedrock, caching is opt-in
 per request: a cachePoint after the system prompt (BedrockChat), for the models
-that support it (BEDROCK_PROMPT_CACHE). The tokens served from the cache are
-logged per question (question_log tokens_cached), from either provider.
+that support it (BEDROCK_PROMPT_CACHE). On Anthropic, a cache_control breakpoint
+after the agent's rules (AnthropicChat; ANTHROPIC_PROMPT_CACHE): tools render
+before the system prompt, so it caches both. The tokens served from the cache are
+logged per question (question_log tokens_cached), from any provider.
 """
 
 import contextlib
@@ -64,13 +81,12 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from typing import Callable
 
 log = logging.getLogger("uvicorn.error")
 
 DEFAULT_MODEL = "gpt-4o-mini"
 OPENAI_EMBED_MODEL = "text-embedding-3-small"
-
-PROVIDERS = ("openai", "bedrock")
 
 # Bedrock's defaults (deploy.md, "AWS Bedrock"): Amazon's own models, which need no
 # extra agreement in the Bedrock console, and support the Converse API with
@@ -86,6 +102,25 @@ EMBED_DIMENSIONS = {"amazon.titan-embed-text-v2:0": (1024, 512, 256),
                     "cohere.embed-multilingual-v3": (1024,)}
 EMBED_CONCURRENCY = 4         # Titan embeds one text per call: this many at once
 
+# Local embeddings (deploy.md, "Local embeddings"): fastembed (ONNX Runtime, no
+# torch) on the server's CPU. The model is downloaded on first use into
+# LOCAL_EMBED_CACHE. Sizes of the models likely to be picked; another one's comes
+# from fastembed's own list.
+LOCAL_EMBED = "BAAI/bge-small-en-v1.5"
+LOCAL_EMBED_DIMENSIONS = {"BAAI/bge-small-en-v1.5": 384, "BAAI/bge-base-en-v1.5": 768,
+                          "BAAI/bge-large-en-v1.5": 1024,
+                          "sentence-transformers/all-MiniLM-L6-v2": 384,
+                          "intfloat/multilingual-e5-large": 1024}
+LOCAL_EMBED_THREADS = 2       # ONNX Runtime threads: indexing mustn't swamp a small server
+LOCAL_EMBED_BATCH = 32
+
+# Anthropic's defaults (deploy.md, "Anthropic"): the current Sonnet writes answers,
+# the current Haiku does the small jobs. Claude has no embeddings: an Anthropic
+# workspace's come from another provider (EMBED_PROVIDER, or the workspace's own).
+ANTHROPIC_CHAT = "claude-sonnet-5-5"
+ANTHROPIC_FAST = "claude-haiku-5-5"
+ANTHROPIC_MIN_TOKENS = 1024
+
 # What a value may look like (they go into AWS endpoints and ARNs, so nothing else).
 REGION = re.compile(r"^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$")
 MODEL_ID = re.compile(r"^(arn:aws[a-z-]*:bedrock:[a-z0-9-]+:\d{0,12}:[a-z-]+/)?"
@@ -95,7 +130,69 @@ ROLE_ARN = re.compile(r"^arn:aws[a-z-]*:iam::\d{12}:role/[\w+=,.@/-]{1,512}$")
 
 class ProviderError(RuntimeError):
     """A workspace's models can't be made or reached (Bedrock not set up, a role
-    that can't be assumed, ...). Never a reason to use another provider."""
+    that can't be assumed, no API key, ...). Never a reason to use another provider."""
+
+
+# ---- The registry: what each provider offers, and how its models are made ----------------
+@dataclass(frozen=True)
+class Provider:
+    """One model provider. make_chat(models, model, openai=, cache_key=, **kwargs)
+    makes a chat model; make_embeddings(models, model, dims, openai=) its
+    embeddings (None: it has none). defaults() -> {chat_model, fast_model,
+    embed_model, embed_dims}, the server's settings for it (.env)."""
+    name: str
+    label: str
+    make_chat: Callable | None = None
+    make_embeddings: Callable | None = None
+    defaults: Callable = dict
+    vision: bool = False              # its chat models read images
+    prompt_caching: str = "none"      # automatic / marked (a marker per request) / none
+    tool_calls: bool = False
+    in_house: bool = False            # text stays in the customer's own cloud account
+    api_key_env: str | None = None    # the server's key; a workspace can bring its own
+    image_format: str = "standard"    # openai: image_url data URLs; standard: LangChain's
+
+    @property
+    def chat(self):
+        return self.make_chat is not None
+
+    @property
+    def embeddings(self):
+        return self.make_embeddings is not None
+
+    def describe(self):
+        """What the settings screen shows of it (GET /api/admin/assistant/models)."""
+        return {"name": self.name, "label": self.label, "chat": self.chat,
+                "embeddings": self.embeddings, "vision": self.vision,
+                "prompt_caching": self.prompt_caching, "tool_calls": self.tool_calls,
+                "in_house": self.in_house, "api_key": self.api_key_env is not None}
+
+
+REGISTRY = {}
+
+
+def register(provider):
+    REGISTRY[provider.name] = provider
+    return provider
+
+
+def provider_info(name, offers=None):
+    """The registry's entry for `name`; offers ("chat" / "embeddings"): it must
+    offer that. Raises ProviderError otherwise (never a stand-in provider)."""
+    found = REGISTRY.get(name)
+    if found is None:
+        raise ProviderError(f"Unknown model provider {name!r}.")
+    if offers and not getattr(found, offers):
+        raise ProviderError(f"{found.label} has no {offers} API.")
+    return found
+
+
+def chat_providers():
+    return tuple(n for n, p in REGISTRY.items() if p.chat)
+
+
+def embedding_providers():
+    return tuple(n for n, p in REGISTRY.items() if p.embeddings)
 
 
 # ---- The server's settings ---------------------------------------------------------------
@@ -112,13 +209,71 @@ def prompt_cache_key(collection, role):
     return f"kb:{collection or 'langchain'}:{role}"[:64]
 
 
-def server_provider():
-    """MODEL_PROVIDER: openai (the default) or bedrock. Anything else is refused
-    rather than read as openai: a typo must not send a private server's data out."""
-    value = (os.getenv("MODEL_PROVIDER") or "openai").strip().lower() or "openai"
-    if value not in PROVIDERS:
-        raise ProviderError(f"MODEL_PROVIDER={value!r} isn't one of: {', '.join(PROVIDERS)}.")
+def _env_provider(name, offers):
+    """A provider named in .env (lowercased), or None when unset. Anything that
+    isn't known, or doesn't offer what it's named for, is refused rather than
+    read as openai: a typo must not send a private server's data out."""
+    value = (os.getenv(name) or "").strip().lower()
+    if not value:
+        return None
+    choices = chat_providers() if offers == "chat" else embedding_providers()
+    if value not in choices:
+        known = REGISTRY.get(value)
+        why = (f"{known.label} has no {offers} API" if known else "it isn't a known provider")
+        raise ProviderError(f"{name}={value!r}: {why}. Choose one of: {', '.join(choices)}.")
     return value
+
+
+def server_provider():
+    """The server's chat provider: CHAT_PROVIDER, else MODEL_PROVIDER, else openai."""
+    return server_providers()[0]
+
+
+def server_providers():
+    """(chat, embeddings): the server's providers. MODEL_PROVIDER sets both, as it
+    always has; CHAT_PROVIDER and EMBED_PROVIDER override one each. Without
+    either for embeddings, the chat provider's own are used when it has them;
+    when it has none (and MODEL_PROVIDER names none that does), that's an
+    error naming EMBED_PROVIDER, never OpenAI by default."""
+    base = (os.getenv("MODEL_PROVIDER") or "").strip().lower()
+    if base and base not in REGISTRY:
+        raise ProviderError(f"MODEL_PROVIDER={base!r} isn't one of: {', '.join(REGISTRY)}.")
+    chat = _env_provider("CHAT_PROVIDER", "chat") or base or "openai"
+    provider_info(chat, "chat")
+    embed = _env_provider("EMBED_PROVIDER", "embeddings")
+    if embed is None:
+        for candidate in (base, chat):
+            if candidate and REGISTRY[candidate].embeddings:
+                embed = candidate
+                break
+    if embed is None:
+        embed = default_embeddings_for(chat)
+    return chat, embed
+
+
+_said = set()
+
+
+def default_embeddings_for(chat):
+    """The embeddings provider a chat provider without embeddings (Anthropic) gets
+    when none is set: local, on the server's own CPU (LOCAL_EMBED_MODEL), so a
+    server with only an Anthropic key can search. Never OpenAI by default. Said
+    once in the log."""
+    if chat not in _said:
+        _said.add(chat)
+        log.info("Models: %s has no embeddings and EMBED_PROVIDER isn't set: the index "
+                 "uses local embeddings (%s, on this server's CPU).", REGISTRY[chat].label,
+                 _local_defaults()["embed_model"])
+    return "local"
+
+
+def log_server_providers():
+    """At startup: which providers the server's models are on (or why they can't be)."""
+    try:
+        chat, embed = server_providers()
+        log.info("Models: chat on %s, embeddings on %s.", chat, embed)
+    except ProviderError as e:
+        log.error("Models: %s", e)
 
 
 def server_region():
@@ -134,23 +289,27 @@ def _env_int(name, default):
 
 
 def server_spec():
-    """The server's own provider and models (.env)."""
-    provider = server_provider()
-    if provider == "openai":
+    """The server's own providers and models (.env)."""
+    chat, embed = server_providers()
+    if chat == embed == "openai":
         return Spec()
-    return Spec(provider="bedrock", region=server_region(), auth="default",
-                chat_model=(os.getenv("BEDROCK_CHAT_MODEL") or "").strip() or BEDROCK_CHAT,
-                fast_model=(os.getenv("BEDROCK_FAST_MODEL") or "").strip() or BEDROCK_FAST,
-                embed_model=(os.getenv("BEDROCK_EMBED_MODEL") or "").strip() or BEDROCK_EMBED,
-                embed_dims=_env_int("BEDROCK_EMBED_DIMENSIONS", BEDROCK_EMBED_DIMENSIONS))
+    on_chat, on_embed = REGISTRY[chat].defaults(), REGISTRY[embed].defaults()
+    bedrock = "bedrock" in (chat, embed)
+    return Spec(provider=chat, embed_provider=None if embed == chat else embed,
+                region=server_region() if bedrock else None, auth="default",
+                chat_model=on_chat.get("chat_model"), fast_model=on_chat.get("fast_model"),
+                embed_model=on_embed.get("embed_model"), embed_dims=on_embed.get("embed_dims"))
 
 
 # ---- A workspace's provider ---------------------------------------------------------------
 @dataclass(frozen=True)
 class Spec:
-    """Which provider and models a workspace uses, and how to reach them.
-    auth (bedrock): default = the server's AWS credentials; role = assume role_arn
-    with external_id; keys = (access key id, secret access key)."""
+    """Which providers and models a workspace uses, and how to reach them.
+    provider: chat (answer, fast, images); embed_provider: embeddings (None: the
+    same). auth (bedrock): default = the server's AWS credentials; role = assume
+    role_arn with external_id; keys = (access key id, secret access key).
+    api_keys: ((provider, key), ...) for the providers the workspace brings its
+    own key for; a provider listed with no key fails closed (never the server's)."""
     provider: str = "openai"
     region: str | None = None
     auth: str = "default"
@@ -166,12 +325,20 @@ class Spec:
     # questions are embedded with it, or not at all when it's another provider's.
     index_embeddings: str | None = None
     error: str | None = None          # why it can't be used: every model call says so
+    embed_provider: str | None = None
+    api_keys: tuple | None = field(default=None, repr=False)
+
+    @property
+    def embeddings_provider(self):
+        return self.embed_provider or self.provider
 
     def cache_key(self):
-        """Identifies the credentials and settings (a hash stands for the keys)."""
-        secret = hashlib.sha256(repr(self.keys).encode()).hexdigest()[:16] if self.keys else ""
-        return (self.provider, self.region, self.auth, self.role_arn, self.external_id,
-                secret, self.workspace)
+        """Identifies the credentials and settings (a hash stands for the keys).
+        The workspace stays last (forget())."""
+        secret = (hashlib.sha256(repr((self.keys, self.api_keys)).encode()).hexdigest()[:16]
+                  if self.keys or self.api_keys else "")
+        return (self.provider, self.embeddings_provider, self.region, self.auth,
+                self.role_arn, self.external_id, secret, self.workspace)
 
 
 _scope = contextvars.ContextVar("models_scope", default=None)
@@ -234,46 +401,92 @@ class Models:
 
     @property
     def provider(self):
+        """The chat provider: who answers (the question log's provider)."""
         return self.spec.provider
 
     @property
+    def embed_provider(self):
+        return self.spec.embeddings_provider
+
+    @property
     def bedrock(self):
+        """The chat models are Bedrock's."""
         return self.spec.provider == "bedrock"
+
+    def uses(self, name):
+        """Either the chat or the embeddings provider is `name`."""
+        return name in (self.provider, self.embed_provider)
+
+    @property
+    def in_house(self):
+        """Some of the workspace's text stays in its own cloud account (Bedrock):
+        then nothing else (an API reranker) may see it either."""
+        return any(REGISTRY[p].in_house for p in (self.provider, self.embed_provider)
+                   if p in REGISTRY)
+
+    def _defaults(self, name):
+        p = REGISTRY.get(name)
+        return p.defaults() if p else {}
 
     # ---- Names ----
     @property
     def answer_name(self):
-        return self.spec.chat_model if self.bedrock else answer_model()
+        return self.spec.chat_model or self._defaults(self.provider).get("chat_model")
 
     @property
     def fast_name(self):
-        return self.spec.fast_model if self.bedrock else fast_model()
+        return self.spec.fast_model or self._defaults(self.provider).get("fast_model")
 
     def name(self, role):
         return self.answer_name if role == "answer" else self.fast_name
 
     @property
+    def embed_model(self):
+        return self.spec.embed_model or self._defaults(self.embed_provider).get("embed_model")
+
+    @property
+    def embed_dims(self):
+        if self.spec.embed_dims or self.spec.embed_model:
+            return self.spec.embed_dims
+        return self._defaults(self.embed_provider).get("embed_dims")
+
+    @property
     def embed_name(self):
         """The embedding model as the index and stored vectors record it: OpenAI's
-        name alone (as before), or bedrock:<model>:<dimensions>."""
-        if self.bedrock:
-            return f"bedrock:{self.spec.embed_model}:{self.spec.embed_dims}"
-        return OPENAI_EMBED_MODEL
+        name alone (as before), or <provider>:<model>:<dimensions>."""
+        return embed_name(self.embed_provider, self.embed_model, self.embed_dims)
 
     def release(self):
         """What changes this workspace's answers on the model side (the answer cache)."""
         return f"{self.provider}|{self.answer_name}|{self.fast_name}"
+
+    # ---- Keys ----
+    def api_key(self, provider):
+        """The workspace's own API key for `provider`, or None: the server's (the
+        client reads its env). A provider the workspace brings its own key for,
+        whose key is missing, fails closed: never the server's key instead."""
+        own = dict(self.spec.api_keys or ())
+        if provider in own:
+            if not own[provider]:
+                raise ProviderError(f"{REGISTRY[provider].label} is selected with the "
+                                    "workspace's own API key, but none is saved.")
+            return own[provider]
+        return None
+
+    def secrets(self):
+        """Every secret this spec holds (to scrub from an error message)."""
+        out = [k for _, k in self.spec.api_keys or () if k]
+        return out + [k for k in self.spec.keys or () if k]
 
     # ---- Chat ----
     def chat(self, role="answer", openai=None, cache_key=None, **kwargs):
         """A chat model for `role` (answer or fast). openai: the caller's ChatOpenAI
         (a test's stand-in); cache_key: the prompt cache's group (prompt_cache_key).
         kwargs: temperature, max_tokens, timeout, max_retries."""
-        if not self.bedrock:
-            if cache_key is not None:
-                kwargs["model_kwargs"] = {"prompt_cache_key": cache_key}
-            return (openai or _openai_chat())(model=self.name(role), **kwargs)
-        return self._bedrock_chat(self.name(role), **kwargs)
+        if self.spec.error:
+            raise ProviderError(self.spec.error)
+        p = provider_info(self.provider, "chat")
+        return p.make_chat(self, self.name(role), openai=openai, cache_key=cache_key, **kwargs)
 
     def answer(self, openai=None, cache_key=None, **kwargs):
         return self.chat("answer", openai, cache_key, **kwargs)
@@ -283,28 +496,29 @@ class Models:
 
     def vision(self, model, openai=None, **kwargs):
         """A model that reads images: ATTACHMENT_VISION_MODEL on OpenAI, the chat
-        model on Bedrock (it must be a multimodal one: Nova Lite / Pro, Claude)."""
-        if not self.bedrock:
-            return (openai or _openai_chat())(model=model, **kwargs)
-        return self._bedrock_chat(self.spec.chat_model, **kwargs)
+        model elsewhere (it must be a multimodal one: Nova Lite / Pro, Claude)."""
+        if self.spec.error:
+            raise ProviderError(self.spec.error)
+        p = provider_info(self.provider, "chat")
+        if self.provider == "openai":
+            return p.make_chat(self, model, openai=openai, **kwargs)
+        if not p.vision:
+            raise ProviderError(f"{p.label}'s models don't read images.")
+        return p.make_chat(self, self.answer_name, **kwargs)
 
-    def _bedrock_chat(self, model, temperature=None, max_tokens=None, timeout=None,
-                      max_retries=None):
-        runtime = runtime_client(self.spec, timeout=timeout, retries=max_retries)
-        control = client(self.spec, "bedrock")      # only an application profile's lookup
-        return _cls("BedrockChat")(model=model, client=runtime, bedrock_client=control,
-                                   region_name=self.spec.region, temperature=temperature,
-                                   max_tokens=max_tokens, prompt_cache=prompt_cache_on(model))
+    def image_block(self, mime, data_b64):
+        """An image as this chat provider takes it in a message's content."""
+        if provider_info(self.provider).image_format == "openai":
+            return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_b64}"}}
+        return {"type": "image", "source_type": "base64", "mime_type": mime, "data": data_b64}
 
     # ---- Embeddings ----
     def embeddings(self, openai=None):
         """The embeddings of this workspace's index (and anything compared with it)."""
-        if not self.bedrock:
-            return (openai or _openai_embeddings())(model=OPENAI_EMBED_MODEL)
-        return _cls("BedrockEmbed")(model_id=self.spec.embed_model,
-                                    client=runtime_client(self.spec),
-                                    region_name=self.spec.region,
-                                    dimensions=self.spec.embed_dims, normalize=True)
+        if self.spec.error:
+            raise ProviderError(self.spec.error)
+        p = provider_info(self.embed_provider, "embeddings")
+        return p.make_embeddings(self, self.embed_model, self.embed_dims, openai=openai)
 
     def query_embeddings(self, openai=None):
         """The embeddings to search the workspace's index with, or None when it was
@@ -312,23 +526,44 @@ class Models:
         by keywords only until the rebuild is done, rather than send the question
         to a provider the workspace has left."""
         built = self.spec.index_embeddings
-        if built is not None and _provider_of(built) != self.provider:
+        if built is None:
+            return self.embeddings(openai)
+        provider, model, dims = parse_embed_name(built)
+        if provider != self.embed_provider:
             return None
-        if self.bedrock and built and built != self.embed_name:
+        if built != self.embed_name:
             # Same provider, other model: the index's own model until it's rebuilt.
-            _, model, dims = built.split(":", 2)
-            return replace_models(self, embed_model=model,
-                                  embed_dims=int(dims) if dims.isdigit() else None
-                                  ).embeddings(openai)
+            return replace_models(self, embed_model=model, embed_dims=dims).embeddings(openai)
         return self.embeddings(openai)
 
     # ---- What else may see the workspace's text ----
     def allows_reranker(self, reranker):
-        """Whether the search may send candidates to `reranker` (rerankers.py): on
-        Bedrock, only one that keeps them in-house (local, or Bedrock's own)."""
-        if reranker is None or not self.bedrock:
+        """Whether the search may send candidates to `reranker` (rerankers.py): when
+        the workspace keeps text in its own cloud (Bedrock, for chat or embeddings),
+        only one that keeps them in-house (local, or Bedrock's own)."""
+        if reranker is None or not self.in_house:
             return True
         return bool(getattr(reranker, "private", False))
+
+
+def embed_name(provider, model, dims):
+    """How an index records its embeddings: OpenAI's model name alone (every index
+    from before providers has it), else <provider>:<model>:<dimensions>."""
+    if provider == "openai":
+        return model or OPENAI_EMBED_MODEL
+    return f"{provider}:{model}:{dims}"
+
+
+def parse_embed_name(name):
+    """embed_name()'s parts: (provider, model, dimensions or None). A model id may
+    hold colons itself (amazon.titan-embed-text-v2:0), the dimensions never do."""
+    head, _, rest = (name or "").partition(":")
+    if head not in REGISTRY or head == "openai" or not rest:
+        return "openai", name or OPENAI_EMBED_MODEL, None
+    model, _, dims = rest.rpartition(":")
+    if not model:                     # <provider>:<model> with no size
+        return head, dims, None
+    return head, model, int(dims) if dims.isdigit() else None
 
 
 class Lazy:
@@ -373,7 +608,7 @@ def replace_models(models, **change):
 
 
 def _provider_of(embed_name):
-    return "bedrock" if (embed_name or "").startswith("bedrock:") else "openai"
+    return parse_embed_name(embed_name)[0]
 
 
 def prompt_cache_on(model):
@@ -493,11 +728,16 @@ def forget(workspace=None):
 
 
 def _aws_error(e):
-    """An AWS error's code and message, without anything secret in it."""
-    response = getattr(e, "response", None) or {}
-    err = response.get("Error") or {}
+    """An AWS error's code and message, without anything secret in it. Another
+    provider's API error (Anthropic's, OpenAI's): its class, type and message."""
+    response = getattr(e, "response", None)
+    err = (response.get("Error") or {}) if isinstance(response, dict) else {}
     if err:
         return f"{err.get('Code', 'Error')}: {err.get('Message', '')}".strip()
+    body = getattr(e, "body", None)
+    detail = body.get("error") if isinstance(body, dict) else None
+    if isinstance(detail, dict) and detail.get("message"):
+        return f"{type(e).__name__} ({detail.get('type', 'error')}): {detail['message']}"
     return f"{type(e).__name__}: {e}"
 
 
@@ -575,17 +815,102 @@ _made = {}
 
 
 def _cls(name):
-    """BedrockChat / BedrockEmbed, made on first use: importing this file never
-    needs langchain-aws or boto3 (an OpenAI-only server)."""
+    """BedrockChat / BedrockEmbed / AnthropicChat, made on first use: importing
+    this file never needs langchain-aws, boto3 or langchain-anthropic (an
+    OpenAI-only server)."""
     if name not in _made:
-        _made[name] = (_make_bedrock_chat if name == "BedrockChat" else _make_bedrock_embed)()
+        _made[name] = {"BedrockChat": _make_bedrock_chat, "BedrockEmbed": _make_bedrock_embed,
+                       "AnthropicChat": _make_anthropic_chat}[name]()
     return _made[name]
 
 
 def __getattr__(name):
-    if name in ("BedrockChat", "BedrockEmbed"):
+    if name in ("BedrockChat", "BedrockEmbed", "AnthropicChat"):
         return _cls(name)
     raise AttributeError(name)
+
+
+# ---- Anthropic: the models -----------------------------------------------------------------
+def _make_anthropic_chat():
+    from langchain_anthropic import ChatAnthropic
+    from langchain_core.messages import AIMessage, SystemMessage
+    from langchain_core.outputs import ChatGenerationChunk, ChatResult
+
+    class AnthropicChat(ChatAnthropic):
+        """ChatAnthropic whose replies are plain text, as OpenAI's are (tool calls
+        stay in .tool_calls), with the stable prompt marked for Anthropic's prompt
+        cache when prompt_cache is on.
+
+        A reply's own content blocks (thinking, tool_use) are kept in
+        additional_kwargs[KEPT] and given back to Claude when the reply is part
+        of the next request (the agent's tool loop): Claude needs its thinking
+        blocks back unchanged, the rest of the app reads text."""
+        prompt_cache: bool = False
+
+        def _prepared(self, messages):
+            out = []
+            for m in messages:
+                if isinstance(m, AIMessage) and m.additional_kwargs.get(KEPT) is not None:
+                    m = m.model_copy(update={"content": m.additional_kwargs[KEPT]})
+                out.append(m)
+            # The leading system messages as one: the agent's rules (the same for
+            # every question) first, then what this question adds (glossary
+            # notes, ...). The cache breakpoint goes after the rules: with the tool
+            # list before them, that is the prefix every question shares.
+            lead = 0
+            while lead < len(out) and isinstance(out[lead], SystemMessage):
+                lead += 1
+            if not lead:
+                return out
+            marked = any(isinstance(b, dict) and "cache_control" in b for m in out[:lead]
+                         if isinstance(m.content, list) for b in m.content)
+            blocks = []
+            for i, m in enumerate(out[:lead]):
+                part = ([{"type": "text", "text": m.content}] if isinstance(m.content, str)
+                        else [dict(b) if isinstance(b, dict) else {"type": "text", "text": b}
+                              for b in m.content])
+                part = [b for b in part if b.get("type") != "text" or b.get("text")]
+                if i == 0 and self.prompt_cache and part and not marked:
+                    part[-1] = {**part[-1], "cache_control": {"type": "ephemeral"}}
+                blocks += part
+            return [SystemMessage(content=blocks), *out[lead:]]
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            # No system prompt but tools (rare here): the breakpoint after them.
+            tools = payload.get("tools")
+            if self.prompt_cache and tools and not payload.get("system"):
+                payload["tools"] = [*tools[:-1], {**tools[-1],
+                                                  "cache_control": {"type": "ephemeral"}}]
+            return payload
+
+        @staticmethod
+        def _plain(message):
+            if isinstance(message.content, list):
+                message.additional_kwargs[KEPT] = message.content
+                message.content = text_of(message.content)
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            result = super()._generate(self._prepared(messages), stop, run_manager, **kwargs)
+            for g in result.generations:
+                self._plain(g.message)
+            return ChatResult(generations=result.generations, llm_output=result.llm_output)
+
+        def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+            # The tokens are announced here, as text (ChatAnthropic announces only
+            # string chunks, and with tools bound its chunks are content blocks).
+            for chunk in super()._stream(self._prepared(messages), stop, None, **kwargs):
+                message = chunk.message
+                self._plain(message)
+                chunk = ChatGenerationChunk(message=message, generation_info=chunk.generation_info)
+                if run_manager:
+                    run_manager.on_llm_new_token(message.content, chunk=chunk)
+                yield chunk
+
+    return AnthropicChat
+
+
+KEPT = "anthropic_content"
 
 
 # ---- Bedrock: what the admin sets up, and checking it ---------------------------------------
@@ -636,9 +961,23 @@ def trust_policy(external_id):
 TEST_PROMPT = "Reply with the single word OK."
 
 
+TEST_PROMPT = "Reply with the single word OK."
+_KEYLIKE = re.compile(r"\b(sk|key)-[A-Za-z0-9_\-]{6,}")
+
+
+def describe_error(e, secrets=()):
+    """A provider's error as the admin is shown it: AWS's code and message, or
+    the client's own, with any key in it blanked out."""
+    text = _aws_error(e)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return _KEYLIKE.sub(lambda m: m.group(1) + "-***", text)
+
+
 def test_connection(spec):
-    """One tiny Converse call to the chat model and one embedding: what Test
-    connection on the Assistant screen shows. Raises ProviderError with AWS's reason."""
+    """One tiny call to the chat model and one embedding: what Test connection on
+    the Assistant screen shows. Raises ProviderError with the provider's reason."""
     from langchain_core.messages import HumanMessage
     on = Models(spec)
     try:
@@ -648,8 +987,191 @@ def test_connection(spec):
     except ProviderError:
         raise
     except Exception as e:
-        raise ProviderError(_aws_error(e)) from e
+        raise ProviderError(describe_error(e, on.secrets())) from e
     usage = getattr(reply, "usage_metadata", None) or {}
-    return {"chat_model": spec.chat_model, "reply": text_of(reply.content).strip()[:40],
+    return {"chat_model": on.answer_name, "reply": text_of(reply.content).strip()[:40],
             "tokens": (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0),
-            "embed_model": spec.embed_model, "dimensions": len(vector)}
+            "embed_model": on.embed_model, "dimensions": len(vector)}
+
+
+# ---- The providers ---------------------------------------------------------------------------
+def _openai_make_chat(on, model, openai=None, cache_key=None, **kwargs):
+    """ChatOpenAI as every call site made it before providers: the caller's class
+    (a test's stand-in), the model, the prompt cache's key; the workspace's own
+    API key only when it brings one."""
+    if cache_key is not None:
+        kwargs["model_kwargs"] = {"prompt_cache_key": cache_key}
+    key = on.api_key("openai")
+    if key:
+        kwargs["api_key"] = key
+    return (openai or _openai_chat())(model=model, **kwargs)
+
+
+def _openai_make_embeddings(on, model, dims, openai=None):
+    key = on.api_key("openai")
+    return (openai or _openai_embeddings())(model=model, **({"api_key": key} if key else {}))
+
+
+def _openai_defaults():
+    return {"chat_model": answer_model(), "fast_model": fast_model(),
+            "embed_model": OPENAI_EMBED_MODEL, "embed_dims": None}
+
+
+def _bedrock_make_chat(on, model, openai=None, cache_key=None, temperature=None,
+                       max_tokens=None, timeout=None, max_retries=None):
+    runtime = runtime_client(on.spec, timeout=timeout, retries=max_retries)
+    control = client(on.spec, "bedrock")      # only an application profile's lookup
+    return _cls("BedrockChat")(model=model, client=runtime, bedrock_client=control,
+                               region_name=on.spec.region, temperature=temperature,
+                               max_tokens=max_tokens, prompt_cache=prompt_cache_on(model))
+
+
+def _bedrock_make_embeddings(on, model, dims, openai=None):
+    return _cls("BedrockEmbed")(model_id=model, client=runtime_client(on.spec),
+                                region_name=on.spec.region, dimensions=dims, normalize=True)
+
+
+def _bedrock_defaults():
+    return {"chat_model": (os.getenv("BEDROCK_CHAT_MODEL") or "").strip() or BEDROCK_CHAT,
+            "fast_model": (os.getenv("BEDROCK_FAST_MODEL") or "").strip() or BEDROCK_FAST,
+            "embed_model": (os.getenv("BEDROCK_EMBED_MODEL") or "").strip() or BEDROCK_EMBED,
+            "embed_dims": _env_int("BEDROCK_EMBED_DIMENSIONS", BEDROCK_EMBED_DIMENSIONS)}
+
+
+register(Provider(
+    name="openai", label="OpenAI", make_chat=_openai_make_chat,
+    make_embeddings=_openai_make_embeddings, defaults=_openai_defaults, vision=True,
+    prompt_caching="automatic", tool_calls=True, api_key_env="OPENAI_API_KEY",
+    image_format="openai"))
+register(Provider(
+    name="bedrock", label="AWS Bedrock", make_chat=_bedrock_make_chat,
+    make_embeddings=_bedrock_make_embeddings, defaults=_bedrock_defaults, vision=True,
+    prompt_caching="marked", tool_calls=True, in_house=True))
+
+
+def _anthropic_make_chat(on, model, openai=None, cache_key=None, temperature=None,
+                         max_tokens=None, timeout=None, max_retries=None):
+    """Claude through Anthropic's API (langchain-anthropic): the workspace's own key,
+    else the server's ANTHROPIC_API_KEY; neither fails closed. temperature is not
+    sent: current Claude models refuse sampling settings other than their own.
+    A small max_tokens is raised to ANTHROPIC_MIN_TOKENS, since thinking counts
+    toward it and a one-word classifier's reply mustn't be cut off by it."""
+    key = on.api_key("anthropic") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        raise ProviderError("Anthropic is selected but no API key is set (ANTHROPIC_API_KEY, "
+                            "or the workspace's own on the Assistant screen).")
+    kwargs = {"model": model, "api_key": key, "prompt_cache": anthropic_prompt_cache_on(model)}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max(max_tokens, ANTHROPIC_MIN_TOKENS)
+    if timeout is not None:
+        kwargs["default_request_timeout"] = timeout
+    if max_retries is not None:
+        kwargs["max_retries"] = max_retries
+    effort = (os.getenv("ANTHROPIC_FAST_EFFORT") or "").strip().lower()
+    if effort and model == on.fast_name and model != on.answer_name:
+        kwargs["effort"] = effort
+    return _cls("AnthropicChat")(**kwargs)
+
+
+def _anthropic_defaults():
+    return {"chat_model": (os.getenv("ANTHROPIC_CHAT_MODEL") or "").strip() or ANTHROPIC_CHAT,
+            "fast_model": (os.getenv("ANTHROPIC_FAST_MODEL") or "").strip() or ANTHROPIC_FAST,
+            "embed_model": None, "embed_dims": None}
+
+
+def anthropic_prompt_cache_on(model):
+    """ANTHROPIC_PROMPT_CACHE: on (the default) marks the stable prompt for every
+    Claude model; off for none. A prompt shorter than the model's minimum (512 to
+    4,096 tokens) just isn't cached."""
+    mode = (os.getenv("ANTHROPIC_PROMPT_CACHE") or "on").strip().lower()
+    return mode not in ("0", "off", "false", "no")
+
+
+def _local_cache_dir():
+    """LOCAL_EMBED_CACHE, else models/fastembed next to the database (the data
+    directory, a persisted volume in Docker), never inside the code."""
+    import db
+    return ((os.getenv("LOCAL_EMBED_CACHE") or "").strip()
+            or os.path.join(os.path.dirname(os.path.abspath(db.DB_PATH)), "models", "fastembed"))
+
+
+def _local_defaults():
+    model = (os.getenv("LOCAL_EMBED_MODEL") or "").strip() or LOCAL_EMBED
+    return {"chat_model": None, "fast_model": None, "embed_model": model,
+            "embed_dims": local_dimensions(model)}
+
+
+def local_dimensions(model):
+    """How many numbers `model` makes (the index records it), or None if unknown."""
+    if model in LOCAL_EMBED_DIMENSIONS:
+        return LOCAL_EMBED_DIMENSIONS[model]
+    try:
+        from fastembed import TextEmbedding
+        return next((m["dim"] for m in TextEmbedding.list_supported_models()
+                     if m["model"] == model), None)
+    except Exception:
+        return None
+
+
+def _fastembed():
+    """fastembed's TextEmbedding (tests replace it: no download in CI)."""
+    from fastembed import TextEmbedding
+    return TextEmbedding
+
+
+_local_models = {}
+_local_lock = threading.Lock()
+
+
+def _local_model(model, cache_dir, threads):
+    """One loaded model per (model, folder, threads), shared: loading it (and the
+    first download) happens once, under a lock."""
+    key = (model, cache_dir, threads)
+    with _local_lock:
+        found = _local_models.get(key)
+        if found is None:
+            os.makedirs(cache_dir, exist_ok=True)
+            try:
+                found = _fastembed()(model_name=model, cache_dir=cache_dir, threads=threads)
+            except Exception as e:
+                raise ProviderError(f"The local embedding model {model} couldn't be loaded "
+                                    f"({type(e).__name__}: {e}).") from e
+            _local_models[key] = found
+    return found
+
+
+class LocalEmbeddings:
+    """LangChain's Embeddings interface over fastembed, loading the model on the
+    first text (opening an index to read it needs none), BATCH texts at a time."""
+
+    def __init__(self, model, cache_dir, threads, batch_size):
+        self.model, self.cache_dir = model, cache_dir
+        self.threads, self.batch_size = threads, batch_size
+
+    def _loaded(self):
+        return _local_model(self.model, self.cache_dir, self.threads)
+
+    def embed_documents(self, texts):
+        texts = list(texts)
+        if not texts:
+            return []
+        return [v.tolist() for v in self._loaded().embed(texts, batch_size=self.batch_size)]
+
+    def embed_query(self, text):
+        return next(iter(self._loaded().query_embed(text))).tolist()
+
+
+def _local_make_embeddings(on, model, dims, openai=None):
+    return LocalEmbeddings(model, _local_cache_dir(),
+                           max(1, _env_int("LOCAL_EMBED_THREADS", LOCAL_EMBED_THREADS)),
+                           max(1, _env_int("LOCAL_EMBED_BATCH", LOCAL_EMBED_BATCH)))
+
+
+register(Provider(
+    name="local", label="Local (on this server)", make_embeddings=_local_make_embeddings,
+    defaults=_local_defaults))
+register(Provider(
+    name="anthropic", label="Anthropic", make_chat=_anthropic_make_chat,
+    defaults=_anthropic_defaults, vision=True, prompt_caching="marked", tool_calls=True,
+    api_key_env="ANTHROPIC_API_KEY"))
+PROVIDERS = tuple(REGISTRY)

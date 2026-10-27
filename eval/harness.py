@@ -159,7 +159,12 @@ def fixture_index(offline=True, corpus=CORPUS):
     folder = tempfile.mkdtemp(prefix="kb-eval-index-")
     saved = [(m, name, getattr(m, name))
              for m in (ingest, rag) for name in ("DB_FOLDER", "OpenAIEmbeddings")]
+    embed_provider = os.environ.get("EMBED_PROVIDER")
     try:
+        if offline:
+            # Whatever the server's embeddings (local, Bedrock, ...): OpenAI's, which
+            # HashEmbeddings stands in for, so the gate never downloads or calls one.
+            os.environ["EMBED_PROVIDER"] = "openai"
         for module in (ingest, rag):
             module.DB_FOLDER = folder
             if offline:
@@ -168,6 +173,11 @@ def fixture_index(offline=True, corpus=CORPUS):
             ingest.main(docs_folder=corpus, collection=COLLECTION)
         yield folder
     finally:
+        if offline:
+            if embed_provider is None:
+                os.environ.pop("EMBED_PROVIDER", None)
+            else:
+                os.environ["EMBED_PROVIDER"] = embed_provider
         for module, name, value in saved:
             setattr(module, name, value)
         SharedSystemClient.clear_system_cache()             # let go of the folder
