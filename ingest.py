@@ -85,17 +85,22 @@ CHUNK_CONTEXT = _env_choice("RAG_CHUNK_CONTEXT", ("title", "headings"))
 CHUNK_SUMMARY = _env_choice("RAG_CHUNK_SUMMARY", ("off", "llm"))
 
 
-def fingerprint():
+def fingerprint(on=None):
     """Everything that decides what a chunk's text and vector are, hashed. An
     index built with other settings can't be updated chunk by chunk: it is
     rebuilt (a shadow rebuild into a new collection, kb/services/indexing.py,
-    started by the app when it sees an index with another FINGERPRINT)."""
+    started by the app when it sees an index with another FINGERPRINT).
+    on: a workspace's models (models.Models) when they aren't OpenAI's: its
+    embedding model and FAST model are part of it, so switching a workspace's
+    provider or embedding model rebuilds its index. None: OpenAI's (FINGERPRINT,
+    the same value as before there were providers)."""
+    bedrock = on is not None and on.bedrock
     return hashlib.sha256(json.dumps({
-        "model": EMBED_MODEL, "chunker": chunking.VERSION,
+        "model": on.embed_name if bedrock else EMBED_MODEL, "chunker": chunking.VERSION,
         "chunk_tokens": chunking.CHUNK_TOKENS, "min_tokens": chunking.MIN_TOKENS,
         "overlap_tokens": chunking.OVERLAP_TOKENS, "header": CHUNK_CONTEXT,
-        "summary": f"llm:{models.fast_model()}:{chunk_context.PROMPT_VERSION}"
-                   if CHUNK_SUMMARY == "llm" else "off",
+        "summary": f"llm:{on.fast_name if bedrock else models.fast_model()}:"
+                   f"{chunk_context.PROMPT_VERSION}" if CHUNK_SUMMARY == "llm" else "off",
         "ids": 1}, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -112,7 +117,9 @@ SAMPLE_FOLDER = "sample"
 
 
 def _embeddings():
-    return OpenAIEmbeddings(model=EMBED_MODEL)
+    """The embeddings of the workspace being indexed (models.scope), made when a
+    chunk is first embedded: opening a store to read or drop it needs none."""
+    return models.Lazy(lambda: models.current().embeddings(openai=OpenAIEmbeddings))
 
 
 # Held while a Chroma store is opened. Chroma keeps one client per folder per
@@ -333,7 +340,8 @@ def load_and_split(docs_folder, key, meta, namespace):
 
 def _embed_and_store(store, items, report):
     """3 & 4. EMBED + STORE — turn chunks into vectors and save them.
-    EMBED: OpenAI reads each chunk and returns a list of ~1536 numbers. Chunks
+    EMBED: the embedding model (OpenAI's, or the workspace's Bedrock one, models.py)
+           reads each chunk and returns a list of ~1,000 numbers. Chunks
            with similar MEANING get similar numbers. That's the magic that lets
            us search by meaning instead of by exact keywords.
     STORE: Chroma saves these vectors (and each chunk's tags) on disk.

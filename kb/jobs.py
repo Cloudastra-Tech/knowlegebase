@@ -65,6 +65,11 @@ class Retry(Exception):
     later (or give up after max_attempts). The message is kept as the job's error."""
 
 
+def _models_scope(ws):
+    import models
+    return models.scope_for(ws) if ws else contextlib.nullcontext()
+
+
 def handler(kind, max_attempts=3, merge=None):
     """Register how a kind of job runs. merge(queued payload, new payload): the
     payload of two such jobs folded into one (see enqueue); default: the queued one's."""
@@ -447,8 +452,10 @@ class Runner:
         with self._held_lock:
             self._held.add(job.id)
         try:
-            # A workspace's job runs as that tenant (row-level security on Postgres).
-            with logs.job_context(job), db.tenant_scope(job.workspace):
+            # A workspace's job runs as that tenant (row-level security on Postgres),
+            # and with its models (models.scope: its provider, never another).
+            with logs.job_context(job), db.tenant_scope(job.workspace), \
+                    _models_scope(job.workspace):
                 result = self.handlers[job.kind].fn(job)
         except Retry as e:
             log.warning("Job %d (%s, workspace %s) failed, attempt %d of %d: %s",

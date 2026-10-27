@@ -62,10 +62,10 @@ GAP_PROMPT = (
 
 
 def llm(prompt, max_tokens=400):
-    """One FAST_MODEL call -> its text (tests replace this)."""
-    from langchain_openai import ChatOpenAI
-    model = ChatOpenAI(model=models.fast_model(), temperature=0, timeout=TIMEOUT,
-                       max_retries=1, max_tokens=max_tokens)
+    """One FAST model call -> its text (tests replace this): the workspace's provider
+    (models.scope; the digest and draft jobs run in their workspace's)."""
+    model = models.current().fast(temperature=0, timeout=TIMEOUT, max_retries=1,
+                                  max_tokens=max_tokens)
     return str(model.invoke(prompt).content or "").strip()
 
 
@@ -108,9 +108,10 @@ def summarise_doc(ws, doc_key, title=None):
         return cached
     block = untrusted.spotlight(text[:DOC_CHARS], "company_documents",
                                 title=title or os.path.basename(doc_key))
-    summary = _clean(llm(DOC_PROMPT.format(document=block), max_tokens=160))
+    with models.scope_for(ws) as on:
+        summary = _clean(llm(DOC_PROMPT.format(document=block), max_tokens=160))
     if summary:
-        digests_store.save_summary(ws, doc_key, version, summary, models.fast_model())
+        digests_store.save_summary(ws, doc_key, version, summary, on.fast_name)
     return summary or None
 
 

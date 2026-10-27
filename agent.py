@@ -778,6 +778,10 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
     The returned run() can be called from several threads at once, each call
     as its own asker (run(principals=...))."""
     prefs = prefs or {}
+    # The workspace's models (models.py): the agent is built inside its scope
+    # (kb/services/agents.py), and every question runs inside it again, so the
+    # guards, HyDE and the rest use the same provider as the answer.
+    on = models.current()
     mask = pii.answer if pii is not None else redact_pii
     retriever, rag_llm = (load_chain(role, collection) if version is None
                           else load_chain(role, collection, version=version))
@@ -987,8 +991,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
     # The model is told about the tools; it decides when to call them. It writes
     # the answer, so it is the ANSWER model (models.py). Its prompt starts with
     # what never changes (the tools, SYSTEM) for OpenAI's prompt cache.
-    llm = ChatOpenAI(model=models.answer_model(), temperature=0, model_kwargs={
-        "prompt_cache_key": models.prompt_cache_key(collection, role)}).bind_tools(tools)
+    llm = on.answer(openai=ChatOpenAI, temperature=0,
+                    cache_key=models.prompt_cache_key(collection, role)).bind_tools(tools)
 
     SYSTEM = SystemMessage(content=(
         "You are the company's internal knowledge assistant. You solve multi-step "
@@ -1259,8 +1263,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                                   "result": step_result(m.name, m.content, found)})
         return messages
 
-    def run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
-            out=None, principals=None, context=None):
+    def _run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
+             out=None, principals=None, context=None):
         """Answer a question -> (answer, trace).
         The answer cites the passages it used as [S1], [S2], ... (checked, see
         cite()). with_sources=True -> (answer, trace, sources) with the sources
@@ -1429,6 +1433,15 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         if with_sources:
             return answer, trace, sources
         return answer + format_sources(sources), trace
+
+    # Each question runs with the workspace's models (models.scope), whichever
+    # thread asks it: the guards, HyDE and the rest use the same provider as the
+    # answer, never the server's when the workspace has its own.
+    def run(*args, **kwargs):
+        with models.scope(on):
+            return _run(*args, **kwargs)
+    run.__doc__ = _run.__doc__
+    run.provider = on.provider
 
     # The same search without the agent (kb/services/retrieval.py: the public API's
     # /search, the MCP server's search_knowledge), scoped to the role unless a

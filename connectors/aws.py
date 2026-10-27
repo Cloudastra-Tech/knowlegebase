@@ -11,7 +11,7 @@ Signature Version 4 request signing and STS AssumeRole.
     assume_role(...)    temporary credentials for a customer's role, with the
                         ExternalId its trust policy requires (connectors/s3.py)
 
-boto3 isn't a dependency of the app, and the connector needs only two calls
+boto3 came in later, for the Bedrock model provider (models.py); the connector needs only two calls
 (ListObjectsV2, GetObject) plus AssumeRole, so the signing is done here and
 checked against AWS's own worked examples (tests/test_connector_s3.py).
 

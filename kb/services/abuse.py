@@ -105,7 +105,7 @@ def rollup_usage(now=None, days_back=7):
         t[1] += cached or 0
         t[2] += t_in or 0
         t[3] += t_out or 0
-        t[4] += cost_of(model, t_in, t_out)
+        t[4] += cost_of(model, t_in, t_out) or 0.0      # an unknown price counts as none
     done = {}
     for (ws, day), (n, cached, t_in, t_out, cost) in totals.items():
         abuse_store.save_usage(ws, day, n, users.get((ws, day), 0), cached, t_in, t_out, cost)

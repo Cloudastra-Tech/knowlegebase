@@ -44,6 +44,7 @@ from rank_bm25 import BM25Okapi
 import access
 import attachments_store as store
 import chunking
+import models
 import docs_store
 import safety
 from connectors import extract
@@ -177,12 +178,16 @@ def _csv_text(data, name):
 def _describe_image(data, mime):
     """What the vision model reads in an image (transcription and description)."""
     from langchain_core.messages import HumanMessage
-    from langchain_openai import ChatOpenAI
-    url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-    reply = ChatOpenAI(model=vision_model(), temperature=0).invoke([HumanMessage(content=[
-        {"type": "text", "text": VISION_PROMPT},
-        {"type": "image_url", "image_url": {"url": url}}])])
-    return str(reply.content or "").strip()
+    on = models.current()          # the workspace attaching it (models.scope)
+    if on.bedrock:                 # Converse takes the image's bytes
+        image = {"type": "image", "source_type": "base64", "mime_type": mime,
+                 "data": base64.b64encode(data).decode()}
+    else:
+        url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+        image = {"type": "image_url", "image_url": {"url": url}}
+    reply = on.vision(vision_model(), temperature=0).invoke([HumanMessage(content=[
+        {"type": "text", "text": VISION_PROMPT}, image])])
+    return str(models.text_of(reply.content) or "").strip()
 
 
 def read(name, mime, data):
@@ -250,7 +255,8 @@ def attach(ws, user, name, mime, data, *, conversation_id=None, space_id=None):
         raise Refused(f"A chat can have up to {PER_CHAT} files attached.", 409)
     if space_id and store.count_for(ws, owner, space_id=space_id) >= PER_SPACE:
         raise Refused(f"Your space can hold up to {PER_SPACE} files.", 409)
-    got = read(name, mime, data)
+    with models.scope_for(ws):        # an image is read by the workspace's own models
+        got = read(name, mime, data)
     expires = time.time() + retention_days() * 86400 if conversation_id else None
     return store.add(ws, owner, os.path.basename(name).strip(), got["mime"], got["kind"],
                      len(data), got["chunks"], conversation_id=conversation_id,

@@ -132,6 +132,8 @@ export const queries = {
   // Its settings and glossary (admins), and the verified answers (HR and admins).
   assistantSettings: () =>
     queryOptions({ queryKey: ["assistant", "settings"], queryFn: assistant.settings }),
+  modelProvider: () =>
+    queryOptions({ queryKey: ["assistant", "models"], queryFn: assistant.modelProvider }),
   verifiedAnswers: () =>
     queryOptions({ queryKey: ["verified-answers"], queryFn: assistant.verifiedAnswers }),
   slackApp: () => queryOptions({ queryKey: ["slack-app"], queryFn: slack.get }),

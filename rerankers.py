@@ -15,6 +15,14 @@ RERANKER=        what it is                                  needs
   local          a small cross-encoder run here on the CPU    nothing to pay for;
                  (ms-marco-MiniLM-L-6, ONNX, about 23 MB,     the model is downloaded
                  through onnxruntime: no torch)               once (Hugging Face)
+  bedrock        AWS Bedrock's Rerank API, in the workspace's  BEDROCK_RERANK_MODEL
+                 own AWS account when it brings one (models.py) (cohere.rerank-v3-5:0;
+                 or the server's (AWS_REGION, its credentials)  amazon.rerank-v1:0
+                                                               isn't in us-east-1)
+
+A workspace whose models are on AWS Bedrock (models.py) only reranks with a
+reranker that keeps its text in-house: local or bedrock. Cohere's and Voyage's APIs
+are skipped there (models.Models.allows_reranker), the fused order is kept.
 
 The API ones SEND THE CANDIDATE CHUNKS' TEXT to that company, which then
 processes company documents: only turn one on with a data processing agreement
@@ -67,6 +75,7 @@ class Reranker:
     rerank_score in its metadata."""
 
     name = "reranker"
+    private = False           # True: the candidates never leave this server or AWS
 
     def scores(self, query, texts):
         raise NotImplementedError
@@ -138,6 +147,7 @@ class LocalCrossEncoder(Reranker):
     RERANK_MODEL_DIR (default: Hugging Face's cache)."""
 
     name = "local"
+    private = True
     REPO = "Xenova/ms-marco-MiniLM-L-6-v2"
     REVISION = "a09144355adeed5f58c8ed011d209bf8ee5a1fec"
     FILE = "onnx/model_quantized.onnx"
@@ -183,6 +193,37 @@ class LocalCrossEncoder(Reranker):
         return out
 
 
+class BedrockReranker(Reranker):
+    """Bedrock's Rerank API (bedrock-agent-runtime), with the credentials of the
+    workspace whose question it is (models.current()), or the server's."""
+    name = "bedrock"
+    private = True
+
+    def __init__(self, model=None):
+        self.model = model or os.getenv("BEDROCK_RERANK_MODEL") or "cohere.rerank-v3-5:0"
+
+    def scores(self, query, texts):
+        import models
+        on = models.current()
+        spec = on.spec if on.bedrock else models.Spec(provider="bedrock",
+                                                      region=models.server_region())
+        client = models.client(spec, "bedrock-agent-runtime", timeout=TIMEOUT, retries=0)
+        arn = (self.model if self.model.startswith("arn:")
+               else f"arn:aws:bedrock:{spec.region}::foundation-model/{self.model}")
+        reply = client.rerank(
+            queries=[{"type": "TEXT", "textQuery": {"text": query}}],
+            sources=[{"type": "INLINE", "inlineDocumentSource": {
+                "type": "TEXT", "textDocument": {"text": t[:MAX_DOC_CHARS]}}} for t in texts],
+            rerankingConfiguration={"type": "BEDROCK_RERANKING_MODEL",
+                                    "bedrockRerankingConfiguration": {
+                                        "numberOfResults": len(texts),
+                                        "modelConfiguration": {"modelArn": arn}}})
+        out = [0.0] * len(texts)
+        for item in reply.get("results", []):
+            out[item["index"]] = float(item["relevanceScore"])
+        return out
+
+
 def from_env():
     """The reranker RERANKER asks for, or None (also when its key is missing)."""
     choice = (os.getenv("RERANKER") or "none").strip().lower()
@@ -198,5 +239,7 @@ def from_env():
             return VoyageReranker(key)
     elif choice == "local":
         return LocalCrossEncoder()
+    elif choice == "bedrock":
+        return BedrockReranker()
     log.warning("RERANKER=%s is unknown or its API key isn't set; reranking is off", choice)
     return None

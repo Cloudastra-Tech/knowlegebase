@@ -67,13 +67,13 @@ def _save(key, model, context):
 
 
 def _llm():
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(model=models.fast_model(), temperature=0, max_tokens=80)
+    """The FAST model of the workspace being indexed (models.scope)."""
+    return models.current().fast(temperature=0, max_tokens=80)
 
 
 def context_for(document, chunk, llm=None):
     """One sentence placing `chunk` in `document` ('' if the call failed)."""
-    model = models.fast_model()
+    model = models.current().fast_name
     document = document[:DOC_CHARS]
     key = _key(model, document, chunk)
     try:

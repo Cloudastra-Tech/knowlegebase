@@ -10,6 +10,7 @@ import os
 
 import assistant_store
 import members_store
+import models
 import workspaces
 from agent import build_agent
 from connectors import outline as outline_connector
@@ -54,12 +55,18 @@ def _build(ws, role, index):
     from kb.services import verified
     settings = assistant.effective(ws)
     collection, version = index
-    return build_agent(role, collection, outline_on(ws, role), prefs=assistant.prefs(settings),
-                       glossary=assistant.glossary(ws) or None,
-                       rules=assistant.rules(ws) or None,
-                       verified=verified.Matcher(ws, role, settings["adapt_verified"]),
-                       version=f"{version}" if version else None,
-                       pii=assistant.pii_policy(ws, settings))
+    # Built with the workspace's models (models.py), and the embeddings its index
+    # was built with: the agent keeps them, a provider change bumps the settings
+    # version and builds it again.
+    on = models.for_workspace(ws, index_embeddings=indexing.embeddings_of(ws))
+    with models.scope(on):
+        return build_agent(role, collection, outline_on(ws, role),
+                           prefs=assistant.prefs(settings),
+                           glossary=assistant.glossary(ws) or None,
+                           rules=assistant.rules(ws) or None,
+                           verified=verified.Matcher(ws, role, settings["adapt_verified"]),
+                           version=f"{version}" if version else None,
+                           pii=assistant.pii_policy(ws, settings))
 
 
 def get_agent(ws, role):

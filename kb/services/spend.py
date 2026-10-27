@@ -60,7 +60,9 @@ def cost(ws, day):
                             (ws, day)).fetchall()
     finally:
         conn.close()
-    return round(sum(cost_of(r[0], r[1], r[2]) for r in rows), 6)
+    # A model whose price isn't known (a Bedrock model not in insights.BEDROCK_PRICES)
+    # counts as nothing: set a cap's model prices before relying on it there.
+    return round(sum(cost_of(r[0], r[1], r[2]) or 0.0 for r in rows), 6)
 
 
 def until_midnight(now):

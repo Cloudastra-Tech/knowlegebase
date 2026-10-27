@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 import assistant_store
 import conversations_store
 import members_store
+import models
 from kb.deps import current_role, current_user, current_viewer, ws_of
 from kb.rate_limit import user_limit
 from kb.services import answering, attachments, conversations, indexing, passages, suggestions
@@ -140,7 +141,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
     titling = None
     if turn and turn["first_question"]:
         def make_title():
-            title["text"] = suggestions.chat_title(question)
+            with models.scope_for(ws):     # the workspace's FAST model (models.py)
+                title["text"] = suggestions.chat_title(question)
         titling = threading.Thread(target=contextvars.copy_context().run, args=(make_title,),
                                    daemon=True)
         titling.start()
@@ -206,7 +208,9 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         try:
             done = answering.ask(ws, user, viewer, question, surface="web", turn=turn,
                                  on_event=on_event, cancel=stop, out=out, cache=not again)
-            followups = suggestions.followups(question, done.answer, done.state, done.sources)
+            with models.scope_for(ws):
+                followups = suggestions.followups(question, done.answer, done.state,
+                                                  done.sources)
             save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
                  max_access=done.max_access, acl=done.acl, standalone_question=done.standalone,
                  followups=followups, verified=done.verified)

@@ -37,6 +37,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { ModelProviderSettings } from "@/components/model-provider-settings"
 import { PiiSettings } from "@/components/pii-settings"
 import {
   assistant,
@@ -508,6 +509,12 @@ export function AssistantView() {
           <>
             <SettingsForm settings={settings} />
             <Glossary settings={settings} />
+            <Section
+              title="Models"
+              description="Which AI provider answers, searches and checks questions in this workspace. Bring your own AWS to keep documents and questions in your own AWS account."
+            >
+              <ModelProviderSettings />
+            </Section>
           </>
         )}
       </div>

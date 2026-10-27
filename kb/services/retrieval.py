@@ -32,7 +32,14 @@ class Refused(Exception):
 
 def search(ws, who, query, k=5):
     """[{doc_id, doc_key, chunk_id, title, provider, url, access, page,
-    heading_path, modified, text, rank}] for `query`, at most k (1..MAX_K)."""
+    heading_path, modified, text, rank}] for `query`, at most k (1..MAX_K). The
+    guard, the search and any reranker use the workspace's models (models.scope)."""
+    import models
+    with models.scope_for(ws):
+        return _search(ws, who, query, k)
+
+
+def _search(ws, who, query, k):
     viewer = access.of(who)
     ok, reason = safety.check_question(query, safety.may_see_restricted(viewer))
     if not ok:

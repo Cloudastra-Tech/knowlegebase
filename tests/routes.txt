@@ -38,6 +38,7 @@ DELETE /scim/v2/Users/{user_id} delete_user scim_token,audited
 GET    /api/access/principals principals require_hr
 GET    /api/admin/api api_settings require_admin
 GET    /api/admin/assistant get_settings require_admin
+GET    /api/admin/assistant/models get_provider require_admin
 GET    /api/admin/audit list_audit Filters,require_admin
 GET    /api/admin/audit/export export_audit Filters,require_admin,audited
 GET    /api/admin/audit/verify verify_audit require_admin
@@ -155,6 +156,7 @@ PATCH  /api/spaces/{space_id} update_space current_user,audited
 PATCH  /scim/v2/Groups/{group_id} patch_group scim_token,audited
 PATCH  /scim/v2/Users/{user_id} patch_user scim_token,audited
 POST   /api/admin/api/service-keys create_service_key require_admin,audited
+POST   /api/admin/assistant/models/test test_provider require_admin,audited
 POST   /api/admin/doc-rules add_rule require_hr,audited
 POST   /api/admin/eval-cases add_eval_case require_admin,current_viewer,audited
 POST   /api/admin/glossary add_term require_admin,audited
@@ -251,6 +253,7 @@ POST   /scim/v2/Groups create_group scim_token,audited
 POST   /scim/v2/Users create_user scim_token,audited
 PUT    /api/admin/api set_api_settings require_admin,audited
 PUT    /api/admin/assistant save_settings require_admin,audited
+PUT    /api/admin/assistant/models save_provider require_admin,audited
 PUT    /api/admin/chat-settings set_chat_settings require_admin,audited
 PUT    /api/admin/email-in set_email_in require_admin,audited
 PUT    /api/admin/groups/{group_id}/members set_group_members require_admin,audited

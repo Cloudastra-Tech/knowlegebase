@@ -30,6 +30,7 @@ import time
 import db
 import ingest
 import integrations_store
+import models
 import sync_store
 import workspaces
 from kb import jobs
@@ -62,6 +63,23 @@ def _row(ws):
         conn.close()
 
 
+def fingerprint(ws, on=None):
+    """The FINGERPRINT the workspace's index must have: ingest.FINGERPRINT on OpenAI,
+    and on Bedrock one with its embedding and FAST models in it, so switching them
+    rebuilds the index (a shadow rebuild: questions keep the old one meanwhile)."""
+    on = on or models.for_workspace(ws)
+    return ingest.fingerprint(on) if on.bedrock else ingest.FINGERPRINT
+
+
+def embeddings_of(ws):
+    """What the workspace's current index was built with (models.Models.embed_name),
+    or None when it has none yet. Indexes from before providers are OpenAI's."""
+    row = _row(ws)
+    if not row:
+        return None
+    return row.get("embeddings") or models.OPENAI_EMBED_MODEL
+
+
 def current(ws):
     """(collection, version): where the workspace's questions are answered from,
     and a number that changes whenever what's in it does."""
@@ -69,18 +87,23 @@ def current(ws):
     return (row["collection"], row["version"]) if row else (workspaces.collection(ws), 0)
 
 
-def _point(ws, collection, generation):
-    """Answer the workspace's questions from `collection` from now on."""
+def _point(ws, collection, generation, on=None):
+    """Answer the workspace's questions from `collection` from now on (built with
+    `on`, the workspace's models)."""
+    on = on or models.for_workspace(ws)
     conn = db.connect()
     try:
         with conn:
             conn.execute("""INSERT INTO search_indexes
-                    (workspace, collection, fingerprint, generation, version, updated_at)
-                    VALUES (?, ?, ?, ?, 1, ?)
+                    (workspace, collection, fingerprint, generation, version, updated_at,
+                     embeddings)
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(workspace) DO UPDATE SET collection = excluded.collection,
                     fingerprint = excluded.fingerprint, generation = excluded.generation,
-                    version = version + 1, updated_at = excluded.updated_at""",
-                         (ws, collection, ingest.FINGERPRINT, generation, time.time()))
+                    version = version + 1, updated_at = excluded.updated_at,
+                    embeddings = excluded.embeddings""",
+                         (ws, collection, fingerprint(ws, on), generation, time.time(),
+                          on.embed_name))
     finally:
         conn.close()
 
@@ -134,7 +157,13 @@ def schedule_stale():
         rows = conn.execute("SELECT workspace, fingerprint FROM search_indexes").fetchall()
     finally:
         conn.close()
-    stale = [r["workspace"] for r in rows if r["fingerprint"] != ingest.FINGERPRINT]
+    stale = []
+    for r in rows:
+        try:
+            if r["fingerprint"] != fingerprint(r["workspace"]):
+                stale.append(r["workspace"])
+        except Exception:         # a workspace whose provider can't be read: next time
+            log.exception("Index: couldn't check workspace %s's index settings", r["workspace"])
     for ws in stale:
         schedule_index(ws)
     if stale:
@@ -176,13 +205,21 @@ def _tell_webhooks(ws, docs, result):
 
 def index(ws, full=False, docs=None, progress=None):
     """Bring the workspace's index up to date: incrementally, or by a full
-    rebuild (see the top of this file). Returns the run's summary."""
+    rebuild (see the top of this file), with the workspace's own models
+    (models.scope: its chunks are embedded by its provider). Returns the run's
+    summary."""
+    on = models.for_workspace(ws)
+    with models.scope(on):
+        return _index(ws, on, full, docs, progress)
+
+
+def _index(ws, on, full, docs, progress):
     row = _row(ws)
     access = integrations_store.chunk_access_levels(ws)
     info = sync_store.doc_info(ws)        # synced files' titles and links
     acls = permissions.doc_acls(ws)       # who may see each document that has its own
-    if full or not row or row["fingerprint"] != ingest.FINGERPRINT:
-        result = _rebuild(ws, row, access, progress, info, acls)
+    if full or not row or row["fingerprint"] != fingerprint(ws, on):
+        result = _rebuild(ws, row, access, progress, info, acls, on)
         pii_scan.scan(ws, result["collection"])  # personal data, for the Knowledge screen
         return result
     result = ingest.update(progress, docs_folder=workspaces.docs_root(ws),
@@ -195,7 +232,7 @@ def index(ws, full=False, docs=None, progress=None):
     return {**result, "mode": "incremental"}
 
 
-def _rebuild(ws, row, access, progress, info, acls=None):
+def _rebuild(ws, row, access, progress, info, acls=None, on=None):
     generation = (row["generation"] if row else 0) + 1
     new = f"{workspaces.collection(ws)}__g{generation}"
     old = row["collection"] if row else workspaces.collection(ws)
@@ -212,7 +249,7 @@ def _rebuild(ws, row, access, progress, info, acls=None):
         except Exception:
             log.exception("Index: couldn't drop the unfinished collection %s", new)
         raise
-    _point(ws, new, generation)
+    _point(ws, new, generation, on)
     if old != new:
         jobs.enqueue("drop_collection", ws, {"collection": old}, lane=lane(ws),
                      delay=DROP_AFTER)
@@ -228,7 +265,7 @@ def rebuild_now(ws, progress=None):
 def run_retag(job):
     ws, provider = job.workspace, job.payload["provider"]
     row = _row(ws)
-    if not row or row["fingerprint"] != ingest.FINGERPRINT:
+    if not row or row["fingerprint"] != fingerprint(ws):
         return run_index(job)         # no index to re-tag: build one (with the new level)
     # The policy as it is NOW: two quick changes need one run, and the last one
     # wins. A source-policy connection's files get their own ACLs, worked out

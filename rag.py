@@ -216,13 +216,19 @@ def load_chain(role="public", collection=None, version=None):
     is given per search (invoke(principals=...)); without one, it is `role`'s
     own principals (public: everyone; hr: also the hr group).
     """
-    # Re-open the vector database we built in ingest.py.
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    # Re-open the vector database we built in ingest.py, with the embeddings it
+    # was built with (the workspace's provider, models.scope). None: it was built
+    # by a provider the workspace has since left, and is being rebuilt: until then
+    # the search is by keywords only, never by sending the question to that one.
+    on = models.current()
+    embeddings = on.query_embeddings(openai=OpenAIEmbeddings)
     with CHROMA_LOCK:
-        vectorstore = vector_store.store(collection or "langchain", embeddings, DB_FOLDER)
+        vectorstore = vector_store.store(collection or "langchain",
+                                         embeddings or models.NoEmbeddings(), DB_FOLDER)
 
-    # With a reranker, both searches bring a larger pool for it to choose from.
-    reranker = RERANKER
+    # With a reranker, both searches bring a larger pool for it to choose from. A
+    # Bedrock workspace's candidates only go to one that keeps them in-house.
+    reranker = RERANKER if on.allows_reranker(RERANKER) else None
     pool = rerankers.CANDIDATES if reranker else TOP_K
     viewer = access.for_role(role)
 
@@ -235,7 +241,7 @@ def load_chain(role="public", collection=None, version=None):
     # The 'filter' makes Chroma only search chunks the asker may see.
     dense_retriever = vectorstore.as_retriever(
         search_kwargs={"k": pool, "filter": access.chroma_filter(viewer)}
-    )
+    ) if embeddings is not None else _NoHits()
     bm25_retriever = KeywordIndex(bm25, acls, viewer, pool) if bm25 else _NoHits()
 
     # ---- HYBRID: fuse both searches with Reciprocal Rank Fusion (RRF) ----
@@ -248,7 +254,7 @@ def load_chain(role="public", collection=None, version=None):
 
     # The FAST model (models.py): HyDE, multi-query, rewriting a follow-up and
     # the output guard's rewrite. The agent's own model writes the answer.
-    llm = ChatOpenAI(model=models.fast_model(), temperature=0)
+    llm = on.fast(openai=ChatOpenAI, temperature=0)
 
     return retriever, llm
 
