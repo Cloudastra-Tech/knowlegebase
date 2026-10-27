@@ -354,6 +354,11 @@ def test_insights_and_the_test_set_follow_the_readers_groups(org, env):  # noqa:
         "label": "Acquisition targets", "size": insights.GAP_MIN_SIZE, "not_found": 0,
         "general_knowledge": 0, "max_access": "restricted", "acl": row["acl"],
         "log_ids": [row["id"]]}])
+    # An unanswered question (the Not found tab) whose search read Finance's file.
+    unanswered = question_log_store.add(
+        org.ws, f"alice@{org.domain}", "web", "not_found", text_mode="full",
+        question="Who is the acquisition lawyer?", max_access="restricted",
+        acl=[[access.group(org.group["id"])]])
 
     def seen(name):
         h = org.login(name)
@@ -361,13 +366,18 @@ def test_insights_and_the_test_set_follow_the_readers_groups(org, env):  # noqa:
         cases = env.client.get("/api/admin/eval-cases", headers=h).json()["cases"]
         exported = env.client.get("/api/admin/insights/export", params={"table": "sources"},
                                   headers=h).text
+        missing = env.client.get("/api/admin/insights/not-found", headers=h).json()
+        resolve = env.client.post(f"/api/admin/insights/not-found/{unanswered}/resolve",
+                                  headers=h).status_code
         return ({s["doc_key"] for s in report["top_sources"]},
                 [(g["label"], g["samples"]) for g in report["gaps"]],
-                [c["message_id"] for c in cases], "finance.txt" in exported)
+                [c["message_id"] for c in cases], "finance.txt" in exported,
+                ([q["question"] for q in missing["questions"]], missing["hidden"], resolve))
 
-    sources, gaps, cases, exported = seen("hr")             # HR, in neither group
+    sources, gaps, cases, exported, missing = seen("hr")    # HR, in neither group
     assert org.keys["finance"] not in sources and not exported
     assert gaps == [(None, [])] and mid not in cases
+    assert missing == ([], 1, 404)
 
     # The answer read Finance's file and the eng group's (a small corpus): HR in
     # both now (eng is an identity provider's group: from their sign-in).
@@ -379,8 +389,9 @@ def test_insights_and_the_test_set_follow_the_readers_groups(org, env):  # noqa:
         conn.execute("UPDATE members SET groups = ?, group_source = 'oidc-test' "
                      "WHERE username = ?", (json.dumps([f"eng@{org.domain}"]), f"hr@{org.domain}"))
     conn.close()
-    sources, gaps, cases, exported = seen("hr")
+    sources, gaps, cases, exported, missing = seen("hr")
     assert org.keys["finance"] in sources and exported and mid in cases
+    assert missing == (["Who is the acquisition lawyer?"], 0, 200)
     assert gaps == [("Acquisition targets", ["What is the Q3 acquisition target of Finance?"])]
 
 
