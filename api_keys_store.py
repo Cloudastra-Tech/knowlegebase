@@ -15,6 +15,10 @@ KINDS
              acts as a PUBLIC user only, never HR: such a key ends up in places
              anyone can read. It stops working once the admin who made it isn't one.
 
+CLIENT   what a key was made for, when not by hand: "extension", a personal key with
+         the ask scope that the browser extension got when its person connected it
+         (kb/routers/extension.py). Its questions are logged with surface "extension".
+
 SCOPES   what a key may do: ask, search, docs:read, docs:write, audit:read.
          docs:write needs an HR / Admin role, audit:read an admin; checked when
          the key is made and again on every call. A service key gets ask, search
@@ -43,6 +47,7 @@ SCOPES = ("ask", "search", "docs:read", "docs:write", "audit:read")
 SERVICE_SCOPES = ("ask", "search", "docs:read")
 SCOPE_ROLES = {"docs:write": STAFF_ROLES, "audit:read": ("admin",)}   # the role a scope needs
 KINDS = ("personal", "service")
+CLIENTS = ("extension",)              # api_keys.client (migration 0013)
 EXPIRY_DAYS = (7, 30, 90, 365)
 DEFAULT_EXPIRY_DAYS = 90
 MAX_PERSONAL = 10                  # active keys per person
@@ -87,7 +92,7 @@ def _key(row):
         return None
     out = {k: row[k] for k in ("id", "workspace", "name", "kind", "prefix", "created_by",
                                "created_at", "last_used_at", "expires_at", "revoked_at",
-                               "revoked_by")}
+                               "revoked_by", "client")}
     out["scopes"] = json.loads(row["scopes"] or "[]")
     out["status"] = status(row)
     out["hint"] = f"{PREFIX}{row['prefix']}_…"
@@ -102,14 +107,18 @@ def scopes_for(role, kind="personal"):
 
 
 def create(workspace, created_by, name, scopes, role, kind="personal",
-           days=DEFAULT_EXPIRY_DAYS):
+           days=DEFAULT_EXPIRY_DAYS, client=None):
     """A new key -> (its row, the key itself): the key is never stored, so this is
     the only time it can be shown. `role`: the maker's role now (a service key
-    needs an admin). Raises Refused with what's wrong."""
+    needs an admin). client: None, or one of CLIENTS: what the key was made for
+    (the browser extension's questions are logged as surface "extension").
+    Raises Refused with what's wrong."""
     name = " ".join((name or "").split())[:NAME_CHARS]
     scopes = list(dict.fromkeys(scopes or []))
     if kind not in KINDS:
         raise Refused("A key is personal or a service key.")
+    if client is not None and (client not in CLIENTS or kind != "personal"):
+        raise Refused("Unknown client.")
     if kind == "service" and role != "admin":
         raise Refused("Only admins can make service keys.")
     if not name:
@@ -151,9 +160,10 @@ def create(workspace, created_by, name, scopes, role, kind="personal",
             try:
                 cur = conn.execute(
                     "INSERT INTO api_keys (workspace, name, kind, prefix, hash, scopes, "
-                    "created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "created_by, created_at, expires_at, client) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (workspace, name, kind, prefix, _hash(key), json.dumps(scopes), created_by,
-                     now, now + days * 86400))
+                     now, now + days * 86400, client))
                 break
             except sqlite3.IntegrityError:
                 continue

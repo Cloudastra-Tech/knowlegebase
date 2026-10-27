@@ -8,6 +8,7 @@ import {
   ApiKeysScreen,
   AssistantScreen,
   DocsScreen,
+  ExtensionConnectScreen,
   HrOnly,
   Home,
   InsightsScreen,
@@ -32,6 +33,7 @@ import {
 //   /chat/:id          one of their saved conversations
 //   /s/:token          a chat or answer shared by someone in their workspace
 //   /passages/:chunkId one cited passage (where a Slack answer's source links)
+//   /extension/connect ?redirect=: the browser extension signing in (chrome.identity)
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
 //   /admin/sign-in, /admin/members, /admin/activity, /admin/api   admins (the Access
@@ -72,6 +74,7 @@ export const routes: RouteObject[] = [
               { path: "passages/:chunkId", Component: PassageScreen }, // a cited passage
               { path: "knowledge", Component: KnowledgeScreen },
               { path: "api-keys", Component: ApiKeysScreen }, // everyone's own keys
+              { path: "extension/connect", Component: ExtensionConnectScreen },
               {
                 Component: HrOnly,
                 children: [

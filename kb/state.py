@@ -34,6 +34,14 @@ slack_users = {}          # (team id, Slack user) -> (expires, {email, team_id, 
 slack_dms = {}            # (team id, Slack user) -> (expires, the bot's DM channel with them)
 slack_lock = threading.Lock()
 
+# ---- Teams (kb/services/teams.py) ----------------------------------------------------
+# Only saves calls to Microsoft: the member and their role are looked up on every
+# question. Keys are refetched daily, or when a token names one not seen yet.
+teams_keys = {}           # "keys" -> (fetched at, {kid: JWK with its endorsements})
+teams_tokens = {}         # (app id, tenant) -> (expires, the bot's token to call Teams)
+teams_people = {}         # (tenant, AAD object id) -> (expires, {email, upn})
+teams_lock = threading.Lock()
+
 # ---- Sign-in (kb/services/sign_in.py, kb/routers/saml.py) ---------------------------
 sso_tests = {}            # "Test sign-in" ticket -> {"workspace", "cid", "expires", "result"}
 sso_tests_lock = threading.Lock()

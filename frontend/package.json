@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:extension": "tsc -p ../extension/tsconfig.json && vite build --config vite.extension.config.ts",
+    "test:extension": "vitest run --config vite.extension.config.ts",
     "lint": "oxlint",
     "test": "vitest run",
     "e2e": "playwright test",

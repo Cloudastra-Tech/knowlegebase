@@ -12,6 +12,16 @@ import "./index.css"
 
 const router = createBrowserRouter(routes)
 
+// Installable as an app (platform.md PL-26): public/sw.js keeps the app shell only,
+// never API responses. Not in development, where Vite serves changing files.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Not installable then (e.g. served over plain HTTP); the site works the same.
+    })
+  })
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

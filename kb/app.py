@@ -65,6 +65,8 @@ def create_app():
                        https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
     app.add_middleware(middleware.BodyLimit)
     app.add_middleware(middleware.SecurityHeaders, docs_paths=(app.docs_url, app.redoc_url))
+    # /api/v1 from the browser extension's origins only (EXTENSION_ORIGINS); none by default.
+    app.add_middleware(middleware.ExtensionCors)
     # Added last, so outermost: every request gets an id and a log line, even a refused one.
     app.add_middleware(logs.RequestLog)
     for r in ROUTERS:
