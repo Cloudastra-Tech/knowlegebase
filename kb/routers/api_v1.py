@@ -37,6 +37,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+import access as acl_check        # access.py (read_document has an `access` of its own)
 import audit_store
 import conversations_store
 import docs_store
@@ -47,7 +48,7 @@ from kb.rate_limit import user_limit
 from kb.routers import docs as docs_router
 from kb.routers import knowledge as knowledge_router
 from kb.routers.audit import Filters
-from kb.services import answering, conversations, retrieval
+from kb.services import answering, conversations, permissions, retrieval
 
 router = APIRouter(prefix="/api/v1")
 VERSION = "1.0.0"
@@ -197,7 +198,7 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
         if cid == "new":
             cid = conversations_store.create(p.workspace, p.username, p.role)["id"]
         turn = await run_in_threadpool(conversations.start_turn, p.workspace, p.username,
-                                       p.role, cid, question)
+                                       p.viewer, cid, question)
     ids = ({"conversation_id": turn["conversation"]["id"], "message_id": turn["message_id"]}
            if turn else {"conversation_id": None, "message_id": None})
     started = time.monotonic()
@@ -213,6 +214,7 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
                 sources=done.sources if done else (),
                 steps=[{"tool": t["tool"]} for t in done.trace] if done else (),
                 max_access=done.max_access if done else "restricted",
+                acl=done.acl if done else None,
                 standalone_question=done.standalone if done else None,
                 latency_ms=int((time.monotonic() - started) * 1000))
         p.record(audit, "question", ids["message_id"],
@@ -221,7 +223,7 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
                   **({"conversation": ids["conversation_id"]} if turn else {})})
 
     def run(on_event=None, cancel=None, out=None):
-        return answering.ask(p.workspace, p.user, p.role, question, surface="api", turn=turn,
+        return answering.ask(p.workspace, p.user, p.viewer, question, surface="api", turn=turn,
                              on_event=on_event, cancel=cancel, out=out)
 
     if body.stream:
@@ -290,7 +292,7 @@ def search(body: SearchIn, p=api_key("search"), audit=audited("api.search")):
     """The passages a query finds, best first: only ones the key's role may see,
     and no answer written (no LLM cost)."""
     try:
-        results = retrieval.search(p.workspace, p.role, body.query.strip(), body.k)
+        results = retrieval.search(p.workspace, p.viewer, body.query.strip(), body.k)
     except retrieval.Refused as e:
         raise HTTPException(400, str(e))
     p.record(audit, "search", None, {"chars": len(body.query), "k": body.k,
@@ -302,7 +304,7 @@ def search(body: SearchIn, p=api_key("search"), audit=audited("api.search")):
 def sources(p=api_key("search"), audit=audited("api.sources.list")):
     """Everything the assistant can search that the key's role may see: uploaded
     files and files synced from connected tools."""
-    items = knowledge_router.knowledge(user=p.user, role=p.role)["items"]
+    items = knowledge_router.listing(p.user, p.role, p.viewer)["items"]
     p.record(audit, "sources", None, {"count": len(items)})
     return {"sources": items}
 
@@ -310,13 +312,16 @@ def sources(p=api_key("search"), audit=audited("api.sources.list")):
 # ---- Documents (uploads) -------------------------------------------------------------
 @router.get("/documents", response_model=DocumentsOut, tags=["Documents"])
 def list_documents(p=api_key("docs:read"), audit=audited("api.documents.list")):
-    """The workspace's uploaded documents the key's role may see (restricted ones
-    for HR / Admin only). Files synced by connectors are under /sources."""
+    """The workspace's uploaded documents the key's person may see (by each one's
+    ACL: restricted ones for HR / Admin only, unless shared otherwise). Files
+    synced by connectors are under /sources."""
     root = workspaces.docs_root(p.workspace)
+    viewer = p.viewer
     found = [{"access": d["access"], "name": d["name"], "size": d["size"],
               "modified": os.path.getmtime(d["path"])}
              for d in docs_store.list_docs(root)
-             if d["access"] == "public" or p.role == "hr"]
+             if acl_check.can_see(viewer, permissions.upload_acl(
+                 p.workspace, f"{d['access']}/{d['name']}"))]
     p.record(audit, "documents", None, {"count": len(found)})
     return {"documents": found}
 
@@ -327,10 +332,10 @@ def list_documents(p=api_key("docs:read"), audit=audited("api.documents.list")):
 def read_document(access: Literal["public", "restricted"], name: str = Path(pattern=NAME),
                   p=api_key("docs:read"), audit=audited("api.document.read")):
     """One uploaded document: a .txt as {access, name, content}, any other file as
-    it is. A restricted one is only there for HR / Admin."""
-    if access == "restricted" and p.role != "hr":
+    it is. Only there for who its ACL names (a restricted one: HR / Admin)."""
+    if not acl_check.can_see(p.viewer, permissions.upload_acl(p.workspace, f"{access}/{name}")):
         raise HTTPException(404, "Document not found.")
-    found = docs_router.read_doc(access, name, user=p.user)
+    found = docs_router.read_doc(access, name, user=p.user, viewer=p.viewer)
     p.record(audit, "doc", f"{access}/{name}")
     return found
 
@@ -348,7 +353,7 @@ def upload_documents(files: list[UploadFile] = File(...), access: str = Form("pu
                      p=api_key("docs:write"), audit=audited("doc.upload")):
     """Text, PDF, Word, PowerPoint, Excel, Markdown or HTML files -> {saved: names};
     they're indexed in the background."""
-    return docs_router.upload_docs(files=files, access=access, user=p.user,
+    return docs_router.upload_docs(files=files, access=access, acl=None, user=p.user,
                                    audit=_KeyAudit(audit, p))
 
 

@@ -3,30 +3,32 @@ One passage (chunk) of a workspace's search index, with the text around it: what
 the source viewer shows when someone opens a citation (chat.md C13). Uploaded
 files have no link to open, so this is how their citations open "at the passage".
 
-The asker's role is checked against the chunk's access level on EVERY call, and
+The asker's principals are checked against the chunk's ACL on EVERY call, and
 the text around it only comes from chunks of the same document they may see too.
 A chunk that isn't there and one they may not see look the same (None).
 """
 
+import access
 import ingest
-from rag import ROLE_ACCESS, passage_of, passage_text
+from rag import passage_of, passage_text
 
 CONTEXT_CHARS = 1500      # of the document before and after the passage, at most
 _GAP = 4                  # whitespace the splitter dropped between chunks, filled with "\n"
 
 
-def get(collection, chunk_id, role, context=CONTEXT_CHARS):
+def get(collection, chunk_id, who, context=CONTEXT_CHARS):
     """{title, provider, url, access, page, heading_path, ..., text, before,
-    after} of a chunk, or None if it isn't in the collection or `role` may not
-    see it. text: the passage itself; before / after: the document's text
-    around it (within `context` characters, as far as it can be pieced together)."""
-    allowed = ROLE_ACCESS.get(role, ["public"])
+    after} of a chunk, or None if it isn't in the collection or `who` (an
+    access.Viewer, or a bare role) may not see it. text: the passage itself;
+    before / after: the document's text around it (within `context`
+    characters, as far as it can be pieced together)."""
+    viewer = access.of(who)
     store = ingest._store(collection)
     got = store._collection.get(ids=[chunk_id], include=["documents", "metadatas"])
     if not got["ids"]:
         return None
     text, meta = got["documents"][0], got["metadatas"][0] or {}
-    if meta.get("access", "public") not in allowed:
+    if not access.can_see(viewer, access.chunk_acl(meta)):
         return None
     body = passage_text(text, meta)
     out = {**passage_of({**meta, "chunk_id": meta.get("chunk_id") or chunk_id}),
@@ -45,7 +47,7 @@ def get(collection, chunk_id, role, context=CONTEXT_CHARS):
         s, e = (m or {}).get("char_start"), (m or {}).get("char_end")
         if (not isinstance(s, int) or not isinstance(e, int) or e < lo or s > hi
                 or m.get("page") != meta.get("page")
-                or m.get("access", "public") not in allowed):
+                or not access.can_see(viewer, access.chunk_acl(m))):
             continue
         for i, ch in enumerate(passage_text(t, m), s):
             if lo <= i < hi:

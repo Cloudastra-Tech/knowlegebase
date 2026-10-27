@@ -102,12 +102,13 @@ def _match_query(q):
     return " ".join(f'"{w}"*' for w in _WORD.findall(q or "")[:8])
 
 
-def search(workspace, owner, levels, q, limit=20):
+def search(workspace, owner, levels, q, limit=20, visible=None):
     """The owner's chats whose title, questions or answers match `q`, best match
     first, one result per chat: [{conversation_id, message_id, title, snippet,
     updated_at}]. Only rows at an access level in `levels` (the searcher's role
-    now) can match, so an answer they may no longer read is never found. The
-    snippet marks each match with \\x02 ... \\x03."""
+    now) can match, and only answers visible(message) allows (who may read them
+    now, kb/services/conversations.visible_to), so an answer they may no longer
+    read is never found. The snippet marks each match with \\x02 ... \\x03."""
     query = _match_query(q)
     if not query or not levels:
         return []
@@ -122,8 +123,18 @@ def search(workspace, owner, levels, q, limit=20):
                AND c.active_leaf_id IS NOT NULL
              ORDER BY bm25(conversation_search) LIMIT ?""",
                             (query, *levels, workspace, owner, limit * 5)).fetchall()
+        answers = {}
+        if visible is not None:
+            mids = [r["message_id"] for r in rows if r["message_id"]]
+            for start in range(0, len(mids), 500):
+                part = mids[start:start + 500]
+                answers.update((m["id"], _message(m)) for m in conn.execute(
+                    f"SELECT * FROM messages WHERE id IN ({','.join('?' * len(part))})", part))
     out, seen = [], set()
     for r in rows:
+        m = answers.get(r["message_id"])
+        if m and m["author"] == "assistant" and not visible(m):
+            continue
         if r["conversation_id"] not in seen:
             seen.add(r["conversation_id"])
             out.append(dict(r))

@@ -4,7 +4,7 @@ workspace never has two runs at once, and workspaces don't wait for each other.
     schedule_index(ws, docs)     documents changed: queue a run. Changes that
                                  arrive while one runs are folded into ONE more
                                  run after it (the job queue's dedupe_key).
-    schedule_retag(ws, provider) a connection's access level changed
+    schedule_retag(ws, provider) a connection's permission policy or permissions changed
     index_status(ws)             what GET /api/index/status shows
     current(ws)                  the collection questions are answered from
 
@@ -33,7 +33,7 @@ import integrations_store
 import sync_store
 import workspaces
 from kb import jobs
-from kb.services import assistant
+from kb.services import assistant, permissions
 
 log = logging.getLogger("uvicorn.error")
 
@@ -138,7 +138,8 @@ def schedule_stale():
 
 
 def schedule_retag(ws, provider):
-    """A connection's access level changed: re-tag its chunks (no embedding)."""
+    """A connection's policy, or who may see its files, changed: re-tag its
+    chunks (no embedding)."""
     jobs.enqueue("retag", ws, {"provider": provider}, lane=lane(ws),
                  dedupe_key=f"retag:{ws}:{provider}")
 
@@ -160,25 +161,26 @@ def index(ws, full=False, docs=None, progress=None):
     row = _row(ws)
     access = integrations_store.chunk_access_levels(ws)
     info = sync_store.doc_info(ws)        # synced files' titles and links
+    acls = permissions.doc_acls(ws)       # who may see each document that has its own
     if full or not row or row["fingerprint"] != ingest.FINGERPRINT:
-        return _rebuild(ws, row, access, progress, info)
+        return _rebuild(ws, row, access, progress, info, acls)
     result = ingest.update(progress, docs_folder=workspaces.docs_root(ws),
                            collection=row["collection"], connector_access=access,
                            workspace=ws, only=docs, doc_info=info,
-                           skip=assistant.blocker(ws))
+                           skip=assistant.blocker(ws), doc_acls=acls)
     if any(result[k] for k in ("embedded", "deleted_chunks", "retagged", "changed")):
         _changed(ws)
     return {**result, "mode": "incremental"}
 
 
-def _rebuild(ws, row, access, progress, info):
+def _rebuild(ws, row, access, progress, info, acls=None):
     generation = (row["generation"] if row else 0) + 1
     new = f"{workspaces.collection(ws)}__g{generation}"
     old = row["collection"] if row else workspaces.collection(ws)
     try:
         result = ingest.main(progress, docs_folder=workspaces.docs_root(ws), collection=new,
                              connector_access=access, workspace=ws, doc_info=info,
-                             skip=assistant.blocker(ws))
+                             skip=assistant.blocker(ws), doc_acls=acls)
         stored = ingest.summary(new)["chunks"]
         if stored != result["chunks"]:
             raise RuntimeError(f"the new index holds {stored} chunks, not {result['chunks']}")
@@ -206,11 +208,14 @@ def run_retag(job):
     row = _row(ws)
     if not row or row["fingerprint"] != ingest.FINGERPRINT:
         return run_index(job)         # no index to re-tag: build one (with the new level)
-    # The level as it is NOW: two quick changes need one run, and the last one wins.
+    # The policy as it is NOW: two quick changes need one run, and the last one
+    # wins. A source-policy connection's files get their own ACLs, worked out
+    # from the source's permissions and this workspace's members and groups now.
     level = integrations_store.chunk_access_levels(ws).get(provider, "restricted")
     job.progress(2, 4, "Updating who can see synced files")
     try:
-        n = ingest.retag(row["collection"], provider, level)
+        n = ingest.retag(row["collection"], provider, level,
+                         permissions.connector_acls(ws, provider))
     except Exception as e:
         log.exception("Index: re-tagging %s in workspace %s failed", provider, ws)
         raise jobs.Retry(f"{type(e).__name__}: {e}")

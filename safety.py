@@ -315,9 +315,17 @@ def check_prompt_injection(text):
 
 # ----------------------------------------------------------------------------
 # The functions rag.py calls.
-# `allow_restricted` = True means this user (e.g. HR) MAY see confidential info,
-# so we skip the salary guards for them.
+# `allow_restricted` = True means this user MAY see confidential HR content, so
+# we skip the salary guards for them: may_see_restricted() says who that is.
 # ----------------------------------------------------------------------------
+def may_see_restricted(who):
+    """May `who` see restricted HR content (staff pay)? Content access, not a
+    role: those who hold the built-in hr group (access.py). By default that is
+    exactly HR and Admin, as before groups; `who` may be a bare role too."""
+    import access
+    return access.may_see_hr(who)
+
+
 def check_question(question, allow_restricted=False):
     """INPUT guardrail. Returns (ok, message)."""
     if not question or not question.strip():

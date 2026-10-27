@@ -10,17 +10,18 @@ request is only checked and queued (kb/routers/slack.py); a job (kb/jobs.py,
 kind "slack") posts "Looking that up…", answers, and updates that message.
 
 WHO ASKS. The Slack user's email (users.info, scope users:read.email) is the
-member they are in the workspace that installed the app; their role, and
-whether they're turned off, are looked up at every question, like a session's.
+member they are in the workspace that installed the app; their role, their
+groups (access.py) and whether they're turned off are looked up at every
+question, like a session's.
 People who aren't members are refused (the default) or answered as public, by
 the workspace's setting. Turned-off members, bots and people from another
 organisation (Slack Connect) are never answered.
 
 THE AUDIENCE RULE, the way this could go wrong. Everyone in a channel reads
 what's posted there, so an answer posted anywhere but the asker's own DM with
-the bot is written with PUBLIC access, whatever the asker's role. When the
-asker's role could have found more (a search as them finds restricted
-passages), they're told so privately ("I found restricted sources; I've sent
+the bot is written with PUBLIC access (principal everyone only), whatever the
+asker's role or groups. When the asker could have found more (a search as them
+finds passages not everyone may read), they're told so privately ("I found restricted sources; I've sent
 you a DM") and answered again in that DM, as themselves. A channel shared with
 another organisation gets no answer in it at all: the asker is answered in a DM.
 
@@ -61,8 +62,10 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from fastapi import HTTPException
 
+import access
 import audit_store
 import conversations_store
+import groups_store
 import members_store
 import slack_store
 from kb import jobs, state
@@ -279,6 +282,11 @@ class Asker:
     member: bool = False
     refusal: str | None = None     # set: don't answer, say this
     ignore: bool = False           # a bot, a deactivated account: say nothing
+    viewer: object = None          # a member's principals (access.Viewer), looked up now
+
+    def who(self):
+        """What they may read when they alone read the answer (their DM)."""
+        return self.viewer if self.viewer is not None else access.for_role(self.role)
 
     def user(self, ws):
         return {"username": self.username, "workspace": ws}
@@ -326,6 +334,7 @@ def identify(install, token, slack_user):
             return asker
         asker.username, asker.member = member["username"], True
         asker.role = "hr" if member["role"] in members_store.STAFF_ROLES else "public"
+        asker.viewer = groups_store.principals_for(ws, member["username"], asker.role)
         return asker
     if install["unknown_users"] == "public":
         asker.username = f"slack:{team}:{slack_user}"
@@ -355,12 +364,12 @@ def answers_privately(kind, channel, team_id, token, slack_user):
         return False
 
 
-def restricted_found(ws, question):
-    """True if a search as HR / Admin finds restricted passages for the question:
-    the asker could have been told more than the channel may read."""
+def restricted_found(ws, who, question):
+    """True if a search as the asker (who: their access.Viewer) finds passages not
+    everyone may read: they could have been told more than the channel may read."""
     try:
         return any(p.get("access") != "public"
-                   for p in retrieval.search(ws, "hr", question, k=5))
+                   for p in retrieval.search(ws, who, question, k=5))
     except Exception:          # refused by the question rules, no index yet, ...
         return False
 
@@ -684,11 +693,12 @@ def _thread_history(token, p):
 
 def _ask(ws, asker, role, question, key=None, history=None):
     """Answer `question` as `role`, saved in the asker's conversation (`key`: the
-    Slack thread it continues). Returns (Answer or answering.Failed, turn)."""
+    Slack thread it continues). role: the asker's viewer (their DM), or "public"
+    (a channel: everyone's content only). Returns (Answer or answering.Failed, turn)."""
     cid = slack_store.thread_conversation(*key) if key else None
     conv = conversations_store.get(ws, asker.username, cid) if cid else None
     if not conv:
-        conv = conversations_store.create(ws, asker.username, role)
+        conv = conversations_store.create(ws, asker.username, access.role_of(role))
     turn = conversations.start_turn(ws, asker.username, role, conv["id"], question)
     if key:
         slack_store.remember_thread(*key, turn["conversation"]["id"])
@@ -704,7 +714,7 @@ def _ask(ws, asker, role, question, key=None, history=None):
     conversations_store.finish_message(
         turn["message_id"], done.answer, done.state, sources=done.sources,
         steps=[{"tool": t["tool"]} for t in done.trace], max_access=done.max_access,
-        standalone_question=done.standalone,
+        acl=done.acl, standalone_question=done.standalone,
         latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified)
     return done, turn
 
@@ -722,8 +732,10 @@ def _deliver(reply, done, turn, private):
 def _audit(ws, asker, p, role, done, turn, where=None):
     audit_store.record(ws, "slack.ask", actor=asker.username, actor_type="user",
                        target_type="question", target_id=turn["message_id"] if turn else None,
-                       details={"surface": "slack", "kind": p["kind"], "audience": role,
-                                "where": where or ("dm" if role == asker.role else "channel"),
+                       details={"surface": "slack", "kind": p["kind"],
+                                "audience": access.role_of(role),
+                                "where": where or ("dm" if isinstance(role, access.Viewer)
+                                                   else "channel"),
                                 "chars": len(p["text"]), "team": p["team"],
                                 "state": "error" if isinstance(done, answering.Failed)
                                 else done.state})
@@ -735,18 +747,19 @@ def answer_in_dm(token, ws, asker, p, note=None):
     where = f" in <#{p['channel']}>" if p.get("channel") and p["channel"] != channel else ""
     dm = Reply(token, {**p, "kind": "dm", "channel": channel, "thread_ts": None})
     dm.private(note or f"You asked{where}: {_escape(p['text'][:300])}")
-    done, turn = _ask(ws, asker, asker.role, p["text"])
+    done, turn = _ask(ws, asker, asker.who(), p["text"])
     _deliver(dm, done, turn, private=True)
-    _audit(ws, asker, p, asker.role, done, turn, where="dm")
+    _audit(ws, asker, p, asker.who(), done, turn, where="dm")
 
 
 def verified_answer(ws, question, role="public"):
     """The verified answer (PL-27, kb/services/verified.py) the question matches, as
     `role` may see it (a channel is answered as public: its audience is anyone in
-    it), or None. Auto-answer posts when there is one."""
+    it, so everyone's content only), or None. Auto-answer posts when there is one."""
     from kb.services import verified
     try:
-        return verified.Matcher(ws, role).match(question)
+        return verified.Matcher(ws, access.role_of(role)).match(
+            question, principals=access.of(role))
     except Exception as e:
         log.warning("Slack: matching verified answers failed (%s)", type(e).__name__)
         return None
@@ -800,7 +813,8 @@ def ask(install, token, p):
         reply.private(SHARED)
         answer_in_dm(token, ws, asker, p)
         return {"answered": "dm"}
-    role = asker.role if private else "public"
+    # In their DM: what they may read. Anywhere else: everyone's content only.
+    role = asker.who() if private else "public"
 
     if auto:
         # Posted when a verified answer the channel may see matches (ask() serves it,
@@ -828,7 +842,7 @@ def ask(install, token, p):
     _deliver(reply, done, turn, private)
     _audit(ws, asker, p, role, done, turn)
     # The audience rule's second half: the asker may see more than the channel.
-    if not private and asker.role != "public" and restricted_found(ws, p["text"]):
+    if not private and asker.member and restricted_found(ws, asker.who(), p["text"]):
         reply.private(RESTRICTED)
         answer_in_dm(token, ws, asker, p)
         return {"answered": "channel+dm"}
@@ -851,13 +865,14 @@ def feedback(install, token, p):
         say(clicker.refusal)
         return {"refused": True}
     m = slack_store.answer_message(ws, p.get("message_id") or "")
-    if not m or m["author"] != "assistant" or not conversations.visible_to(clicker.role, m):
+    if not m or m["author"] != "assistant" or not conversations.visible_to(clicker.who(), m):
         say("That answer isn't available to you any more.")
         return {"refused": True}
     question = conversations_store.get_message(ws, m["owner"], m["parent_id"])
     snapshot = {"question": question["content"] if question else None,
                 "standalone_question": m["standalone_question"], "answer": m["content"],
-                "state": m["state"], "sources": m["sources"], "max_access": m["max_access"]}
+                "state": m["state"], "sources": m["sources"], "max_access": m["max_access"],
+                "acl": access.message_clauses(m)}
     conversations_store.set_feedback(m["id"], clicker.username, ws, p["rating"], [], None,
                                      snapshot)
     audit_store.record(ws, "feedback.set", actor=clicker.username, actor_type="user",

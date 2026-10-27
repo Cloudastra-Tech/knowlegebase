@@ -20,12 +20,11 @@ keep their meaning:
     messages.acl       the audience of an answer: a JSON list of ACLs, all of
                        which a reader must meet. Filled in from max_access for
                        answers already saved: public [], restricted [["group:hr"]].
-    integrations.settings.policy   a connection's permission policy: source,
-                       workspace or restricted. From its access level: everyone
-                       becomes workspace, anything else restricted.
+A connection's permission policy (source, workspace or restricted) is kept in
+integrations.settings["policy"] when one is set. Rows are left as they are: one
+without it has its access level's (integrations_store.policy_of: everyone is
+workspace, anything else restricted).
 """
-
-import json
 
 from alembic import op
 
@@ -69,9 +68,6 @@ SCHEMA = (
         PRIMARY KEY (workspace, doc_key, principal_type, principal))""",
 )
 
-POLICY_OF_ACCESS = {"everyone": "workspace"}
-
-
 def _has_column(conn, table, column):
     return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
 
@@ -85,17 +81,6 @@ def upgrade():
     conn.exec_driver_sql("""UPDATE messages SET acl = CASE max_access WHEN 'public' THEN '[]'
                             ELSE '[["group:hr"]]' END
                             WHERE author = 'assistant' AND acl IS NULL""")
-    for workspace, provider, settings in conn.exec_driver_sql(
-            "SELECT workspace, provider, settings FROM integrations").fetchall():
-        try:
-            values = json.loads(settings or "{}")
-        except ValueError:
-            values = {}
-        if not isinstance(values, dict) or values.get("policy"):
-            continue
-        values["policy"] = POLICY_OF_ACCESS.get(values.get("access"), "restricted")
-        conn.exec_driver_sql("UPDATE integrations SET settings = ? WHERE workspace = ? AND "
-                             "provider = ?", (json.dumps(values), workspace, provider))
 
 
 def downgrade():

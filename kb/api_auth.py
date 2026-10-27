@@ -24,7 +24,9 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+import access
 import api_keys_store
+import groups_store
 import members_store
 import workspaces
 from kb import logs
@@ -55,6 +57,14 @@ class Principal:
     def role(self):
         """The access role it searches and reads as (rag.ROLE_ACCESS)."""
         return "hr" if self.member_role in members_store.STAFF_ROLES else "public"
+
+    @property
+    def viewer(self):
+        """What it may read (access.py): a personal key, its person's principals
+        now; a service key, everyone's content only."""
+        if self.kind != "personal":
+            return access.for_role("public")
+        return groups_store.principals_for(self.workspace, self.username, self.role)
 
     @property
     def user(self):

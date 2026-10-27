@@ -1,7 +1,7 @@
 """
 Saved chats around the agent (conversations_store.py holds the rows):
 
-  visible_to()   whether a viewer's CURRENT role may read a message. Checked on
+  visible_to()   whether a viewer's CURRENT principals may read a message. Checked on
                  every read, so an owner demoted from HR stops seeing answers built
                  from restricted documents, even in their own chats.
   start_turn()   a question in a conversation: saves it, and loads the history the

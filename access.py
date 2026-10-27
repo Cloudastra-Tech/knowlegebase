@@ -64,12 +64,15 @@ def for_role(role):
 
 
 def of(who):
-    """A Viewer for a role ("public" / "hr"), a Viewer, or a set of principals."""
+    """A Viewer for a role ("public" / "hr"), a Viewer, a set of principals, or a
+    list of the old access levels (["public", "restricted"]: the hr role's)."""
     if isinstance(who, Viewer):
         return who
     if who is None or isinstance(who, str):
         return for_role(who or "public")
     held = set(who)
+    if held and held <= set(LEVELS):
+        return for_role("hr" if "restricted" in held else "public")
     return Viewer(held, "hr" if HR in held else "public")
 
 
@@ -148,14 +151,18 @@ def source_acl(source):
 
 def message_clauses(message):
     """The clauses a saved answer's reader must meet: what the model read for it
-    (its `acl`, or its max_access) and each of its sources."""
+    (its `acl`, or its max_access) and each of its sources. A source's own ACL
+    counts whenever it has one; its access level only for an answer from before
+    ACLs (since, the answer's `acl` holds every chunk read, its sources too:
+    their level would wrongly ask for the hr group)."""
     saved = message.get("acl")
-    if saved is None:
+    legacy = saved is None
+    if legacy:
         level = message.get("max_access") or "restricted"
         saved = [] if level == "public" else [[HR]]
     found = [list(c) for c in saved]
     found += [source_acl(s) for s in message.get("sources") or ()
-              if s.get("acl") or s.get("access")]
+              if s.get("acl") or (legacy and s.get("access"))]
     return clauses(found)
 
 

@@ -9,10 +9,11 @@ stored. Every time it's opened:
   - the viewer must be signed in to the same workspace (anyone else: 404);
   - sharing must still be on for the workspace, the link not revoked or expired,
     and the person who made it still a member;
-  - each answer is checked with visible_to() against the LOWEST of: the viewer's
-    role now, the sharer's role now, and the role it was shared as. A link can
-    never show more than its sharer may see now (a sharer moved out of HR stops
-    sharing HR answers), nor more than the viewer may.
+  - each answer is checked with visible_to() against BOTH the viewer and the
+    sharer, each with their principals now (groups too: access.py) at the lower
+    of their role now and the role it was shared as. A link can never show more
+    than its sharer may see now (a sharer moved out of HR, or out of a group,
+    stops sharing its answers), nor more than the viewer may.
 
 An answer that fails is WITHHELD whole, its text and its sources (decision D1):
 the text was written from the documents, so hiding only the citations would still
@@ -24,7 +25,9 @@ import time
 
 from fastapi import HTTPException
 
+import access
 import conversations_store as store
+import groups_store
 import members_store
 import workspaces
 from kb.deps import ws_of
@@ -68,14 +71,15 @@ def shared_messages(share):
 
 
 def is_restricted(messages):
-    return any(m["author"] == "assistant"
-               and store.answer_access(m["max_access"], m["sources"]) != "public"
-               for m in messages)
+    """Does any answer in it need more than being in the workspace to read?"""
+    return any(m["author"] == "assistant" and access.message_clauses(m) for m in messages)
 
 
 def open_share(token, viewer, viewer_role):
     """The link `token` as `viewer` (a signed-in user, viewing the app as
-    viewer_role) may see it. Raises 404 / 410."""
+    viewer_role) may see it. Raises 404 / 410. An answer shows only if BOTH the
+    viewer (their principals now) and the sharer (theirs now, at the lower of
+    their role now and the role it was shared as) may read it."""
     ws = ws_of(viewer)
     share = store.share_by_token(token)
     if not share or share["workspace"] != ws:
@@ -86,10 +90,13 @@ def open_share(token, viewer, viewer_role):
             or (share["expires_at"] and share["expires_at"] <= time.time())
             or not store.chat_settings(ws)["sharing_enabled"]):
         raise HTTPException(410, GONE)
-    role = lowest(viewer_role, sharer_role, share["role_used"])
+    readers = (groups_store.principals_for(ws, viewer["username"],
+                                           lowest(viewer_role, share["role_used"])),
+               groups_store.principals_for(ws, share["created_by"],
+                                           lowest(sharer_role, share["role_used"])))
     messages, question = [], None
     for m in shared_messages(share):
-        shown = conversations.present(m, role)
+        shown = conversations.present(m, readers)
         if m["author"] == "user":
             question = m["content"]
         else:

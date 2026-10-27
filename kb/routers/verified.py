@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 import verified_store as store
 from kb.audit import audited
-from kb.deps import require_hr, ws_of
+from kb.deps import current_viewer, require_hr, ws_of
 from kb.services import verified
 
 router = APIRouter()
@@ -57,11 +57,13 @@ def list_answers(user=Depends(require_hr)):
 
 @router.get("/api/admin/verified-answers/draft")
 def draft_answer(message_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$"),
-                 gap_id: int | None = None, user=Depends(require_hr)):
-    """A new answer's fields from one of your chat answers, or from a content gap."""
+                 gap_id: int | None = None, user=Depends(require_hr),
+                 viewer=Depends(current_viewer)):
+    """A new answer's fields from one of your chat answers (one you may still
+    read), or from a content gap."""
     ws = ws_of(user)
     if message_id:
-        found = verified.draft_from_message(ws, user, "hr", message_id)
+        found = verified.draft_from_message(ws, user, viewer, message_id)
     elif gap_id is not None:
         found = verified.draft_from_gap(ws, "hr", gap_id)
     else:

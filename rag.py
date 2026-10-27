@@ -618,7 +618,9 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None, p
 
     # May this asker see restricted HR content? (The hr group: HR / Admin.)
     allow_restricted = access.may_see_hr(principals if principals is not None else role)
-    search = {"principals": principals} if principals is not None else {}
+    # Our retriever filters as it searches; any other (a stand-in) is filtered after.
+    own = isinstance(retriever, HybridRetriever)
+    search = {"principals": principals} if principals is not None and own else {}
 
     # ---- GUARD (input) -------------------------------------------------
     # Check the question BEFORE doing any work (e.g. block empty/abusive input).
@@ -639,6 +641,8 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None, p
         docs = retriever.invoke(question, dense_query=queries[0], **search)
     else:
         docs = retriever.invoke(question, dense_queries=queries, **search)
+    if principals is not None and not own:
+        docs = [d for d in docs if access.can_see(principals, access.chunk_acl(d.metadata))]
 
     # ---- 1b. Add how the top documents BEGIN (title / summary), so a chunk
     # from the middle of a document is read in context. They come after the
