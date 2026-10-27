@@ -10,6 +10,7 @@ import docs_store
 import ingest
 import integrations_store
 import sync_store
+import vector_store
 import workspaces
 from connectors import registry
 from kb.deps import current_role, current_user, current_viewer, ws_of
@@ -43,9 +44,7 @@ def listing(user, role, viewer, everything=False):
     # Chunks per file in the index (by file path), straight from Chroma.
     chunks = {}
     try:
-        import chromadb
-        col = chromadb.PersistentClient(path=ingest.DB_FOLDER).get_collection(
-            indexing.current(ws)[0])
+        col = vector_store.existing(ingest.DB_FOLDER, indexing.current(ws)[0])
         for meta in col.get(include=["metadatas"])["metadatas"]:
             key = os.path.normcase(os.path.abspath(meta.get("source", "")))
             chunks[key] = chunks.get(key, 0) + 1

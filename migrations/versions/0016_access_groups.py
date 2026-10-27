@@ -28,6 +28,8 @@ workspace, anything else restricted).
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0016"
 down_revision = "0015"
 branch_labels = None
@@ -69,11 +71,11 @@ SCHEMA = (
 )
 
 def _has_column(conn, table, column):
-    return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
+    return dialect.has_column(conn, table, column)
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)
     if not _has_column(conn, "messages", "acl"):
@@ -84,7 +86,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("doc_acl", "group_members", "access_groups"):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
     with op.batch_alter_table("messages") as batch:

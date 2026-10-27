@@ -25,6 +25,8 @@ Additive only: new tables, and one new column (NULL on existing rows).
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0012"
 down_revision = "0011"
 branch_labels = None
@@ -97,11 +99,11 @@ SCHEMA = (
 
 
 def _has_column(conn, table, column):
-    return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
+    return dialect.has_column(conn, table, column)
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)
     if not _has_column(conn, "messages", "verified"):
@@ -109,7 +111,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("glossary", "assistant_settings", "doc_rules", "verified_answer_vectors",
                   "verified_answers"):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")

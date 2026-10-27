@@ -48,12 +48,12 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
 
 import access
 import chunk_context
 import chunking
 import models
+import vector_store
 
 # Load the secret OPENAI_API_KEY from the .env file into the program.
 load_dotenv()
@@ -122,10 +122,10 @@ CHROMA_LOCK = threading.Lock()
 
 
 def _store(collection):
-    """The collection (made if it doesn't exist yet)."""
+    """The collection (made if it doesn't exist yet), in Chroma or pgvector
+    (VECTOR_STORE, vector_store.py)."""
     with CHROMA_LOCK:
-        return Chroma(persist_directory=DB_FOLDER, embedding_function=_embeddings(),
-                      collection_name=collection or "langchain")
+        return vector_store.store(collection or "langchain", _embeddings(), DB_FOLDER)
 
 
 # Folders at the top of a docs folder that are never indexed: drafts the assistant

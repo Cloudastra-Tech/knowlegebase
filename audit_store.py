@@ -79,7 +79,11 @@ def record(workspace, action, actor=None, actor_type="user", target_type=None, t
            "ip": ip, "user_agent": (user_agent or "")[:300] or None,
            "details": _canonical_details(details)}
     with _lock:
-        conn = db.connect()
+        if workspace == db.tenant():
+            conn = db.connect()
+        else:          # e.g. "_platform" (operator-level), from inside a workspace's request
+            with db.platform():
+                conn = db.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             last = conn.execute("SELECT hash FROM audit_events WHERE workspace = ? "
@@ -154,15 +158,29 @@ def _reading(conn, workspace):
     """Ready a connection to read the workspace's events: shown_actor(actor) in SQL
     is what the actor filter matches. Returns the function for _event()."""
     shown = _shown(workspace, _pseudonyms(conn, workspace))
-    conn.create_function("shown_actor", 1, shown, deterministic=True)
+    if not db.is_postgres():           # Postgres can't call Python: see _matching_actors
+        conn.create_function("shown_actor", 1, shown, deterministic=True)
     return shown
 
 
-def _where(workspace, actor=None, action=None, since=None, until=None):
+def _matching_actors(conn, workspace, actor, shown):
+    """Postgres: the workspace's actors whose shown name contains `actor` (as
+    shown_actor(actor) LIKE '%actor%' matches them on SQLite, case aside)."""
+    needle = actor.lower()
+    return [r[0] for r in conn.execute("SELECT DISTINCT actor FROM audit_events WHERE "
+                                       "workspace = ? AND actor IS NOT NULL", (workspace,))
+            if needle in str(shown(r[0])).lower()]
+
+
+def _where(workspace, actor=None, action=None, since=None, until=None, actors=None):
     """SQL and arguments for the filters list() and export() share. `action`
-    ending in "." matches every action it starts (e.g. "member.")."""
+    ending in "." matches every action it starts (e.g. "member."). actors: on
+    Postgres, the actor filter as the names it matches (_matching_actors)."""
     sql, args = ["workspace = ?"], [workspace]
-    if actor:
+    if actor and actors is not None:
+        sql.append(f"actor IN ({', '.join('?' * len(actors))})" if actors else "1 = 0")
+        args += actors
+    elif actor:
         sql.append("shown_actor(actor) LIKE ? ESCAPE '\\'")
         args.append("%" + actor.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     if action:
@@ -185,13 +203,15 @@ def list_events(workspace, actor=None, action=None, since=None, until=None, curs
                 limit=PAGE):
     """A page of events, newest first: (events, next cursor or None). The cursor
     is the id to continue below."""
-    where, args = _where(workspace, actor, action, since, until)
-    if cursor is not None:
-        where, args = where + " AND id < ?", args + [cursor]
     limit = max(1, min(int(limit), MAX_PAGE))
     conn = db.connect()
     try:
         shown = _reading(conn, workspace)
+        where, args = _where(workspace, actor, action, since, until,
+                             _matching_actors(conn, workspace, actor, shown)
+                             if actor and db.is_postgres() else None)
+        if cursor is not None:
+            where, args = where + " AND id < ?", args + [cursor]
         rows = conn.execute(f"SELECT * FROM audit_events WHERE {where} ORDER BY id DESC "
                             "LIMIT ?", args + [limit + 1]).fetchall()
     finally:
@@ -203,12 +223,16 @@ def list_events(workspace, actor=None, action=None, since=None, until=None, curs
 
 def iter_events(workspace, actor=None, action=None, since=None, until=None, batch=500):
     """Every matching event, oldest first, read a batch at a time (for export)."""
-    where, args = _where(workspace, actor, action, since, until)
+    where = args = None
     after = 0
     while True:
         conn = db.connect()
         try:
             shown = _reading(conn, workspace)
+            if where is None:
+                where, args = _where(workspace, actor, action, since, until,
+                                     _matching_actors(conn, workspace, actor, shown)
+                                     if actor and db.is_postgres() else None)
             rows = conn.execute(f"SELECT * FROM audit_events WHERE {where} AND id > ? "
                                 "ORDER BY id LIMIT ?", args + [after, batch]).fetchall()
         finally:

@@ -12,6 +12,8 @@ again by migrations/legacy.py) may have them already.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0002"
 down_revision = "0001"
 branch_labels = None
@@ -54,7 +56,7 @@ SCHEMA = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)
 

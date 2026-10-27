@@ -124,6 +124,7 @@ def fixture_index(offline=True, corpus=CORPUS):
     rag.load_chain(role, COLLECTION)."""
     import ingest
     import rag
+    import vector_store
     from chromadb.api.client import SharedSystemClient
 
     folder = tempfile.mkdtemp(prefix="kb-eval-index-")
@@ -142,6 +143,9 @@ def fixture_index(offline=True, corpus=CORPUS):
             setattr(module, name, value)
         SharedSystemClient.clear_system_cache()             # let go of the folder
         shutil.rmtree(folder, ignore_errors=True)
+        if vector_store.backend() == "pgvector":           # the folder's namespace there
+            for name in vector_store.collection_names(folder):
+                vector_store.drop_collection(folder, name)
 
 
 def source_of(doc, corpus=CORPUS):

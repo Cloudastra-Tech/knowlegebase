@@ -9,7 +9,6 @@ answer at the callback (the claims of a verified ID token). The rest is real.
 import json
 import re
 import socket
-import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -211,7 +210,7 @@ def test_a_provider_is_checked_and_its_secret_kept_encrypted(client, acme, provi
     assert conn["id"] in [c["id"] for c in listed]
     assert "s3cret-value" not in json.dumps(listed)
     import members_store
-    with sqlite3.connect(members_store.DB_PATH) as db:
+    with __import__("db").connect() as db:
         raw, metadata = db.execute("SELECT secret, metadata FROM sso_connections WHERE id = ?",
                                    (conn["id"],)).fetchone()
     assert b"s3cret-value" not in raw
@@ -945,7 +944,7 @@ def put_rules(client, headers, conn, rules, **extra):
 def groups_were_sent(username, days_ago):
     import time
     import members_store
-    with sqlite3.connect(members_store.DB_PATH) as db:
+    with __import__("db").connect() as db:
         db.execute("UPDATE members SET groups_updated_at = ? WHERE username = ?",
                    (time.time() - days_ago * 86400, username))
 

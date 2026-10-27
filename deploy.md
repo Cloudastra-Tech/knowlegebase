@@ -1089,6 +1089,72 @@ docker compose up -d && curl -fsS http://localhost:8501/api/health/ready
 (or a throwaway folder), run the app against it and check `/api/health/ready`
 and a sign-in. A backup that was never restored is a hope, not a backup.
 
+## Moving to Postgres
+
+SQLite (`config/app.db`) is the default and stays right for one server. Postgres
+is for several app processes or servers, managed backups with point-in-time
+recovery, and row-level security (ARCHITECTURE.md, "Postgres, row-level security
+and pgvector"). The app switches when `DATABASE_URL` is set.
+
+**The database.** Postgres 14 or newer, built with ICU (every packaged and managed
+one is). For `VECTOR_STORE=pgvector`, the `vector` extension 0.8 or newer
+(`pgvector/pgvector:pg16` in Docker; on a managed service, enable it). Make one
+database and one login role that owns it; the app makes its tables on first start:
+
+```sql
+CREATE ROLE kb LOGIN PASSWORD '...' CREATEROLE;   -- CREATEROLE: for row-level security
+CREATE DATABASE kb OWNER kb;
+```
+
+```bash
+# .env
+DATABASE_URL=postgresql://kb:...@db.internal:5432/kb?sslmode=require
+VECTOR_STORE=pgvector        # optional: the search index in Postgres too
+# DB_POOL_MAX=20             # connections per app process
+# DB_RLS=off                 # only to rule row-level security out while debugging
+```
+
+`kb` owns the tables, so it is the **platform role** row-level security doesn't
+limit (sign-in, jobs of no workspace, the operator, migrations). Each workspace's
+requests and jobs run as `kb_tenant` (`DB_TENANT_ROLE`), which the first start
+makes (it needs `CREATEROLE`; without it the app logs "Row-level security not set
+up" and runs everything as `kb`, as on SQLite). If the tables end up owned by
+another role (restored by a DBA, say), give `kb` `BYPASSRLS` instead. Backups: the
+provider's PITR, or `pg_dump -Fc` nightly; `scripts/backup.sh` covers SQLite only
+(it still archives `config/` with the key, `docs/` and `data/`).
+
+**Runbook** (minutes for today's data; plan a short maintenance window):
+
+1. **Freeze writes.** Announce it, then stop the app so nothing writes to
+   `config/app.db` while it's copied: `docker compose stop knowledgebase`.
+2. **Back up** as usual: `BACKUP_ENV_FILE=/root/kb-backup.env scripts/backup.sh`.
+3. **Migrate.** With the new image (so `app.db` is at the newest migration: start
+   it once on SQLite first if it isn't; the tool refuses otherwise):
+
+   ```bash
+   docker compose run --rm -e DATABASE_URL='postgresql://kb:...@db.internal:5432/kb' \
+       knowledgebase python -m tools.migrate_sqlite_to_pg \
+       --sqlite config/app.db --chroma-dir chroma_db      # --chroma-dir only for pgvector
+   ```
+
+   It makes the schema in Postgres, copies every table (FTS rows, message order,
+   binary keys and all) in one transaction, moves every id sequence past the
+   highest id SQLite gave out, and copies the Chroma index's vectors into pgvector
+   without re-embedding. Run it again at any time: a table already copied is
+   checked and left alone; one with different rows is refused (nothing changes)
+   unless `--overwrite`.
+4. **Verify.** The tool prints, per table, the row counts on both sides and
+   whether a SHA-256 over every row matches, and exits 1 if any doesn't.
+   `--verify-only` repeats the check without changing anything.
+5. **Switch.** Put `DATABASE_URL` (and `VECTOR_STORE=pgvector`) in `.env`, then
+   `docker compose up -d` and `curl -fsS http://localhost:8501/api/health/ready`;
+   sign in and ask a question. Keep `config/app.db` untouched for a while.
+
+**Going back** (before anything new is written to Postgres): stop the app, remove
+`DATABASE_URL` / `VECTOR_STORE` from `.env`, start it: it uses `config/app.db` and
+`chroma_db/` again, as they were at step 1. After writes, going back means copying
+them out of Postgres by hand; there's no reverse tool.
+
 ## The encryption key (KEK) and each workspace's keys
 
 Secrets in `app.db` (integration tokens, SSO client secrets and SAML keys, the

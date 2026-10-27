@@ -66,7 +66,11 @@ def put(workspace, row, keep=2000, now=None):
               "trace": json.dumps(row.get("trace") or []),
               "acl": None if row.get("acl") is None else json.dumps(row["acl"])}
     with _lock, _db() as conn:
-        conn.execute(f"INSERT OR REPLACE INTO answer_cache ({', '.join(cols)}) "
+        # (What INSERT OR REPLACE does on the (workspace, key) unique key, spelled out
+        # so Postgres runs it too: its ON CONFLICT names the primary key.)
+        conn.execute("DELETE FROM answer_cache WHERE workspace = ? AND key = ?",
+                     (workspace, values.get("key")))
+        conn.execute(f"INSERT INTO answer_cache ({', '.join(cols)}) "
                      f"VALUES ({', '.join('?' * len(cols))})",
                      [values.get(c) for c in cols])
         conn.execute("DELETE FROM answer_cache WHERE workspace = ? AND (expires_at <= ? OR "

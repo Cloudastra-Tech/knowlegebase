@@ -18,6 +18,8 @@ Additive only: one new column (NULL on existing rows) and one new table.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0010"
 down_revision = "0009"
 branch_labels = None
@@ -33,11 +35,11 @@ SCHEMA = (
 
 
 def _has_column(conn, table, column):
-    return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
+    return dialect.has_column(conn, table, column)
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     if not _has_column(conn, "question_log", "tokens_cached"):
         conn.exec_driver_sql("ALTER TABLE question_log ADD COLUMN tokens_cached INTEGER")
     for statement in SCHEMA:
@@ -45,7 +47,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     conn.exec_driver_sql("DROP TABLE IF EXISTS chunk_contexts")
     with op.batch_alter_table("question_log") as batch:
         batch.drop_column("tokens_cached")

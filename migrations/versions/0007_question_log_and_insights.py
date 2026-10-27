@@ -30,6 +30,8 @@ so deleting a conversation removes its words from the log too.
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0007"
 down_revision = "0006"
 branch_labels = None
@@ -148,21 +150,46 @@ SCHEMA = (
 
 
 def _has_column(conn, table, column):
-    return any(row[1] == column for row in conn.exec_driver_sql(f"PRAGMA table_info({table})"))
+    return dialect.has_column(conn, table, column)
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table, column, definition in COLUMNS:
         if not _has_column(conn, table, column):    # adopted again by migrations/legacy.py
             conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    postgres = dialect.postgres(conn)
     for statement in SCHEMA:
+        if postgres and statement.lstrip().startswith("CREATE TRIGGER"):
+            for pg_statement in PG_TRIGGER:
+                dialect.native(conn).exec_driver_sql(pg_statement)
+            continue
         conn.exec_driver_sql(statement)
 
 
+# The same trigger on Postgres: a function, run after each deleted message.
+PG_TRIGGER = (
+    """CREATE OR REPLACE FUNCTION question_log_forget_message() RETURNS trigger
+       LANGUAGE plpgsql AS $$
+       BEGIN
+           UPDATE question_log SET question = NULL, answer = NULL, embedding = NULL,
+                                   message_id = NULL
+            WHERE message_id = OLD.id;
+           RETURN OLD;
+       END $$""",
+    "DROP TRIGGER IF EXISTS question_log_forget_message ON messages",
+    """CREATE TRIGGER question_log_forget_message AFTER DELETE ON messages
+       FOR EACH ROW EXECUTE FUNCTION question_log_forget_message()""",
+)
+
+
 def downgrade():
-    conn = op.get_bind()
-    conn.exec_driver_sql("DROP TRIGGER IF EXISTS question_log_forget_message")
+    conn = dialect.bind()
+    if dialect.postgres(conn):
+        dialect.native(conn).exec_driver_sql(
+            "DROP TRIGGER IF EXISTS question_log_forget_message ON messages")
+    else:
+        conn.exec_driver_sql("DROP TRIGGER IF EXISTS question_log_forget_message")
     for table in ("eval_candidates", "content_gaps", "insights_docs", "source_stats",
                   "insights_daily", "question_log"):
         conn.exec_driver_sql(f"DROP TABLE {table}")

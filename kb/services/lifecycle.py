@@ -58,6 +58,7 @@ import mailer
 import members_store
 import secret_box
 import slack_store
+import vector_store
 import workspaces
 from connectors import registry
 from kb import jobs, state
@@ -374,23 +375,19 @@ def _revoke_outside(ws):
 
 def collections_of(ws):
     """The names of the workspace's search index collections (current and shadow)."""
-    if ws == workspaces.DEFAULT or not os.path.isdir(ingest.DB_FOLDER):
+    if ws == workspaces.DEFAULT:
         return []
-    import chromadb
     with ingest.CHROMA_LOCK:
-        found = chromadb.PersistentClient(path=ingest.DB_FOLDER).list_collections()
+        names = vector_store.collection_names(ingest.DB_FOLDER)
     base = workspaces.collection(ws)
-    names = [getattr(c, "name", c) for c in found]
     return [n for n in names if n == base or n.startswith(base + "__g")]
 
 
 def _drop_collections(ws):
-    import chromadb
     names = collections_of(ws)
     with ingest.CHROMA_LOCK:
-        client = chromadb.PersistentClient(path=ingest.DB_FOLDER)
         for name in names:
-            client.delete_collection(name)
+            vector_store.drop_collection(ingest.DB_FOLDER, name)
     return names
 
 
@@ -404,13 +401,7 @@ def workspace_dirs(ws):
 
 def _tables(conn):
     """{table: [columns]} of every table but SQLite's own and FTS shadows."""
-    names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
-    out = {}
-    for name in names:
-        if name.startswith("sqlite_") or name.startswith("conversation_search_"):
-            continue
-        out[name] = [r[1] for r in conn.execute(f'PRAGMA table_info("{name}")')]
-    return out
+    return db.tables(conn)
 
 
 def _delete_rows(ws):

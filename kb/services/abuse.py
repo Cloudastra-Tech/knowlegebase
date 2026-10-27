@@ -153,12 +153,16 @@ def checks(now=None, limits=None):
                 found.append((ws, "failed_sign_ins", str(hour), None,
                               {"failed_last_hour": failed, "hourly_average": round(hourly, 2)}))
         # Workspaces signed up from one address in the last day.
-        for ip, n, made in conn.execute(
-                "SELECT ip, COUNT(*), GROUP_CONCAT(workspace) FROM audit_events WHERE "
-                "action = 'workspace.create' AND at >= ? AND ip IS NOT NULL GROUP BY ip "
-                "HAVING COUNT(*) >= ?", (now - 86400, t["signups_per_ip"])):
-            found.append((PLATFORM, "signups_per_ip", f"{ip}:{today}", ip,
-                          {"workspaces": sorted(set((made or "").split(","))), "count": n}))
+        # (Grouped here, not by SQLite's GROUP_CONCAT, so Postgres runs it too.)
+        made = {}
+        for ip, workspace in conn.execute(
+                "SELECT ip, workspace FROM audit_events WHERE action = 'workspace.create' "
+                "AND at >= ? AND ip IS NOT NULL", (now - 86400,)):
+            made.setdefault(ip, []).append(workspace or "")
+        for ip, created in sorted(made.items()):
+            if len(created) >= t["signups_per_ip"]:
+                found.append((PLATFORM, "signups_per_ip", f"{ip}:{today}", ip,
+                              {"workspaces": sorted(set(created)), "count": len(created)}))
     finally:
         conn.close()
     return found

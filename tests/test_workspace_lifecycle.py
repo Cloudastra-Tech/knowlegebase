@@ -147,11 +147,10 @@ def populate(ws, root):
     os.makedirs(os.path.join(docs, "connectors", "notion"))
     with open(os.path.join(docs, "connectors", "notion", "page.txt"), "w") as f:
         f.write("A synced page.")
-    import chromadb
-    chroma = chromadb.PersistentClient(path=ingest.DB_FOLDER)
+    import vector_store                   # Chroma or pgvector (VECTOR_STORE)
     for name in (workspaces.collection(ws), workspaces.collection(ws) + "__g2"):
-        chroma.get_or_create_collection(name).add(ids=["1"], documents=["leave"],
-                                                  embeddings=[[0.1, 0.2]])
+        vector_store.store(name, None, ingest.DB_FOLDER)._collection.add(
+            ids=["1"], documents=["leave"], embeddings=[[0.1, 0.2]])
     return {"secrets": secrets, "api_key": api_key, "scim_token": scim_token}
 
 
@@ -169,7 +168,10 @@ def leftovers(needles):
     found = []
     conn = db.connect()
     try:
-        for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'"):
+        # (On SQLite every table, FTS5's shadow tables too; on Postgres, the catalog's.)
+        tables = list(db.tables(conn)) if db.is_postgres() else \
+            [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        for table in tables:
             for row in conn.execute(f'SELECT * FROM "{table}"'):
                 keys = row.keys()
                 if table == "audit_events" and row["workspace"] == audit_store.PLATFORM:
@@ -306,7 +308,7 @@ def test_the_admins_are_emailed(client, places, monkeypatch):
 
 
 def test_purge_leaves_nothing_of_the_workspace(client, places, jobs_paused):
-    import chromadb
+    import vector_store
     import ingest
     import workspaces
     from kb.services import lifecycle
@@ -338,8 +340,7 @@ def test_purge_leaves_nothing_of_the_workspace(client, places, jobs_paused):
     assert leftovers([ws, *made["secrets"]]) == []
     assert not os.path.exists(os.path.dirname(workspaces.docs_root(ws)))
     assert not os.path.exists(lifecycle_store.export_dir(ws))
-    names = [getattr(c, "name", c) for c in
-             chromadb.PersistentClient(path=ingest.DB_FOLDER).list_collections()]
+    names = vector_store.collection_names(ingest.DB_FOLDER)
     assert not [n for n in names if ws in n]
     assert workspaces.collection(bystander) in names
     # Crypto-shredded: its secrets, even copied out before, can't be opened.

@@ -10,6 +10,10 @@ import sqlite3
 import pytest
 from cryptography.fernet import Fernet
 
+# Each test breaks a real SQLite file or Chroma folder; Postgres's readiness is
+# checked in tests/test_postgres_migrations.py.
+pytestmark = pytest.mark.sqlite_only("breaks the SQLite file and the Chroma folder themselves")
+
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):

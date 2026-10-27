@@ -135,13 +135,23 @@ class TeamTaken(Exception):
     """This Slack team is already installed in another workspace."""
 
 
+def _installed_elsewhere(team_id, workspace):
+    """Is this Slack team installed in another workspace? (Every workspace's installs,
+    db.platform: a tenant's connection sees only its own.)"""
+    conn = db.connect_platform()
+    try:
+        return conn.execute("SELECT workspace FROM slack_installs WHERE team_id = ? AND "
+                            "workspace != ?", (team_id, workspace)).fetchone()
+    finally:
+        conn.close()
+
+
 def installed(workspace, team_id, team_name, app_id, bot_user_id, bot_token, scopes, user):
     """Record a finished install (oauth.v2.access). Raises TeamTaken."""
     sealed = secret_box.seal(bot_token, workspace)
     with _lock, _db() as conn:
         _ensure(conn, workspace)
-        other = conn.execute("SELECT workspace FROM slack_installs WHERE team_id = ? AND "
-                             "workspace != ?", (team_id, workspace)).fetchone()
+        other = _installed_elsewhere(team_id, workspace)
         if other:
             raise TeamTaken(team_id)
         try:

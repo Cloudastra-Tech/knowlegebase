@@ -102,6 +102,39 @@ def _match_query(q):
     return " ".join(f'"{w}"*' for w in _WORD.findall(q or "")[:8])
 
 
+# ts_headline's options for the snippet FTS5 makes (snippet(..., 12)): about 12
+# words, each match between \x02 and \x03.
+_HEADLINE = ('StartSel="\x02", StopSel="\x03", MaxWords=12, MinWords=4, ShortWord=0, '
+             'MaxFragments=1, FragmentDelimiter="…"')
+
+
+def _search_postgres(conn, q, marks, levels, workspace, owner, limit):
+    """search()'s query on Postgres (migrations/versions/0008_chat_history.py):
+    the same words as prefixes, all required, over the same rows and access
+    filter; ranked by ts_rank, cut by ts_headline, with "…" where the snippet
+    doesn't reach the start or end of its text as FTS5's does."""
+    terms = " & ".join(f"'{w}':*" for w in _WORD.findall(q or "")[:8])
+    rows = conn.execute(f"""
+        SELECT s.conversation_id, s.message_id, c.title, c.updated_at, s.body,
+               ts_headline('kb_search', s.body, query.q, ?) AS snippet
+          FROM conversation_search s JOIN conversations c ON c.id = s.conversation_id,
+               (SELECT to_tsquery('kb_search', ?) AS q) query
+         WHERE s.tsv @@ query.q AND s.access IN ({marks})
+           AND c.workspace = ? AND c.owner = ? AND c.deleted_at IS NULL
+           AND c.active_leaf_id IS NOT NULL
+         ORDER BY ts_rank(s.tsv, query.q) DESC LIMIT ?""",
+                        (_HEADLINE, terms, *levels, workspace, owner, limit * 5)).fetchall()
+    out = []
+    for r in rows:
+        r = dict(r)
+        body, snippet = " ".join(r.pop("body").split()), r["snippet"]
+        plain = " ".join(snippet.replace("\x02", "").replace("\x03", "").split())
+        r["snippet"] = (("" if body.startswith(plain) else "…") + snippet
+                        + ("" if body.endswith(plain) else "…"))
+        out.append(r)
+    return out
+
+
 def search(workspace, owner, levels, q, limit=20, visible=None):
     """The owner's chats whose title, questions or answers match `q`, best match
     first, one result per chat: [{conversation_id, message_id, title, snippet,
@@ -114,7 +147,10 @@ def search(workspace, owner, levels, q, limit=20, visible=None):
         return []
     marks = ",".join("?" * len(levels))
     with _lock, _db() as conn:
-        rows = conn.execute(f"""
+        if db.is_postgres():
+            rows = _search_postgres(conn, q, marks, levels, workspace, owner, limit)
+        else:
+            rows = conn.execute(f"""
             SELECT s.conversation_id, s.message_id, c.title, c.updated_at,
                    snippet(conversation_search, 0, char(2), char(3), '…', 12) AS snippet
               FROM conversation_search s JOIN conversations c ON c.id = s.conversation_id
@@ -122,7 +158,7 @@ def search(workspace, owner, levels, q, limit=20, visible=None):
                AND c.workspace = ? AND c.owner = ? AND c.deleted_at IS NULL
                AND c.active_leaf_id IS NOT NULL
              ORDER BY bm25(conversation_search) LIMIT ?""",
-                            (query, *levels, workspace, owner, limit * 5)).fetchall()
+                                (query, *levels, workspace, owner, limit * 5)).fetchall()
         answers = {}
         if visible is not None:
             mids = [r["message_id"] for r in rows if r["message_id"]]

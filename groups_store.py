@@ -152,7 +152,7 @@ def staff(workspace):
     with _db() as conn:
         return [r["username"] for r in conn.execute(
             "SELECT username FROM members WHERE workspace = ? AND role IN ('hr', 'admin') "
-            "AND NOT disabled ORDER BY username", (workspace,))]
+            "AND disabled = 0 ORDER BY username", (workspace,))]
 
 
 def members(workspace, group_id):
@@ -351,6 +351,14 @@ def set_doc_acl(workspace, doc_key, principals, created_by):
 
 
 def move_doc_acl(workspace, old_key, new_key):
+    if old_key == new_key:
+        return
     with _db() as conn:
-        conn.execute("UPDATE OR REPLACE doc_acl SET doc_key = ? WHERE workspace = ? AND "
-                     "doc_key = ?", (new_key, workspace, old_key))
+        # The moved grants replace any the new key already has for the same principal
+        # (SQLite's UPDATE OR REPLACE, which Postgres doesn't have).
+        conn.execute("DELETE FROM doc_acl WHERE workspace = ? AND doc_key = ? AND "
+                     "(principal_type, principal) IN (SELECT principal_type, principal "
+                     "FROM doc_acl WHERE workspace = ? AND doc_key = ?)",
+                     (workspace, new_key, workspace, old_key))
+        conn.execute("UPDATE doc_acl SET doc_key = ? WHERE workspace = ? AND doc_key = ?",
+                     (new_key, workspace, old_key))

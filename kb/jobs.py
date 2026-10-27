@@ -10,7 +10,9 @@ of worker threads.
 
 A job is claimed the way members_store.claim_metadata_fetch claims a fetch: in
 one BEGIN IMMEDIATE transaction it is marked as this worker's for a LEASE, so no
-two threads or processes run the same job. The worker renews the leases of the
+two threads or processes run the same job. On Postgres (db.py) workers don't
+wait for each other to claim: each takes the next job with SELECT ... FOR UPDATE
+SKIP LOCKED, and its lane with a transaction-level advisory lock (_claim_postgres). The worker renews the leases of the
 jobs it is running; if it dies (a crash, a deploy), the lease runs out and any
 worker, this one after its restart included, claims the job again. Handlers are
 written to be run again safely.
@@ -81,13 +83,22 @@ def periodic(kind, every, max_attempts=1):
 
 
 # ---- The table --------------------------------------------------------------------
+def _connect():
+    """The queue is the platform's: a request queues another workspace's job, or
+    one of no workspace, and the runner claims any (row-level security, db.py,
+    doesn't limit it)."""
+    with db.platform():
+        return db.connect()
+
+
 @contextlib.contextmanager
-def _transaction():
-    """A connection inside BEGIN IMMEDIATE: holds the write lock until it commits."""
-    conn = db.connect()
+def _transaction(immediate=True):
+    """A connection inside BEGIN IMMEDIATE: holds the write lock until it commits.
+    immediate=False: a plain BEGIN (Postgres's claims, which lock rows instead)."""
+    conn = _connect()
     conn.isolation_level = None
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         yield conn
         conn.execute("COMMIT")
     except BaseException:
@@ -113,7 +124,7 @@ class Job:
 
     def progress(self, step, total, message):
         """Shown while it runs (GET /api/index/status reads it for index jobs)."""
-        conn = db.connect()
+        conn = _connect()
         try:
             with conn:
                 conn.execute("UPDATE jobs SET progress = ? WHERE id = ? AND locked_by = ?",
@@ -126,9 +137,11 @@ class Job:
 def _fold_into_queued(conn, kind, dedupe_key, payload, run_after):
     """Fold `payload` into the job with this dedupe_key that's queued, if there is
     one (it then runs no later than `run_after`). Its id, or None."""
+    # (FOR UPDATE on Postgres: a worker claiming it meanwhile waits, or is waited
+    # for and the job is no longer queued.)
     row = dedupe_key and conn.execute(
-        "SELECT id, payload FROM jobs WHERE dedupe_key = ? AND status = 'queued'",
-        (dedupe_key,)).fetchone()
+        "SELECT id, payload FROM jobs WHERE dedupe_key = ? AND status = 'queued'"
+        + (" FOR UPDATE" if db.is_postgres() else ""), (dedupe_key,)).fetchone()
     if not row:
         return None
     queued = json.loads(row["payload"] or "{}")
@@ -174,6 +187,8 @@ def claim(worker, kinds, lease=LEASE, now=None):
     if not kinds:
         return None
     now = now or time.time()
+    if db.is_postgres():
+        return _claim_postgres(worker, kinds, lease, now)
     marks = ", ".join("?" * len(kinds))
     with _transaction() as conn:
         while True:
@@ -208,11 +223,64 @@ def claim(worker, kinds, lease=LEASE, now=None):
                        worker)
 
 
+_CANDIDATES = """
+    SELECT j.* FROM jobs j
+     WHERE j.kind IN ({marks}) AND j.id NOT IN ({skipped})
+       AND ((j.status = 'queued' AND j.run_after <= ?)
+            OR (j.status = 'running' AND j.locked_until < ?))
+       AND NOT EXISTS (SELECT 1 FROM jobs r
+                        WHERE r.lane = j.lane AND r.id != j.id
+                          AND r.status = 'running' AND r.locked_until >= ?)
+     ORDER BY COALESCE((SELECT MAX(s.started_at) FROM jobs s
+                         WHERE s.workspace IS j.workspace), 0),
+              j.run_after, j.id
+     LIMIT 1 FOR UPDATE OF j SKIP LOCKED"""
+
+
+def _claim_postgres(worker, kinds, lease, now):
+    """claim() on Postgres: the same rules, without a lock on the whole table. The
+    next job is taken FOR UPDATE SKIP LOCKED (one another worker is claiming is
+    passed over), then its lane with pg_try_advisory_xact_lock; the lane is
+    checked again after that, since another worker may just have started a job
+    in it. A job passed over is left for the next try."""
+    marks = ", ".join("?" * len(kinds))
+    skipped = [0]
+    with _transaction(immediate=False) as conn:
+        while True:
+            row = conn.execute(
+                _CANDIDATES.format(marks=marks, skipped=", ".join("?" * len(skipped))),
+                (*kinds, *skipped, now, now, now)).fetchone()
+            if row is None:
+                return None
+            if not conn.execute("SELECT pg_try_advisory_xact_lock(hashtext(?))",
+                                ("kb.jobs.lane:" + row["lane"],)).fetchone()[0] or \
+                    conn.execute("SELECT 1 FROM jobs WHERE lane = ? AND id != ? AND "
+                                 "status = 'running' AND locked_until >= ?",
+                                 (row["lane"], row["id"], now)).fetchone():
+                skipped.append(row["id"])
+                continue
+            if row["status"] == "running" and row["attempts"] >= row["max_attempts"]:
+                conn.execute("UPDATE jobs SET status = 'failed', finished_at = ?, "
+                             "locked_by = NULL, locked_until = NULL, "
+                             "error = COALESCE(error, 'The worker running it stopped.') "
+                             "WHERE id = ?", (now, row["id"]))
+                skipped.append(row["id"])
+                continue
+            if row["status"] == "running":
+                log.warning("Job %d (%s, workspace %s): its worker %s stopped; running it again",
+                            row["id"], row["kind"], row["workspace"], row["locked_by"])
+            conn.execute("UPDATE jobs SET status = 'running', locked_by = ?, locked_until = ?, "
+                         "attempts = attempts + 1, started_at = ?, progress = NULL WHERE id = ?",
+                         (worker, now + lease, now, row["id"]))
+            return Job(conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone(),
+                       worker)
+
+
 def _finish(job, **fields):
     """Update a job this worker still holds. False if it doesn't any more (its
     lease ran out and another worker took it over)."""
     cols = ", ".join(f"{k} = ?" for k in fields)
-    conn = db.connect()
+    conn = _connect()
     try:
         with conn:
             return conn.execute(f"UPDATE jobs SET {cols}, locked_by = NULL, locked_until = NULL "
@@ -256,7 +324,7 @@ def fail(job, error, backoff=BACKOFF):
 def renew(worker, ids, lease=LEASE):
     if not ids:
         return
-    conn = db.connect()
+    conn = _connect()
     try:
         with conn:
             conn.execute(f"UPDATE jobs SET locked_until = ? WHERE locked_by = ? AND "
@@ -267,7 +335,7 @@ def renew(worker, ids, lease=LEASE):
 
 
 def get(job_id):
-    conn = db.connect()
+    conn = _connect()
     try:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
@@ -279,7 +347,7 @@ def lane_jobs(lane, kinds):
     """A lane's queued and running jobs of `kinds`, newest first, then the last
     one that finished (if any), as dicts."""
     marks = ", ".join("?" * len(kinds))
-    conn = db.connect()
+    conn = _connect()
     try:
         rows = conn.execute(f"""
             SELECT * FROM jobs WHERE lane = ? AND kind IN ({marks}) AND (
@@ -316,7 +384,7 @@ def ensure_periodic(kinds, now=None):
 def prune(job=None, keep_days=KEEP_DAYS):
     """Delete finished jobs older than keep_days, except each lane's last one
     (the index status shows it)."""
-    conn = db.connect()
+    conn = _connect()
     try:
         with conn:
             n = conn.execute("""
@@ -379,7 +447,8 @@ class Runner:
         with self._held_lock:
             self._held.add(job.id)
         try:
-            with logs.job_context(job):          # its log lines carry job_id, job_kind
+            # A workspace's job runs as that tenant (row-level security on Postgres).
+            with logs.job_context(job), db.tenant_scope(job.workspace):
                 result = self.handlers[job.kind].fn(job)
         except Retry as e:
             log.warning("Job %d (%s, workspace %s) failed, attempt %d of %d: %s",

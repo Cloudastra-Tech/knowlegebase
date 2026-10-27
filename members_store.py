@@ -129,14 +129,24 @@ class NoAdminLeft(Exception):
 
 def _db():
     global _ready
-    conn = db.connect()
     if not _ready:
         with _lock:
             if not _ready:
-                with conn:
-                    _import_old_files(conn)
+                conn = db.connect_platform()        # the files name any workspace
+                try:
+                    with conn:
+                        _import_old_files(conn)
+                finally:
+                    conn.close()
                 _ready = True
-    return conn
+    return db.connect()
+
+
+def _platform_db():
+    """_db(), seeing every workspace's rows (db.platform): for a check that is
+    across workspaces by nature, e.g. whether another one owns a domain."""
+    with db.platform():
+        return _db()
 
 
 # ---- The old config files, copied in once -------------------------------------
@@ -257,7 +267,7 @@ def set_group_admin_days(workspace, days):
 # ---- Domains -------------------------------------------------------------------
 def workspace_for_domain(domain):
     """The workspace that has verified this email domain, or None."""
-    with _db() as conn:
+    with _platform_db() as conn:
         row = conn.execute("""SELECT workspace FROM workspace_domains
                               WHERE domain = ? AND verified_at IS NOT NULL""",
                            (domain.strip().lower(),)).fetchone()
@@ -276,7 +286,7 @@ def add_verified_domain(workspace, domain):
     """For whoever runs the server: let `domain` sign in to `workspace`.
     Raises ValueError if another workspace has already verified it."""
     domain = domain.strip().lower()
-    with _lock, _db() as conn:
+    with _lock, _platform_db() as conn:
         owner = conn.execute("""SELECT workspace FROM workspace_domains
                                 WHERE domain = ? AND verified_at IS NOT NULL""",
                              (domain,)).fetchone()
@@ -317,7 +327,7 @@ def create_workspace(name, domain, email, person_name, code=None):
     `code`, when given, is used up by it. Returns the new workspace's slug;
     raises WorkspaceTaken."""
     domain, email = domain.strip().lower(), email.strip().lower()
-    with _lock, _db() as conn:
+    with _lock, _platform_db() as conn:
         if conn.execute("""SELECT 1 FROM workspace_domains
                            WHERE domain = ? AND verified_at IS NOT NULL""", (domain,)).fetchone():
             raise WorkspaceTaken("workspace_exists")
@@ -792,9 +802,9 @@ def _log_event(conn, workspace, cid, email, outcome, reason=None, ref=None):
                   time.time()))
     # SCIM's events are kept apart: a big first sync mustn't push out the sign-ins.
     scim = int(outcome == "scim")
-    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND (outcome = 'scim') = ?
+    conn.execute("""DELETE FROM sso_events WHERE workspace = ? AND (outcome = 'scim') = (? = 1)
                     AND id NOT IN (SELECT id FROM sso_events
-                                   WHERE workspace = ? AND (outcome = 'scim') = ?
+                                   WHERE workspace = ? AND (outcome = 'scim') = (? = 1)
                                    ORDER BY id DESC LIMIT ?)""",
                  (workspace, scim, workspace, scim, EVENTS_KEPT))
 
@@ -804,7 +814,7 @@ def recent_events(workspace, limit=50, scim=False):
     with _db() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT connection_id, email, outcome, reason, ref, at FROM sso_events "
-            "WHERE workspace = ? AND (outcome = 'scim') = ? ORDER BY id DESC LIMIT ?",
+            "WHERE workspace = ? AND (outcome = 'scim') = (? = 1) ORDER BY id DESC LIMIT ?",
             (workspace, int(scim), limit))]
 
 

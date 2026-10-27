@@ -14,6 +14,8 @@ Two new tables, nothing existing changes:
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0004"
 down_revision = "0003"
 branch_labels = None
@@ -53,7 +55,7 @@ SCHEMA = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for statement in SCHEMA:
         conn.exec_driver_sql(statement)
 

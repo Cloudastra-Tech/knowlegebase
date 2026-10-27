@@ -9,7 +9,6 @@ identity provider's settings document are faked.
 import csv
 import io
 import json
-import sqlite3
 import uuid
 
 import pytest
@@ -435,7 +434,7 @@ def test_a_refused_change_writes_nothing(client):
 
 # ---- The hash chain -----------------------------------------------------------------------
 def _db():
-    return sqlite3.connect(db.DB_PATH)
+    return db.connect()           # the app's database, either backend
 
 
 def test_the_chain_links_each_workspace_on_its_own():

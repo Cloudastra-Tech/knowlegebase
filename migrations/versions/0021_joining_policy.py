@@ -26,6 +26,8 @@ deletes its rows (kb/services/lifecycle.py).
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0021"
 down_revision = "0020"
 branch_labels = None
@@ -76,10 +78,9 @@ TABLES = (
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table, name, kind in COLUMNS:
-        have = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
-        if name not in have:
+        if not dialect.has_column(conn, table, name):
             conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
             if table == "workspaces":
                 # Existing workspaces keep today's behaviour: anyone on a verified domain
@@ -90,7 +91,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("claim_codes", "join_requests"):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
     for table, name, _ in COLUMNS:

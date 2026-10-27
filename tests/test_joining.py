@@ -294,7 +294,7 @@ def test_a_denial_is_remembered_then_they_can_ask_again(client, fakes, mail, mon
     assert error_of(sign_in(client, fakes, "google", domain)[0]) == "join_denied"
     assert requests_of(client, h) == [] and mail == []
     # After it: a new request.
-    with sqlite3.connect(db.DB_PATH) as conn:
+    with db.connect() as conn:             # the app's database, either backend
         conn.execute("UPDATE join_requests SET decided_at = ? WHERE id = ?",
                      (time.time() - (join_store.deny_days() + 1) * 86400, req["id"]))
     conn.close()
@@ -370,7 +370,7 @@ def test_a_data_request_exports_and_erases_their_requests(client, fakes):
     assert [r["status"] for r in exported["join_requests"]] == ["approved"]
     r = client.post(f"/api/admin/members/{email}/erase", headers=h, json={"confirm": email})
     assert r.status_code == 200, r.text
-    with sqlite3.connect(db.DB_PATH) as conn:
+    with db.connect() as conn:             # the app's database, either backend
         left = conn.execute("SELECT COUNT(*) FROM join_requests WHERE workspace = ?",
                             (ws,)).fetchone()[0]
     conn.close()
@@ -404,6 +404,7 @@ def test_admins_set_the_policy_for_the_workspace_and_per_domain(client):
 
 
 # ---- The migration's defaults ---------------------------------------------------------------
+@pytest.mark.sqlite_only("upgrades a SQLite file one migration at a time with alembic")
 def test_existing_workspaces_migrate_to_auto_and_new_ones_start_at_request(tmp_path,
                                                                           monkeypatch):
     from alembic import command
@@ -450,7 +451,7 @@ def orphan(admin_password=False, admin_seen_days=None):
         members_store.set_password(f"pw-admin@{ws}.old", "A", auth.hash_password(PASSWORD), ws,
                                    "admin")
     if admin_seen_days is not None:
-        with sqlite3.connect(db.DB_PATH) as conn:
+        with db.connect() as conn:             # the app's database, either backend
             conn.execute("UPDATE members SET last_login_at = ? WHERE username = ?",
                          (time.time() - admin_seen_days * 86400, f"gone@{ws}.old"))
         conn.close()

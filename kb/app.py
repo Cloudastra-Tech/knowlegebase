@@ -73,6 +73,7 @@ def create_app():
                        secret_key=os.getenv("SESSION_SECRET") or secrets.token_urlsafe(32),
                        session_cookie="kb_oauth", max_age=10 * 60, same_site="lax",
                        https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
+    app.add_middleware(middleware.TenantScope)
     app.add_middleware(middleware.BodyLimit)
     app.add_middleware(middleware.SecurityHeaders, docs_paths=(app.docs_url, app.redoc_url))
     # /api/v1 from the browser extension's origins only (EXTENSION_ORIGINS); none by default.

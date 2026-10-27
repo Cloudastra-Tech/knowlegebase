@@ -27,6 +27,8 @@ good and gives support no access), and new tables:
 
 from alembic import op
 
+from migrations import dialect
+
 revision = "0013"
 down_revision = "0012"
 branch_labels = None
@@ -83,8 +85,8 @@ TABLES = (
 
 
 def upgrade():
-    conn = op.get_bind()
-    have = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(workspaces)")}
+    conn = dialect.bind()
+    have = set(dialect.columns(conn, "workspaces"))
     for name, kind in COLUMNS:
         if name not in have:
             conn.exec_driver_sql(f"ALTER TABLE workspaces ADD COLUMN {name} {kind}")
@@ -93,7 +95,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = dialect.bind()
     for table in ("audit_anchors", "audit_pseudonyms", "workspace_exports", "workspace_keys"):
         conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
     with op.batch_alter_table("workspaces") as batch:
