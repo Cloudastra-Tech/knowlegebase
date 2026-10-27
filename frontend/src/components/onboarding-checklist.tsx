@@ -141,6 +141,12 @@ export function OnboardingChecklist({ onAddProvider }: { onAddProvider: () => vo
   return (
     <Panel
       title="Set up your workspace"
+      description={
+        <>
+          {left === 1 ? "One step left" : `${left} steps left`} to make it useful for everyone.
+          Each one ticks itself off when it's done.
+        </>
+      }
       className="min-w-0"
       actions={
         <Button size="sm" variant="ghost" onClick={hide} disabled={hiding}>
@@ -148,11 +154,7 @@ export function OnboardingChecklist({ onAddProvider }: { onAddProvider: () => vo
         </Button>
       }
     >
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        {left === 1 ? "One step left" : `${left} steps left`} to make it useful for everyone.
-        Each one ticks itself off when it's done.
-      </p>
-      <ol className="mt-4 flex flex-col gap-4">
+      <ol className="flex flex-col gap-4">
         {checklist.steps.map((s) => (
           <li key={s.id} className="flex flex-wrap items-start gap-3" data-step={s.id}>
             <Tick done={s.done} />

@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { markInstant, usePrefersReducedMotion } from "./motion"
+import { markInstant, usePrefersReducedMotion, useStaggerOnce } from "./motion"
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -43,5 +43,31 @@ describe("usePrefersReducedMotion", () => {
     matches = true
     act(() => listeners.forEach((cb) => cb()))
     expect(result.current).toBe(true)
+  })
+})
+
+describe("useStaggerOnce", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("staggers the first draw 40ms apart, capped at the sixth, then never again", () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(({ ready }) => useStaggerOnce(ready), {
+      initialProps: { ready: false },
+    })
+    // Nothing yet: the items aren't there.
+    expect(result.current(0)).toEqual({})
+
+    rerender({ ready: true })
+    expect(result.current(0).className).toContain("motion-safe:animate-in")
+    expect(result.current(0).style).toEqual({ animationDelay: "0ms" })
+    expect(result.current(2).style).toEqual({ animationDelay: "80ms" })
+    expect(result.current(9).style).toEqual({ animationDelay: "200ms" })
+
+    // Played: a refetch, a filter or a new item doesn't animate.
+    act(() => vi.advanceTimersByTime(1000))
+    expect(result.current(0)).toEqual({})
+    expect(result.current(7)).toEqual({})
   })
 })

@@ -68,10 +68,10 @@ function DataPanel({
   return (
     <Panel
       title={danger ? <span className="text-destructive">{title}</span> : title}
+      description={description}
       className={danger ? "border border-destructive/40" : undefined}
     >
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">{description}</p>
-      <div className="mt-4">{children}</div>
+      {children}
     </Panel>
   )
 }

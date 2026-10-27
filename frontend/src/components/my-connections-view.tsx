@@ -22,6 +22,7 @@ import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
 import { Card, Stat } from "@/components/integrations-view"
 import { ScreenHeader } from "@/components/screen-header"
 import { api, type Integration } from "@/lib/api"
+import { type StaggerItem, useStaggerOnce } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
@@ -35,12 +36,12 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 function MyConnectionCard({
   item,
-  order,
+  enter,
   onChange,
   autoOpenPicker,
 }: {
   item: Integration
-  order: number
+  enter: StaggerItem // the grid's first-draw stagger (useStaggerOnce)
   onChange: () => void
   autoOpenPicker?: boolean
 }) {
@@ -98,7 +99,7 @@ function MyConnectionCard({
   const reconnect = item.error?.code === "auth_expired" || item.error?.code === "missing_scope"
 
   return (
-    <Card item={item} order={order}>
+    <Card item={item} enter={enter}>
       {item.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">
           Not turned on for this server yet. Ask your admin.
@@ -231,6 +232,7 @@ export function MyConnectionsView({ openPickerFor }: { openPickerFor?: string | 
       query.state.data?.integrations.some((i) => i.status === "syncing") ? 3000 : false,
   })
   const items = data?.integrations ?? null
+  const enter = useStaggerOnce(items !== null)
   const load = () =>
     void queryClient.invalidateQueries({ queryKey: queries.myIntegrations().queryKey })
 
@@ -258,7 +260,7 @@ export function MyConnectionsView({ openPickerFor }: { openPickerFor?: string | 
             <MyConnectionCard
               key={item.id}
               item={item}
-              order={i}
+              enter={enter(i)}
               onChange={load}
               autoOpenPicker={openPickerFor === item.id}
             />

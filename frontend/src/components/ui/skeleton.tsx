@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 // A shimmer that sweeps across (a translated gradient: transform only, 1.4s linear),
 // not a pulse. The sweep is tw-animate's enter slide from -200% on top of a +100%

@@ -37,6 +37,17 @@ describe("Panel", () => {
     expect(screen.getByText("┌")).toHaveAttribute("aria-hidden", "true")
   })
 
+  it("is described by its description, under the title", () => {
+    render(
+      <Panel title="Usage" description="Questions start again on 1 Nov.">
+        <p>12 of 100</p>
+      </Panel>,
+    )
+    const region = screen.getByRole("region", { name: "Usage" })
+    expect(region).toHaveAccessibleDescription("Questions start again on 1 Nov.")
+    expect(screen.getByText("Questions start again on 1 Nov.")).toHaveAttribute("data-slot", "panel-description")
+  })
+
   it("is opaque for reading, and plain without a head", () => {
     const { container } = render(
       <Panel tone="solid">

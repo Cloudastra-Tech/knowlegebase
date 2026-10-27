@@ -367,6 +367,11 @@ export function ActivityView({ signIns }: { signIns: ReactNode }) {
     <Panel
       tone="solid"
       title="Activity"
+      description={
+        tab === "changes"
+          ? "Every change an admin or HR made here, newest first. Kept for good, and chained so an edited entry shows."
+          : "Sign-ins through your providers and with passwords, and changes providers made by themselves."
+      }
       actions={
         <Tabs panels={false} value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList>
@@ -376,12 +381,7 @@ export function ActivityView({ signIns }: { signIns: ReactNode }) {
         </Tabs>
       }
     >
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-        {tab === "changes"
-          ? "Every change an admin or HR made here, newest first. Kept for good, and chained so an edited entry shows."
-          : "Sign-ins through your providers and with passwords, and changes providers made by themselves."}
-      </p>
-      <div className="mt-4">{tab === "changes" ? <AdminChanges /> : signIns}</div>
+      <div>{tab === "changes" ? <AdminChanges /> : signIns}</div>
     </Panel>
   )
 }

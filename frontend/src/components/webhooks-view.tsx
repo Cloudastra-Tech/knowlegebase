@@ -575,6 +575,19 @@ export function WebhooksView() {
   return (
     <Panel
       title="Webhooks"
+      description={
+        <>
+          Tell your own systems (a SIEM, an ITSM, chat ops) when something happens here.
+          Requests are signed with HMAC-SHA256
+          {settings ? `, and retried for ${settings.retry_hours} hours until they're answered with a 2xx` : ""}
+          .
+          {reason && (
+            <span id={reasonId} className={cn("mt-2 block text-xs", off && "sr-only")}>
+              {reason}
+            </span>
+          )}
+        </>
+      }
       actions={
         <Button
           size="sm"
@@ -586,18 +599,7 @@ export function WebhooksView() {
         </Button>
       }
     >
-      <p className="-mt-2 max-w-2xl text-sm text-pretty text-muted-foreground">
-        Tell your own systems (a SIEM, an ITSM, chat ops) when something happens here.
-        Requests are signed with HMAC-SHA256
-        {settings ? `, and retried for ${settings.retry_hours} hours until they're answered with a 2xx` : ""}
-        .
-      </p>
-      {reason && (
-        <p id={reasonId} className={cn("mt-2 text-xs text-muted-foreground", off && "sr-only")}>
-          {reason}
-        </p>
-      )}
-      <div className="mt-4">
+      <div>
         {off ? (
           <AsciiEmptyState
             art="broken"

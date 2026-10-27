@@ -52,9 +52,8 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <Panel title={title} actions={action} className="min-w-0">
-      <p className="-mt-2 text-sm text-pretty text-muted-foreground">{description}</p>
-      <div className="mt-4">{children}</div>
+    <Panel title={title} description={description} actions={action} className="min-w-0">
+      {children}
     </Panel>
   )
 }

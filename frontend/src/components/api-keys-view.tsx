@@ -497,36 +497,38 @@ export function ApiKeysView() {
             )}
           </Panel>
 
-          <Panel title="Connect an agent (MCP)" className="min-w-0">
-            <div className="grid min-w-0 grid-cols-1 gap-4">
-              <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-                {data.settings.mcp_enabled
-                  ? "Give Claude, Cursor or another MCP client your key, and it can search and ask the knowledge base with your permissions."
-                  : "Your admins have turned the MCP server off."}
-              </p>
-              {data.settings.mcp_enabled && (
-                <>
-                  <CopyField label="MCP server URL" value={data.mcp_url} />
-                  <McpSnippets mcpUrl={data.mcp_url} />
-                </>
-              )}
-            </div>
+          <Panel
+            title="Connect an agent (MCP)"
+            description={
+              data.settings.mcp_enabled
+                ? "Give Claude, Cursor or another MCP client your key, and it can search and ask the knowledge base with your permissions."
+                : "Your admins have turned the MCP server off."
+            }
+            className="min-w-0"
+          >
+            {data.settings.mcp_enabled && (
+              <div className="grid min-w-0 grid-cols-1 gap-4">
+                <CopyField label="MCP server URL" value={data.mcp_url} />
+                <McpSnippets mcpUrl={data.mcp_url} />
+              </div>
+            )}
           </Panel>
 
-          <Panel title="REST API" className="min-w-0">
-            <div className="grid min-w-0 grid-cols-1 gap-3">
-              <p className="-mt-2 text-sm text-pretty text-muted-foreground">
-                {data.settings.api_enabled
-                  ? "Version 1: ask, search, sources, documents and (admins) the audit log."
-                  : "Your admins have turned the API off."}
-              </p>
-              {data.settings.api_enabled && (
-                <>
-                  <CopyField label="Base URL" value={data.api_url} />
-                  <CopyField label="OpenAPI description" value={data.openapi_url} />
-                </>
-              )}
-            </div>
+          <Panel
+            title="REST API"
+            description={
+              data.settings.api_enabled
+                ? "Version 1: ask, search, sources, documents and (admins) the audit log."
+                : "Your admins have turned the API off."
+            }
+            className="min-w-0"
+          >
+            {data.settings.api_enabled && (
+              <div className="grid min-w-0 grid-cols-1 gap-3">
+                <CopyField label="Base URL" value={data.api_url} />
+                <CopyField label="OpenAPI description" value={data.openapi_url} />
+              </div>
+            )}
           </Panel>
         </div>
       )}
