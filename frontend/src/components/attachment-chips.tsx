@@ -96,7 +96,7 @@ export function AttachmentChips({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <ShieldAlert
-                    className="size-3.5 shrink-0 text-amber-600"
+                    className="size-3.5 shrink-0 text-warning"
                     aria-label="Contains instructions"
                   />
                 </TooltipTrigger>

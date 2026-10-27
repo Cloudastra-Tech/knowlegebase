@@ -61,6 +61,7 @@ export function citedNumber(href?: string) {
 export interface Citations {
   byNumber: Map<number, Source>
   open: (source: Source) => void
+  live?: boolean // the answer is streaming in: a chip pops as its source arrives
 }
 export const CitationsContext = createContext<Citations | null>(null)
 

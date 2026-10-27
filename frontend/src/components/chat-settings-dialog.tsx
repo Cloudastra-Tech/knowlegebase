@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -114,8 +113,7 @@ export function ChatSettingsDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button onClick={save} loading={saving}>
             Save
           </Button>
         </DialogFooter>

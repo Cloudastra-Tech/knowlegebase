@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Link2Off, Loader2, Lock, MessageSquarePlus } from "lucide-react"
+import { Link2Off, Lock, MessageSquarePlus } from "lucide-react"
 import { toast } from "sonner"
 
 import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
@@ -106,12 +106,8 @@ export function SharedView({ token }: { token: string }) {
         </p>
         {continuable && (
           <div className="pt-2" data-print="hide">
-            <Button variant="outline" size="sm" disabled={fork.isPending} onClick={() => fork.mutate()}>
-              {fork.isPending ? (
-                <Loader2 className="animate-spin" data-icon="inline-start" />
-              ) : (
-                <MessageSquarePlus data-icon="inline-start" />
-              )}
+            <Button variant="outline" size="sm" loading={fork.isPending} onClick={() => fork.mutate()}>
+              {!fork.isPending && <MessageSquarePlus data-icon="inline-start" />}
               Continue in my chats
             </Button>
           </div>
