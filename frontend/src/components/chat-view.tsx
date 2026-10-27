@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { flushSync } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react-router"
 import {
@@ -16,7 +17,13 @@ import {
 import { toast } from "sonner"
 
 import { AttachButton, AttachmentChips } from "@/components/attachment-chips"
-import { AssistantMessage, BranchNav, type AnswerActions, type Message } from "@/components/chat-answer"
+import {
+  AssistantMessage,
+  BranchNav,
+  type AnswerActions,
+  type LiveStep,
+  type Message,
+} from "@/components/chat-answer"
 import { Composer } from "@/components/chat-composer"
 import { ChatSidebar } from "@/components/chat-sidebar"
 import { LoggingNotice } from "@/components/logging-notice"
@@ -50,6 +57,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller"
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -69,6 +84,7 @@ import {
 import { useUser } from "@/lib/auth-context"
 import { CHOOSE_SPACE, FOCUS_COMPOSER, TOGGLE_SIDEBAR } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
+import { usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { spaceLabel } from "@/lib/spaces"
 
@@ -97,9 +113,18 @@ function fromSaved(saved: SavedMessage[], keys: Map<string, string> = new Map())
       followups: m.followups,
       siblings: m.siblings,
       verified: m.verified,
-      steps: (m.steps ?? []).map((s) => ({ ...s, done: true })),
+      steps: endSteps(
+        (m.steps ?? []).map((s) => ({ ...s, done: s.result != null })),
+        m.state === "stopped" || m.state === "error" ? m.state : null,
+      ),
     }
   })
+}
+
+// An answer's steps once it has ended: a step still running when it was stopped or
+// failed shows that (not a done step); otherwise they're all done.
+function endSteps(steps: LiveStep[], ended: "stopped" | "error" | null): LiveStep[] {
+  return steps.map((st) => (st.done ? st : { ...st, done: true, ...(ended ? { ended } : {}) }))
 }
 
 const keysOf = (messages: Message[]) =>
@@ -153,6 +178,17 @@ const ENDED: Partial<Record<AnswerState, string>> = {
   stopped: "Answer stopped.",
 }
 
+// How much of the turn before stays in sight above a question pinned to the top (px).
+const PEEK = 64
+
+// The scroller holds a pinned question in place as its answer grows (putting it back
+// when the page above it changes), and lets go when the reader scrolls with the wheel,
+// touch or scroll keys. Scrolled another way, it would be undone on the next token, so
+// these let go too: a press on the scrollbar, and the focus moving into the transcript
+// (Tab to a link, which scrolls to it). Told as a wheel turn, the one way in it has.
+const letGo = (viewport: HTMLElement) =>
+  viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true }))
+
 const typing = (el: Element | null) =>
   el instanceof HTMLElement &&
   (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))
@@ -184,12 +220,15 @@ export function ChatView({ role }: { role: Role }) {
   const [editing, setEditing] = useState<string | null>(null) // a question's key
   const [sharing, setSharing] = useState<{ messageId: string | null } | null>(null)
   const [announce, setAnnounce] = useState("")
-  const [atBottom, setAtBottom] = useState(true)
+  // The last question is the scroller's anchor (see the transcript, below), except
+  // after switching versions, which never moves the view.
+  const [pinLast, setPinLast] = useState(true)
   const abort = useRef<AbortController | null>(null)
   const nextKey = useRef(1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const lastAnswerRef = useRef<HTMLDivElement>(null)
+  const reduced = usePrefersReducedMotion()
   const knowledge = useQuery({ ...queries.knowledge(), meta: { silent: true } })
   // Someone who hasn't asked anything yet: "ask your first question" (the server's
   // suggestions, from titles they may read), and HR the sample documents.
@@ -251,22 +290,14 @@ export function ChatView({ role }: { role: Role }) {
     inputRef.current?.focus()
   }, [prefill, setParams])
 
-  // Follow the answer down only while the reader is at the bottom; otherwise offer
-  // "Jump to latest". No smooth scrolling for people who asked for less motion.
-  const scrollToEnd = useCallback((smooth = true) => {
-    const el = scrollRef.current
-    if (!el) return
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduce ? "smooth" : "auto" })
-  }, [])
-  const lastText = messages.at(-1)?.text
-  useEffect(() => {
-    if (atBottom) scrollToEnd()
-  }, [messages.length, lastText, atBottom, scrollToEnd])
-  // Another chat opens at its end (scrolling there sets atBottom again).
-  useEffect(() => {
-    scrollToEnd(false)
-  }, [urlId, scrollToEnd])
+  // Another conversation gets a scroller of its own, so it opens at its last question
+  // (the scroller's defaultScrollPosition). A new chat that's just been saved, and so
+  // has an address now, keeps the one it has.
+  const [scroller, setScroller] = useState({ urlId, key: urlId ?? "new" })
+  if (scroller.urlId !== urlId) {
+    setScroller({ urlId, key: live && scroller.urlId === null ? scroller.key : (urlId ?? "new") })
+    setPinLast(true)
+  }
 
   // Esc stops an answer being written, wherever the focus is.
   useEffect(() => {
@@ -315,7 +346,6 @@ export function ChatView({ role }: { role: Role }) {
     abort.current?.abort()
     setSession(null)
     setEditing(null)
-    setAtBottom(true)
     navigate(to)
   }
 
@@ -417,21 +447,32 @@ export function ChatView({ role }: { role: Role }) {
       status: "Thinking",
       steps: [],
     }
-    const cut = (all: Message[], m: Message) => all.slice(0, all.findIndex((x) => x.key === m.key))
-    edit((all) =>
-      target
-        ? [...cut(all, target), draft]
-        : again.edit
-          ? [...cut(all, again.edit), { key: questionKey, role: "user", text: q }, draft]
-          : [...all, { key: questionKey, role: "user", text: q }, draft],
-    )
+    // The question goes in after what stays, as a new row the scroller pins to the top
+    // of the view, with the answer growing below it. Asked again, what makes way goes
+    // first (its own render), so the scroller sees the question arrive, not a swap:
+    // a retried or rewritten answer's question comes back as a new row too.
+    const at = (m: Message) => messages.findIndex((x) => x.key === m.key)
+    const before = target ? messages[at(target) - 1] : undefined
+    const reasked = before?.role === "user" ? before : undefined // the question asked again
+    const from = target
+      ? at(target) - (reasked ? 1 : 0)
+      : again.edit
+        ? at(again.edit)
+        : messages.length
+    const kept = messages.slice(0, from)
+    const asked: Message[] = target
+      ? reasked
+        ? [{ ...reasked, key: `draft-${nextKey.current++}` }]
+        : []
+      : [{ key: questionKey, role: "user", text: q }]
+    if (from < messages.length) flushSync(() => edit(() => kept))
+    edit(() => [...kept, ...asked, draft])
+    setPinLast(true)
     setLoading(true)
     setAnnounce("Writing an answer…")
-    setAtBottom(true)
     const change = (fn: (s: Session) => Session) => setSession((s) => (s ? fn(s) : s))
     const update = (fn: (m: Message) => Message) =>
       change((s) => ({ ...s, messages: s.messages.map((m) => (m.key === key ? fn(m) : m)) }))
-    const allDone = (m: Message) => (m.steps ?? []).map((st) => ({ ...st, done: true }))
     // The address follows the session in the same render, so it never shows another.
     const go = (id: string) => navigate(`/chat/${id}`, { flushSync: true })
     let savedIn: string | null = urlId
@@ -516,7 +557,10 @@ export function ChatView({ role }: { role: Role }) {
         followups: reply.followups,
         verified: reply.verified,
         streaming: false,
-        steps: allDone(m),
+        steps: endSteps(
+          m.steps ?? [],
+          reply.state === "stopped" || reply.state === "error" ? reply.state : null,
+        ),
       }))
       // The versions beside it ("‹ 2 / 3 ›") come from the saved conversation.
       if (savedIn) reload(savedIn).catch(() => {})
@@ -526,8 +570,13 @@ export function ChatView({ role }: { role: Role }) {
         // Stopped: keep what was written (the server saves it the same way), and
         // take the focus to it.
         ended = "stopped"
-        update((m) => ({ ...m, state: "stopped", streaming: false, steps: allDone(m) }))
-        requestAnimationFrame(() => lastAnswerRef.current?.focus())
+        update((m) => ({
+          ...m,
+          state: "stopped",
+          streaming: false,
+          steps: endSteps(m.steps ?? [], "stopped"),
+        }))
+        requestAnimationFrame(() => lastAnswerRef.current?.focus({ preventScroll: true }))
       } else if (err instanceof ApiError && (err.status === 429 || err.status === 402)) {
         // Nothing was asked: give the question back to send again in a moment (a
         // rate limit), or once the plan allows it (402: the plan's limit, BILLING=on).
@@ -545,7 +594,7 @@ export function ChatView({ role }: { role: Role }) {
           text: err instanceof Error ? err.message : "Something went wrong.",
           state: "error",
           streaming: false,
-          steps: allDone(m),
+          steps: endSteps(m.steps ?? [], "error"),
         }))
       }
     } finally {
@@ -562,6 +611,7 @@ export function ChatView({ role }: { role: Role }) {
     try {
       await api.updateConversation(urlId, { active_leaf_id: to })
       const fresh = await queryClient.fetchQuery({ ...queries.conversation(urlId), staleTime: 0 })
+      setPinLast(false)
       setSession({
         id: urlId,
         role,
@@ -651,137 +701,161 @@ export function ChatView({ role }: { role: Role }) {
           onNewChat={newChat}
           onDeleted={() => open("/chat")}
         />
-        <div
-          ref={scrollRef}
-          className="relative flex-1 overflow-y-auto"
-          data-print="flow"
-          onScroll={(e) => {
-            const el = e.currentTarget
-            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
-          }}
+        {/* The transcript. A question just asked is pinned to the top of the view and
+            its answer grows below it: nothing scrolls while it streams (no following).
+            When there's more below, "Jump to latest" goes there. The last question is
+            the anchor; a chat opens with it at the top (or at its end, if it fits). */}
+        <MessageScrollerProvider
+          key={scroller.key}
+          defaultScrollPosition="last-anchor"
+          scrollPreviousItemPeek={PEEK}
         >
-          <div
-            className="mx-auto max-w-3xl space-y-6 px-4 py-6"
-            role="log"
-            aria-label="Conversation"
-            aria-busy={loading}
-          >
-            {empty && (
-              <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
-                <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                  {space
-                    ? `Ask in ${spaceLabel(space)}`
-                    : firstRun
-                      ? "Ask your first question"
-                      : "Ask your company docs"}
-                </h2>
-                <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                  {space?.kind === "personal"
-                    ? "Answers come from the files you keep in your space and the sources you added to it, "
-                    : space
-                      ? "Answers come only from this space's sources that you can see, "
-                      : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
-                  with the sources cited under every answer. Attach a file to ask about it too.
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Searching as{" "}
-                  <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
-                </p>
-                <LoggingNotice />
-                <div className="mt-8 grid w-full max-w-xl gap-2" aria-label="Suggested questions">
-                  {firstRun && (
-                    <p className="text-left text-xs font-medium text-muted-foreground">
-                      Try one of these, from your workspace's documents, or type your own.
-                    </p>
-                  )}
-                  {starters.map((s) => (
-                    <Button
-                      key={s}
-                      variant="outline"
-                      onClick={() => ask(s)}
-                      className="h-auto justify-start whitespace-normal rounded-lg px-4 py-3 text-left font-normal"
-                    >
-                      {s}
-                    </Button>
-                  ))}
-                </div>
-                {offerSample && (welcome.sample.available || welcome.sample.on) && (
-                  <div className="mt-6 flex max-w-xl flex-col items-center gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {welcome.sample.on
-                        ? "The sample HR handbook is in. Remove it before colleagues ask."
-                        : "No documents yet? Try it on a made-up HR handbook first."}
-                    </p>
-                    <SampleDocsToggle sample={welcome.sample} />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {forkedFrom && (
-              <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <CornerUpLeft className="size-3.5 shrink-0" />
-                Branched from{" "}
-                <Link
-                  to={`/chat/${forkedFrom.conversation_id}`}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    open(`/chat/${forkedFrom.conversation_id}`)
-                  }}
-                  className="truncate font-medium text-foreground underline-offset-4 hover:underline"
-                >
-                  {forkedFrom.title}
-                </Link>
-              </p>
-            )}
-
-            {shown?.notice && (
-              <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Info className="size-3.5 shrink-0" />
-                {shown.notice}
-              </p>
-            )}
-
-            {messages.map((m) =>
-              m.role === "user" ? (
-                <UserMessage
-                  key={m.key}
-                  message={m}
-                  editing={editing === m.key}
-                  busy={loading}
-                  onEdit={() => setEditing(m.key)}
-                  onCancel={() => setEditing(null)}
-                  onSave={(text) => ask(text, { edit: m })}
-                  onBranch={showBranch}
-                />
-              ) : (
-                <AssistantMessage
-                  key={m.key}
-                  message={m}
-                  actions={actions}
-                  last={m === lastAnswer}
-                  ref={m === lastAnswer ? lastAnswerRef : undefined}
-                />
-              ),
-            )}
-          </div>
-          {!atBottom && messages.length > 0 && (
-            <div className="pointer-events-none sticky bottom-2 flex justify-center" data-print="hide">
-              <Button
-                variant="outline"
-                size="sm"
-                className="pointer-events-auto rounded-full shadow-sm"
-                onClick={() => {
-                  setAtBottom(true)
-                  scrollToEnd()
-                }}
+          <MessageScroller className="flex-1" data-print="flow">
+            {/* No browser scroll anchoring: the scroller keeps the question in place
+                itself, and the two together nudged the view on every token. */}
+            <MessageScrollerViewport
+              ref={viewportRef}
+              aria-label="Chat messages"
+              onPointerDown={(e) => e.target === e.currentTarget && letGo(e.currentTarget)}
+              // Not focus from a portal (the passage sheet), which React bubbles through here.
+              onFocus={(e) => e.currentTarget.contains(e.target) && letGo(e.currentTarget)}
+              data-print="flow"
+              className="outline-none [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+            >
+              <MessageScrollerContent
+                className="mx-auto w-full max-w-3xl px-4 py-6"
+                aria-label="Conversation"
+                aria-busy={loading}
               >
-                <ArrowDown data-icon="inline-start" />
-                Jump to latest
-              </Button>
-            </div>
-          )}
-        </div>
+                {empty && (
+                  <MessageScrollerItem>
+                    <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
+                      <h2 className="text-2xl font-semibold tracking-tight text-balance">
+                        {space
+                          ? `Ask in ${spaceLabel(space)}`
+                          : firstRun
+                            ? "Ask your first question"
+                            : "Ask your company docs"}
+                      </h2>
+                      <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                        {space?.kind === "personal"
+                          ? "Answers come from the files you keep in your space and the sources you added to it, "
+                          : space
+                            ? "Answers come only from this space's sources that you can see, "
+                            : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
+                        with the sources cited under every answer. Attach a file to ask about it too.
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Searching as{" "}
+                        <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
+                      </p>
+                      <LoggingNotice />
+                      <div className="mt-8 grid w-full max-w-xl gap-2" aria-label="Suggested questions">
+                        {firstRun && (
+                          <p className="text-left text-xs font-medium text-muted-foreground">
+                            Try one of these, from your workspace's documents, or type your own.
+                          </p>
+                        )}
+                        {starters.map((s) => (
+                          <Button
+                            key={s}
+                            variant="outline"
+                            onClick={() => ask(s)}
+                            className="h-auto justify-start whitespace-normal rounded-lg px-4 py-3 text-left font-normal"
+                          >
+                            {s}
+                          </Button>
+                        ))}
+                      </div>
+                      {offerSample && (welcome.sample.available || welcome.sample.on) && (
+                        <div className="mt-6 flex max-w-xl flex-col items-center gap-2">
+                          <p className="text-xs text-muted-foreground">
+                            {welcome.sample.on
+                              ? "The sample HR handbook is in. Remove it before colleagues ask."
+                              : "No documents yet? Try it on a made-up HR handbook first."}
+                          </p>
+                          <SampleDocsToggle sample={welcome.sample} />
+                        </div>
+                      )}
+                    </div>
+                  </MessageScrollerItem>
+                )}
+
+                {forkedFrom && (
+                  <MessageScrollerItem>
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <CornerUpLeft className="size-3.5 shrink-0" />
+                      Branched from{" "}
+                      <Link
+                        to={`/chat/${forkedFrom.conversation_id}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          open(`/chat/${forkedFrom.conversation_id}`)
+                        }}
+                        className="truncate font-medium text-foreground underline-offset-4 hover:underline"
+                      >
+                        {forkedFrom.title}
+                      </Link>
+                    </p>
+                  </MessageScrollerItem>
+                )}
+
+                {shown?.notice && (
+                  <MessageScrollerItem>
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Info className="size-3.5 shrink-0" />
+                      {shown.notice}
+                    </p>
+                  </MessageScrollerItem>
+                )}
+
+                {messages.map((m) => (
+                  <MessageScrollerItem
+                    key={m.key}
+                    messageId={m.key}
+                    scrollAnchor={pinLast && m === lastUser}
+                    // Drawn even off screen: a row skipped by content-visibility counts
+                    // as 10rem tall, so a question just asked was pinned against a
+                    // guess and the view jumped once it was drawn.
+                    className="[content-visibility:visible]"
+                  >
+                    {m.role === "user" ? (
+                      <UserMessage
+                        message={m}
+                        editing={editing === m.key}
+                        busy={loading}
+                        onEdit={() => setEditing(m.key)}
+                        onCancel={() => setEditing(null)}
+                        onSave={(text) => ask(text, { edit: m })}
+                        onBranch={showBranch}
+                      />
+                    ) : (
+                      <AssistantMessage
+                        message={m}
+                        actions={actions}
+                        last={m === lastAnswer}
+                        ref={m === lastAnswer ? lastAnswerRef : undefined}
+                      />
+                    )}
+                  </MessageScrollerItem>
+                ))}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            {/* The view moves; the focus goes to the transcript, as the button goes
+                away once there's nothing further down. */}
+            <MessageScrollerButton
+              variant="outline"
+              size="sm"
+              behavior={reduced ? "auto" : "smooth"}
+              onClick={() => viewportRef.current?.focus({ preventScroll: true })}
+              data-print="hide"
+              className="rounded-full border-(--glass-border) bg-glass shadow-sm backdrop-blur-md hover:bg-muted data-[active=true]:duration-(--dur-jump) data-[active=true]:ease-out-strong data-[active=false]:duration-(--dur-jump-exit) data-[active=false]:ease-out-strong motion-reduce:data-[active=false]:translate-y-0 motion-reduce:data-[active=false]:scale-100 pointer-coarse:h-10"
+            >
+              <ArrowDown data-icon="inline-start" />
+              Jump to latest
+            </MessageScrollerButton>
+          </MessageScroller>
+        </MessageScrollerProvider>
         {/* Said once an answer ends, not word by word as it streams. */}
         <p className="sr-only" role="status" aria-live="polite">
           {announce}

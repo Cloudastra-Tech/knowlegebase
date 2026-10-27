@@ -5,6 +5,8 @@ import {
   BadgeCheck,
   BookOpen,
   Check,
+  CircleAlert,
+  CircleSlash,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -61,9 +63,11 @@ import {
 import { branchOf } from "@/lib/chat-history"
 import { CitationsContext, citedNumber, placeOf, remarkCitations } from "@/lib/citations"
 
-// One line of the steps panel, live while the assistant works.
+// One line of the steps panel, live while the assistant works. `ended`: still running
+// when the answer was stopped or failed, so it never finished (not a done step).
 export interface LiveStep extends StepLine {
   done: boolean
+  ended?: "stopped" | "error"
 }
 
 // A message as the chat shows it: a question, or an answer (streaming, or finished
@@ -176,18 +180,38 @@ function StepRow({ step }: { step: LiveStep }) {
   return (
     <div className="flex items-start gap-2 text-xs">
       <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
-        {!step.done ? (
+        {step.ended === "error" ? (
+          <CircleAlert className="size-3.5 text-destructive" aria-hidden />
+        ) : step.ended === "stopped" ? (
+          <CircleSlash className="size-3.5 text-muted-foreground" aria-hidden />
+        ) : !step.done ? (
           <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
         ) : blocked ? (
           <TriangleAlert className="size-3.5 text-amber-600" aria-hidden />
         ) : (
           <Check className="size-3.5 text-emerald-600" aria-hidden />
         )}
-        <span className="sr-only">{!step.done ? "Running:" : blocked ? "Problem:" : "Done:"}</span>
+        <span className="sr-only">
+          {step.ended === "error"
+            ? "Failed:"
+            : step.ended === "stopped"
+              ? "Stopped:"
+              : !step.done
+                ? "Running:"
+                : blocked
+                  ? "Problem:"
+                  : "Done:"}
+        </span>
       </span>
       <span className={step.done ? "text-muted-foreground" : "text-foreground"}>
         {step.label}
         {step.done ? "" : "…"}
+        {step.ended && (
+          <span className="text-muted-foreground/80">
+            {" "}
+            · {step.ended === "error" ? "didn't finish" : "stopped"}
+          </span>
+        )}
         {step.result && <span className="text-muted-foreground/80"> · {step.result}</span>}
       </span>
     </div>
@@ -227,11 +251,23 @@ function StepsPanel({ message }: { message: Message }) {
       </p>
     ) : null
   const summary = steps.map((st) => st.label).join(" · ")
+  const ended = steps.some((st) => st.ended === "error")
+    ? "error"
+    : steps.some((st) => st.ended === "stopped")
+      ? "stopped"
+      : null
   return (
     <Collapsible>
       <CollapsibleTrigger className="group flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground">
         <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-        <Check className="size-3.5 shrink-0 text-emerald-600" />
+        {ended === "error" ? (
+          <CircleAlert className="size-3.5 shrink-0 text-destructive" aria-hidden />
+        ) : ended === "stopped" ? (
+          <CircleSlash className="size-3.5 shrink-0" aria-hidden />
+        ) : (
+          <Check className="size-3.5 shrink-0 text-emerald-600" />
+        )}
+        {ended && <span className="sr-only">{ended === "error" ? "Failed:" : "Stopped:"}</span>}
         <span className="shrink-0">
           {steps.length} step{steps.length === 1 ? "" : "s"}
         </span>

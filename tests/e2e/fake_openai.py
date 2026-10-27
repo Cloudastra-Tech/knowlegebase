@@ -12,9 +12,12 @@ the app talks to it through OPENAI_BASE_URL, so no key and no network are needed
                                           question says "earn")
         the question rewrite              the question, unchanged
         HyDE                              a fixed guess
-Streams when asked to, a word at a time.
+Streams when asked to, a word at a time. A question that says "in full detail" gets
+a long answer (the same sentences, in several paragraphs), streamed slowly, so the
+chat's scrolling can be watched while it's written (frontend/e2e/chat-scroll.spec.ts).
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -117,10 +120,23 @@ def _chunk(model, delta, finish=None):
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}) + "\n\n"
 
 
+DETAIL = "in full detail"     # the question that makes a long, slow answer
+DETAIL_PARAGRAPHS = 10
+DETAIL_WORD_DELAY = 0.02      # seconds a word
+
+
+def in_detail(body):
+    return bool(body.get("tools")) and any(
+        m["role"] == "user" and DETAIL in text_of(m).lower() for m in body["messages"])
+
+
 @app.post("/v1/chat/completions")
 async def chat(req: Request):
     body = await req.json()
     text, model = reply_for(body), body.get("model", "fake")
+    slow = in_detail(body)
+    if slow:
+        text = "\n\n".join([text] * DETAIL_PARAGRAPHS)
     if not body.get("stream"):
         return JSONResponse({"id": "fake", "object": "chat.completion", "created": 0,
                              "model": model,
@@ -129,9 +145,11 @@ async def chat(req: Request):
                              "usage": {"prompt_tokens": 1, "completion_tokens": 1,
                                        "total_tokens": 2}})
 
-    def stream():
+    async def stream():
         for word in re.findall(r"\S+\s*", text):
             yield _chunk(model, {"role": "assistant", "content": word})
+            if slow:
+                await asyncio.sleep(DETAIL_WORD_DELAY)
         yield _chunk(model, {}, "stop")
         yield "data: [DONE]\n\n"
 

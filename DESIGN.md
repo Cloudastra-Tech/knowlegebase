@@ -216,6 +216,8 @@ Tokens in `index.css` (and `lib/motion.ts` for Motion):
   screen), `ease-drawer` (sheets, the sidebar), `ease-hover` (colour and background).
 - **Durations:** press 120ms, hover 150ms, tooltip 140ms, popover 180/120ms, dialog 220/150ms,
   sheet 280/200ms, screen 200ms, swap 150ms, reveal 240ms; used as `duration-(--dur-popover)`.
+  The chat adds Jump to latest 150/100ms, a step line 180ms, the steps folding 250ms and a
+  citation chip resolving 160ms; an answer's sources stagger 30ms (`--stagger-sources`).
 - **Distances:** `--enter-y` 6px, `--enter-scale` and `--press-scale` 0.97. All zero under
   reduced motion.
 - **Stagger:** 40ms apart, at most 6 items, first mount only.
@@ -230,7 +232,7 @@ Tokens in `index.css` (and `lib/motion.ts` for Motion):
 | Dialog | 220ms in / 150ms out, from the centre |
 | Sheet | full-edge slide, 280 / 200ms, `ease-drawer` |
 | Screen change | content rises `--enter-y` with a fade on non-glass children, 200ms; no exit |
-| Chat | new messages rise 6px; history never animates; citations stagger once on completion |
+| Chat | a question just sent is pinned to the top and its answer grows below it; nothing scrolls while it streams, and "Jump to latest" is instant with reduced motion. New messages rise 6px; history never animates; citations stagger once on completion |
 | Toast | Sonner's own motion |
 
 **Reduced motion is "fewer and gentler":** movement goes, fades that help understanding stay.
