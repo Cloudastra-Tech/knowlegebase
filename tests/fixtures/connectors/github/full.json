@@ -1,0 +1,360 @@
+{
+ "_source": [
+  "https://github.com/github/rest-api-description (descriptions/api.github.com/api.github.com.json): POST /app/installations/{installation_id}/access_tokens -> installation-token {token, expires_at, permissions, repository_selection}; GET /repos/{owner}/{repo} -> full-repository {full_name, default_branch, private, visibility}; GET /repos/{owner}/{repo}/branches/{branch} -> branch-with-protection {name, commit {sha}}; GET /repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1 -> git-tree {sha, truncated, tree [{path, mode, type, sha, size}]}; GET /repos/{owner}/{repo}/git/blobs/{file_sha} -> blob {content (base64), encoding, sha, size}; GET /repos/{owner}/{repo}/collaborators -> [collaborator {login, id, permissions, role_name}]; GET /repos/{owner}/{repo}/teams",
+  "https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps (repo teams need Administration read: without it, 403 Resource not accessible by integration)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://api.github.com/app/installations/111/access_tokens"
+   },
+   "response": {
+    "status": 201,
+    "json": {
+     "token": "ghs_test",
+     "expires_at": "2099-01-01T00:00:00Z",
+     "permissions": {
+      "contents": "read",
+      "metadata": "read"
+     },
+     "repository_selection": "selected"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": 6231,
+     "name": "api",
+     "full_name": "acme/api",
+     "private": false,
+     "visibility": "public",
+     "default_branch": "main",
+     "html_url": "https://github.com/acme/api",
+     "owner": {
+      "login": "acme",
+      "type": "Organization"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api/branches/main"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "name": "main",
+     "commit": {
+      "sha": "d1"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api/git/trees/d1",
+    "params": {
+     "recursive": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "d1",
+     "truncated": false,
+     "tree": [
+      {
+       "path": "README",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-api-readme",
+       "size": 30
+      },
+      {
+       "path": "src",
+       "mode": "040000",
+       "type": "tree",
+       "sha": "t-src"
+      },
+      {
+       "path": "src/server.py",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-server",
+       "size": 60
+      },
+      {
+       "path": "src/server.min.js",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-min",
+       "size": 60
+      },
+      {
+       "path": "package-lock.json",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-lock",
+       "size": 60
+      },
+      {
+       "path": "src/huge.py",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-huge",
+       "size": 900000
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api/git/blobs/b-api-readme"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-api-readme",
+     "size": 13,
+     "encoding": "base64",
+     "content": "QVBJIHNlcnZpY2UuCg==\n",
+     "url": "https://api.github.com/blobs/b-api-readme"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/api/git/blobs/b-server"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-server",
+     "size": 44,
+     "encoding": "base64",
+     "content": "ZGVmIGhhbmRsZXIoZXZlbnQpOgogICAgcmV0dXJuIHsnb2snOiBUcnVlfQo=\n",
+     "url": "https://api.github.com/blobs/b-server"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": 7950,
+     "name": "handbook",
+     "full_name": "acme/handbook",
+     "private": true,
+     "visibility": "private",
+     "default_branch": "main",
+     "html_url": "https://github.com/acme/handbook",
+     "owner": {
+      "login": "acme",
+      "type": "Organization"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/branches/main"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "name": "main",
+     "commit": {
+      "sha": "c1"
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/collaborators",
+    "params": {
+     "affiliation": "all"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "login": "ann",
+      "id": 1,
+      "type": "User",
+      "role_name": "admin",
+      "permissions": {
+       "admin": true,
+       "pull": true
+      }
+     },
+     {
+      "login": "bob",
+      "id": 2,
+      "type": "User",
+      "role_name": "read",
+      "permissions": {
+       "admin": false,
+       "pull": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/teams"
+   },
+   "response": {
+    "status": 403,
+    "json": {
+     "message": "Resource not accessible by integration",
+     "documentation_url": "https://docs.github.com/rest/repos/repos#list-repository-teams",
+     "status": "403"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/git/trees/c1",
+    "params": {
+     "recursive": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "c1",
+     "truncated": false,
+     "tree": [
+      {
+       "path": "README.md",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-readme",
+       "size": 40
+      },
+      {
+       "path": "docs",
+       "mode": "040000",
+       "type": "tree",
+       "sha": "t-docs"
+      },
+      {
+       "path": "docs/setup.md",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-setup",
+       "size": 80
+      },
+      {
+       "path": "docs/guide.rst",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-guide",
+       "size": 80
+      },
+      {
+       "path": "docs/big.md",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-big",
+       "size": 2000000
+      },
+      {
+       "path": "src/app.py",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-app",
+       "size": 80
+      },
+      {
+       "path": "node_modules/x/README.md",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-nm",
+       "size": 20
+      },
+      {
+       "path": "images/logo.png",
+       "mode": "100644",
+       "type": "blob",
+       "sha": "b-png",
+       "size": 500
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/git/blobs/b-readme"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-readme",
+     "size": 24,
+     "encoding": "base64",
+     "content": "IyBIYW5kYm9vawoKU3RhcnQgaGVyZS4K\n",
+     "url": "https://api.github.com/blobs/b-readme"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/git/blobs/b-setup"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-setup",
+     "size": 32,
+     "encoding": "base64",
+     "content": "IyBTZXR1cAoKYGBgYmFzaAptYWtlIHNldHVwCmBgYAo=\n",
+     "url": "https://api.github.com/blobs/b-setup"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/acme/handbook/git/blobs/b-guide"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "sha": "b-guide",
+     "size": 22,
+     "encoding": "base64",
+     "content": "R3VpZGUKPT09PT0KCkJlIGtpbmQuCg==\n",
+     "url": "https://api.github.com/blobs/b-guide"
+    }
+   }
+  }
+ ]
+}

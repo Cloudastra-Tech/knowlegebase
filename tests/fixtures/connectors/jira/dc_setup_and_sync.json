@@ -1,0 +1,208 @@
+{
+ "_source": [
+  "https://docs.atlassian.com/software/jira/docs/api/REST/9.12.0/ (GET /rest/api/2/myself: {key, name, displayName, timeZone, ...}; GET /rest/api/2/project: [project]; GET /rest/api/2/search: {startAt, maxResults, total, issues}; GET /rest/api/2/issue/{issueIdOrKey}/comment: {startAt, maxResults, total, comments}; GET /rest/api/2/project/{projectKeyOrId}/permissionscheme)",
+  "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html (Authorization: Bearer <token>)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/myself"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "self": "https://jira.acme.com/rest/api/2/user?username=ann",
+     "key": "JIRAUSER10100",
+     "name": "ann",
+     "displayName": "Ann Lee",
+     "active": true,
+     "timeZone": "Europe/Berlin"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/project"
+   },
+   "response": {
+    "status": 200,
+    "json": [
+     {
+      "id": "10000",
+      "key": "OPS",
+      "name": "Operations"
+     },
+     {
+      "id": "10001",
+      "key": "HR",
+      "name": "People"
+     }
+    ]
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/project/OPS/permissionscheme"
+   },
+   "response": {
+    "status": 403,
+    "json": {
+     "errorMessages": [
+      "You do not have permission"
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/search",
+    "params": {
+     "startAt": "0"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "startAt": 0,
+     "maxResults": 100,
+     "total": 2,
+     "issues": [
+      {
+       "id": "20001",
+       "key": "OPS-1",
+       "self": "https://jira.acme.com/rest/api/2/issue/20001",
+       "fields": {
+        "summary": "Rotate the TLS certificates",
+        "status": {
+         "name": "Open"
+        },
+        "issuetype": {
+         "name": "Task"
+        },
+        "priority": {
+         "name": "Medium"
+        },
+        "assignee": {
+         "name": "ann",
+         "displayName": "Ann Lee"
+        },
+        "reporter": {
+         "name": "bob",
+         "displayName": "Bob Ray"
+        },
+        "labels": [],
+        "created": "2026-09-01T09:00:00.000+0000",
+        "updated": "2026-10-01T09:00:00.000+0000",
+        "project": {
+         "id": "10000",
+         "key": "OPS",
+         "name": "Operations"
+        },
+        "security": null,
+        "description": "Certificates expire every 90 days.\nRun certbot renew."
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/search",
+    "params": {
+     "startAt": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "startAt": 1,
+     "maxResults": 100,
+     "total": 2,
+     "issues": [
+      {
+       "id": "20002",
+       "key": "OPS-2",
+       "self": "https://jira.acme.com/rest/api/2/issue/20002",
+       "fields": {
+        "summary": "Back up the database",
+        "status": {
+         "name": "Open"
+        },
+        "issuetype": {
+         "name": "Task"
+        },
+        "priority": {
+         "name": "Medium"
+        },
+        "assignee": {
+         "name": "ann",
+         "displayName": "Ann Lee"
+        },
+        "reporter": {
+         "name": "bob",
+         "displayName": "Bob Ray"
+        },
+        "labels": [],
+        "created": "2026-09-01T09:00:00.000+0000",
+        "updated": "2026-10-02T09:00:00.000+0000",
+        "project": {
+         "id": "10000",
+         "key": "OPS",
+         "name": "Operations"
+        },
+        "security": null,
+        "description": "Nightly at 02:00."
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/issue/20001/comment"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "startAt": 0,
+     "maxResults": 100,
+     "total": 1,
+     "comments": [
+      {
+       "id": "1",
+       "author": {
+        "name": "bob",
+        "displayName": "Bob Ray"
+       },
+       "body": "Done for October.",
+       "created": "2026-10-01T10:00:00.000+0000"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://jira.acme.com/rest/api/2/issue/20002/comment"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "startAt": 0,
+     "maxResults": 100,
+     "total": 0,
+     "comments": []
+    }
+   }
+  }
+ ]
+}

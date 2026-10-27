@@ -387,19 +387,20 @@ reads the old collection, which this one drops 10 minutes after its rebuild.
 
 ## Connectors
 
-Google Drive, Notion, Outline, Confluence (Cloud and Data Center), SharePoint &
-OneDrive and websites are **connectors**
+Google Drive, Notion, Outline, Confluence and Jira (Cloud and Data Center),
+SharePoint & OneDrive, Zendesk, GitHub and websites are **connectors**
 (`connectors/registry.py`), all synced the same way (`kb/services/sync.py`): each
 run asks the source only for what changed since its last cursor (Drive's change
 feed, Notion's and Outline's newest edits, a Confluence CQL search on
-`lastmodified`, each SharePoint library's delta link; a website is crawled again with
-conditional requests), writes changed documents to
+`lastmodified`, a Jira JQL search on `updated`, each SharePoint library's delta
+link, Zendesk's incremental exports, a GitHub compare from the last synced commit;
+a website is crawled again with conditional requests), writes changed documents to
 `<docs>/connectors/<provider>/`, records them in `source_items` (which replaced
 each folder's `manifest.json`: an existing manifest is imported the first time
 it's met and left in place) and re-indexes exactly those documents. A full
 listing still runs on the first sync, when the picks change, and every 6 hours
-for Notion and Outline (every 24 hours for Confluence and SharePoint, which also
-refreshes captured permissions), to find deletions.
+for Notion and Outline (every 24 hours for Confluence, Jira, SharePoint, Zendesk
+articles and GitHub, which also refreshes captured permissions), to find deletions.
 
 - **Errors** show on the Integrations page in plain words, with the sync history
   (the last 50 runs) and skipped items. "Access expired" and "settings need
@@ -435,6 +436,52 @@ refreshes captured permissions), to find deletions.
   the same public-address check as Outline's (`CONNECTOR_ALLOW_PRIVATE_HOSTS` for a
   test server). Space permissions aren't readable through Data Center's REST API,
   so only page restrictions are captured there.
+- **Jira** (Cloud) uses the **same Atlassian app** as Confluence: in its
+  *Permissions* add the Jira API with the classic scopes `read:jira-work` and
+  `read:jira-user` (the sync asks for these plus `offline_access`; `JIRA_SCOPES`
+  overrides them). An Atlassian app has **one** callback URL, so Jira comes back
+  on Confluence's, `<PUBLIC_URL>/api/integrations/confluence/callback`: keep that
+  one even if only Jira is used. Projects are picked on the card; each issue is
+  one document (summary, key fields, description, comments; comments restricted
+  to a group or role are left out). New issues sync if updated within
+  `JIRA_BACKFILL_DAYS` (default 365; 0 = all). The project's browse permissions
+  (read from its permission scheme, which needs a Jira or project admin to
+  connect) and each issue's security level are captured. Jira's and
+  Confluence's calls share the app's hourly points quota.
+- **Jira Data Center** (8.14+) is like Confluence Data Center: the site's address
+  and a personal access token, nothing on the server.
+- **Zendesk.** A workspace admin enters the Zendesk subdomain and either an
+  agent's or admin's email + API token (nothing on the server), or, when the
+  server has `ZENDESK_CLIENT_ID` / `ZENDESK_CLIENT_SECRET`, signs in with Zendesk
+  OAuth (redirect URL `<PUBLIC_URL>/api/integrations/zendesk/callback`, scopes
+  `hc:read tickets:read users:read`, `ZENDESK_SCOPES` overrides). An OAuth client
+  made in one Zendesk account only works for that account: serving other
+  companies needs a **global OAuth client, which only Zendesk grants** (build a
+  local client whose identifier starts with `zdg-` in a `d3v-` sponsored test
+  account, then request global status in the Marketplace portal; allow about a
+  week). Help Center articles sync (all, or the categories / sections picked);
+  their user segments are captured. **Solved tickets** are off by default; turning
+  them on (the picker's switch) locks the connection to HR and admins while they
+  sync (`ZENDESK_TICKETS_BACKFILL_DAYS`, default 365). Incremental exports are
+  limited to 10 calls a minute per Zendesk account.
+- **GitHub.** Create a **GitHub App** (organisation or personal Settings →
+  Developer settings → GitHub Apps → New): *Callback URL*
+  `<PUBLIC_URL>/api/integrations/github/callback`, tick **Request user
+  authorization (OAuth) during installation** (it replaces the Setup URL), keep
+  *Expire user authorization tokens*, untick *Webhook → Active* (not used yet);
+  *Repository permissions*: Contents **read**, Metadata **read** (Administration
+  read only if repo teams should be captured); *Where can this app be installed*:
+  Any account. Generate a private key and a client secret, then set
+  `GITHUB_APP_ID`, `GITHUB_APP_SLUG` (the app's URL name), `GITHUB_APP_CLIENT_ID`,
+  `GITHUB_APP_CLIENT_SECRET` and `GITHUB_APP_PRIVATE_KEY` (the PEM, newlines as
+  `\n`) or `GITHUB_APP_PRIVATE_KEY_FILE`. Connecting installs the app on the
+  admin's organisation; repositories are picked on the card. READMEs and docs
+  (`.md`, `.mdx`, `.rst`, `.txt`) sync; code only for repositories where it's
+  turned on, with the file types listed in the picker (size caps
+  `GITHUB_MAX_DOC_BYTES` 1 MB, `GITHUB_MAX_CODE_BYTES` 256 KB). Wikis aren't
+  synced (the REST API doesn't serve them). Webhooks (push, repository and
+  membership events) are a follow-up; until then each sync compares the default
+  branch with the last synced commit.
 - **SharePoint & OneDrive.** Register a *multi-tenant* app in Entra ID (App
   registrations → New: "Accounts in any organizational directory"), Web redirect
   URI `<PUBLIC_URL>/api/integrations/sharepoint/callback`, a client secret, and
@@ -445,9 +492,10 @@ refreshes captured permissions), to find deletions.
   organisation. Customers whose policy blocks unverified apps need publisher
   verification on the registration. Change notifications (webhooks) are not
   used yet: libraries are polled with their delta link.
-- Both capture source permissions (Confluence space permissions and page
-  restrictions; SharePoint item permissions) into each item's `acl` for the
-  per-user filtering to come. They are **not enforced** yet: who may ask is the
+- These capture source permissions (Confluence space permissions and page
+  restrictions; Jira project browse grants and security levels; SharePoint item
+  permissions; Zendesk user segments; GitHub visibility and collaborators) into
+  each item's `acl` for the per-user filtering to come. They are **not enforced** yet: who may ask is the
   connection's access level, as for every connector.
 - **Websites** must be https on a public address (checked again before every
   request, redirects included). To crawl a test site on this machine, list it
