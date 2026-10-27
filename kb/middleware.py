@@ -1,4 +1,5 @@
-"""Middleware on every request: a cap on the request body, and security headers."""
+"""Middleware on every request: a cap on the request body, security headers, and
+CORS for the public API from the browser extension only."""
 
 import json
 
@@ -99,3 +100,45 @@ class SecurityHeaders:
             await send(message)
 
         await self.app(scope, receive, with_headers)
+
+
+class ExtensionCors:
+    """CORS for the public API (/api/v1) from the browser extension only: the
+    origins in EXTENSION_ORIGINS (kb/routers/extension.origins()), and no other
+    path. Credentials are never allowed (the extension sends its API key in
+    Authorization, not cookies), so there is no Access-Control-Allow-Credentials.
+    Not set: no CORS headers at all. (Chrome lets an extension page with host
+    permission for the server call it without CORS; the allowlist keeps every
+    other origin out.)"""
+
+    METHODS = "GET, POST, DELETE, OPTIONS"
+    HEADERS = "Authorization, Content-Type"
+    MAX_AGE = "600"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/v1/"):
+            return await self.app(scope, receive, send)
+        from kb.routers.extension import origins
+        headers = dict(scope["headers"])
+        origin = headers.get(b"origin", b"").decode("latin-1").rstrip("/")
+        if not origin or origin not in origins():
+            return await self.app(scope, receive, send)
+        if scope["method"] == "OPTIONS" and b"access-control-request-method" in headers:
+            response = Response(status_code=204, headers={
+                "Access-Control-Allow-Origin": origin, "Vary": "Origin",
+                "Access-Control-Allow-Methods": self.METHODS,
+                "Access-Control-Allow-Headers": self.HEADERS,
+                "Access-Control-Max-Age": self.MAX_AGE})
+            return await response(scope, receive, send)
+        allow = [(b"access-control-allow-origin", origin.encode()), (b"vary", b"Origin")]
+
+        async def with_cors(message):
+            if message["type"] == "http.response.start":
+                message["headers"] = [(k, v) for k, v in message.get("headers", [])
+                                      if k.lower() != b"access-control-allow-origin"] + allow
+            await send(message)
+
+        await self.app(scope, receive, with_cors)

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "developer": {
+    "name": "Knowledge assistant",
+    "websiteUrl": "https://YOUR-KNOWLEDGE-HOST",
+    "privacyUrl": "https://YOUR-KNOWLEDGE-HOST",
+    "termsOfUseUrl": "https://YOUR-KNOWLEDGE-HOST"
+  },
+  "name": {
+    "short": "Knowledge",
+    "full": "Knowledge assistant"
+  },
+  "description": {
+    "short": "Cited answers from your company's documents, in Teams.",
+    "full": "Ask the Knowledge assistant in a 1:1 chat, or @mention it in a channel or group chat. Answers cite the documents they come from. In a 1:1 chat you're answered from everything your account may see; in channels and group chats only from documents everyone may see. Rate an answer with the thumbs up or down under it."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#18181B",
+  "bots": [
+    {
+      "botId": "00000000-0000-0000-0000-000000000000",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupChat"],
+          "commands": [
+            {
+              "title": "Ask a question",
+              "description": "For example: What is our refund policy?"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["YOUR-KNOWLEDGE-HOST"]
+}

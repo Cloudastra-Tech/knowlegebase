@@ -1,0 +1,3 @@
+dist/
+# vitest's cache (npm run test:extension); the extension has no packages of its own
+node_modules/

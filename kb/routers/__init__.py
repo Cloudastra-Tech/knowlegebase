@@ -150,6 +150,8 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     DELETE /admin/api/keys/{id}   revoke any key in the workspace                    (admin)
   api_v1.py    (the public API: "Authorization: Bearer kb_live_...", an API key, not a session)
     POST   /v1/ask | /v1/search   GET /v1/sources | /v1/audit | /v1/openapi.json
+                                  (/v1/ask's optional `context`: selected text, sent as untrusted
+                                  data; an extension key's questions log as surface "extension")
     GET | POST | DELETE /v1/documents ...   see the module; the API we keep stable
   slack.py
     GET    /admin/slack           the Slack app: which app, which Slack team, settings (HR / Admin)
@@ -161,6 +163,24 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PUT    /admin/slack/settings  {unknown_users, auto_answer, auto_answer_channels} (admin)
     POST   /slack/events | /slack/commands | /slack/interactions   (Slack's signature, not a
                                   session; /slack/apps/{app_key}/...: a customer's own app)
+  teams.py
+    GET    /admin/teams           the Teams bot: which bot, which Microsoft tenant, settings (HR / Admin)
+    PUT    /admin/teams/app       {mode: custom, app_id, app_tenant, client_secret} | {mode: central,
+                                  tenant_id}                                      (admin)
+    GET    /admin/teams/package   the Teams app (manifest.json + icons) as a zip    (admin)
+    PUT    /admin/teams/settings  {unknown_users}                                  (admin)
+    DELETE /admin/teams           disconnect: the secret and tenant are forgotten   (admin)
+    POST   /teams/messages | /teams/apps/{app_key}/messages   (the Bot Connector's JWT, not a
+                                  session; app_key: a customer's own Azure Bot)
+  extension.py (the browser extension, extension/)
+    GET    /extension             is it set up here, and my connected extensions
+    POST   /extension/connect     {redirect_uri} -> {code}: one-time, 60 s, for our extension only
+    POST   /v1/extension/exchange {code} -> {key}: a personal key with the ask scope (no session)
+    DELETE /v1/extension/key      the extension's own key is revoked (that key, not a session)
+  email_in.py
+    GET    /admin/email-in        on or off, the workspace's ask@ address, server set up? (HR / Admin)
+    PUT    /admin/email-in        {enabled}                                         (admin)
+    POST   /email-in/postmark     Postmark's inbound webhook (HTTP Basic credentials, not a session)
   workspace.py  (the workspace's own admins; support opened as admin can't do the starred)
     GET    /admin/workspace       its state, exports, support access, audit retention   (admin)
     POST   /admin/workspace/export          * a ZIP, made by a job, kept 24 h             (admin)

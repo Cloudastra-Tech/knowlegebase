@@ -50,7 +50,7 @@ class Principal:
     name: str
     member_role: str           # their role now: public / hr / admin (a service key: public)
     scopes: tuple
-    surface: str               # api / mcp
+    surface: str               # api / mcp, or extension: a key the browser extension was given
 
     @property
     def role(self):
@@ -106,6 +106,8 @@ def authenticate(authorization, surface, scope=None):
         if not alive or member["role"] != "admin":
             raise KeyRefused(401, INVALID)
         username, name, role = f"key:{key['prefix']}", key["name"], "public"
+    if surface == "api" and key.get("client") == "extension":
+        surface = "extension"           # its questions are logged and audited as the extension's
     principal = Principal(key["id"], key["prefix"], key["kind"], ws, username, name, role,
                           tuple(key["scopes"]), surface)
     if scope and not principal.may(scope):

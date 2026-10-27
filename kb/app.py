@@ -15,16 +15,17 @@ import safety
 import secret_box
 from kb import jobs, logs, mcp_server, middleware, settings, site
 from kb.routers import (admin_members, admin_sign_in, api_keys, api_v1, assistant, audit, auth,
-                        chat, conversations, docs, dsar, health, index, insights, integrations,
-                        invites, knowledge, operator, saml, scim, shares, signup, slack, sso,
-                        verified, workspace)
+                        chat, conversations, docs, dsar, email_in, extension, health, index,
+                        insights, integrations, invites, knowledge, operator, saml, scim, shares,
+                        signup, slack, sso, teams, verified, workspace)
 from kb.services import indexing, keys
 
 log = logging.getLogger("uvicorn.error")
 
 ROUTERS = (auth, sso, signup, saml, admin_sign_in, chat, conversations, shares, index, docs,
            integrations, knowledge, admin_members, invites, audit, insights, health, scim,
-           api_keys, api_v1, slack, verified, assistant, workspace, dsar, operator)
+           api_keys, api_v1, slack, verified, assistant, workspace, dsar, operator, teams,
+           extension, email_in)
 
 
 @contextlib.asynccontextmanager
@@ -72,6 +73,8 @@ def create_app():
                        https_only=os.getenv("PUBLIC_URL", "").startswith("https://"))
     app.add_middleware(middleware.BodyLimit)
     app.add_middleware(middleware.SecurityHeaders, docs_paths=(app.docs_url, app.redoc_url))
+    # /api/v1 from the browser extension's origins only (EXTENSION_ORIGINS); none by default.
+    app.add_middleware(middleware.ExtensionCors)
     # Added last, so outermost: every request gets an id and a log line, even a refused one.
     app.add_middleware(logs.RequestLog)
     for r in ROUTERS:

@@ -347,6 +347,25 @@ def test_the_report_adds_today_and_works_out_rates_latency_and_cost(docs_root):
     assert "2026-10-22" not in insights_store.days(ws, "2026-10-22", "2026-10-22")
 
 
+def test_the_report_says_where_questions_were_asked(docs_root):
+    """Every surface, the new ones (Teams, the browser extension, email) too, with
+    its questions and how many were answered, most asked first."""
+    ws = new_ws()
+    now = at("2026-10-22", 10)
+    seed(ws)                                          # seven from the web chat
+    for surface, outcome in (("teams", "answered"), ("teams", "not_found"),
+                             ("email", "partial"), ("extension", "answered")):
+        log_store.add(ws, "ann", surface, outcome, text_mode="metadata",
+                      at=at("2026-10-21", 12))
+    report = insights.report(ws, "hr", "2026-10-20", "2026-10-22", now)
+    by = {s["surface"]: (s["questions"], s["answered"]) for s in report["surfaces"]}
+    assert by == {"web": (7, 3), "teams": (2, 1), "email": (1, 1), "extension": (1, 1),
+                  "api": (0, 0), "mcp": (0, 0), "slack": (0, 0)}
+    assert [s["surface"] for s in report["surfaces"]][:2] == ["web", "teams"]
+    assert insights.report(ws, "hr", "2026-10-22", "2026-10-22", now)["surfaces"][0] == {
+        "surface": "web", "questions": 1, "answered": 1}
+
+
 def test_a_day_the_job_missed_is_rolled_up_when_asked_for(docs_root):
     ws = new_ws()
     now = at("2026-10-22", 10)
@@ -574,7 +593,7 @@ def test_each_table_exports_as_csv_and_the_export_is_audited(client, fresh_defau
         "/api/admin/insights/export", params={"table": "daily", "from": day, "to": day},
         headers=h).text)))
     assert daily[1][:3] == [day, "1", "1"]
-    for table in ("never_cited", "stale", "gaps", "connectors"):
+    for table in ("never_cited", "stale", "gaps", "connectors", "surfaces"):
         assert client.get("/api/admin/insights/export", params={"table": table},
                           headers=h).status_code == 200
     assert client.get("/api/admin/insights/export", params={"table": "users"},

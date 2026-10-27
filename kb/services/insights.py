@@ -490,10 +490,17 @@ def report(ws, role, since_day, until_day, now=None):
                     and visible(role, d["access"])),
                    key=lambda d: (-d["cited"], d["doc_key"]))
 
+    # Where the questions were asked: the web chat, the API, Slack, Teams, ...
+    by_surface = log_store.surface_counts(ws, since_day, until_day)
+    surfaces = sorted(({"surface": s, "questions": by_surface.get(s, (0, 0))[0],
+                        "answered": by_surface.get(s, (0, 0))[1] or 0}
+                       for s in log_store.SURFACES), key=lambda s: -s["questions"])
+
     settings = log_store.settings(ws)
     return {
         "from": since_day, "to": until_day, "today": current,
         "logging": settings, "totals": totals, "daily": daily,
+        "surfaces": surfaces,
         "top_sources": top[:LIST_LIMIT],
         "never_cited": never[:LIST_LIMIT], "never_cited_count": len(never),
         "stale": stale[:LIST_LIMIT],
