@@ -7,7 +7,9 @@ indexing (document.indexed), a failed sync (integration.sync_failed), the
 question log (question.unanswered: the question's text only when the
 workspace's question log keeps text, and as it keeps it), invites, SCIM and
 single sign-on (member.added), the Members screen and SCIM (member.disabled),
-the SAML metadata refresh (sso.metadata_changed) and every audit event of the
+the SAML metadata refresh (sso.metadata_changed), the abuse and cost monitor
+(abuse.alert: the alerts the workspace's admins are told about, see
+kb/services/abuse.py) and every audit event of the
 workspace (audit.event, for a SIEM: audit_store's listener). Payloads carry IDs
 and a few fields, never document text: the receiver fetches more with an API
 key. emit() never fails what called it.
@@ -55,6 +57,7 @@ EVENTS = {
     "member.added": "Someone joined the workspace",
     "member.disabled": "A member's access was turned off",
     "sso.metadata_changed": "A SAML provider's metadata changed or needs attention",
+    "abuse.alert": "Unusual usage or spend: a daily spend limit passed, a spike",
     "audit.event": "Every audit log event (for a SIEM)",
 }
 TEST_EVENT = "webhook.test"
@@ -240,6 +243,13 @@ def member_added(ws, username, role, via):
 
 def member_disabled(ws, username, via):
     emit(ws, "member.disabled", {"username": username, "via": via})
+
+
+def abuse_alert(ws, alert):
+    """An alert the workspace's admins are told about (kb/services/abuse.py), with
+    its numbers; a member it names is in `subject`, as the admins' email says."""
+    emit(ws, "abuse.alert", {"alert_id": alert["id"], "kind": alert["kind"],
+                             "subject": alert.get("subject"), "details": alert["details"]})
 
 
 def question_unanswered(ws, question_id, surface, question=None):

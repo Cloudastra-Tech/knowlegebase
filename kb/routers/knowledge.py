@@ -13,7 +13,7 @@ import sync_store
 import workspaces
 from connectors import registry
 from kb.deps import current_role, current_user, current_viewer, ws_of
-from kb.services import agents, assistant, indexing, permissions
+from kb.services import agents, assistant, indexing, permissions, pii_scan
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -27,8 +27,9 @@ def knowledge(user=Depends(current_user), role=Depends(current_role),
     person sees only the items they may search (their ACL names one of their
     principals, like search itself). HR and admins, who manage them, see every
     item's title, with WHO CAN SEE it (`who`: [{principal, kind, label}];
-    `dropped`: grants at the source that matched no one here, left out) and
-    whether they may search it themselves (`readable`)."""
+    `dropped`: grants at the source that matched no one here, left out),
+    whether they may search it themselves (`readable`), and the personal data the
+    ingest scan found in it when the policy flags it (`pii`: {counts, text})."""
     return listing(user, role, viewer, everything=role == "hr")
 
 
@@ -60,6 +61,9 @@ def listing(user, role, viewer, everything=False):
     manage = role == "hr"
     rules = assistant.rules(ws) if manage else None
     names = permissions.names(ws) if manage else None
+    # PERSONAL DATA (HR / Admin): documents the ingest scan found dense personal data
+    # in, under the workspace's policy (kb/services/pii_scan.py).
+    flagged = pii_scan.flags(ws, assistant.pii_policy(ws)) if manage else {}
 
     def place(key, provider, acl, dropped=0, folder=None):
         out = {"doc_key": key, "provider": provider, "folder": folder,
@@ -72,6 +76,7 @@ def listing(user, role, viewer, everything=False):
             out["who"] = permissions.labels(ws, acl, names)
             out["dropped"] = dropped
             out["readable"] = access.can_see(viewer, acl)
+            out["pii"] = flagged.get(key)
         return out
 
     def shown(acl):

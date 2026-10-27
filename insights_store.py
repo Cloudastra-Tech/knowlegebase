@@ -141,7 +141,8 @@ def _candidate(r):
 
 def add_candidate(workspace, message_id, question, answer, expected_answer, sources, reasons,
                   comment, role, max_access, created_by):
-    """A golden-set candidate; promoting the same answer again updates it."""
+    """A golden-set candidate; promoting the same answer again updates it (and one the
+    weekly job suggested becomes the admin's)."""
     with _lock, _db() as conn:
         conn.execute(
             """INSERT INTO eval_candidates (workspace, message_id, question, answer,
@@ -149,12 +150,25 @@ def add_candidate(workspace, message_id, question, answer, expected_answer, sour
                    created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workspace, message_id) DO UPDATE SET
                    expected_answer = excluded.expected_answer, created_by = excluded.created_by,
-                   created_at = excluded.created_at""",
+                   created_at = excluded.created_at, origin = 'admin'""",
             (workspace, message_id, question, answer, expected_answer, json.dumps(sources),
              json.dumps(reasons), comment, role, max_access, created_by, time.time()))
         return _candidate(conn.execute(
             "SELECT * FROM eval_candidates WHERE workspace = ? AND message_id = ?",
             (workspace, message_id)).fetchone())
+
+
+def suggest_candidate(workspace, message_id, question, answer, sources, reasons, comment,
+                      role, max_access, origin, now=None):
+    """A candidate the weekly job suggests (origin: feedback / not_found). Never
+    replaces one already there (an admin's above all). True when it's new."""
+    with _lock, _db() as conn:
+        return bool(conn.execute(
+            """INSERT OR IGNORE INTO eval_candidates (workspace, message_id, question, answer,
+                   expected_answer, sources, reasons, comment, role, max_access, created_by,
+                   created_at, origin) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'system', ?, ?)""",
+            (workspace, message_id, question, answer, json.dumps(sources), json.dumps(reasons),
+             comment, role, max_access, time.time() if now is None else now, origin)).rowcount)
 
 
 def feedback_for(workspace, message_id):

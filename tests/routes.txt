@@ -99,6 +99,7 @@ GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role,current_viewer
 GET    /api/me/api-keys my_keys current_user
 GET    /api/messages/{mid}/markdown answer_markdown current_user,current_viewer
+GET    /api/operator/alerts operator_alerts require_operator
 GET    /api/operator/audit operator_audit require_operator
 GET    /api/operator/me operator_me require_operator
 GET    /api/operator/providers operator_providers -
@@ -196,6 +197,7 @@ POST   /api/integrations/{provider}/permissions/sync integration_permissions_syn
 POST   /api/integrations/{provider}/setup integration_setup require_hr,audited
 POST   /api/integrations/{provider}/sync integration_sync require_hr,audited
 POST   /api/me/api-keys create_my_key current_user,audited
+POST   /api/operator/alerts/{alert_id}/acknowledge operator_acknowledge_alert require_operator,audited
 POST   /api/operator/auth/exchange operator_exchange audited
 POST   /api/operator/auth/logout operator_logout require_operator,audited
 POST   /api/operator/workspaces/{ws}/reindex operator_reindex require_operator,audited
@@ -246,6 +248,7 @@ PUT    /api/integrations/{provider}/access integration_access require_hr,audited
 PUT    /api/integrations/{provider}/containers integration_set_containers require_hr,audited
 PUT    /api/integrations/{provider}/policy integration_policy require_hr,audited
 PUT    /api/messages/{mid}/feedback give_feedback current_user,current_viewer,audited
+PUT    /api/operator/workspaces/{ws}/spend-caps operator_spend_caps require_operator,audited
 PUT    /api/prompts/{prompt_id} update_prompt current_user,current_role,audited
 PUT    /api/spaces/{space_id}/members/{username} set_space_member current_user,audited
 PUT    /scim/v2/Groups/{group_id} replace_group scim_token,audited

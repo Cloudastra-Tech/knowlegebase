@@ -88,6 +88,28 @@ export interface RuleWeights {
 
 // ---- Assistant settings ----
 export type Tone = "default" | "friendly" | "formal" | "concise" | "detailed"
+export type AnswerCache = "off" | "exact" | "semantic"
+
+// The personal data policy (pii.py): which types are masked in answers and in the
+// question log, and flagged at ingest; the workspace's own email domains stay in answers.
+export type PiiEntity =
+  | "EMAIL"
+  | "PHONE"
+  | "CARD"
+  | "IBAN"
+  | "US_SSN"
+  | "UK_NI"
+  | "IN_PAN"
+  | "IN_AADHAAR"
+
+export interface PiiPolicy {
+  answers: PiiEntity[]
+  logs: PiiEntity[]
+  ingest: PiiEntity[]
+  allow_own_domains: boolean
+  allowed_domains: string[]
+  dense_min: number
+}
 
 export interface GlossaryEntry {
   id: number
@@ -109,10 +131,28 @@ export interface AssistantSettings {
   allow_currency_server: boolean
   show_steps: boolean
   adapt_verified: boolean
+  answer_cache: AnswerCache
+  answer_cache_server: boolean // false: ANSWER_CACHE=off on this server
+  cross_lingual: boolean
+  pii_policy: PiiPolicy
+  own_domains: string[] // the workspace's verified domains
   updated_by: string | null
   updated_at: number | null
-  choices: { tones: Tone[]; languages: string[] }
-  limits: { name: number; instructions: number; term: number; definition: number; synonyms: number }
+  choices: {
+    tones: Tone[]
+    languages: string[]
+    answer_cache: AnswerCache[]
+    pii_entities: { id: PiiEntity; label: string }[]
+    pii_packs: Record<string, PiiEntity[]>
+  }
+  limits: {
+    name: number
+    instructions: number
+    term: number
+    definition: number
+    synonyms: number
+    pii_domains: number
+  }
   glossary: GlossaryEntry[]
 }
 
@@ -127,8 +167,10 @@ export type AssistantChange = Partial<
     | "allow_currency"
     | "show_steps"
     | "adapt_verified"
+    | "answer_cache"
+    | "cross_lingual"
   >
->
+> & { pii_policy?: PiiPolicy | null }
 
 export interface GlossaryInput {
   term: string

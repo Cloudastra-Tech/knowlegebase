@@ -75,6 +75,40 @@ export interface OperatorWorkspace {
   suspended_reason: string | null
   deleting_at: number | null
   support_until: number | null // its admin allows support until then
+  // Today's model cost (UTC day) and the daily caps: null = no cap.
+  spend: { today_usd: number; soft_usd: number | null; hard_usd: number | null }
+  open_alerts: number // the abuse and cost monitor's, not yet acknowledged
+}
+
+export type AlertKind =
+  | "questions_spike"
+  | "user_burst"
+  | "failed_sign_ins"
+  | "signups_per_ip"
+  | "spend_soft"
+  | "spend_hard"
+
+// What the abuse and cost monitor found (kb/services/abuse.py).
+export interface AbuseAlert {
+  id: number
+  workspace: string // "_platform": not one workspace (sign-ups from one address)
+  kind: AlertKind
+  title: string
+  summary: string
+  subject: string | null
+  details: Record<string, unknown>
+  created_at: number
+  notified: string[]
+  acknowledged_by: string | null
+  acknowledged_at: number | null
+}
+
+export interface AbuseThresholds {
+  spike_factor: number
+  spike_min: number
+  user_per_hour: number
+  failed_sign_ins: number
+  signups_per_ip: number
 }
 
 export const operatorApi = {
@@ -99,6 +133,16 @@ export const operatorApi = {
   // A one-time code: /#sso?code=... opens the workspace as support, in this browser.
   supportSession: (ws: string) =>
     call<{ code: string }>(`/workspaces/${encodeURIComponent(ws)}/support-session`, post()),
+  alerts: (openOnly = false) =>
+    call<{ alerts: AbuseAlert[]; thresholds: AbuseThresholds }>(
+      `/alerts${openOnly ? "?open=true" : ""}`,
+    ),
+  acknowledge: (id: number) => call<AbuseAlert>(`/alerts/${id}/acknowledge`, post()),
+  setSpendCaps: (ws: string, caps: { soft_usd: number | null; hard_usd: number | null }) =>
+    call<{ cost_usd: number; soft_usd: number | null; hard_usd: number | null }>(
+      `/workspaces/${encodeURIComponent(ws)}/spend-caps`,
+      { method: "PUT", body: JSON.stringify(caps) },
+    ),
   audit: (ws: string) =>
     call<{
       events: AuditEvent[]
