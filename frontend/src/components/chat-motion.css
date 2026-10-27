@@ -1,0 +1,222 @@
+/* The chat's motion (DESIGN.md, "Motion"; the plan's chat-and-tools.md section 3):
+   CSS only, so it stays smooth while an answer streams in. Only transform and
+   opacity move (and Radix-measured height for the steps folding up). Everything here
+   plays once, when its element mounts, and only on answers written on this screen:
+   the components add these classes to live answers only, never to saved history, a
+   branch switch or an edited question. With reduced motion, nothing moves: fades
+   stay, the word fade, the shimmer and the caret's blink go. */
+
+/* The question's bubble (chat-view.tsx): subtle glass tinted with the signal, a top
+   highlight, the corner by the edge squared off. No backdrop blur: a transcript has
+   many of them, and the field is faded out under the column anyway (DESIGN.md,
+   "Glass": in-content surfaces are the subtle tier). Unlayered, so it wins over the
+   Bubble variant's own fill. */
+.kb-user-bubble {
+  border-radius: 1.125rem 1.125rem 0.375rem 1.125rem;
+  border-color: color-mix(in oklab, var(--signal) 22%, var(--glass-border));
+  background-color: color-mix(in oklab, var(--signal) 9%, var(--glass-bg-subtle));
+  background-image: linear-gradient(to bottom, var(--glass-highlight), transparent 60%);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-highlight),
+    0 8px 24px -16px color-mix(in oklab, var(--signal) 35%, transparent);
+  color: var(--foreground);
+  padding: 0.625rem 1rem;
+}
+
+/* A step line arriving (step_start): up 4px and in. Lines that start together are
+   40ms apart (--i, from lib/chat-steps.ts staggerOf). */
+@keyframes kb-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.kb-line-in {
+  animation: kb-line-in 180ms var(--ease-out-strong) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger, 40ms));
+}
+
+/* A status glyph changing (running to done, blocked, failed): a quick crossfade. */
+@keyframes kb-glyph-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+    filter: blur(2px);
+  }
+}
+.kb-glyph-in {
+  animation: kb-glyph-in 150ms var(--ease-out-strong) both;
+}
+
+/* The steps folding into their summary once the answer starts (and opening again when
+   someone asks for them): height and opacity. Folding is a movement on screen, so it
+   takes the in-out curve; opening is an enter. Overrides Trace's own accordion
+   animation, which moves the height only. */
+@keyframes kb-fold-open {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+@keyframes kb-fold-close {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+.kb-trace [data-slot="trace-collapsible-content"][data-state="open"] {
+  animation: kb-fold-open 200ms var(--ease-out-strong);
+}
+.kb-trace [data-slot="trace-collapsible-content"][data-state="closed"] {
+  animation: kb-fold-close 250ms var(--ease-in-out-strong);
+}
+
+/* Words arriving as the answer streams: each new word fades in where it already sits,
+   so nothing reflows. The spans go once the answer is done (chat-markdown.tsx). */
+@keyframes kb-word-in {
+  from {
+    opacity: 0;
+  }
+}
+.kb-word {
+  animation: kb-word-in 180ms var(--ease-out-strong) both;
+}
+
+/* The streaming caret, inline after the last word: a mono block in the signal mint,
+   blinking in steps (it's a cursor, not an easing). */
+@keyframes kb-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.kb-caret {
+  margin-left: 0.125em;
+  font-family: var(--font-mono);
+  color: var(--signal);
+  animation: kb-caret 1s steps(1) infinite;
+  user-select: none;
+}
+
+/* A citation chip resolving (its source arrived): a small pop, staggered by number. */
+@keyframes kb-pop {
+  from {
+    opacity: 0.6;
+    transform: translateY(-1px) scale(0.92);
+  }
+}
+.kb-pop {
+  animation: kb-pop 160ms var(--ease-out-strong) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger, 40ms));
+}
+
+/* Sources and follow-ups arriving: up 4px and in, one after the other. --d delays the
+   whole group (the follow-ups wait for the action row). */
+@keyframes kb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.kb-rise {
+  animation: kb-rise 200ms var(--ease-out-strong) both;
+  animation-delay: calc(var(--d, 0ms) + var(--i, 0) * var(--stagger, 40ms));
+}
+
+/* The action row and the answer's notices: a plain fade. */
+@keyframes kb-fade {
+  from {
+    opacity: 0;
+  }
+}
+.kb-fade {
+  animation: kb-fade 150ms var(--ease-out-strong) both;
+  animation-delay: var(--d, 0ms);
+}
+.kb-fade-slow {
+  animation: kb-fade 180ms var(--ease-out-strong) both;
+}
+
+/* The source sheet: slides in on the drawer curve, leaves faster. */
+.kb-source-sheet[data-state="open"] {
+  animation-duration: 240ms;
+  animation-timing-function: var(--ease-drawer);
+}
+.kb-source-sheet[data-state="closed"] {
+  animation-duration: 150ms;
+  animation-timing-function: var(--ease-out-strong);
+}
+
+/* The chat's background field: dimmer at rest, breathing while the assistant works,
+   with a mint glow rising from the composer. The field itself is drawn by
+   lib/ascii-loop.ts (still with reduced motion or "Reduce effects"). */
+.kb-chat-backdrop .kb-chat-field {
+  opacity: 0.8;
+  transition: opacity 600ms var(--ease-out-strong);
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(50% - 32rem),
+    rgb(0 0 0 / 22%) calc(50% - 22rem),
+    rgb(0 0 0 / 22%) calc(50% + 22rem),
+    #000 calc(50% + 32rem),
+    #000 100%
+  );
+}
+.kb-chat-backdrop .kb-chat-glow {
+  opacity: 0;
+  background: radial-gradient(
+    ellipse 60% 45% at 50% 100%,
+    color-mix(in oklab, var(--signal) 14%, transparent),
+    transparent 70%
+  );
+  transition: opacity 600ms var(--ease-out-strong);
+}
+@keyframes kb-breathe {
+  50% {
+    opacity: 1;
+  }
+}
+.kb-chat-backdrop[data-thinking] .kb-chat-field {
+  animation: kb-breathe 2.4s var(--ease-in-out-strong) infinite;
+}
+.kb-chat-backdrop[data-thinking] .kb-chat-glow {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kb-line-in,
+  .kb-rise {
+    animation-name: kb-fade;
+    animation-duration: 150ms;
+  }
+  .kb-glyph-in,
+  .kb-pop {
+    animation-name: kb-fade;
+  }
+  .kb-word {
+    animation: none;
+  }
+  .kb-caret {
+    animation: none;
+  }
+  .kb-chat-backdrop[data-thinking] .kb-chat-field {
+    animation: none;
+  }
+}
+:root[data-effects="reduced"] .kb-chat-backdrop[data-thinking] .kb-chat-field,
+:root[data-effects="reduced"] .kb-caret {
+  animation: none;
+}
+@media print {
+  .kb-caret {
+    display: none;
+  }
+}

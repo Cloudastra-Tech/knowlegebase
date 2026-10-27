@@ -12,12 +12,20 @@ the app talks to it through OPENAI_BASE_URL, so no key and no network are needed
                                           question says "earn")
         the question rewrite              the question, unchanged
         HyDE                              a fixed guess
+        a question saying "calculate 2*3"  the calculator tool first, then the
+                                          cited answer
 Streams when asked to, a word at a time.
+
+FAKE_OPENAI_DELAY=<seconds>: answer that much slower, a word at a time (and the
+searches and checks a few times that), to watch the chat's steps and streaming by
+eye. Unset (the tests), it answers at once.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
+import os
 import re
 import struct
 
@@ -33,6 +41,10 @@ PASSAGE = re.compile(r'<untrusted_data source="(?:company_documents|attached_fil
                      r'(.*?)\n</untrusted_data>', re.S)
 
 
+def delay(times=1):
+    return float(os.getenv("FAKE_OPENAI_DELAY") or 0) * times
+
+
 def vector(item):
     words = (re.findall(r"[a-z0-9]+", item.lower()) if isinstance(item, str)
              else [str(t) for t in item])           # token ids
@@ -46,6 +58,7 @@ def vector(item):
 @app.post("/v1/embeddings")
 async def embeddings(req: Request):
     body = await req.json()
+    await asyncio.sleep(delay(6))                   # a search that takes a moment
     items = body["input"] if isinstance(body["input"], list) else [body["input"]]
     if items and isinstance(items[0], int):          # one text as token ids
         items = [items]
@@ -80,6 +93,17 @@ def cited_answer(messages):
         first = re.split(r"(?<=[.!?])\s", lines[0])[0] if lines else text[:80]
         sentences.append(f"{first.rstrip('.')} [S{n}].")
     return " ".join(sentences)
+
+
+def calculation(messages):
+    """The expression to work out first, when the question asks to calculate and
+    the calculator hasn't been called yet."""
+    if any(tc.get("function", {}).get("name") == "calculator"
+           for m in messages if m["role"] == "assistant" for tc in m.get("tool_calls") or []):
+        return None
+    question = next((text_of(m) for m in reversed(messages) if m["role"] == "user"), "")
+    found = re.search(r"calculate\s+([\d.+\-*/() ]+)", question, re.I)
+    return found.group(1).strip() if found else None
 
 
 def reply_for(body):
@@ -120,8 +144,13 @@ def _chunk(model, delta, finish=None):
 @app.post("/v1/chat/completions")
 async def chat(req: Request):
     body = await req.json()
-    text, model = reply_for(body), body.get("model", "fake")
+    model = body.get("model", "fake")
+    expression = calculation(body["messages"]) if body.get("tools") else None
+    if expression:
+        return await tool_call(model, "calculator", {"expression": expression}, body.get("stream"))
+    text = reply_for(body)
     if not body.get("stream"):
+        await asyncio.sleep(delay(4))               # the guards and the rewrite
         return JSONResponse({"id": "fake", "object": "chat.completion", "created": 0,
                              "model": model,
                              "choices": [{"index": 0, "finish_reason": "stop",
@@ -129,13 +158,37 @@ async def chat(req: Request):
                              "usage": {"prompt_tokens": 1, "completion_tokens": 1,
                                        "total_tokens": 2}})
 
-    def stream():
+    async def stream():
         for word in re.findall(r"\S+\s*", text):
+            await asyncio.sleep(delay())
             yield _chunk(model, {"role": "assistant", "content": word})
         yield _chunk(model, {}, "stop")
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+async def tool_call(model, name, args, stream):
+    """The model asking for a tool, as OpenAI words it (streamed, or whole)."""
+    await asyncio.sleep(delay(4))
+    call = {"id": f"call_{name}", "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)}}
+    if not stream:
+        return JSONResponse({"id": "fake", "object": "chat.completion", "created": 0,
+                             "model": model,
+                             "choices": [{"index": 0, "finish_reason": "tool_calls",
+                                          "message": {"role": "assistant", "content": None,
+                                                      "tool_calls": [call]}}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 1,
+                                       "total_tokens": 2}})
+
+    def chunks():
+        yield _chunk(model, {"role": "assistant", "content": None,
+                             "tool_calls": [{"index": 0, **call}]})
+        yield _chunk(model, {}, "tool_calls")
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(chunks(), media_type="text/event-stream")
 
 
 # A webhook receiver (kb/services/webhooks.py), for trying webhooks against this

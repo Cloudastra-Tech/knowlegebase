@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -115,7 +115,7 @@ export function ChatSettingsDialog({
             Cancel
           </Button>
           <Button onClick={save} disabled={saving}>
-            {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            {saving && <AsciiSpinner size="xs" label="" />}
             Save
           </Button>
         </DialogFooter>

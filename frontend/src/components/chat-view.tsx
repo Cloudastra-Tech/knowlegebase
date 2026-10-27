@@ -17,6 +17,7 @@ import { toast } from "sonner"
 
 import { AttachButton, AttachmentChips } from "@/components/attachment-chips"
 import { AssistantMessage, BranchNav, type AnswerActions, type Message } from "@/components/chat-answer"
+import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
 import { ChatSidebar } from "@/components/chat-sidebar"
 import { LoggingNotice } from "@/components/logging-notice"
@@ -34,6 +35,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -50,6 +52,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Message as MessageRow } from "@/components/ui/message"
 import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -67,7 +70,7 @@ import {
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
-import { CHOOSE_SPACE, FOCUS_COMPOSER, TOGGLE_SIDEBAR } from "@/lib/chat-events"
+import { CHOOSE_SPACE, FOCUS_COMPOSER, setThinking, TOGGLE_SIDEBAR } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
 import { queries } from "@/lib/queries"
 import { spaceLabel } from "@/lib/spaces"
@@ -426,6 +429,7 @@ export function ChatView({ role }: { role: Role }) {
           : [...all, { key: questionKey, role: "user", text: q }, draft],
     )
     setLoading(true)
+    setThinking(true)
     setAnnounce("Writing an answer…")
     setAtBottom(true)
     const change = (fn: (s: Session) => Session) => setSession((s) => (s ? fn(s) : s))
@@ -467,18 +471,26 @@ export function ChatView({ role }: { role: Role }) {
         change((s) => ({ ...s, conversation: s.conversation && { ...s.conversation, title: e.title } }))
         queryClient.invalidateQueries({ queryKey: ["conversations"] })
       } else if (e.type === "status") update((m) => ({ ...m, status: e.text }))
-      else if (e.type === "step_start")
+      else if (e.type === "step_start") {
+        // Timed on this screen's clock, for the trace ("0.8s"). Each step ripples the
+        // background field again.
+        const startedAt = performance.now()
         update((m) => ({
           ...m,
-          steps: [...(m.steps ?? []), { id: e.id, tool: e.tool, label: e.label, done: false }],
+          steps: [...(m.steps ?? []), { id: e.id, tool: e.tool, label: e.label, done: false, startedAt }],
         }))
-      else if (e.type === "step_end")
+        setThinking(true)
+      } else if (e.type === "step_end") {
+        const now = performance.now()
         update((m) => ({
           ...m,
           steps: (m.steps ?? []).map((st) =>
-            st.id === e.id ? { ...st, done: true, result: e.result } : st,
+            st.id === e.id
+              ? { ...st, done: true, result: e.result, ms: st.startedAt === undefined ? undefined : now - st.startedAt }
+              : st,
           ),
         }))
+      }
       else if (e.type === "answer")
         // The passages its [S#] chips cite come along whenever they change.
         update((m) => ({ ...m, text: e.text, ...(e.sources ? { sources: e.sources } : {}) }))
@@ -551,6 +563,7 @@ export function ChatView({ role }: { role: Role }) {
     } finally {
       if (abort.current === controller) abort.current = null
       setLoading(false)
+      setThinking(false)
       setAnnounce(ended ? (ENDED[ended] ?? "Answer ready.") : "")
       queryClient.invalidateQueries({ queryKey: ["conversations"] })
     }
@@ -633,7 +646,8 @@ export function ChatView({ role }: { role: Role }) {
         onNewChat={newChat}
         onDeleted={(id) => id === urlId && open("/chat")}
       />
-      <div className="flex min-w-0 flex-1 flex-col" data-print="flow">
+      <div className="relative isolate flex min-w-0 flex-1 flex-col" data-print="flow">
+        <ChatBackdrop />
         <ChatHeader
           conversation={conversation}
           title={title}
@@ -922,10 +936,12 @@ function UserMessage({
     )
   }
   return (
-    <div className="group flex flex-col items-end gap-1">
-      <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-        {message.text}
-      </div>
+    <MessageRow align="end" className="group flex-col items-end gap-1 data-[align=end]:flex-col">
+      {/* Glass, tinted with the signal: the question, set apart from the answer's
+          opaque reading column. */}
+      <Bubble variant="outline" align="end" className="max-w-[85%]">
+        <BubbleContent className="kb-user-bubble whitespace-pre-wrap">{message.text}</BubbleContent>
+      </Bubble>
       <div className="flex items-center gap-0.5 text-muted-foreground" data-print="hide">
         <BranchNav message={message} onBranch={onBranch} disabled={busy} />
         {message.id && (
@@ -947,7 +963,7 @@ function UserMessage({
           </Tooltip>
         )}
       </div>
-    </div>
+    </MessageRow>
   )
 }
 

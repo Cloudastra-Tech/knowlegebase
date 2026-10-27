@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Link2Off, Loader2, Lock, MessageSquarePlus } from "lucide-react"
+import { Link2Off, Lock, MessageSquarePlus } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -108,7 +109,7 @@ export function SharedView({ token }: { token: string }) {
           <div className="pt-2" data-print="hide">
             <Button variant="outline" size="sm" disabled={fork.isPending} onClick={() => fork.mutate()}>
               {fork.isPending ? (
-                <Loader2 className="animate-spin" data-icon="inline-start" />
+                <AsciiSpinner size="xs" label="" />
               ) : (
                 <MessageSquarePlus data-icon="inline-start" />
               )}
