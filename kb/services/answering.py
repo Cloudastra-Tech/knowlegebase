@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass, field
 
 from agent import Cancelled  # noqa: F401  (re-exported: a stopped run raises it)
-from kb.services import agents, conversations, question_log
+from kb.services import agents, conversations, question_log, spaces
 
 log = logging.getLogger("uvicorn.error")
 
@@ -56,7 +56,10 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
     (conversations.start_turn): its history is what a follow-up is answered with.
     on_event / cancel: stream progress, and stop (raises Cancelled). out: the
     agent's running report (agent.run), for a caller that needs what was read so
-    far after a stop. Raises Failed when answering fails."""
+    far after a stop. Raises Failed when answering fails.
+    A conversation asked in a space searches only the space's sources (among
+    those the role may see), and one with files attached reads them too
+    (spaces.context_for)."""
     if surface not in SURFACES:
         raise ValueError(f"surface must be one of: {', '.join(SURFACES)}")
     out = {} if out is None else out
@@ -65,9 +68,10 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
         # No waiting for re-indexing: it changes the index document by document, or
         # builds a new one beside it (services/indexing.py).
         run = question_log.tracked(agents.get_agent(ws, role), ws, user, role, surface, turn)
+        context = spaces.context_for(ws, user, turn["conversation"]) if turn else None
         answer, trace, sources = run(question, with_sources=True, on_event=on_event,
                                      cancel=cancel, history=turn["history"] if turn else None,
-                                     out=out)
+                                     out=out, **({"context": context} if context else {}))
         state, sources, access = conversations.outcome(answer, trace, sources, out,
                                                        history_access)
     except Cancelled:

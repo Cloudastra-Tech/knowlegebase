@@ -268,10 +268,25 @@ class HybridRetriever:
         self.weigh = None
 
     @staticmethod
-    def _hits(retriever, query, k):
+    def _hits(retriever, query, k, keys=None):
         """retriever's chunks for query: as many as it returns by itself, or k of
         them when k is given (each retriever is shared by every question at
-        once, so its own setting is left as it is)."""
+        once, so its own setting is left as it is). keys: only chunks of these
+        documents (a SCOPE, see scope_keys), on top of the retriever's own filter."""
+        if keys is not None:
+            if not keys:
+                return []
+            if hasattr(retriever, "vectorstore"):
+                own = retriever.search_kwargs.get("filter")
+                where = {"doc_key": {"$in": sorted(keys)}}
+                return retriever.vectorstore.similarity_search(
+                    query, k=k, filter={"$and": [own, where]} if own else where)
+            if hasattr(retriever, "vectorizer"):
+                scores = retriever.vectorizer.get_scores(retriever.preprocess_func(query))
+                found = [i for i, d in enumerate(retriever.docs)
+                         if d.metadata.get("doc_key") in keys]
+                return [retriever.docs[i] for i in sorted(found, key=lambda i: -scores[i])[:k]]
+            return []
         if k and hasattr(retriever, "vectorstore"):           # Chroma, with its filter
             return retriever.vectorstore.similarity_search(
                 query, k=k, filter=retriever.search_kwargs.get("filter"))
@@ -279,6 +294,14 @@ class HybridRetriever:
             return retriever.vectorizer.get_top_n(retriever.preprocess_func(query),
                                                   retriever.docs, n=k)
         return retriever.invoke(query)
+
+    def scope_keys(self, keep):
+        """The documents a SCOPE (a space, kb/services/spaces.py) lets a search
+        read: those keep(metadata) accepts among the chunks this retriever may
+        search at all. They come from its keyword index, which holds only what the
+        role may see, so a scope can narrow a search but never widen it."""
+        return {d.metadata.get("doc_key") for d in getattr(self.bm25, "docs", [])
+                if d.metadata.get("doc_key") and keep(d.metadata)}
 
     def intros_for(self, docs, max_docs=2):
         """The opening chunks of the top documents among `docs` that aren't
@@ -288,7 +311,7 @@ class HybridRetriever:
         return [i for src in sources for i in self.intros.get(src, [])
                 if i.page_content not in have]
 
-    def invoke(self, query, dense_query=None, dense_queries=None, k=None):
+    def invoke(self, query, dense_query=None, dense_queries=None, k=None, keep=None):
         """query: what the user asked — the KEYWORD search uses exactly this.
         dense_query: an enriched version for the MEANING search only (e.g.
         the question + a HyDE guess); defaults to query. dense_queries: several
@@ -307,13 +330,22 @@ class HybridRetriever:
         document's rule (boost > 1, demote < 1), and a blocked document's chunks
         are dropped. The FRESHNESS boost (prefer_recent) then reorders near ties
         with the rule's multiplier in the same score: the two compose, neither
-        replaces the other, and a reranker's order is weighed by the rules too."""
+        replaces the other, and a reranker's order is weighed by the rules too.
+
+        keep: a SCOPE, metadata -> bool (a space's sources): only chunks of the
+        documents it accepts, among those the role may search (scope_keys)."""
         want = k or self.top_k
         each = max(k, self.pool) if k and self.reranker else k
+        keys = None
+        if keep is not None:
+            keys = self.scope_keys(keep)
+            if not keys:
+                return []
+            each = each or self.pool
         # Run the searches. Each returns an ORDERED list of chunks (best first).
-        lists = [("dense_rank", self._hits(self.dense, q, each))
+        lists = [("dense_rank", self._hits(self.dense, q, each, keys))
                  for q in (dense_queries or [dense_query or query])]
-        lists.append(("bm25_rank", self._hits(self.bm25, query, each)))
+        lists.append(("bm25_rank", self._hits(self.bm25, query, each, keys)))
 
         # Score every chunk by its rank in each list (RRF).
         scores = {}        # chunk text -> fused score
@@ -486,7 +518,8 @@ def passage_of(meta):
     """What a citation shows of a chunk, from its metadata (ingest.py's PASSAGE
     METADATA; an index from before it has fewer fields): its document's title,
     provider and link, who may see it, and where in the document it sits. The
-    page is 1-based, as people count pages."""
+    page is 1-based, as people count pages. A file the asker attached to the chat
+    or keeps in their space (kb/services/attachments.py) says so: "attachment"."""
     page = meta.get("page")
     is_pdf = str(meta.get("source") or meta.get("doc_key") or "").lower().endswith(".pdf")
     return {
@@ -502,6 +535,7 @@ def passage_of(meta):
         "char_start": meta.get("char_start"),
         "char_end": meta.get("char_end"),
         "modified": meta.get("modified") or None,
+        **({"attachment": meta["attachment"]} if meta.get("attachment") else {}),
     }
 
 
@@ -513,7 +547,7 @@ def passage_text(text, meta):
     return re.sub(r"\A\[[^\]\n]*\]\n", "", text)
 
 
-def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
+def retrieve(question, retriever, llm, role="public", guard=None, expand=None, keep=None):
     """Retrieve: the chunks a question is answered from -> (docs, None), or
     (None, reason) when an input guard refused it. Nothing is generated here:
     the agent writes the one answer, citing these chunks (agent.py).
@@ -521,7 +555,8 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
     below. The caller runs its guards WHILE this retrieves; guard() is waited
     on before anything found is returned.
     expand: optional function -> the question as searched (the workspace's
-    glossary adds the other names of its terms); the guard checks it as asked."""
+    glossary adds the other names of its terms); the guard checks it as asked.
+    keep: optional SCOPE, metadata -> bool (HybridRetriever.invoke)."""
 
     # Does this role get to see restricted info? (HR yes, public no.)
     allow_restricted = "restricted" in ROLE_ACCESS.get(role, ["public"])
@@ -541,10 +576,11 @@ def retrieve(question, retriever, llm, role="public", guard=None, expand=None):
 
     # ---- 1. RETRIEVE (and rerank, if a reranker is plugged in: RERANKER) -
     # Keyword search gets the question as asked; meaning search the enriched one(s).
+    scope = {"keep": keep} if keep is not None else {}
     if len(queries) == 1:
-        docs = retriever.invoke(question, dense_query=queries[0])
+        docs = retriever.invoke(question, dense_query=queries[0], **scope)
     else:
-        docs = retriever.invoke(question, dense_queries=queries)
+        docs = retriever.invoke(question, dense_queries=queries, **scope)
 
     # ---- 1b. Add how the top documents BEGIN (title / summary), so a chunk
     # from the middle of a document is read in context. They come after the

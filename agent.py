@@ -410,7 +410,9 @@ def _evidence_block(n, doc):
     text = doc.page_content
     if doc.metadata.get("chunk_context"):     # the LLM-written context line is for search only
         text = text.replace(doc.metadata["chunk_context"] + "\n", "", 1)
-    return spotlight(text, "company_documents", ref=f"S{n}", document=p["title"],
+    # A file the asker attached is data like any document, and says where it's from.
+    source = "attached_file" if doc.metadata.get("attachment") else "company_documents"
+    return spotlight(text, source, ref=f"S{n}", document=p["title"],
                      provider=p["provider"], section=p["heading_path"], page=p["page"],
                      updated=(p["modified"] or "")[:10])
 
@@ -536,6 +538,10 @@ class _Run:
         # The definitions of the glossary terms this question uses: a message the
         # model reads right after the system prompt (build_agent(glossary=...)).
         self.extra = []
+        # Where this question is asked (kb/services/spaces.py), or None: a space's
+        # scope (.keep), the attached files searched besides the index (.passages)
+        # and what the model is told about them (.notes).
+        self.context = None
         self._lock = threading.Lock()     # tools can run in parallel threads
 
     def emit(self, event):
@@ -725,10 +731,15 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         """The passages found for `question`, numbered and spotlighted (one block
         each, its ref the marker to cite it with) — evidence, not an answer: the
         agent's model writes the one answer from it."""
-        docs, refused = retrieve(question, retriever, rag_llm, role, guard=guard, expand=expand)
+        context = run.context
+        keep = {"keep": context.keep} if context and context.keep is not None else {}
+        docs, refused = retrieve(question, retriever, rag_llm, role, guard=guard, expand=expand,
+                                 **keep)
         if docs is None:                 # a guard refused before anything was shown
             run.block(refused)
             return _blocked_note(refused)
+        if context:                      # the asker's own files first: they chose them
+            docs = context.passages(question) + docs
         numbered = run.number(docs, question)
         run.saw([d for _, d in numbered])
         run.remember([d.page_content for _, d in numbered])
@@ -1036,7 +1047,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         # Outline wiki (searched live). The user never has to name the source.
         searches = [("retrieve_docs", "search_docs", {"question": question},
                      lambda: search_docs_for(run, question, guard=run.verdict))]
-        if outline:
+        if outline and (run.context is None or run.context.keep is None):   # not in a space
             searches.append(("retrieve_wiki", "search_outline", {"query": question},
                              lambda: search_outline.invoke({"query": question})))
         steps = _Held(run.emit)           # the steps panel waits for the guards too
@@ -1177,7 +1188,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         return messages
 
     def run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
-            out=None):
+            out=None, context=None):
         """Answer a question -> (answer, trace).
         The answer cites the passages it used as [S1], [S2], ... (checked, see
         cite()). with_sources=True -> (answer, trace, sources) with the sources
@@ -1201,8 +1212,13 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
           coverage    "none" / "partial" / "full", see coverage()  (once done)
           dropped     how many [S#] markers cite() removed          (once done)
           unsupported figures the answer's sources don't show, see
-                      check_figures()                               (once done)"""
+                      check_figures()                               (once done)
+        context: where it's asked (kb/services/spaces.Context), or None: a
+          space's sources limit the index search (.keep(metadata), or None for
+          all of it), .passages(question) are the asker's own files' passages,
+          searched with it, and .notes what the model is told about both"""
         state = _Run(on_event, cancel, question=user_input)
+        state.context = context
         report = {} if out is None else out
         state.report = report
         report.update(standalone=user_input, access=state.access, sources=[])
@@ -1243,10 +1259,12 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         if note:
             state.extra = [SystemMessage(content=GLOSSARY_NOTE.format(
                 lines=_preference_text(note)))]
+        if context:                       # the space's instructions, the attached files
+            state.extra += [SystemMessage(content=text) for text in context.notes]
 
         # VERIFIED ANSWERS: a question that matches one an admin approved gets it,
         # once the input guards have passed; one they refuse is refused as before.
-        if verified is not None and retrieval:
+        if verified is not None and retrieval and context is None:
             try:
                 hit = verified.match(state.search_for or user_input)
             except Exception:

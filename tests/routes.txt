@@ -14,11 +14,17 @@ DELETE /api/admin/workspace delete_workspace require_tenant_admin,audited
 DELETE /api/admin/workspace/support-access revoke_support require_admin,audited
 DELETE /api/conversation-folders/{fid} delete_folder current_user,audited
 DELETE /api/conversations/{cid} delete_conversation current_user,audited
+DELETE /api/conversations/{cid}/attachments/{attachment_id} remove_attachment current_user,audited
 DELETE /api/docs/{access}/{name} delete_doc require_hr,audited
 DELETE /api/integrations/{provider} integration_disconnect require_hr,audited
 DELETE /api/me/api-keys/{key_id} revoke_my_key current_user,audited
 DELETE /api/messages/{mid}/feedback remove_feedback current_user,current_role,audited
+DELETE /api/prompts/{prompt_id} delete_prompt current_user,current_role,audited
 DELETE /api/shares/{sid} revoke_share current_user,audited
+DELETE /api/spaces/{space_id} delete_space current_user,audited
+DELETE /api/spaces/{space_id}/files/{attachment_id} remove_space_file current_user,audited
+DELETE /api/spaces/{space_id}/members/{username} remove_space_member current_user,audited
+DELETE /api/spaces/{space_id}/sources/{source_id} remove_space_source current_user,audited
 DELETE /api/v1/documents/{access}/{name} delete_document api_key,audited
 DELETE /api/v1/extension/key disconnect_extension api_key,audited
 DELETE /scim/v2/Groups/{group_id} delete_group scim_token,audited
@@ -50,6 +56,7 @@ GET    /api/admin/verified-answers/draft draft_answer require_hr
 GET    /api/admin/workspace workspace_settings require_admin
 GET    /api/admin/workspace/exports/{eid}/download download_export require_tenant_admin,audited
 GET    /api/assistant assistant_info current_user
+GET    /api/attachments/limits attachment_limits current_user
 GET    /api/auth/me me current_user
 GET    /api/auth/providers auth_providers -
 GET    /api/auth/saml/{cid}/done saml_done -
@@ -65,6 +72,7 @@ GET    /api/conversation-folders list_folders current_user
 GET    /api/conversations list_conversations current_user,current_role
 GET    /api/conversations/search search_conversations current_user,current_role
 GET    /api/conversations/{cid} get_conversation current_user,current_role
+GET    /api/conversations/{cid}/attachments list_attachments current_user
 GET    /api/docs list_docs require_hr
 GET    /api/docs/{access}/{name} read_doc require_hr
 GET    /api/extension extension_status current_user
@@ -87,10 +95,14 @@ GET    /api/operator/sso/{provider}/start operator_sso_start -
 GET    /api/operator/workspaces operator_workspaces require_operator
 GET    /api/operator/workspaces/{ws}/audit operator_workspace_audit require_operator
 GET    /api/passages/{chunk_id} passage current_user,current_role
+GET    /api/prompts list_prompts current_user,current_role
 GET    /api/question-log/settings log_settings current_user
 GET    /api/shared/{token} open_share current_user,current_role
 GET    /api/shares list_shares current_user
 GET    /api/slack/oauth/callback slack_oauth_callback -
+GET    /api/spaces list_spaces current_user
+GET    /api/spaces/source-options source_options current_user,current_role
+GET    /api/spaces/{space_id} get_space current_user,current_role
 GET    /api/v1/audit audit_log Filters,api_key,audited
 GET    /api/v1/documents list_documents api_key,audited
 GET    /api/v1/documents/{access}/{name} read_document api_key,audited
@@ -113,6 +125,7 @@ PATCH  /api/admin/sign-in/saml-connections/{cid} edit_saml_connection require_ad
 PATCH  /api/admin/verified-answers/{answer_id} update_answer require_hr,audited
 PATCH  /api/conversation-folders/{fid} rename_folder current_user,audited
 PATCH  /api/conversations/{cid} edit_conversation current_user,current_role,audited
+PATCH  /api/spaces/{space_id} update_space current_user,audited
 PATCH  /scim/v2/Groups/{group_id} patch_group scim_token,audited
 PATCH  /scim/v2/Users/{user_id} patch_user scim_token,audited
 POST   /api/admin/api/service-keys create_service_key require_admin,audited
@@ -146,6 +159,7 @@ POST   /api/chat chat current_user,current_role
 POST   /api/chat/stream chat_stream current_user,current_role
 POST   /api/conversation-folders create_folder current_user,audited
 POST   /api/conversations create_conversation current_user,current_role,audited
+POST   /api/conversations/{cid}/attachments add_attachments current_user,audited
 POST   /api/conversations/{cid}/fork fork_conversation current_user,current_role,audited
 POST   /api/docs create_doc require_hr,audited
 POST   /api/docs/upload upload_docs require_hr,audited
@@ -162,6 +176,7 @@ POST   /api/operator/workspaces/{ws}/reset-rate-limits operator_reset_rate_limit
 POST   /api/operator/workspaces/{ws}/support-session operator_support_session require_operator,audited
 POST   /api/operator/workspaces/{ws}/suspend operator_suspend require_operator,audited
 POST   /api/operator/workspaces/{ws}/unsuspend operator_unsuspend require_operator,audited
+POST   /api/prompts create_prompt current_user,current_role,audited
 POST   /api/reindex reindex require_hr,audited
 POST   /api/shares create_share current_user,current_role,audited
 POST   /api/slack/apps/{app_key}/commands slack_commands slack_signature,audited
@@ -170,6 +185,9 @@ POST   /api/slack/apps/{app_key}/interactions slack_interactions slack_signature
 POST   /api/slack/commands slack_commands slack_signature,audited
 POST   /api/slack/events slack_events slack_signature,audited
 POST   /api/slack/interactions slack_interactions slack_signature,audited
+POST   /api/spaces create_space current_user,audited
+POST   /api/spaces/{space_id}/files add_space_files current_user,audited
+POST   /api/spaces/{space_id}/sources add_space_source current_user,current_role,audited
 POST   /api/teams/apps/{app_key}/messages teams_messages bot_connector,audited
 POST   /api/teams/messages teams_messages bot_connector,audited
 POST   /api/v1/ask ask api_key,audited
@@ -198,5 +216,7 @@ PUT    /api/docs/{access}/{name} save_doc require_hr,audited
 PUT    /api/integrations/{provider}/access integration_access require_hr,audited
 PUT    /api/integrations/{provider}/containers integration_set_containers require_hr,audited
 PUT    /api/messages/{mid}/feedback give_feedback current_user,current_role,audited
+PUT    /api/prompts/{prompt_id} update_prompt current_user,current_role,audited
+PUT    /api/spaces/{space_id}/members/{username} set_space_member current_user,audited
 PUT    /scim/v2/Groups/{group_id} replace_group scim_token,audited
 PUT    /scim/v2/Users/{user_id} replace_user scim_token,audited

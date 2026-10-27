@@ -19,7 +19,7 @@ import conversations_store
 import members_store
 from kb.deps import current_role, current_user, ws_of
 from kb.rate_limit import user_limit
-from kb.services import answering, conversations, indexing, passages, suggestions
+from kb.services import answering, attachments, conversations, indexing, passages, suggestions
 from kb.services.answering import Cancelled
 
 router = APIRouter()
@@ -63,8 +63,12 @@ def passage(chunk_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
     """A cited passage and the document's text around it, for the source viewer:
     {title, provider, url, access, page, heading_path, modified, text, before,
     after}. Checked against the asker's role on every call; a passage that isn't
-    in the index and one they may not see are the same 404."""
-    found = passages.get(indexing.current(ws_of(user))[0], chunk_id, role)
+    in the index and one they may not see are the same 404. A passage of a file
+    attached to a chat (att-...) opens for the person who attached it only."""
+    if attachments.is_chunk_id(chunk_id):
+        found = attachments.passage(ws_of(user), user, chunk_id)
+    else:
+        found = passages.get(indexing.current(ws_of(user))[0], chunk_id, role)
     if not found:
         raise HTTPException(404, "That passage isn't in your documents any more, "
                                  "or your role can't see it.")
