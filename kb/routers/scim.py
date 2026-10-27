@@ -40,6 +40,7 @@ from kb.audit import audited
 from kb.deps import public_url, require_admin, ws_of
 from kb.routers.admin_sign_in import GroupRule
 from kb.services import scim as protocol
+from kb.services import webhooks
 from kb.services.scim import ScimError
 from kb.services.sign_in import explained
 
@@ -190,6 +191,7 @@ def create_user(body: dict = Body(...), ctx=Depends(scim_token),
     _done(ctx, audit, None, "member", saved["username"],
           {"scim_id": saved["id"], "user_name": saved["user_name"], "active": saved["active"],
            "taken_over": taken_over}, saved["username"], "scim_user_created")
+    webhooks.member_added(ctx["workspace"], saved["username"], saved["role"], "scim")
     return ScimJSON(protocol.user_resource(saved, ctx["base"]), status_code=201,
                     headers={"Location": f"{ctx['base']}/Users/{saved['id']}"})
 
@@ -211,6 +213,8 @@ def _save_user(ctx, audit, user_id, new):
               "scim_user_reactivated": "scim.user.reactivate"}.get(code)
     _done(ctx, audit, action, "member", saved["username"],
           {"scim_id": saved["id"], "changed": changed}, saved["username"], code)
+    if changed.get("active") is False:
+        webhooks.member_disabled(ctx["workspace"], saved["username"], "scim")
     return protocol.user_resource(saved, ctx["base"])
 
 
@@ -238,6 +242,7 @@ def delete_user(user_id: str, ctx=Depends(scim_token), audit=audited("scim.user.
     if not username:
         raise ScimError(404, f"User {user_id} not found.")
     sessions_store.delete_user(username, ctx["workspace"])
+    webhooks.member_disabled(ctx["workspace"], username, "scim")
     _done(ctx, audit, None, "member", username,
           {"scim_id": user_id, "anonymise_after_days": scim_store.retention_days()},
           username, "scim_user_deleted")

@@ -43,7 +43,8 @@ _WORDS = {
     "es": "el la los las es son qué que cómo cuándo dónde quién por para con mi mis tu "
           "nuestro una unos está están hay puedo cuál cuánto cuántos del al lo se",
     "fr": "le la les est sont quel quelle quels comment quand où qui pour avec mon ma mes "
-          "notre votre une des du au je nous vous est-ce combien puis-je",
+          "notre votre une des du au je nous vous combien il elle ils sur dans pas ce cette "
+          "puis peut",
     "de": "der die das ist sind was wie wann wo wer warum für mit mein meine unser ein eine "
           "nicht und ich wir sie gibt kann können wieviel welche",
     "pt": "o a os as é são qual quais como quando onde quem porque por para com meu minha "
@@ -62,6 +63,10 @@ _WORDS = {
     "fa": "چه چطور کی کجا چرا این است برای با از در را",
 }
 _WORD_SETS = {lang: set(words.split()) for lang, words in _WORDS.items()}
+_SHARED = {}                      # word -> how many lists have it
+for _words in _WORD_SETS.values():
+    for _w in _words:
+        _SHARED[_w] = _SHARED.get(_w, 0) + 1
 # Which word lists can decide a text in each script.
 _BY_SCRIPT = {"latin": ("en", "es", "fr", "de", "pt", "it", "nl", "hi-Latn"),
               "ru": ("ru", "uk"), "ar": ("ar", "ur", "fa")}
@@ -103,7 +108,8 @@ def detect(text):
     text = _MARKER.sub(" ", unicodedata.normalize("NFKC", text or ""))
     counts = {}
     for ch in text:
-        if ch.isalpha():
+        # Letters, and the vowel signs of Indic scripts (combining marks).
+        if ch.isalpha() or unicodedata.category(ch).startswith("M"):
             script = _script(ch)
             if script:
                 counts[script] = counts.get(script, 0) + 1
@@ -114,18 +120,27 @@ def detect(text):
     if counts.get("ja"):
         return "ja"
     script = max(counts, key=counts.get)
-    if counts[script] * 2 < letters:                 # no script is most of it
+    # Code-switching: "Pro plan की कीमत क्या है?" is Hindi with an English name in it.
+    other = max((s for s in counts if s != "latin"), key=counts.get, default=None)
+    if script == "latin" and other and counts[other] * 3 >= letters:
+        script = other
+    if counts[script] * 2 < letters and script == "latin":   # no script is most of it
         return None
     if script not in _BY_SCRIPT:
         return script
-    words = [w.casefold().strip("'’-") for w in _TOKEN.findall(text)]
+    words = [part.casefold().strip("'’") for w in _TOKEN.findall(text)
+             for part in re.split(r"-", w) if part]
     if script == "ru" and _UK_LETTERS & set("".join(words)):
         return "uk"
-    hits = {lang: sum(w in _WORD_SETS[lang] for w in words) for lang in _BY_SCRIPT[script]}
+    # A word in several lists counts as a fraction for each: "le" says French or
+    # Italian, "est" says French.
+    hits = {lang: sum(1 / _SHARED[w] for w in words if w in _WORD_SETS[lang])
+            for lang in _BY_SCRIPT[script]}
     ranked = sorted(hits.items(), key=lambda kv: -kv[1])
     best, n = ranked[0]
     runner_up = ranked[1][1] if len(ranked) > 1 else 0
-    if n >= MIN_HITS and n > runner_up:
+    seen = sum(w in _WORD_SETS[best] for w in words)
+    if seen >= MIN_HITS and n > runner_up:
         return best
     return _DEFAULT.get(script)
 

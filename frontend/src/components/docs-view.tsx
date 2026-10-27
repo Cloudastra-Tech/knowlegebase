@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useSearchParams } from "react-router"
 import { toast } from "sonner"
 import {
   Download,
@@ -46,6 +47,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { DraftEditor, DraftRow } from "@/components/draft-editor"
 import { cn } from "@/lib/utils"
 import { api, type Access, type Doc, type UploadLimits } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
@@ -480,11 +482,25 @@ export function DocsView() {
   const uploadLimits = data?.upload_limits ?? null
   const { status: indexStatus, refresh: refreshIndex } = useIndexStatus()
   const indexing = indexStatus?.status === "indexing"
-  const [filter, setFilter] = useState<"all" | Access>("all")
+  // ?draft=<id>: one of the assistant's drafts (from Knowledge or Insights).
+  const [params, setParams] = useSearchParams()
+  const pickedDraft = params.get("draft")
+  const [filter, setFilter] = useState<"all" | Access | "drafts">(() =>
+    pickedDraft ? "drafts" : "all",
+  )
   // The picked document as the latest list has it: null until it's there, and
   // once it's gone.
   const [picked, setPicked] = useState<{ access: Access; name: string } | null>(null)
   const selected = docs.find((d) => sameDoc(d, picked as Doc)) ?? null
+  // The drafts (HR); looked at again every few seconds while one is being written.
+  const { data: draftList } = useQuery({
+    ...queries.drafts(),
+    refetchInterval: (q) =>
+      q.state.data?.drafts.some((d) => d.status === "generating") ? 3000 : false,
+  })
+  const draftRows = draftList?.drafts ?? []
+  const pickDraft = (id: string | null) =>
+    setParams(id ? { draft: id } : {}, { replace: true })
 
   const refresh = useCallback(
     async (select?: { access: Access; name: string }) => {
@@ -505,6 +521,7 @@ export function DocsView() {
   }
 
   const visible = docs.filter((d) => filter === "all" || d.access === filter)
+  const showDrafts = filter === "drafts"
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 md:h-full">
@@ -531,6 +548,9 @@ export function DocsView() {
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="public">Everyone</TabsTrigger>
                 <TabsTrigger value="restricted">Limited</TabsTrigger>
+                <TabsTrigger value="drafts">
+                  Drafts{draftRows.length ? ` (${draftRows.length})` : ""}
+                </TabsTrigger>
               </TabsList>
             </Tabs>
           </div>
@@ -539,7 +559,23 @@ export function DocsView() {
             <UploadDialog onUploaded={() => refresh()} limits={uploadLimits} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2">
-            {loading ? (
+            {showDrafts ? (
+              draftRows.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                  No drafts. Summarise a source on the Knowledge screen, or draft a doc for a
+                  content gap in Insights.
+                </p>
+              ) : (
+                draftRows.map((d) => (
+                  <DraftRow
+                    key={d.id}
+                    draft={d}
+                    selected={d.id === pickedDraft}
+                    onPick={() => pickDraft(d.id)}
+                  />
+                ))
+              )
+            ) : loading ? (
               <div className="space-y-2 px-2">
                 <Skeleton className="h-12 w-full" />
                 <Skeleton className="h-12 w-full" />
@@ -571,7 +607,25 @@ export function DocsView() {
           </div>
         </Card>
 
-        {selected ? (
+        {showDrafts ? (
+          pickedDraft ? (
+            <DraftEditor
+              key={pickedDraft}
+              id={pickedDraft}
+              onPublished={(key) => {
+                pickDraft(null)
+                const [access, ...rest] = key.split("/")
+                setFilter("all")
+                refresh({ access: access as Access, name: rest.join("/") })
+              }}
+              onDeleted={() => pickDraft(null)}
+            />
+          ) : (
+            <Card className="flex items-center justify-center p-10 text-center text-sm text-muted-foreground">
+              Pick a draft on the left to review it.
+            </Card>
+          )
+        ) : selected ? (
           <DocEditor
             key={`${selected.access}/${selected.name}`}
             doc={selected}

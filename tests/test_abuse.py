@@ -120,8 +120,15 @@ def test_an_alert_is_raised_and_mailed_once(mails, monkeypatch):
     assert [to for to, _ in about] == ["op@cloudastra.example"]          # not the tenant's admin
     assert "burst@x.example asked 11 questions" in about[0][1]["body"]
     assert not [a for a in abuse.monitor(NOW + 60) if a["workspace"] == ws]  # once
+    # Told to the tenant: its admins, and its webhooks that want abuse.alert.
+    from kb.services import webhooks
+    events = []
+    monkeypatch.setattr(webhooks, "emit", lambda w, event, data: events.append((w, event, data)))
     monkeypatch.setenv("ABUSE_NOTIFY_TENANT_ADMINS", "on")
     assert f"admin@{ws}.example" in abuse.notify(mine[0])
+    assert events == [(ws, "abuse.alert", {"alert_id": mine[0]["id"], "kind": "user_burst",
+                                           "subject": "burst@x.example",
+                                           "details": mine[0]["details"]})]
 
 
 def test_operators_see_and_acknowledge_alerts(client, idp, mails):  # noqa: F811

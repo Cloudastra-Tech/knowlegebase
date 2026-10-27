@@ -25,7 +25,8 @@ THE CHECKS (thresholds from the environment):
 WHO IS TOLD: ABUSE_ALERT_EMAILS (default: OPERATOR_EMAILS) for every alert. The
 workspace's admins too for a spend cap, and for the others with
 ABUSE_NOTIFY_TENANT_ADMINS=on (off by default: a burst can be a false alarm, and
-naming a member to their admin is the operator's call).
+naming a member to their admin is the operator's call). What the admins are told
+is also an abuse.alert webhook event (kb/services/webhooks.py).
 """
 
 import logging
@@ -196,6 +197,9 @@ def notify(alert, tenant=None):
     to = set(operator_emails())
     if tenant and ws != PLATFORM:
         to |= {a for a in members_store.enabled_admins(ws) if "@" in a}
+        # ...and the workspace's own systems, when a webhook wants abuse.alert (#75).
+        from kb.services import webhooks
+        webhooks.abuse_alert(ws, alert)
     sent = []
     for email in sorted(to):
         try:

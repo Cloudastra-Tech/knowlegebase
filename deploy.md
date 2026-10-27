@@ -804,6 +804,31 @@ root with `Cache-Control: no-cache`, so a new service worker is picked up on the
 next visit. The service worker caches the app shell only and never touches
 `/api/`, `/mcp` or `/scim/`.
 
+## Digests and outbound webhooks
+
+**Digests** go by the mailer (`MAIL_BACKEND`, above) or as a Slack DM from the
+workspace's Slack app (the member is found by email: `users.lookupByEmail`, scope
+`users:read.email`, already in the manifest). Links in them use `PUBLIC_URL`. The
+summaries use `FAST_MODEL`, once per version of a document.
+
+**Webhooks** are added by a workspace's admins (Access → Webhooks). Addresses must
+be `https://` and resolve only to public IPs. To try one against a receiver on
+this machine, list it like a connector's test site:
+`CONNECTOR_ALLOW_PRIVATE_HOSTS=127.0.0.1:9000` (plain http is then allowed for it).
+A receiver checks each request:
+
+```python
+import hashlib, hmac, time
+def valid(secret, timestamp, body: bytes, signature):          # X-KB-Timestamp, X-KB-Signature
+    if abs(time.time() - int(timestamp)) > 300:
+        return False
+    mac = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256)
+    return hmac.compare_digest("v1=" + mac.hexdigest(), signature)
+```
+
+It should answer 2xx quickly; anything else is retried for 24 hours, and
+`X-KB-Delivery` repeats on a retry, so receivers can drop duplicates.
+
 ## Health checks and error tracking
 
 - `GET /api/health` — the process is up. Always 200 while it runs; the Docker
