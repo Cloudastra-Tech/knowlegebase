@@ -633,6 +633,10 @@ ROLE_ONLY = {
     "get_insights": "HR / Admin counts by access level (follow-up: by ACL)",
     "export_insights": "as get_insights",
     "list_eval_cases": "HR / Admin; eval cases carry no ACL (follow-up)",
+    "list_prompts": "saved prompts hold no documents; the role says who keeps the workspace's",
+    "create_prompt": "as list_prompts",
+    "update_prompt": "as list_prompts",
+    "delete_prompt": "as list_prompts",
 }
 
 
