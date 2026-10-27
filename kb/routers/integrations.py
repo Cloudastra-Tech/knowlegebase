@@ -16,7 +16,10 @@ Every connector is listed in connectors/registry.py with the same shape
   PUT    /api/integrations/{provider}/containers save the picks, then sync
   POST   /api/integrations/{provider}/sync       sync now (full / confirm a mass delete)
   GET    /api/integrations/{provider}/runs       sync history and skipped items
-  PUT    /api/integrations/{provider}/access     who may ask about its files
+  PUT    /api/integrations/{provider}/access     who may ask about its files (the old levels)
+  PUT    /api/integrations/{provider}/policy     its permission policy: source, workspace,
+                                                 restricted (kb/services/permissions.py)
+  POST   /api/integrations/{provider}/permissions/sync   sync permissions now
   DELETE /api/integrations/{provider}            disconnect + delete the synced copies
 
 Errors reach the browser as plain-language messages for a code
@@ -42,7 +45,7 @@ from connectors import base, registry
 from kb.audit import audited
 from kb.deps import current_role, current_user, public_url, require_hr, ws_of
 from kb.rate_limit import user_limit
-from kb.services import agents, sync
+from kb.services import agents, permissions, sync
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -115,6 +118,10 @@ def _integration_info(ws, c, role):
             "doc_count": synced or (row and row["doc_count"]) or 0, "skipped_count": skipped,
             "error": _error(error if status == "error" else None),
             "access": integrations_store.access_of(row),
+            # Who may ask about its files (kb/services/permissions.py), and the
+            # policies it may have (source: only when it reads the source's permissions).
+            "policy": integrations_store.policy_of(row),
+            "policies": list(permissions.policies(provider)),
             "containers": settings.get(c.SETTINGS_KEY) or [],
             "held_deletes": state.get("pending_deletes") or 0,
             "last_run": _run_summary(last)}
@@ -321,7 +328,7 @@ def integration_set_containers(provider: str, body: ContainersIn, user=Depends(r
                   **{k: settings.get(k) for k in ("max_pages", "max_depth") if k in settings},
                   **({"options": {k: options[k] for k in sorted(options)}} if options else {})},
                  user=user)
-    if integrations_store.access_of(row) != integrations_store.access_of({"settings": settings}):
+    if integrations_store.policy_of(row) != integrations_store.policy_of({"settings": settings}):
         from kb.services import indexing
         indexing.schedule_retag(ws, provider)  # e.g. locked to HR and admins
     if changed:
@@ -385,10 +392,62 @@ def integration_access(provider: str, body: AccessIn, user=Depends(require_hr),
         raise HTTPException(400, f"{c.LABEL} syncs tickets, which hold customers' personal "
                                  "data, so only HR and admins can ask about it. Turn tickets "
                                  "off to change this.")
-    if integrations_store.access_of(row) != body.access:
-        integrations_store.update(ws, provider,
-                                  settings=dict(row.get("settings") or {}, access=body.access))
+    policy = "workspace" if body.access == "everyone" else "restricted"
+    if integrations_store.policy_of(row) != policy:
+        # The level IS the policy now: no separate policy key to disagree with it.
+        settings = dict(row.get("settings") or {}, access=body.access)
+        settings.pop("policy", None)
+        integrations_store.update(ws, provider, settings=settings)
         audit.record("integration", provider, {"access": body.access}, user=user)
         indexing.schedule_retag(ws, provider)
     return {"access": body.access}
+
+
+class PolicyIn(BaseModel):
+    policy: str = Field(pattern=r"^(source|workspace|restricted)$")
+
+
+@router.put("/api/integrations/{provider}/policy")
+def integration_policy(provider: str, body: PolicyIn, user=Depends(require_hr),
+                       audit=audited("integration.policy")):
+    """The connection's PERMISSION POLICY (kb/services/permissions.py): source (who
+    may read each file at the source; only for connectors that read permissions),
+    workspace (everyone) or restricted (HR and admins, the default). Its chunks
+    are re-tagged (nothing is embedded again)."""
+    from kb.services import indexing
+    ws = ws_of(user)
+    c, row = _connected(ws, provider)
+    if body.policy not in permissions.policies(provider):
+        raise HTTPException(400, f"{c.LABEL} doesn't read who may see each item at the "
+                                 "source, so it can't follow the source's permissions.")
+    if body.policy != "restricted" and (row.get("settings") or {}).get("access_lock"):
+        raise HTTPException(400, f"{c.LABEL} syncs tickets, which hold customers' personal "
+                                 "data, so only HR and admins can ask about it. Turn tickets "
+                                 "off to change this.")
+    before = integrations_store.policy_of(row)
+    if before != body.policy:
+        integrations_store.update(ws, provider, settings=dict(
+            row.get("settings") or {}, policy=body.policy,
+            access="everyone" if body.policy == "workspace" else "restricted"))
+        audit.record("integration", provider, {"policy": [before, body.policy]}, user=user)
+        indexing.schedule_retag(ws, provider)
+    return {"policy": body.policy}
+
+
+@router.post("/api/integrations/{provider}/permissions/sync")
+def integration_permissions_sync(provider: str, user=Depends(require_hr),
+                                 audit=audited("integration.permissions_sync")):
+    """SYNC PERMISSIONS NOW: list everything at the source again (a full sync, so
+    every item's permissions are read afresh), and work out every file's ACL again
+    from them and this workspace's members and groups now (a re-tag, no embedding).
+    Otherwise this happens after every scheduled sync."""
+    from kb.services import indexing
+    _connector(provider)
+    user_limit(user, "sync")
+    ws = ws_of(user)
+    _connected(ws, provider)
+    sync.start_sync(ws, provider, full=True)
+    indexing.schedule_retag(ws, provider)
+    audit.record("integration", provider, user=user)
+    return {"ok": True}
 

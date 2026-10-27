@@ -157,7 +157,8 @@ def test_an_answer_whose_source_became_restricted_is_not_served_to_the_public(se
     # The document is tagged restricted now (e.g. its connection's access changed).
     collection = ingest._store(indexing.current(setup.ws)[0])._collection
     ids = collection.get(where={"doc_key": "public/leave.txt"})["ids"]
-    collection.update(ids=ids, metadatas=[{"access": "restricted"}] * len(ids))
+    collection.update(ids=ids, metadatas=[{"access": "restricted", "acl": ["group:hr"]}]
+                      * len(ids))
     assert matcher(setup, "public").match(question) is None
     assert matcher(setup, "hr").match(question)
 

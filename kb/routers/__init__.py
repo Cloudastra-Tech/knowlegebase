@@ -52,7 +52,8 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     POST   /docs                  {name, access, content} new .txt      (HR / Admin)
     PUT    /docs/{access}/{name}  {content} save a .txt                 (HR / Admin)
     DELETE /docs/{access}/{name}                                        (HR / Admin)
-    POST   /docs/upload           multipart: files[], access            (HR / Admin)
+    POST   /docs/upload           multipart: files[], access, acl?      (HR / Admin)
+    PUT    /docs/{access}/{name}/acl  {acl}: who may see it (re-tag)   (HR / Admin)
   index.py
     POST   /reindex               rebuild the search index              (HR / Admin)
     GET    /index/status          background re-index progress
@@ -66,6 +67,9 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     PUT    /integrations/google_drive/folders   {folders} choose what to sync  (HR / Admin)
     PUT    /integrations/{provider}/access      {access: restricted|everyone}
                                   who may ask about its files, then re-index  (HR / Admin)
+    PUT    /integrations/{provider}/policy      {policy: source|workspace|restricted}
+                                  its permission policy, then re-tag          (HR / Admin)
+    POST   /integrations/{provider}/permissions/sync   sync permissions now   (HR / Admin)
     POST   /integrations/{provider}/sync        sync now                      (HR / Admin)
     DELETE /integrations/{provider}             disconnect + delete copies    (HR / Admin)
   ({provider} = google_drive | notion)
@@ -112,6 +116,12 @@ Endpoints (all under /api, all except sign-in need "Authorization: Bearer <token
     GET    /admin/eval-cases      answers promoted to the test set            (HR / Admin)
     POST   /admin/eval-cases      {message_id, expected_answer}: promote a rated answer (admin)
     DELETE /admin/eval-cases/{id}                                              (admin)
+  groups.py    (who may see content; roles gate screens: access.py)
+    GET    /admin/groups          every group and its members (built-in, manual, idp, scim) (admin)
+    POST   /admin/groups          {name, description}: a manual group                (admin)
+    PATCH  /admin/groups/{id}     {name?, description?}   DELETE /admin/groups/{id}  (admin)
+    PUT    /admin/groups/{id}/members {usernames}: a manual group's members          (admin)
+    GET    /access/principals     everyone, groups, members: the access pickers    (HR / Admin)
   verified.py
     GET    /admin/verified-answers  every verified answer, live status, owners    (HR / Admin)
     GET    /admin/verified-answers/draft ?message_id | ?gap_id: a new one's fields (HR / Admin)

@@ -86,7 +86,7 @@ def build():
         text: no answer is written. Use read_document(doc_key) for a whole one."""
         p = _caller(ctx, "search_knowledge")
         try:
-            results = retrieval.search(p.workspace, p.role, query.strip(), k)
+            results = retrieval.search(p.workspace, p.viewer, query.strip(), k)
         except retrieval.Refused as e:
             raise ToolError(str(e))
         _audit(ctx, p, "mcp.search_knowledge", "search", None,
@@ -101,7 +101,7 @@ def build():
         (refused by a guardrail)."""
         p = _caller(ctx, "ask")
         try:
-            done = answering.ask(p.workspace, p.user, p.role, question.strip(),
+            done = answering.ask(p.workspace, p.user, p.viewer, question.strip(),
                                  surface="mcp")
         except answering.Failed as e:
             _audit(ctx, p, "mcp.ask", "question", None,
@@ -118,7 +118,7 @@ def build():
         returned it. Only documents the person may see; long ones are cut off
         (truncated: true)."""
         p = _caller(ctx, "read_document")
-        found = retrieval.read_document(p.workspace, p.role, doc_key.strip())
+        found = retrieval.read_document(p.workspace, p.viewer, doc_key.strip())
         if not found:
             raise ToolError("There's no such document, or you may not see it.")
         _audit(ctx, p, "mcp.read_document", "doc", found["doc_key"],
@@ -130,7 +130,7 @@ def build():
         """What the assistant can search: uploaded files and files synced from
         connected tools, with their titles, links and access levels."""
         p = _caller(ctx, "list_sources")
-        items = knowledge_router.knowledge(user=p.user, role=p.role)["items"]
+        items = knowledge_router.listing(p.user, p.role, p.viewer)["items"]
         _audit(ctx, p, "mcp.list_sources", "sources", None, {"count": len(items)})
         return {"sources": items}
 

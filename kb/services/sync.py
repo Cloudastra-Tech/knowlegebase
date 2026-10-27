@@ -257,6 +257,12 @@ def sync(ws, provider, full=False, confirm_deletes=False):
     integrations_store.update(ws, provider, status="connected", last_sync_at=now,
                               doc_count=synced, last_error=None)
     _reindex(ws, run)
+    # PERMISSION SYNC (kb/services/permissions.py): with the source policy, every
+    # file's ACL is worked out again from what the source says now and this
+    # workspace's members and groups, and the chunks whose ACL changed are
+    # re-tagged (no embedding), so permissions are at most one sync old.
+    if integrations_store.policy_of(integrations_store.get(ws, provider)) == "source":
+        indexing.schedule_retag(ws, provider)
     return {**run.counts, "held_deletes": held, "limit_reached": run.limit,
             "mode": "full" if run.full else "incremental", "reindexed": len(run.changed)}
 

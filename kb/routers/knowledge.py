@@ -5,24 +5,36 @@ import os
 
 from fastapi import APIRouter, Depends
 
+import access
 import docs_store
 import ingest
 import integrations_store
 import sync_store
 import workspaces
 from connectors import registry
-from kb.deps import current_role, current_user, ws_of
-from kb.services import agents, assistant, indexing
+from kb.deps import current_role, current_user, current_viewer, ws_of
+from kb.services import agents, assistant, indexing, permissions
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
 
 
 @router.get("/api/knowledge")
-def knowledge(user=Depends(current_user), role=Depends(current_role)):
+def knowledge(user=Depends(current_user), role=Depends(current_role),
+              viewer=Depends(current_viewer)):
     """Everything this workspace's assistant can search: uploaded files plus files
-    synced by connectors, with how much of each is in the search index.
-    Public users only see public items (like search itself)."""
+    synced by connectors, with how much of each is in the search index. Each
+    person sees only the items they may search (their ACL names one of their
+    principals, like search itself). HR and admins, who manage them, see every
+    item's title, with WHO CAN SEE it (`who`: [{principal, kind, label}];
+    `dropped`: grants at the source that matched no one here, left out) and
+    whether they may search it themselves (`readable`)."""
+    return listing(user, role, viewer, everything=role == "hr")
+
+
+def listing(user, role, viewer, everything=False):
+    """The Knowledge listing (see knowledge()). everything=False: only what
+    `viewer` may search, as the public API and the MCP server list it."""
     ws = ws_of(user)
     root = workspaces.docs_root(ws)
     sync_store.import_manifests(ws)
@@ -45,45 +57,59 @@ def knowledge(user=Depends(current_user), role=Depends(current_role)):
 
     # SOURCE RULES (HR / Admin): which rule decides each document, for the row
     # actions. Keys, providers and folders are what a rule matches on.
-    rules = assistant.rules(ws) if role == "hr" else None
+    manage = role == "hr"
+    rules = assistant.rules(ws) if manage else None
+    names = permissions.names(ws) if manage else None
 
-    def place(key, provider, folder=None):
-        out = {"doc_key": key, "provider": provider, "folder": folder}
+    def place(key, provider, acl, dropped=0, folder=None):
+        out = {"doc_key": key, "provider": provider, "folder": folder,
+               "access": access.level_of_acl(acl)}
         if rules is not None:
             rule = rules.rule_for(key, provider)
             out["rule"] = rule and {k: rule[k] for k in ("id", "match_type", "match_value",
                                                          "action", "weight")}
+        if manage:
+            out["who"] = permissions.labels(ws, acl, names)
+            out["dropped"] = dropped
+            out["readable"] = access.can_see(viewer, acl)
         return out
 
-    items = []
-    for d in docs_store.list_docs(root):
-        if role != "hr" and d["access"] == "restricted":
-            continue
-        key = os.path.relpath(d["path"], root).replace(os.sep, "/")
-        items.append({"title": d["name"], "source": "Uploaded", "access": d["access"],
-                      "url": None, "modified": os.path.getmtime(d["path"]),
-                      "size": d["size"], "chunks": indexed(d["path"]),
-                      **place(key, assistant.UPLOADS, key.rsplit("/", 1)[0])})
+    def shown(acl):
+        return everything or access.can_see(viewer, acl)
 
-    # Synced files: what source_items says each connector folder holds.
+    items = []
+    picked = permissions.doc_acls(ws)
+    for d in docs_store.list_docs(root):
+        key = os.path.relpath(d["path"], root).replace(os.sep, "/")
+        acl = picked.get(key) or access.level_acl(d["access"])
+        if not shown(acl):
+            continue
+        items.append({"title": d["name"], "source": "Uploaded", "url": None,
+                      "modified": os.path.getmtime(d["path"]),
+                      "size": d["size"], "chunks": indexed(d["path"]),
+                      **place(key, assistant.UPLOADS, acl, folder=key.rsplit("/", 1)[0])})
+
+    # Synced files: what source_items says each connector folder holds, and who
+    # may see each as ingest.py tags it (its connection's policy).
+    sourced = permissions.connector_acls(ws, details=True)
     levels = integrations_store.chunk_access_levels(ws)
     connectors_dir = os.path.join(root, "connectors")
     for provider in sorted(os.listdir(connectors_dir)) if os.path.isdir(connectors_dir) else []:
         folder = os.path.join(connectors_dir, provider)
-        access = levels.get(provider, "restricted")       # as ingest.py tags them
-        if role != "hr" and access == "restricted":
-            continue
         for item in sync_store.items(ws, provider).values():
             name = item.get("file_name")
             path = os.path.join(folder, name) if name else None
             if not path or not os.path.isfile(path):
                 continue
+            key = f"connectors/{provider}/{name}"
+            acl, dropped = permissions.connection_acl(ws, provider, key, sourced, levels)
+            if not shown(acl):
+                continue
             items.append({"title": item.get("title") or name,
-                          "source": registry.label(provider), "access": access,
+                          "source": registry.label(provider),
                           "url": item.get("url"), "modified": item.get("modified"),
                           "size": os.path.getsize(path), "chunks": indexed(path),
-                          **place(f"connectors/{provider}/{name}", provider,
-                                  item.get("parent_id"))})
+                          **place(key, provider, acl, dropped, item.get("parent_id"))})
 
     items.sort(key=lambda i: (i["source"] != "Uploaded", i["title"].lower()))
     out = {"workspace": ws, "items": items,

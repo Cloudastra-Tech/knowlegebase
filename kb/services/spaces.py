@@ -8,15 +8,20 @@ of sources a chat can be asked in.
                workspace's index) and optional instructions for the assistant
 
 Asking in a space SCOPES the search: only chunks of the space's documents, AND
-only among those the asker's role may search at all. The scope is applied by
-the retriever to the chunks it already holds for the role (rag.HybridRetriever.
-scope_keys), so being in a space can narrow what someone reads, never widen it:
-a member who can't see a document in their team's space never reads it, nor
-sees it listed among the space's sources.
+only among those the asker may read at all (their principals, access.py). The
+scope is applied by the retriever on top of its principal filter (rag.
+HybridRetriever.scope_keys), so being in a space can narrow what someone reads,
+never widen it: a member who can't see a document in their team's space never
+reads it, nor sees it listed among the space's sources.
 
-searchable() is the one place that answers "which documents may this role see"
-for spaces: it reads the agent's own access-filtered copy of the index, so
-whatever decides access there (rag.load_chain) decides it here too.
+searchable() is the one place that answers "which documents may this viewer
+see" for spaces: it asks the agent's own index copy with the viewer's
+principals (rag.KeywordIndex.reachable), so the ACLs decide it here as they do
+for every search.
+
+A personal space's files, and files attached to a chat, are kept apart from the
+index (kb/services/attachments.py) with their uploader's user principal as
+their ACL: an answer built from one is for its uploader alone.
 
 context_for() is what ask() hands the agent for a conversation: the space's
 scope and instructions, and the files attached to the chat (and kept in the
@@ -29,6 +34,7 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 
+import access
 import attachments_store
 import members_store
 import spaces_store as store
@@ -55,13 +61,14 @@ def can_create_team():
 
 
 # ---- Who may see what --------------------------------------------------------------------
-def searchable(ws, role):
-    """{doc_key: chunk metadata} of every document `role` may search in workspace
-    `ws`: from the agent's own copy of the index (its keyword index, built from
-    the chunks the role may see), so it follows whatever decides access there."""
-    retriever = agents.get_agent(ws, role).retriever
+def searchable(ws, who):
+    """{doc_key: chunk metadata} of every document `who` (an access.Viewer, or a
+    bare role) may search in workspace `ws`: the chunks of the agent's own index
+    copy that their principals may read."""
+    bm25 = agents.get_agent(ws, access.role_of(who)).retriever.bm25
+    docs = bm25.reachable(access.of(who)) if hasattr(bm25, "reachable") else []
     out = {}
-    for d in getattr(retriever.bm25, "docs", []):
+    for d in docs:
         key = d.metadata.get("doc_key")
         if key and key not in out:
             out[key] = d.metadata
@@ -84,9 +91,9 @@ def keep_for(ws, sources):
                                             assistant.provider_of(meta)))
 
 
-def matched(ws, role, sources):
-    """{source id: how many documents the role may see that it matches}."""
-    docs = searchable(ws, role)
+def matched(ws, who, sources):
+    """{source id: how many documents `who` may see that it matches}."""
+    docs = searchable(ws, who)
     out = {}
     for s in sources:
         keep = keep_for(ws, [s])
@@ -94,10 +101,10 @@ def matched(ws, role, sources):
     return out
 
 
-def source_options(ws, role):
-    """What a space can be made of, as the role may see it: providers, folders
-    and documents of the index."""
-    docs = searchable(ws, role)
+def source_options(ws, who):
+    """What a space can be made of, as `who` may see it: providers, folders and
+    documents of the index."""
+    docs = searchable(ws, who)
     providers, folders, items = {}, {}, []
     for key, meta in sorted(docs.items()):
         provider = assistant.provider_of(meta)
@@ -120,7 +127,7 @@ def _member_of(ws, username):
     return m if m and m["workspace"] == ws and not m["disabled"] else None
 
 
-def access(ws, user, space_id):
+def open_space(ws, user, space_id):
     """(space, "owner" | "member") for someone who may use it, or 404."""
     space = store.get(ws, space_id)
     if space and space["kind"] == "personal":
@@ -133,7 +140,7 @@ def access(ws, user, space_id):
 
 
 def owned(ws, user, space_id):
-    space, role = access(ws, user, space_id)
+    space, role = open_space(ws, user, space_id)
     if role != "owner":
         raise HTTPException(403, "Only the space's owners can change it.")
     return space
@@ -152,12 +159,12 @@ def list_for(ws, user):
                                        for s in store.team_spaces_of(ws, user["username"])]
 
 
-def detail(ws, user, role, space_id):
+def detail(ws, user, who, space_id):
     """A space as its member sees it: its sources they may see (the rest only
     counted), its members, its instructions and, for a personal space, its files."""
-    space, my_role = access(ws, user, space_id)
+    space, my_role = open_space(ws, user, space_id)
     sources = store.sources(ws, space_id)
-    counts = matched(ws, role, sources)
+    counts = matched(ws, who, sources)
     shown = [{**s, "documents": counts[s["id"]]} for s in sources if counts[s["id"]]]
     out = {**summary(space, my_role), "instructions": space["instructions"],
            "sources": shown, "hidden_sources": len(sources) - len(shown),
@@ -211,9 +218,9 @@ def delete(ws, user, space_id):
     return space
 
 
-def add_source(ws, user, role, space_id, match_type, value):
-    """A document, folder or provider the adder's role may see (at least one
-    document of it): a space never lists what its maker couldn't search."""
+def add_source(ws, user, who, space_id, match_type, value):
+    """A document, folder or provider the adder may see (at least one document
+    of it): a space never lists what its maker couldn't search."""
     owned(ws, user, space_id)
     if match_type not in store.MATCH_TYPES:
         raise HTTPException(400, "A source is a document, a folder or a provider.")
@@ -223,7 +230,7 @@ def add_source(ws, user, role, space_id, match_type, value):
     if len(store.sources(ws, space_id)) >= store.MAX_SOURCES:
         raise HTTPException(409, f"A space can have up to {store.MAX_SOURCES} sources.")
     probe = {"id": 0, "match_type": match_type, "match_value": value}
-    if not matched(ws, role, [probe])[0]:
+    if not matched(ws, who, [probe])[0]:
         raise HTTPException(404, "That isn't something you can search.")
     return dict(store.add_source(ws, space_id, match_type, value, user["username"]))
 
@@ -254,7 +261,7 @@ def set_member(ws, user, space_id, username, role):
 def remove_member(ws, user, space_id, username):
     """An owner removes anyone; a member may leave."""
     username = (username or "").strip().lower()
-    space, my_role = access(ws, user, space_id)
+    space, my_role = open_space(ws, user, space_id)
     if space["kind"] == "personal":
         raise HTTPException(400, "Your own space is only yours.")
     if username != user["username"] and my_role != "owner":
@@ -308,7 +315,7 @@ def context_for(ws, user, conversation):
     space = None
     if conversation.get("space_id"):
         try:
-            space, _ = access(ws, user, conversation["space_id"])
+            space, _ = open_space(ws, user, conversation["space_id"])
         except HTTPException:
             space = None
     personal = space["id"] if space and space["kind"] == "personal" else None

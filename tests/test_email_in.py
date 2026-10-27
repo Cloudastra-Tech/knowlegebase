@@ -393,3 +393,20 @@ def test_admins_turn_it_on_and_hr_can_look(mail, monkeypatch):
     monkeypatch.delenv("EMAIL_IN_DOMAIN")
     r = mail.client.put("/api/admin/email-in", headers=admin, json={"enabled": True})
     assert r.status_code == 400 and "EMAIL_IN_DOMAIN" in r.json()["detail"]
+
+
+# ---- Group ACLs (access.py): answered with what the sender may see now --------------------------
+def test_email_answers_follow_the_senders_groups(mail):
+    import groups_store
+    from kb.services import indexing
+    w = mail.ws
+    g = groups_store.create(w, "Vendors", "", f"admin@{w}.example")
+    groups_store.set_members(w, g["id"], [f"staff@{w}.example"], f"admin@{w}.example")
+    groups_store.set_doc_acl(w, "restricted/contract.txt", [f"group:{g['id']}"], "admin")
+    indexing.index(w, docs=["restricted/contract.txt"])          # jobs are run by hand here
+    mail.ask(f"staff@{w}.example")                    # a public member, in the group
+    mail.ask(f"hr@{w}.example")                       # HR, not in it
+    mail.run_jobs()
+    by = {reply["To"]: reply for reply in mail.sent}
+    assert SECRET_WORDS in by[f"staff@{w}.example"]["TextBody"]
+    assert SECRET_WORDS not in json.dumps(by[f"hr@{w}.example"])

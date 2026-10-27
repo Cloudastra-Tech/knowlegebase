@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 import attachments_store
 import members_store
 from kb.audit import audited
-from kb.deps import current_role, current_user, ws_of
+from kb.deps import current_user, current_viewer, ws_of
 from kb.rate_limit import user_limit
 from kb.services import attachments, spaces
 
@@ -56,15 +56,15 @@ def create_space(body: SpaceIn, user=Depends(current_user), audit=audited("space
 
 
 @router.get("/api/spaces/source-options")
-def source_options(user=Depends(current_user), role=Depends(current_role)):
+def source_options(user=Depends(current_user), viewer=Depends(current_viewer)):
     """What a space can be made of: the providers, folders and documents the
-    role the app is viewed as may search."""
-    return spaces.source_options(ws_of(user), role)
+    asker may search (as the app is viewed now)."""
+    return spaces.source_options(ws_of(user), viewer)
 
 
 @router.get("/api/spaces/{space_id}")
-def get_space(space_id: str, user=Depends(current_user), role=Depends(current_role)):
-    return spaces.detail(ws_of(user), user, role, space_id)
+def get_space(space_id: str, user=Depends(current_user), viewer=Depends(current_viewer)):
+    return spaces.detail(ws_of(user), user, viewer, space_id)
 
 
 @router.patch("/api/spaces/{space_id}")
@@ -86,8 +86,9 @@ def delete_space(space_id: str, user=Depends(current_user), audit=audited("space
 
 @router.post("/api/spaces/{space_id}/sources")
 def add_space_source(space_id: str, body: SourceIn, user=Depends(current_user),
-                     role=Depends(current_role), audit=audited("space.source_add")):
-    source = spaces.add_source(ws_of(user), user, role, space_id, body.match_type, body.value)
+                     viewer=Depends(current_viewer), audit=audited("space.source_add")):
+    source = spaces.add_source(ws_of(user), user, viewer, space_id, body.match_type,
+                               body.value)
     audit.record("space", space_id, {"match_type": body.match_type}, user=user)
     return source
 

@@ -50,6 +50,7 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
+import access
 import chunk_context
 import chunking
 import models
@@ -157,28 +158,36 @@ def _source_info(key, doc_info):
             "provider": info.get("provider") or "", "modified": info.get("modified") or ""}
 
 
-def doc_meta(docs_folder, key, connector_access, doc_info=None):
+def doc_meta(docs_folder, key, connector_access, doc_info=None, doc_acls=None):
     """What every chunk of a document carries besides its own position.
 
-    ACCESS LEVEL (permission control): this is how enterprises secure RAG —
-    each chunk carries metadata saying WHO may see it. Chunks from restricted/
-    are "restricted"; other uploads are "public". Files synced by a connector
-    take the level its admin chose for that connection (restricted unless
-    opened to everyone). At query time we only fetch chunks the user is allowed
-    to see — so confidential text never reaches the model for the wrong user."""
+    ACCESS (permission control): this is how enterprises secure RAG — each
+    chunk carries metadata saying WHO may see it, its ACL (access.py): the
+    principals that may read it. At query time we only fetch chunks the user
+    holds a principal of — so confidential text never reaches the model for
+    the wrong user. doc_acls: {doc key: ACL} where one is set (an upload's
+    picked ACL, a synced file's under its connection's permission policy:
+    kb/services/permissions.py). Otherwise the old levels decide: uploads in
+    restricted/ are for the hr group, other uploads for everyone, and synced
+    files take their connection's level (restricted unless opened to everyone).
+    `access` (public / restricted) is kept beside it: public only when everyone
+    may read the chunk."""
     provider = _connector_of(key)
     meta = {"doc_key": key, "connector": provider or ""}
     if provider:
         meta.update(_source_info(key, doc_info))
-        meta["access"] = (connector_access or {}).get(provider, "restricted")
+        level = (connector_access or {}).get(provider, "restricted")
     else:
-        meta["access"] = "restricted" if "/restricted/" in "/" + key else "public"
+        level = "restricted" if "/restricted/" in "/" + key else "public"
         meta.update(title=os.path.basename(key), provider=UPLOADS)
+    acl = (doc_acls or {}).get(key)
+    meta["acl"] = access.clean_acl(acl) if acl else access.level_acl(level)
+    meta["access"] = access.level_of_acl(meta["acl"])
     return meta
 
 
 # The tags doc_meta() gives: when one of them changes, a document's chunks are re-tagged.
-DOC_FIELDS = ("doc_key", "connector", "access", "title", "url", "provider")
+DOC_FIELDS = ("doc_key", "connector", "access", "acl", "title", "url", "provider")
 
 
 def doc_id(namespace, key):
@@ -225,8 +234,10 @@ def chunk_id(namespace, key, n, text):
 
 
 def _clean(meta):
-    """Chroma takes only str / int / float / bool values."""
-    return {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))}
+    """Chroma takes only str / int / float / bool values, and non-empty lists of
+    strings (a chunk's ACL)."""
+    return {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))
+            or (isinstance(v, list) and v and all(isinstance(x, str) for x in v))}
 
 
 # Headings ("## Refunds", "Refund policy:") and the path of them a position sits
@@ -344,7 +355,7 @@ def _reporter(progress):
 
 
 def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None,
-         workspace=None, doc_info=None, skip=None):
+         workspace=None, doc_info=None, skip=None, doc_acls=None):
     """Build a search index from a docs folder, from scratch. Returns a summary dict.
     progress(step, total, message) — optional callback, e.g. for a UI progress bar.
     docs_folder / collection — which workspace (defaults = the original setup).
@@ -354,7 +365,8 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
     workspace — goes into the chunk ids (default: the collection's name).
     doc_info — {doc key: {title, url, provider}} for synced files (sync_store.doc_info).
     skip — skip(doc key, its tags) -> True leaves a document out: a source rule
-    blocks it (kb/services/assistant.py)."""
+    blocks it (kb/services/assistant.py).
+    doc_acls — {doc key: ACL} for documents with one set (see doc_meta)."""
     report = _reporter(progress)
     collection = collection or "langchain"
     namespace = workspace or collection
@@ -373,7 +385,7 @@ def main(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_acce
     for key in keys:
         path = os.path.join(docs_folder, *key.split("/"))
         try:
-            meta = doc_meta(docs_folder, key, connector_access, doc_info)
+            meta = doc_meta(docs_folder, key, connector_access, doc_info, doc_acls)
             if skip and skip(key, meta):
                 blocked += 1
                 continue
@@ -408,18 +420,19 @@ def _stored_docs(store, keys=None):
 
 def _same(metas, field):
     """The one value every chunk has for `field`, or None if they differ."""
-    values = {m.get(field) for m in metas}
-    return values.pop() if len(values) == 1 else None
+    values = {tuple(v) if isinstance(v, list) else v for v in (m.get(field) for m in metas)}
+    value = values.pop() if len(values) == 1 else None
+    return list(value) if isinstance(value, tuple) else value
 
 
 def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_access=None,
-           workspace=None, only=None, doc_info=None, skip=None):
+           workspace=None, only=None, doc_info=None, skip=None, doc_acls=None):
     """Bring an existing collection in line with the docs folder, document by
     document. Returns a summary dict (with what was embedded, re-tagged, removed).
 
     For every document (or only the keys in `only`):
       unchanged (same size, time and tags)       nothing to do
-      same content, other tags (e.g. access)     its chunks' metadata is updated:
+      same content, other tags (e.g. its ACL)    its chunks' metadata is updated:
                                                  no embedding call
       same content, older CHUNK_META             re-split: the same ids come out,
                                                  so only their metadata is updated
@@ -458,7 +471,7 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
                 deletes += have["ids"]
                 stats["removed"] += 1
             continue
-        meta = doc_meta(docs_folder, key, connector_access, doc_info)
+        meta = doc_meta(docs_folder, key, connector_access, doc_info, doc_acls)
         if skip and skip(key, meta):
             if have:
                 deletes += have["ids"]
@@ -505,16 +518,44 @@ def update(progress=None, docs_folder=DOCS_FOLDER, collection=None, connector_ac
             "blocked": stats["blocked"]}
 
 
-def retag(collection, connector, access):
-    """Give every chunk synced by `connector` the access level `access`, without
-    embedding anything. Returns how many chunks changed."""
+def retag(collection, connector, level, acls=None):
+    """Give every chunk synced by `connector` its document's ACL (acls: {doc key:
+    ACL}), or the access level `level`'s for a document without one, without
+    embedding anything: only `acl` and `access` change. Returns how many chunks
+    changed."""
     store = _store(collection)
     got = store._collection.get(where={"connector": connector}, include=["metadatas"])
-    ids = [cid for cid, m in zip(got["ids"], got["metadatas"]) if m.get("access") != access]
-    for start in range(0, len(ids), 1000):
-        batch = ids[start:start + 1000]
-        store._collection.update(ids=batch, metadatas=[{"access": access}] * len(batch))
-    return len(ids)
+    updates = []
+    for cid, m in zip(got["ids"], got["metadatas"]):
+        acl = (acls or {}).get(m.get("doc_key"))
+        acl = access.clean_acl(acl) if acl else access.level_acl(level)
+        tags = {"acl": acl, "access": access.level_of_acl(acl)}
+        if m.get("acl") != acl or m.get("access") != tags["access"]:
+            updates.append((cid, tags))
+    _update_tags(store, updates)
+    return len(updates)
+
+
+def _update_tags(store, updates):
+    """[(chunk id, metadata to merge into its own)], in batches."""
+    for start in range(0, len(updates), 1000):
+        batch = updates[start:start + 1000]
+        store._collection.update(ids=[i for i, _ in batch], metadatas=[t for _, t in batch])
+
+
+def backfill_acls(store):
+    """Chunks indexed before ACLs get their access level's (access.level_acl), in
+    place, with no embedding. Retrieval filters on `acl`, so this runs before a
+    collection is searched (rag.load_chain). Returns how many chunks changed."""
+    got = store._collection.get(include=["metadatas"])
+    updates = [(cid, {"acl": access.level_acl((m or {}).get("access", "public"))})
+               for cid, m in zip(got["ids"], got["metadatas"])
+               if not isinstance((m or {}).get("acl"), list)]
+    _update_tags(store, updates)
+    if updates:
+        log.info("Index: gave %d chunks from before ACLs the ACL of their access level",
+                 len(updates))
+    return len(updates)
 
 
 def drop(collection):

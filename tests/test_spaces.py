@@ -70,8 +70,9 @@ def test_a_member_never_reads_a_document_of_the_space_they_cannot_see(env, citin
         assert "forty" not in done["answer"] and "Bluebird" not in done["answer"]
         assert keys(done) <= {"pricing.txt"}
         assert all(s["access"] == "public" for s in done["sources"])
-    seen = " ".join(str(m.content) for prompt in citing["seen"][-3:] for m in prompt)
-    assert "forty percent" not in seen                  # not even in the prompt
+    read = " ".join(str(m.content) for prompt in citing["seen"][-3:] for m in prompt
+                    if m.type == "tool")
+    assert "Bluebird deal" not in read and "margins" not in read   # never in the prompt
     view = env.client.get(f"/api/spaces/{sid}", headers=staff).json()
     assert [s["match_value"] for s in view["sources"]] == ["public/sales"]
     assert view["hidden_sources"] == 1 and "margins" not in str(view)

@@ -41,6 +41,7 @@ import time
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
+import access
 import attachments_store as store
 import chunking
 import docs_store
@@ -268,9 +269,9 @@ def _document(row, chunk, where):
     meta = {"chunk_id": f"{CHUNK_PREFIX}-{row['id']}-{chunk['n']}",
             "doc_id": f"{CHUNK_PREFIX}-{row['id']}", "doc_key": f"attachments/{row['id']}",
             "title": row["filename"], "provider": PROVIDER[where], "url": None,
-            # The asker's own text, like their question: whoever may read the chat
-            # may read it (conversations.visible_to).
-            "access": "public", "attachment": where,
+            # Its uploader's alone (access.py): an answer that read it is for them
+            # only (conversations.visible_to), a share link's viewer included.
+            "acl": [access.user(row["owner"])], "access": "restricted", "attachment": where,
             "char_start": chunk["char_start"], "char_end": chunk["char_end"],
             "heading_path": chunk["heading_path"] or None,
             "modified": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(row["created_at"]))}

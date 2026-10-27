@@ -12,6 +12,9 @@ restricted: an admin opens it up on purpose, never by accident. A connector may
 LOCK it (settings["access_lock"] = "restricted": Zendesk while it syncs
 tickets, which hold customers' personal data): then it is restricted whatever
 settings["access"] says.
+
+The access level is now one of three PERMISSION POLICIES (policy_of): the
+source's own permissions, the whole workspace, or HR and admins.
 """
 
 import json
@@ -25,6 +28,8 @@ _lock = threading.Lock()
 
 ACCESS_LEVELS = ("restricted", "everyone")
 DEFAULT_ACCESS = "restricted"
+POLICIES = ("source", "workspace", "restricted")
+DEFAULT_POLICY = "restricted"
 
 
 def _db():
@@ -96,13 +101,29 @@ def remove(workspace, provider):
                      (workspace, provider))
 
 
-def access_of(row):
-    """Who may ask about a connection's files: "restricted" or "everyone"."""
+def policy_of(row):
+    """A connection's PERMISSION POLICY (settings["policy"]; platform.md PL-10.2):
+      source      each file is for who may read it at the source (its
+                  source_items.acl, mapped to members and groups by
+                  kb/services/permissions.py; what doesn't map is left out)
+      workspace   everyone in the workspace (the old "everyone")
+      restricted  HR and admins (the old "restricted", the default)
+    A connection from before policies has its access level's; a LOCKED one
+    (access_lock) is restricted whatever it says."""
     settings = (row or {}).get("settings") or {}
     if settings.get("access_lock") == "restricted":
         return "restricted"
-    level = settings.get("access")
-    return level if level in ACCESS_LEVELS else DEFAULT_ACCESS
+    policy = settings.get("policy")
+    if policy in POLICIES:
+        return policy
+    return "workspace" if settings.get("access") == "everyone" else DEFAULT_POLICY
+
+
+def access_of(row):
+    """Who may ask about a connection's files as a level: "everyone" for the
+    workspace policy, else "restricted" (the source policy's files have their
+    own ACLs; one that can't be worked out falls back to this)."""
+    return "everyone" if policy_of(row) == "workspace" else "restricted"
 
 
 def chunk_access(level):

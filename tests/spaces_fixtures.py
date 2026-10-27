@@ -7,6 +7,7 @@ exactly what the search let the model read.
 
 import json
 import re
+from typing import ClassVar
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -26,9 +27,10 @@ class Allow:
 
 class Citing(BaseChatModel):
     """The agent's model: the first line of every passage it was shown, cited.
-    record["seen"] gets each prompt it was given."""
+    Citing.sink["seen"] gets each prompt it was given (a class attribute: a
+    pydantic field would be a copy)."""
 
-    record: dict = None
+    sink: ClassVar[dict] = {}
 
     @property
     def _llm_type(self):
@@ -38,12 +40,13 @@ class Citing(BaseChatModel):
         return self
 
     def _answer(self, messages):
-        self.record.setdefault("seen", []).append(messages)
+        Citing.sink.setdefault("seen", []).append(messages)
         lines = []
         for m in messages:
             if isinstance(m, ToolMessage) and m.name == "search_docs":
                 for source, n, text in BLOCK.findall(m.content):
-                    first = next((ln for ln in text.splitlines()[1:] if ln.strip()), text)
+                    first = next((ln for ln in text.splitlines()[1:]
+                                  if ln.strip() and not ln.startswith(("#", "["))), text)
                     lines.append(f"{first.strip()} [S{n}]")
         return "\n\n".join(lines) or "I couldn't find that in the documents."
 
@@ -66,7 +69,8 @@ def citing(monkeypatch):
     import safety
     from kb import state
     record = {}
-    monkeypatch.setattr(agent, "ChatOpenAI", lambda **kwargs: Citing(record=record))
+    monkeypatch.setattr(Citing, "sink", record)
+    monkeypatch.setattr(agent, "ChatOpenAI", lambda **kwargs: Citing())
     monkeypatch.setattr(rag, "ChatOpenAI", lambda **kwargs: Allow())
     monkeypatch.setattr(safety, "_get_intent_llm", lambda: Allow())
     monkeypatch.setattr(rag, "USE_HYDE", False)

@@ -13,6 +13,7 @@ import sqlite3
 from fastapi import Depends, Header, HTTPException, Request
 
 import auth
+import groups_store
 import lifecycle_store
 import members_store
 import sessions_store
@@ -69,6 +70,13 @@ def public_user(user):
 def current_role(user=Depends(current_user), x_role: str = Header(default="hr")):
     """HR only if the ACCOUNT is HR or admin; X-Role can only lower it ("view as public")."""
     return "hr" if user["role"] in members_store.STAFF_ROLES and x_role == "hr" else "public"
+
+
+def current_viewer(user=Depends(current_user), role=Depends(current_role)):
+    """Who is asking, to the CONTENT (access.py): their principals now (themselves,
+    their groups, the built-in hr group while viewing the app as HR / Admin),
+    with the role. Roles gate screens; this gates what they may read."""
+    return groups_store.principals_for(ws_of(user), user["username"], role)
 
 
 def require_hr(user=Depends(current_user), role=Depends(current_role)):

@@ -37,8 +37,9 @@ import {
 //   /extension/connect ?redirect=: the browser extension signing in (chrome.identity)
 //   /documents, /integrations        HR and admins, viewing the app as HR
 //                      (not /docs: that is FastAPI's API reference, api.py)
-//   /admin/sign-in, /admin/members, /admin/activity, /admin/api, /admin/data   admins
-//                      (the Access screen's tabs; Data: retention, export, support, delete)
+//   /admin/sign-in, /admin/members, /admin/groups, /admin/activity, /admin/api,
+//   /admin/data        admins (the Access screen's tabs; Groups: who may see content;
+//                      Data: retention, export, support, delete)
 //   /admin/insights, /admin/insights/feedback   HR and admins, viewing the app as HR
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
@@ -107,6 +108,7 @@ export const routes: RouteObject[] = [
                   { path: "assistant", Component: AssistantScreen },
                   { path: "sign-in", element: <AccessScreen tab="sign-in" /> },
                   { path: "members", element: <AccessScreen tab="members" /> },
+                  { path: "groups", element: <AccessScreen tab="groups" /> },
                   { path: "activity", element: <AccessScreen tab="activity" /> },
                   { path: "api", element: <AccessScreen tab="api" /> },
                   { path: "data", element: <AccessScreen tab="data" /> },

@@ -69,6 +69,7 @@ from fastapi import HTTPException
 import audit_store
 import conversations_store
 import email_in_store
+import groups_store
 import mailer
 import members_store
 import workspaces
@@ -260,8 +261,15 @@ PROVIDERS = {"postmark": Postmark()}
 
 # ---- Checks ----------------------------------------------------------------------------------
 def access_role(member):
-    """The access role a member asks as (rag.ROLE_ACCESS), as a session's is."""
+    """The role a member asks as, as a session's is. What they may READ is
+    access_viewer's."""
     return "hr" if member["role"] in members_store.STAFF_ROLES else "public"
+
+
+def access_viewer(ws, member):
+    """What a member may read (access.Viewer): their principals now, their groups
+    too, as a session's (kb/deps.current_viewer). The reply goes to them alone."""
+    return groups_store.principals_for(ws, member["username"], access_role(member))
 
 
 def asker(ws, email):
@@ -451,13 +459,14 @@ def run(job):
         return {"limited": True}
 
     role = access_role(member)
+    viewer = access_viewer(ws, member)
     conv = _conversation(ws, member, role, p)
-    turn = conversations.start_turn(ws, member["username"], role, conv["id"], p["question"])
+    turn = conversations.start_turn(ws, member["username"], viewer, conv["id"], p["question"])
     cid = turn["conversation"]["id"]
     started = time.monotonic()
     reply = _reply(p, ws)
     try:
-        done = answering.ask(ws, user, role, p["question"], surface="email", turn=turn)
+        done = answering.ask(ws, user, viewer, p["question"], surface="email", turn=turn)
     except answering.Failed as e:
         conversations_store.finish_message(turn["message_id"], f"Something went wrong: {e.kind}",
                                            "error", max_access="restricted")
@@ -467,7 +476,7 @@ def run(job):
     conversations_store.finish_message(
         turn["message_id"], done.answer, done.state, sources=done.sources,
         steps=[{"tool": t["tool"]} for t in done.trace], max_access=done.max_access,
-        standalone_question=done.standalone,
+        acl=done.acl, standalone_question=done.standalone,
         latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified)
     text, sources = render(done, _base_url())
     reply_id = _send(p, reply, text, sources, member, ws)

@@ -2,17 +2,17 @@
 thumbs up / down they give answers, and the workspace's chat settings (how long
 chats are kept). Questions and answers are added by the chat stream
 (kb/routers/chat.py, with a conversation_id). Every read checks the reader's
-CURRENT role against what each answer was built from
+CURRENT principals (their role and groups now) against what each answer was built from
 (kb/services/conversations.visible_to)."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+import access
 import conversations_store as store
 from kb.audit import audited
-from kb.deps import current_role, current_user, require_admin, require_hr, ws_of
+from kb.deps import current_role, current_user, current_viewer, require_admin, require_hr, ws_of
 from kb.services import conversations, spaces
-from rag import ROLE_ACCESS
 
 router = APIRouter()
 
@@ -86,12 +86,13 @@ def list_conversations(limit: int = Query(50, ge=1, le=200), before: float | Non
 
 @router.get("/api/conversations/search")
 def search_conversations(q: str = Query("", max_length=200), limit: int = Query(20, ge=1, le=50),
-                         user=Depends(current_user), role=Depends(current_role)):
-    """The asker's chats whose title, questions or answers match `q`. Answers their
-    role can't read now never match (a demoted HR person can't find old HR
-    answers this way). Each result's snippet marks the matches with \\u0002 ... \\u0003."""
-    found = store.search(ws_of(user), user["username"], ROLE_ACCESS.get(role, ["public"]), q,
-                         limit)
+                         user=Depends(current_user), viewer=Depends(current_viewer)):
+    """The asker's chats whose title, questions or answers match `q`. Answers they
+    can't read now never match (a demoted HR person can't find old HR answers this
+    way, nor someone who left a group its answers). Each result's snippet marks
+    the matches with \\u0002 ... \\u0003."""
+    found = store.search(ws_of(user), user["username"], list(access.LEVELS), q, limit,
+                         visible=lambda m: conversations.visible_to(viewer, m))
     return {"results": [{"conversation_id": r["conversation_id"], "message_id": r["message_id"],
                          "title": r["title"] or "New chat", "snippet": r["snippet"],
                          "updated_at": r["updated_at"]} for r in found]}
@@ -104,7 +105,7 @@ def create_conversation(body: NewConversationIn, user=Depends(current_user),
     the asker's spaces or none."""
     title = " ".join((body.title or "").split())[:store.TITLE_CHARS] or None
     if body.space_id:
-        spaces.access(ws_of(user), user, body.space_id)      # 404 unless they're in it
+        spaces.open_space(ws_of(user), user, body.space_id)  # 404 unless they're in it
     conv = store.create(ws_of(user), user["username"], role, title, space_id=body.space_id)
     audit.record("conversation", conv["id"], {"role": role, "space": bool(body.space_id)},
                  user=user)
@@ -112,18 +113,19 @@ def create_conversation(body: NewConversationIn, user=Depends(current_user),
 
 
 @router.get("/api/conversations/{cid}")
-def get_conversation(cid: str, user=Depends(current_user), role=Depends(current_role)):
+def get_conversation(cid: str, user=Depends(current_user), role=Depends(current_role),
+                     viewer=Depends(current_viewer)):
     """A conversation as shown: its messages from the first to the current one, each
-    with its versions (siblings). An answer built from documents the reader's role
-    can't see now is withheld."""
+    with its versions (siblings). An answer built from documents the reader can't
+    see now is withheld."""
     conv = _own(user, cid)
     messages = store.messages_of(cid)
     feedback = store.feedback_of(user["username"], [m["id"] for m in messages])
     admin = user["role"] == "admin"
     return {**_summary(conv, role),
             "forked_from": conversations.forked_from(ws_of(user), user["username"], conv),
-            "messages": conversations.view(conv, messages, conv["active_leaf_id"], role, admin,
-                                           feedback)}
+            "messages": conversations.view(conv, messages, conv["active_leaf_id"], viewer,
+                                           admin, feedback)}
 
 
 @router.patch("/api/conversations/{cid}")
@@ -214,28 +216,28 @@ def delete_folder(fid: str, user=Depends(current_user),
 
 
 # ---- Answers --------------------------------------------------------------------------
-def _answer(user, role, mid):
+def _answer(user, viewer, mid):
     """An answer in one of the asker's conversations that they may read now."""
     m = store.get_message(ws_of(user), user["username"], mid)
     if not m or m["author"] != "assistant" or m["state"] is None:
         raise HTTPException(404, "That answer doesn't exist.")
-    if not conversations.visible_to(role, m):
+    if not conversations.visible_to(viewer, m):
         raise HTTPException(403, "That answer used documents you can't see any more.")
     return m
 
 
 @router.get("/api/messages/{mid}/markdown")
-def answer_markdown(mid: str, user=Depends(current_user), role=Depends(current_role)):
+def answer_markdown(mid: str, user=Depends(current_user), viewer=Depends(current_viewer)):
     """An answer as markdown with its citations as footnotes, for Copy (C25)."""
-    return {"markdown": conversations.markdown_of(_answer(user, role, mid))}
+    return {"markdown": conversations.markdown_of(_answer(user, viewer, mid))}
 
 
 @router.put("/api/messages/{mid}/feedback")
 def give_feedback(mid: str, body: FeedbackIn, user=Depends(current_user),
-                  role=Depends(current_role), audit=audited("feedback.set")):
+                  viewer=Depends(current_viewer), audit=audited("feedback.set")):
     """Thumbs up or down on an answer, with reasons and a note for thumbs down. HR and
     admins see it with the question and answer (GET /api/admin/feedback)."""
-    m = _answer(user, role, mid)
+    m = _answer(user, viewer, mid)
     if body.rating not in (1, -1):
         raise HTTPException(400, "A rating is 1 (helpful) or -1 (not helpful).")
     reasons = list(dict.fromkeys(body.reasons)) if body.rating == -1 else []
@@ -245,7 +247,8 @@ def give_feedback(mid: str, body: FeedbackIn, user=Depends(current_user),
     question = store.get_message(ws_of(user), user["username"], m["parent_id"])
     snapshot = {"question": question["content"] if question else None,
                 "standalone_question": m["standalone_question"], "answer": m["content"],
-                "state": m["state"], "sources": m["sources"], "max_access": m["max_access"]}
+                "state": m["state"], "sources": m["sources"], "max_access": m["max_access"],
+                "acl": access.message_clauses(m)}
     store.set_feedback(mid, user["username"], ws_of(user), body.rating, reasons, comment,
                        snapshot)
     audit.record("message", mid, {"rating": body.rating, "reasons": reasons}, user=user)
@@ -253,9 +256,9 @@ def give_feedback(mid: str, body: FeedbackIn, user=Depends(current_user),
 
 
 @router.delete("/api/messages/{mid}/feedback")
-def remove_feedback(mid: str, user=Depends(current_user), role=Depends(current_role),
+def remove_feedback(mid: str, user=Depends(current_user), viewer=Depends(current_viewer),
                     audit=audited("feedback.delete")):
-    _answer(user, role, mid)
+    _answer(user, viewer, mid)
     store.delete_feedback(mid, user["username"])
     audit.record("message", mid, user=user)
     return {"ok": True}
@@ -263,13 +266,14 @@ def remove_feedback(mid: str, user=Depends(current_user), role=Depends(current_r
 
 @router.get("/api/admin/feedback")
 def list_feedback(rating: int | None = Query(None), limit: int = Query(100, ge=1, le=500),
-                  user=Depends(require_hr), role=Depends(current_role)):
+                  user=Depends(require_hr), viewer=Depends(current_viewer)):
     """The workspace's answer feedback, newest first, for HR and admins (viewing the
-    app as HR): the question, the answer and its sources as they were rated."""
+    app as HR): the question, the answer and its sources as they were rated, of
+    answers they may read themselves (their groups)."""
     items = []
     for f in store.list_feedback(ws_of(user), rating=rating, limit=limit):
         snap = f["snapshot"]
-        if not conversations.visible_to(role, {"author": "assistant", **snap}):
+        if not conversations.visible_to(viewer, {"author": "assistant", **snap}):
             continue
         items.append({"message_id": f["message_id"], "user": f["user"],
                       "rating": f["rating"], "reasons": f["reasons"], "comment": f["comment"],

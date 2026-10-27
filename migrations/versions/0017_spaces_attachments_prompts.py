@@ -1,7 +1,7 @@
 """spaces, chat attachments and saved prompts
 
-Revision ID: 0018
-Revises: 0015
+Revision ID: 0017
+Revises: 0016
 Create Date: 2026-10-27
 
 Additive only: new tables. Existing rows and columns stay as they are
@@ -18,7 +18,10 @@ Additive only: new tables. Existing rows and columns stay as they are
                         the workspace's index, matched as source rules match them
     attachments         files attached to one chat (C23), or kept in a personal
                         space. Only the extracted text is kept, never the file;
-                        a chat's go with it (ON DELETE CASCADE) or when they expire
+                        a chat's go with it (ON DELETE CASCADE) or when they expire.
+                        Their passages carry the uploader's user principal as
+                        their ACL (access.py), so an answer built from one is
+                        for its uploader alone, a share link included
     attachment_chunks   that text, split for searching: NOT the workspace index,
                         so nobody else's search, the passage viewer or a rebuild
                         ever sees it
@@ -31,9 +34,8 @@ Every table has a `workspace` column, so deleting a workspace deletes them
 
 from alembic import op
 
-revision = "0018"
-# 0016 (group ACLs) and 0017 (digests) are in flight: re-point to the newest at merge.
-down_revision = "0015"
+revision = "0017"
+down_revision = "0016"   # another in flight (digests) re-points to the newest at merge
 branch_labels = None
 depends_on = None
 

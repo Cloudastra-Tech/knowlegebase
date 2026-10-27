@@ -8,6 +8,7 @@ import type {
   Container,
   Integration,
   IntegrationSetup,
+  PermissionPolicy,
   SkippedItem,
   SyncRun,
 } from "@/lib/api/types"
@@ -37,6 +38,14 @@ export const integrationsApi = {
       `/integrations/${seg(provider)}/access`,
       json("PUT", { access }),
     ),
+  setIntegrationPolicy: (provider: string, policy: PermissionPolicy) =>
+    request<{ policy: PermissionPolicy }>(
+      `/integrations/${seg(provider)}/policy`,
+      json("PUT", { policy }),
+    ),
+  // Read every item's permissions at the source again, then re-tag (no re-embedding).
+  syncIntegrationPermissions: (provider: string) =>
+    request<{ ok: boolean }>(`/integrations/${seg(provider)}/permissions/sync`, json("POST")),
   // What can be picked (inside `parent`, for a tree), and what is picked now.
   integrationContainers: (provider: string, parent?: string) =>
     request<{ items: Container[]; picked: Container[] }>(

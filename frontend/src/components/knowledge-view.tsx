@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { BookOpen, ExternalLink, FileText, Globe, Lock, Search } from "lucide-react"
 import { siGoogledrive, siNotion } from "simple-icons"
 
+import { WhoCanSeeBadges } from "@/components/access-picker"
 import { RuleActions, RuleBadge, RulesPanel } from "@/components/knowledge-rules"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -30,6 +31,23 @@ function SourceIcon({ source }: { source: string }) {
       </svg>
     )
   return <FileText className="size-4 shrink-0 text-muted-foreground" />
+}
+
+// HR / Admin: who can see an item, grants at the source that matched no one here
+// (left out, never let in), and whether they may search it themselves.
+function WhoCanSee({ item }: { item: KnowledgeItem }) {
+  const notes = [
+    item.dropped ? `${item.dropped} grant${item.dropped === 1 ? "" : "s"} at the source matched no one here` : null,
+    item.readable === false ? "you can't search it yourself" : null,
+  ].filter(Boolean)
+  return (
+    <span className="flex min-w-0 flex-col gap-1">
+      <WhoCanSeeBadges who={item.who ?? []} />
+      {notes.length > 0 && (
+        <span className="text-xs text-muted-foreground">{notes.join(" · ")}</span>
+      )}
+    </span>
+  )
 }
 
 // Everything the assistant can search in this workspace, in one list. HR and admins
@@ -113,12 +131,12 @@ export function KnowledgeView() {
         <div
           className={cn(
             "hidden gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-medium text-muted-foreground md:grid",
-            manage ? "grid-cols-[1fr_140px_100px_110px_110px_32px]" : "grid-cols-[1fr_140px_100px_110px_110px]",
+            manage ? "grid-cols-[1fr_120px_200px_100px_100px_32px]" : "grid-cols-[1fr_140px_100px_110px_110px]",
           )}
         >
           <span>Name</span>
           <span>Source</span>
-          <span>Access</span>
+          <span>{manage ? "Who can see" : "Access"}</span>
           <span>Updated</span>
           <span className="text-right">In search</span>
           {manage && <span className="sr-only">Source rules</span>}
@@ -141,7 +159,7 @@ export function KnowledgeView() {
               className={cn(
                 "grid items-center gap-x-4 gap-y-1 border-b px-4 py-3 text-sm last:border-b-0",
                 manage
-                  ? "grid-cols-[1fr_auto_auto] gap-x-2 md:grid-cols-[1fr_140px_100px_110px_110px_32px] md:gap-x-4"
+                  ? "grid-cols-[1fr_auto_auto] gap-x-2 md:grid-cols-[1fr_120px_200px_100px_100px_32px] md:gap-x-4"
                   : "grid-cols-[1fr_auto] md:grid-cols-[1fr_140px_100px_110px_110px]",
               )}
             >
@@ -164,10 +182,18 @@ export function KnowledgeView() {
                 {i.rule && (i.rule.action !== "block" || i.chunks > 0) && <RuleBadge rule={i.rule} />}
               </div>
               <span className="hidden text-muted-foreground md:block">{i.source}</span>
-              <span className="hidden md:block">
-                {i.access === "restricted" ? (
+              <span
+                className={cn(
+                  "md:block",
+                  // HR / Admin see who can see each item on phones too, under its name.
+                  i.who ? "order-last col-span-full md:order-none md:col-span-1" : "hidden",
+                )}
+              >
+                {i.who ? (
+                  <WhoCanSee item={i} />
+                ) : i.access === "restricted" ? (
                   <span className="flex items-center gap-1 text-destructive">
-                    <Lock className="size-3.5" /> HR only
+                    <Lock className="size-3.5" /> Limited
                   </span>
                 ) : (
                   <span className="flex items-center gap-1 text-muted-foreground">

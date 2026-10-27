@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 import assistant_store
 import conversations_store
 import members_store
-from kb.deps import current_role, current_user, ws_of
+from kb.deps import current_role, current_user, current_viewer, ws_of
 from kb.rate_limit import user_limit
 from kb.services import answering, attachments, conversations, indexing, passages, suggestions
 from kb.services.answering import Cancelled
@@ -41,14 +41,14 @@ class StreamIn(ChatIn):
 
 
 @router.post("/api/chat")
-def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
+def chat(body: ChatIn, user=Depends(current_user), viewer=Depends(current_viewer)):
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Please type a question.")
     user_limit(user, "chat")
     try:
         # Logged as "api": this one-shot endpoint isn't what the site uses.
-        done = answering.ask(ws_of(user), user, role, question, surface="api")
+        done = answering.ask(ws_of(user), user, viewer, question, surface="api")
     except answering.Failed as e:
         # OpenAI down, a bad key, ...: say so plainly instead of a bare 500.
         raise HTTPException(502, f"The assistant couldn't answer just now ({e.kind}). "
@@ -59,16 +59,16 @@ def chat(body: ChatIn, user=Depends(current_user), role=Depends(current_role)):
 
 @router.get("/api/passages/{chunk_id}")
 def passage(chunk_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
-            user=Depends(current_user), role=Depends(current_role)):
+            user=Depends(current_user), viewer=Depends(current_viewer)):
     """A cited passage and the document's text around it, for the source viewer:
     {title, provider, url, access, page, heading_path, modified, text, before,
-    after}. Checked against the asker's role on every call; a passage that isn't
-    in the index and one they may not see are the same 404. A passage of a file
-    attached to a chat (att-...) opens for the person who attached it only."""
+    after}. Checked against what the asker may see on every call; a passage that
+    isn't in the index and one they may not see are the same 404. A passage of a
+    file attached to a chat (att-...) opens for the person who attached it only."""
     if attachments.is_chunk_id(chunk_id):
         found = attachments.passage(ws_of(user), user, chunk_id)
     else:
-        found = passages.get(indexing.current(ws_of(user))[0], chunk_id, role)
+        found = passages.get(indexing.current(ws_of(user))[0], chunk_id, viewer)
     if not found:
         raise HTTPException(404, "That passage isn't in your documents any more, "
                                  "or your role can't see it.")
@@ -92,7 +92,8 @@ def _steps(trace, details=True):
 
 
 @router.post("/api/chat/stream")
-async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(current_role)):
+async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(current_role),
+                      viewer=Depends(current_viewer)):
     """Same as /api/chat, but streams what's happening as Server-Sent Events:
          conversation {"id", "title", "user_message_id", "message_id", "new_conversation"}
                                                     first, for a saved conversation only
@@ -127,11 +128,12 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
 
     turn = None
     if body.conversation_id:
-        turn = await run_in_threadpool(conversations.start_turn, ws, user["username"], role,
+        turn = await run_in_threadpool(conversations.start_turn, ws, user["username"], viewer,
                                        body.conversation_id, question, body.retry_of,
                                        body.regenerate_of, body.edit_of)
         question = turn["question"]
     history_access = turn["history_access"] if turn else "public"
+    history_acl = turn["history_acl"] if turn else []
     # A new chat's title, written beside the answer (one small model call at most).
     title = {}
     titling = None
@@ -170,6 +172,9 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         if not turn:
             return
         try:
+            # Who may read it: everything the model read (a stopped or failed
+            # answer too: what it had written may repeat any of it).
+            fields.setdefault("acl", conversations.read_acl(out, seen["steps"], history_acl))
             conversations_store.finish_message(
                 turn["message_id"], content, answer_state, steps=seen["steps"],
                 max_access=fields.pop("max_access", None)
@@ -198,11 +203,11 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         def standalone():                          # only when it differs from the question
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
-            done = answering.ask(ws, user, role, question, surface="web", turn=turn,
+            done = answering.ask(ws, user, viewer, question, surface="web", turn=turn,
                                  on_event=on_event, cancel=stop, out=out)
             followups = suggestions.followups(question, done.answer, done.state, done.sources)
             save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
-                 max_access=done.max_access, standalone_question=done.standalone,
+                 max_access=done.max_access, acl=done.acl, standalone_question=done.standalone,
                  followups=followups, verified=done.verified)
             put_title()
             put({"type": "done", "answer": done.answer, "sources": done.sources,
