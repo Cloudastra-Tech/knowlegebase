@@ -13,6 +13,11 @@ export interface User {
   // What the ACCOUNT may do. An HR or admin account can still view the app as "public".
   role: AccountRole
   provider?: string                   // "google", "microsoft", or an OIDC id such as "okta"
+  // Cloudastra support opened the workspace (the operator's email): every request is audited.
+  impersonator?: string
+  // GET /auth/me: where the workspace is in its life (being deleted: admins only, until then).
+  workspace_status?: "active" | "suspended" | "deleting"
+  deleting_at?: number | null
 }
 
 export interface AuthOptions {

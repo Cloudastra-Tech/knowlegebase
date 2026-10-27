@@ -37,6 +37,7 @@ const ERRORS: Record<string, string> = {
   not_allowed: "Your account isn't set up for this app. Ask your admin to add it.",
   not_workspace: "Use your company's Google Workspace account, not a personal or guest one.",
   disabled: "Your access has been turned off. Ask your admin.",
+  workspace_closed: "Your workspace is suspended or being deleted. Ask your admin.",
   unverified: "Your sign-in provider didn't confirm your email address.",
   cancelled: "Sign-in was cancelled.",
   sso_failed: "Single sign-on didn't finish. Please try again.",
