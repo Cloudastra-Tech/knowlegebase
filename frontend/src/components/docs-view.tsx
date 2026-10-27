@@ -336,7 +336,9 @@ function DocEditor({
   onSaved: () => void
   onDeleted: () => void
 }) {
-  const isText = doc.name.toLowerCase().endsWith(".txt")
+  // Not shared with the asker: they manage it (access, delete) but can't open it.
+  const sealed = doc.readable === false
+  const isText = doc.name.toLowerCase().endsWith(".txt") && !sealed
   const [original, setOriginal] = useState("")
   const [content, setContent] = useState("")
   const [loading, setLoading] = useState(isText)
@@ -406,7 +408,7 @@ function DocEditor({
               {saving ? <Loader2 className="animate-spin" /> : <Save />}
               Save
             </Button>
-          ) : (
+          ) : sealed ? null : (
             <Button
               size="sm"
               variant="outline"
@@ -438,7 +440,13 @@ function DocEditor({
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col">
-        {!isText ? (
+        {sealed ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            <Lock className="size-8" />
+            Only the people and groups it's shared with can open it. You can still change
+            who can see it, or delete it.
+          </div>
+        ) : !isText ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             <FileText className="size-8" />
             Only text files can be edited here. Download it, change it, then upload it again

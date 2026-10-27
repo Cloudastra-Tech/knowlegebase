@@ -439,6 +439,12 @@ def test_an_uploads_acl_can_change_by_retag(org, env):  # noqa: F811
     assert len(env.embedded) == embedded
     assert FINANCE in _texts(_reach(org.ws, org.viewer("bob"), FINANCE))
     assert FINANCE not in _texts(_reach(org.ws, org.viewer("alice"), FINANCE))
+    # The Documents screen lists it for HR / Admin, but its text is only for bob now.
+    docs = {f"{d['access']}/{d['name']}": d for d in
+            env.client.get("/api/docs", headers=org.admin).json()["docs"]}
+    assert docs[org.keys["finance"]]["readable"] is False
+    assert docs[org.keys["open"]]["readable"] is True
+    assert env.client.get(f"/api/docs/{org.keys['finance']}", headers=org.admin).status_code == 403
     bad = env.client.put(f"/api/docs/{org.keys['finance']}/acl",
                          json={"acl": ["user:stranger@elsewhere.example"]}, headers=org.admin)
     assert bad.status_code == 400

@@ -694,6 +694,7 @@ export interface Doc {
   size: number
   acl?: string[] // who may see it (principals)
   who?: WhoCanSee[]
+  readable?: boolean // false: the asker isn't someone it's shared with, so can't open it
 }
 
 // What the server takes per upload (UPLOAD_MAX_FILE_MB / UPLOAD_MAX_REQUEST_MB).

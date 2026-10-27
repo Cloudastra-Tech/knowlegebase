@@ -253,7 +253,7 @@ function PolicyControl({ item, onChange }: { item: Integration; onChange: () => 
           <Button
             size="sm"
             variant="outline"
-            className="self-start"
+            className="self-start text-foreground"
             onClick={syncPermissions}
             disabled={syncing || item.status === "syncing"}
           >

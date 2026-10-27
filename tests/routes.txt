@@ -63,7 +63,7 @@ GET    /api/conversation-folders list_folders current_user
 GET    /api/conversations list_conversations current_user,current_role
 GET    /api/conversations/search search_conversations current_user,current_viewer
 GET    /api/conversations/{cid} get_conversation current_user,current_role,current_viewer
-GET    /api/docs list_docs require_hr
+GET    /api/docs list_docs require_hr,current_viewer
 GET    /api/docs/{access}/{name} read_doc require_hr,current_viewer
 GET    /api/health health_check -
 GET    /api/health/ready ready_check -

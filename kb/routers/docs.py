@@ -76,7 +76,9 @@ def _readable(ws, key, viewer):
 
 
 @router.get("/api/docs")
-def list_docs(user=Depends(require_hr)):
+def list_docs(user=Depends(require_hr), viewer=Depends(current_viewer)):
+    """Every upload, with who may see it (acl, who) and whether the asker may open
+    it themselves (readable)."""
     ws = ws_of(user)
     root = workspaces.docs_root(ws)
     picked, names = groups_store.all_doc_acls(ws), permissions.names(ws)
@@ -85,7 +87,8 @@ def list_docs(user=Depends(require_hr)):
         key = f"{d['access']}/{d['name']}"
         acl = picked.get(key) or acl_check.level_acl(d["access"])
         docs.append({**{k: d[k] for k in ("access", "name", "size")}, "acl": acl,
-                     "who": permissions.labels(ws, acl, names)})
+                     "who": permissions.labels(ws, acl, names),
+                     "readable": acl_check.can_see(viewer, acl)})
     return {"docs": docs, "upload_limits": _upload_limits()}
 
 
