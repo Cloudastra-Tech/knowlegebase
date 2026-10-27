@@ -48,6 +48,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { DraftEditor, DraftRow } from "@/components/draft-editor"
+import { IndexAdminMenu } from "@/components/index-admin"
 import { cn } from "@/lib/utils"
 import { api, type Access, type Doc, type UploadLimits } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
@@ -475,7 +476,8 @@ function DocEditor({
 
 const NO_DOCS: Doc[] = []
 
-export function DocsView() {
+// admin: also the index's admin tools (rebuild from scratch, background jobs).
+export function DocsView({ admin = false }: { admin?: boolean }) {
   const queryClient = useQueryClient()
   const { data, isPending: loading } = useQuery(queries.docs())
   const docs = data?.docs ?? NO_DOCS
@@ -501,6 +503,18 @@ export function DocsView() {
   const draftRows = draftList?.drafts ?? []
   const pickDraft = (id: string | null) =>
     setParams(id ? { draft: id } : {}, { replace: true })
+  // ?jobs=1: the background jobs, opened (the header's "See the background jobs").
+  const jobsOpen = admin && params.get("jobs") === "1"
+  const setJobsOpen = (open: boolean) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        if (open) next.set("jobs", "1")
+        else next.delete("jobs")
+        return next
+      },
+      { replace: true },
+    )
 
   const refresh = useCallback(
     async (select?: { access: Access; name: string }) => {
@@ -533,17 +547,28 @@ export function DocsView() {
             automatically.
           </p>
         </div>
-        <Button variant="outline" onClick={reindex} disabled={indexing || !docs.length}>
-          {indexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          {indexing ? "Indexing…" : "Re-index now"}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={reindex} disabled={indexing || !docs.length}>
+            {indexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {indexing ? "Indexing…" : "Re-index now"}
+          </Button>
+          {admin && (
+            <IndexAdminMenu
+              documents={docs.length}
+              indexing={indexing}
+              jobsOpen={jobsOpen}
+              onJobsOpenChange={setJobsOpen}
+              onStarted={refreshIndex}
+            />
+          )}
+        </div>
       </div>
 
 
       <div className="grid gap-4 md:min-h-0 md:flex-1 md:grid-cols-[320px_1fr] md:grid-rows-[minmax(0,1fr)]">
         <Card className="flex max-h-96 min-h-0 flex-col gap-3 py-4 md:max-h-none">
           <div className="flex items-center justify-between gap-2 px-4">
-            <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
+            <Tabs panels={false} value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
               <TabsList>
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="public">Everyone</TabsTrigger>

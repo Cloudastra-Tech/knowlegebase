@@ -45,7 +45,7 @@ const ITEMS: Integration[] = [
   { ...base, id: "outline", name: "Outline", auth: "token", picker: "list", status: "disconnected" },
   { ...base, id: "website", name: "Website", auth: "url", picker: "urls", status: "disconnected" },
   { id: "confluence", name: "Confluence", icon: "confluence", availability: "soon", status: "unavailable" },
-  { id: "slack", name: "Slack", availability: "soon", status: "unavailable" },
+  { id: "slack", name: "Slack messages", availability: "soon", status: "unavailable" },
 ]
 
 describe("IntegrationsView", () => {
@@ -66,7 +66,7 @@ describe("IntegrationsView", () => {
     // "Coming soon" comes from the same list.
     const soon = screen.getByText("Coming soon").parentElement!
     expect(within(soon).getByText("Confluence")).toBeInTheDocument()
-    expect(within(soon).getByText("Slack")).toBeInTheDocument()
+    expect(within(soon).getByText("Slack messages")).toBeInTheDocument()
   })
 
   it("connects a token connector with its form and shows the server's reason", async () => {

@@ -137,6 +137,9 @@ export interface Member {
   groups_updated_at: number | null // when the role source last sent their groups
   admin_kept: boolean // admin from groups past the limit: kept only as the last admin
   disabled: boolean
+  // The identity provider manages them through SCIM: it sets their access, and would
+  // add them back if removed here (the API refuses both).
+  scim_managed?: boolean
   has_password: boolean
   last_login_at: number | null
   created_at: number
@@ -724,7 +727,27 @@ export interface IndexStatus {
   message: string
   pending: boolean
   summary: { documents: number; chunks: number; restricted: number } | null
+  error: string | null // the exception's text: admins only (null for everyone else)
+  reason: IndexReason | null // why it failed, or is waiting to try again
+  finished_at: number | null
+}
+
+// Why a re-index failed (kb/services/indexing.py REASONS), worded by lib/index-reasons.ts.
+export type IndexReason = "no_ai_key" | "ai_key_rejected" | "ai_quota" | "ai_unreachable" | "unknown"
+
+// A background job of the workspace (GET /api/admin/jobs, admins).
+export interface WorkspaceJob {
+  id: number
+  kind: string
+  status: "queued" | "running" | "done" | "failed"
+  attempts: number
+  max_attempts: number
+  details: { full?: boolean; provider?: string }
+  progress: string | null
   error: string | null
+  reason: IndexReason | null // index jobs only
+  created_at: number
+  started_at: number | null
   finished_at: number | null
 }
 

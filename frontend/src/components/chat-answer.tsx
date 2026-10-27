@@ -129,14 +129,16 @@ function SourceCard({
     <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60">
       <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium tabular-nums">
         {source.n ?? index}
-      </span>
+      </span>{" "}
       <Icon className="size-4 shrink-0 text-muted-foreground" />
-      {/* On a phone the provider goes under the title, so the title keeps the width. */}
+      {/* On a phone the provider goes under the title, so the title keeps the width.
+          The spaces keep the words apart in the text a screen reader checks the
+          button's name against. */}
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{source.title}</span>
-        {place && <span className="block truncate text-xs text-muted-foreground">{place}</span>}
+        <span className="block truncate font-medium">{source.title}</span>{" "}
+        {place && <span className="block truncate text-xs text-muted-foreground">{place}</span>}{" "}
         <span className="block truncate text-xs text-muted-foreground sm:hidden">{label}</span>
-      </span>
+      </span>{" "}
       <Badge
         variant={general ? "outline" : "secondary"}
         className="hidden max-w-[45%] sm:inline-flex"
@@ -151,7 +153,8 @@ function SourceCard({
       <button
         type="button"
         onClick={() => onOpen(source)}
-        aria-label={`Open source ${source.n ?? index}: ${source.title}${place ? `, ${place}` : ""}`}
+        // All its visible text is in its name (WCAG 2.5.3), the provider too.
+        aria-label={`Open source ${source.n ?? index}: ${source.title}${place ? `, ${place}` : ""}, ${label}`}
         className="min-w-0 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         {body}
@@ -232,7 +235,7 @@ function StepsPanel({ message }: { message: Message }) {
         <span className="shrink-0">
           {steps.length} step{steps.length === 1 ? "" : "s"}
         </span>
-        <span className="truncate opacity-70">· {summary}</span>
+        <span className="truncate">· {summary}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-2 space-y-2">
         <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
@@ -727,7 +730,7 @@ function ActionRow({ message, actions }: { message: Message; actions: AnswerActi
   const shareable = !!state && SHAREABLE.includes(state) && !message.withheld
   const rateable = !!state && RATEABLE.includes(state) && !message.withheld
   return (
-    <div className="flex flex-wrap items-center gap-0.5 text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-0.5 text-muted-foreground" data-print="hide">
       {shareable && (
         <IconAction label="Copy" onClick={() => copyAnswer(message)}>
           <Copy />
@@ -844,7 +847,7 @@ export function AssistantMessage({
 
           {finished && last && !actions.busy && actions.onFollowup && !message.withheld
             && (message.followups?.length ?? 0) > 0 && (
-            <div className="flex flex-col items-start gap-1.5" aria-label="Follow-up questions" role="group">
+            <div className="flex flex-col items-start gap-1.5" aria-label="Follow-up questions" role="group" data-print="hide">
               {message.followups!.map((f) => (
                 <Button
                   key={f}

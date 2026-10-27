@@ -410,12 +410,23 @@ def fork(workspace, owner, cid, message_id):
     if not copied or copied[-1]["id"] != message_id:
         return None
     title = (FORK_PREFIX + (conv["title"] or "New chat"))[:TITLE_CHARS]
-    new = create(workspace, owner, conv["role_used"], title, forked_from=message_id)
+    return copy_into_new(workspace, owner, conv["role_used"], title, copied,
+                         forked_from=message_id)
+
+
+def copy_into_new(workspace, owner, role_used, title, copied, forked_from=None, trace=True):
+    """A new chat of `owner`'s holding a copy of `copied` (messages, in order, each
+    the parent of the next). Each answer keeps what it was built from (its acl),
+    so it's checked against its new owner on every read. trace=False leaves out
+    the tools' raw input and output (a copy of someone else's chat)."""
+    new = create(workspace, owner, role_used, title, forked_from=forked_from)
     parent = None
     with _lock, _db() as conn:
         for m in copied:
             mid = _new_id()
             row = {k: m.get(k) for k in _COPIED}
+            if not trace:
+                row["trace"] = []
             for key in _JSON_FIELDS:
                 row[key] = json.dumps(row.get(key) or [])
             for key in ("acl", "verified"):

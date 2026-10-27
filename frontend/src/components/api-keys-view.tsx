@@ -302,9 +302,11 @@ export function CodeBlock({ label, code, wrap }: { label: string; code: string; 
   }
   return (
     <div className="relative min-w-0">
+      {/* Focusable, so a keyboard can scroll it. */}
       <pre
+        tabIndex={0}
         className={cn(
-          "max-h-64 overflow-auto rounded-lg bg-muted p-3 pr-10 font-mono text-xs leading-relaxed",
+          "max-h-64 overflow-auto rounded-lg bg-muted p-3 pr-10 font-mono text-xs leading-relaxed outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
           wrap ? "break-all whitespace-pre-wrap" : "whitespace-pre",
         )}
       >

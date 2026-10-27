@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useMemo, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { BellRing, Loader2, Mail, Plus, Send, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -106,6 +106,79 @@ function SourcePicker({
   )
 }
 
+// A folder a digest can follow, from the documents this person can read now (the
+// Knowledge list): an upload folder, or a synced source's folder.
+interface FolderOption {
+  folder: string
+  label: string
+}
+
+function folderLabel(provider: string, source: string, folder: string) {
+  if (provider === "uploads") return folder === "restricted" ? "Uploads: limited files" : "Uploads: files for everyone"
+  return `${source}: folder ${folder}`
+}
+
+// The folders of the sources picked (or of every source when none is).
+function useFolderOptions(sources: string[]): FolderOption[] {
+  const { data } = useQuery(queries.knowledge())
+  return useMemo(() => {
+    const out = new Map<string, FolderOption>()
+    for (const item of data?.items ?? []) {
+      if (!item.folder || item.source === "Sample") continue
+      if (sources.length && !sources.includes(item.provider)) continue
+      if (!out.has(item.folder))
+        out.set(item.folder, { folder: item.folder, label: folderLabel(item.provider, item.source, item.folder) })
+    }
+    return [...out.values()].sort((a, b) => a.label.localeCompare(b.label))
+  }, [data, sources])
+}
+
+function FolderPicker({
+  sources,
+  picked,
+  onChange,
+  idPrefix,
+}: {
+  sources: string[]
+  picked: string[]
+  onChange: (next: string[]) => void
+  idPrefix: string
+}) {
+  const options = useFolderOptions(sources)
+  // A folder picked before that isn't listed now (moved, or not readable) stays visible.
+  const shown = [
+    ...options,
+    ...picked
+      .filter((f) => !options.some((o) => o.folder === f))
+      .map((f) => ({ folder: f, label: `Folder ${f}` })),
+  ]
+  if (!shown.length) return null
+  const toggle = (folder: string, on: boolean) =>
+    onChange(on ? [...picked, folder] : picked.filter((p) => p !== folder))
+  return (
+    <FieldSet>
+      <FieldLegend variant="label">Folders</FieldLegend>
+      <FieldDescription>None picked: every folder of those sources.</FieldDescription>
+      <FieldGroup data-slot="checkbox-group" className="max-h-48 gap-3 overflow-y-auto">
+        {shown.map((o, i) => (
+          <Field key={o.folder} orientation="horizontal">
+            <Checkbox
+              id={`${idPrefix}-${i}`}
+              checked={picked.includes(o.folder)}
+              onCheckedChange={(on) => toggle(o.folder, on === true)}
+            />
+            <FieldContent className="min-w-0">
+              <FieldLabel htmlFor={`${idPrefix}-${i}`} className="font-normal break-all">
+                {o.label}
+              </FieldLabel>
+            </FieldContent>
+          </Field>
+        ))}
+      </FieldGroup>
+    </FieldSet>
+  )
+}
+
 function ChannelSelect({
   settings,
   value,
@@ -164,12 +237,14 @@ function NewDigestDialog({ settings }: { settings: DigestSettings }) {
   const [frequency, setFrequency] = useState<DigestFrequency>("weekly")
   const [channel, setChannel] = useState<DigestChannel>("email")
   const [sources, setSources] = useState<string[]>([])
+  const [folders, setFolders] = useState<string[]>([])
   const add = useMutation({
-    mutationFn: () => digests.subscribe({ frequency, channel, sources }),
+    mutationFn: () => digests.subscribe({ frequency, channel, sources, folders }),
     onSuccess: () => {
       toast.success(`Subscribed. The first one comes ${frequency === "daily" ? "tomorrow" : "in a week"}.`)
       setOpen(false)
       setSources([])
+      setFolders([])
       void refresh()
     },
     onError: (err) => toast.error(errorText(err)),
@@ -187,7 +262,7 @@ function NewDigestDialog({ settings }: { settings: DigestSettings }) {
           <Plus data-icon="inline-start" /> New digest
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-md">
         <form onSubmit={submit} className="flex flex-col gap-6">
           <DialogHeader>
             <DialogTitle>New digest</DialogTitle>
@@ -208,6 +283,7 @@ function NewDigestDialog({ settings }: { settings: DigestSettings }) {
               </Field>
             </div>
             <SourcePicker settings={settings} picked={sources} onChange={setSources} idPrefix="new-source" />
+            <FolderPicker sources={sources} picked={folders} onChange={setFolders} idPrefix="new-folder" />
           </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
@@ -250,6 +326,7 @@ function DigestCard({ sub, settings }: { sub: DigestSubscription; settings: Dige
     onError: (err) => toast.error(errorText(err)),
   })
   const labels = sub.sources.map((id) => settings.sources.find((s) => s.id === id)?.label ?? id)
+  const folderCount = sub.folders.length
 
   return (
     <section className="rounded-2xl border border-border/70 bg-background p-5">
@@ -261,7 +338,8 @@ function DigestCard({ sub, settings }: { sub: DigestSubscription; settings: Dige
             {!sub.enabled && <Badge variant="outline">Paused</Badge>}
           </h3>
           <p className="text-sm text-muted-foreground">
-            {labels.length ? labels.join(", ") : "Every source you can read"} · last sent{" "}
+            {labels.length ? labels.join(", ") : "Every source you can read"}
+            {folderCount > 0 && ` (${folderCount} folder${folderCount === 1 ? "" : "s"})`} · last sent{" "}
             {timeAgo(sub.last_sent_at)}
             {sub.enabled && ` · next ${when(sub.next_due_at)}`}
           </p>
@@ -304,6 +382,14 @@ function DigestCard({ sub, settings }: { sub: DigestSubscription; settings: Dige
           picked={sub.sources}
           onChange={(sources) => change.mutate({ sources })}
           idPrefix={`source-${sub.id}`}
+        />
+      </div>
+      <div className="mt-4">
+        <FolderPicker
+          sources={sub.sources}
+          picked={sub.folders}
+          onChange={(folders) => change.mutate({ folders })}
+          idPrefix={`folder-${sub.id}`}
         />
       </div>
       <div className="mt-5 flex flex-wrap gap-2">

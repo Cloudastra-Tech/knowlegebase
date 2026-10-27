@@ -677,6 +677,12 @@ ROLE_ONLY = {
     "create_prompt": "as list_prompts",
     "update_prompt": "as list_prompts",
     "delete_prompt": "as list_prompts",
+    "index_status": "no documents; the role only decides who sees the error's text",
+    "reindex": "as index_status",
+    "continue_share": "as open_share: copies only what both readers' principals may read",
+    "list_not_found": "as get_insights",
+    "resolve_not_found": "as get_insights",
+    "reopen_not_found": "as get_insights",
 }
 
 

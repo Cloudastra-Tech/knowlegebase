@@ -124,6 +124,18 @@ def start_gap(ws, user, gap, now=None):
     return draft
 
 
+def start_question(ws, user, question):
+    """A new draft answering one unanswered question the requester may see
+    (insights.find_not_found): a gap of one. The scope keeps only the question's
+    id; its text is read again when the draft is written."""
+    title = " ".join(question["question"].split())
+    draft = drafts_store.create(ws, "gap", f"Draft - {title}"[:200],
+                                {"question_id": question["id"], "label": None},
+                                user["username"])
+    _queue(ws, draft)
+    return draft
+
+
 def _queue(ws, draft):
     jobs.enqueue("draft", ws, {"id": draft["id"]}, lane=f"draft:{ws}",
                  dedupe_key=f"draft:{draft['id']}")
@@ -156,8 +168,19 @@ def write_summary(ws, reader, draft):
     return summaries.summarise_folder(label, summarised), sources
 
 
+def _question_gap(ws, role, log_id):
+    """One unanswered question as a gap of one, or None (gone, or not the role's)."""
+    found = insights.find_not_found(ws, role, log_id)
+    return found and {"label": found["question"][:200], "samples": [found["question"]]}
+
+
 def write_gap(ws, reader, draft):
-    gap = find_gap(ws, reader.role, draft["scope"].get("gap_id"))
+    if draft["scope"].get("question_id") is not None:
+        gap = _question_gap(ws, reader.role, draft["scope"]["question_id"])
+        if not gap:
+            raise Empty("This question is gone, or its text is no longer kept.")
+    else:
+        gap = find_gap(ws, reader.role, draft["scope"].get("gap_id"))
     if not gap:
         raise Empty("This content gap is gone (gaps are worked out again weekly).")
     queries = gap["samples"][:MAX_GAP_QUERIES] or [gap["label"] or ""]

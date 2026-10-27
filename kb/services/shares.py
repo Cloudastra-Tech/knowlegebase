@@ -75,11 +75,11 @@ def is_restricted(messages):
     return any(m["author"] == "assistant" and access.message_clauses(m) for m in messages)
 
 
-def open_share(token, viewer, viewer_role):
-    """The link `token` as `viewer` (a signed-in user, viewing the app as
-    viewer_role) may see it. Raises 404 / 410. An answer shows only if BOTH the
-    viewer (their principals now) and the sharer (theirs now, at the lower of
-    their role now and the role it was shared as) may read it."""
+def _opened(token, viewer, viewer_role):
+    """(share, its conversation, readers) for the link `token` opened by `viewer`
+    (a signed-in user, viewing the app as viewer_role). readers: the viewer and
+    the sharer, each with their principals now, at the lower of their role now
+    and the role it was shared as. Raises 404 / 410."""
     ws = ws_of(viewer)
     share = store.share_by_token(token)
     if not share or share["workspace"] != ws:
@@ -94,6 +94,41 @@ def open_share(token, viewer, viewer_role):
                                            lowest(viewer_role, share["role_used"])),
                groups_store.principals_for(ws, share["created_by"],
                                            lowest(sharer_role, share["role_used"])))
+    return share, conv, readers
+
+
+def continue_share(token, viewer, viewer_role):
+    """"Continue in my chats": a new chat of the viewer's own (under the role they
+    view the app as) holding each question and finished answer of the link that
+    BOTH readers may read now, as open_share() shows it. A withheld or unfinished
+    answer is left out with its question. Returns (the new conversation, how
+    many answers were left out); 400 when nothing is left to continue from."""
+    share, conv, readers = _opened(token, viewer, viewer_role)
+    kept, skipped, question = [], 0, None
+    for m in shared_messages(share):
+        if m["author"] == "user":
+            question = m
+            continue
+        shown = conversations.present(m, readers)
+        if question is None or shown["withheld"] or shown["state"] in ("pending", "error"):
+            skipped += 1
+        else:
+            kept += [question, m]
+        question = None
+    if not kept:
+        raise HTTPException(400, "There's nothing in this link you can see to continue from.")
+    title = (store.FORK_PREFIX + (conv["title"] or "Shared chat"))[:store.TITLE_CHARS]
+    new = store.copy_into_new(ws_of(viewer), viewer["username"], viewer_role, title, kept,
+                              trace=False)
+    return new, skipped
+
+
+def open_share(token, viewer, viewer_role):
+    """The link `token` as `viewer` (a signed-in user, viewing the app as
+    viewer_role) may see it. Raises 404 / 410. An answer shows only if BOTH the
+    viewer (their principals now) and the sharer (theirs now, at the lower of
+    their role now and the role it was shared as) may read it."""
+    share, conv, readers = _opened(token, viewer, viewer_role)
     messages, question = [], None
     for m in shared_messages(share):
         shown = conversations.present(m, readers)

@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { DateRangePicker, type DateRange } from "@/components/date-range-picker"
 import { InsightsFeedback } from "@/components/insights-feedback"
+import { NotFoundQuestions } from "@/components/insights-not-found"
 import { QualityTrendView } from "@/components/insights-quality"
 import { QuestionLogSettings } from "@/components/question-log-settings"
 import { Badge } from "@/components/ui/badge"
@@ -38,7 +39,7 @@ import {
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
-export type InsightsTab = "overview" | "feedback"
+export type InsightsTab = "overview" | "not-found" | "feedback"
 
 const iso = (d: Date) => format(d, "yyyy-MM-dd")
 
@@ -598,12 +599,14 @@ export function InsightsView({
   onTabChange,
   onAddVerified,
   onDraftDoc,
+  onDraftQuestion,
 }: {
   tab: InsightsTab
   canEdit: boolean
   onTabChange: (tab: InsightsTab) => void
   onAddVerified?: (gapId: number) => void // a content gap: start a verified answer for it
   onDraftDoc?: (gapId: number) => void // a content gap: have the assistant draft a doc
+  onDraftQuestion?: (questionId: number) => void // one unanswered question: the same
 }) {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -616,9 +619,10 @@ export function InsightsView({
             Questions, answers and documents, in aggregate. No one's chats are shown here.
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => onTabChange(v as InsightsTab)}>
+        <Tabs panels={false} value={tab} onValueChange={(v) => onTabChange(v as InsightsTab)}>
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="not-found">Not found</TabsTrigger>
             <TabsTrigger value="feedback">Feedback</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -626,6 +630,8 @@ export function InsightsView({
       <div className="mt-6">
         {tab === "overview" ? (
           <Overview canEdit={canEdit} onAddVerified={onAddVerified} onDraftDoc={onDraftDoc} />
+        ) : tab === "not-found" ? (
+          <NotFoundQuestions onDraftDoc={onDraftQuestion} />
         ) : (
           <InsightsFeedback canEdit={canEdit} />
         )}

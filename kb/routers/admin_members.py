@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 import join_store
 import mailer
 import members_store
+import scim_store
 import sessions_store
 from kb.audit import audited
 from kb.deps import require_admin, ws_of
@@ -25,18 +26,36 @@ class MemberPatch(BaseModel):
     disabled: bool | None = None
 
 
-def _member_out(m, admin_days=None):
+SCIM_OWNS = ("Your identity provider manages this member through SCIM, and would undo "
+             "it. Change it there.")
+
+
+def _scim_on(ws):
+    """The workspace's identity provider can provision it now (an active SCIM token)."""
+    return any(t["revoked_at"] is None for t in scim_store.list_tokens(ws))
+
+
+def _scim_managed(m, scim_on):
+    """SCIM provisioned or changed them, and still can: their access (active) is
+    the provider's to set, and removing them here would only last until its
+    next push. Their role picked here still wins over their groups."""
+    return bool(scim_on and m.get("scim_updated_at") and not m.get("anonymised_at"))
+
+
+def _member_out(m, admin_days=None, scim_on=None):
     source = ("override" if m["override_role"] else
               "groups" if m["group_role"] else "default")
     if admin_days is None:
         admin_days = members_store.group_admin_days(m["workspace"])
+    if scim_on is None:
+        scim_on = _scim_on(m["workspace"])
     return {"username": m["username"], "name": m["name"], "role": m["role"],
             "role_source": source, "override_role": m["override_role"],
             "group_role": m["group_role"], "groups": m["groups"],
             "groups_updated_at": m["groups_updated_at"],
             # admin from groups older than the limit: kept only as the last admin
             "admin_kept": members_store.group_admin_stale(m, admin_days),
-            "disabled": m["disabled"],
+            "disabled": m["disabled"], "scim_managed": _scim_managed(m, scim_on),
             "has_password": m["has_password"], "last_login_at": m["last_login_at"],
             "created_at": m["created_at"]}
 
@@ -55,8 +74,8 @@ def _workspace_member(user, username):
 def list_members(user=Depends(require_admin)):
     ws = ws_of(user)
     members_store.expire_group_admins(ws)            # so the list shows who's admin now
-    days = members_store.group_admin_days(ws)
-    return {"members": [_member_out(m, days) for m in members_store.list_members(ws)]}
+    days, scim_on = members_store.group_admin_days(ws), _scim_on(ws)
+    return {"members": [_member_out(m, days, scim_on) for m in members_store.list_members(ws)]}
 
 
 @router.patch("/api/admin/members/{username}")
@@ -64,6 +83,10 @@ def edit_member(username: str, body: MemberPatch, user=Depends(require_admin),
                 audit=audited("member.update")):
     member = _workspace_member(user, username)
     ws = member["workspace"]
+    # Turning a SCIM member's access OFF stays possible (an emergency lockout);
+    # back on is the provider's call.
+    if body.disabled is False and _scim_managed(member, _scim_on(ws)):
+        raise HTTPException(409, SCIM_OWNS)
     if "role" in body.model_fields_set:
         members_store.set_role(member["username"], body.role, ws)
     if body.disabled is not None:
@@ -80,6 +103,8 @@ def edit_member(username: str, body: MemberPatch, user=Depends(require_admin),
 @router.delete("/api/admin/members/{username}")
 def delete_member(username: str, user=Depends(require_admin), audit=audited("member.remove")):
     member = _workspace_member(user, username)
+    if _scim_managed(member, _scim_on(member["workspace"])):
+        raise HTTPException(409, SCIM_OWNS)
     members_store.remove(member["username"], member["workspace"])
     sessions_store.delete_user(member["username"], member["workspace"])
     # Their own Gmail / Calendar go with them (kb/services/sync.py disconnect_member).

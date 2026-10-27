@@ -1,12 +1,13 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Link2Off, Lock } from "lucide-react"
+import { Link2Off, Loader2, Lock, MessageSquarePlus } from "lucide-react"
+import { toast } from "sonner"
 
 import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ApiError, type SharedChat } from "@/lib/api"
+import { api, ApiError, type SharedChat } from "@/lib/api"
 import { queries } from "@/lib/queries"
 
 function messagesOf(shared: SharedChat): Message[] {
@@ -34,9 +35,26 @@ const day = (t: number) =>
 // /s/:token: a chat or an answer someone in the workspace shared (C16). Read only.
 // An answer built from documents the viewer's role can't read is withheld whole,
 // with "Ask it yourself", which asks the question in a new chat with their own role.
+// "Continue in my chats" copies what the viewer sees here into a chat of their own
+// (the server leaves out withheld answers and their questions) to ask on from.
 export function SharedView({ token }: { token: string }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const shared = useQuery(queries.sharedChat(token))
+  const fork = useMutation({
+    mutationFn: () => api.continueShare(token),
+    onSuccess: ({ id, skipped }) => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] })
+      if (skipped)
+        toast.info(
+          skipped === 1
+            ? "One answer you can't see was left out."
+            : `${skipped} answers you can't see were left out.`,
+        )
+      navigate(`/chat/${id}`)
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Couldn't copy the chat."),
+  })
   const actions: AnswerActions = {
     onAskYourself: (question) => navigate(`/chat?q=${encodeURIComponent(question)}`),
   }
@@ -71,6 +89,10 @@ export function SharedView({ token }: { token: string }) {
     )
   }
   const data = shared.data
+  // Something to carry on from: a finished answer the viewer can see.
+  const continuable = data.messages.some(
+    (m) => m.author === "assistant" && !m.withheld && m.state !== "pending" && m.state !== "error",
+  )
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
       <header className="space-y-1 border-b pb-4">
@@ -82,6 +104,18 @@ export function SharedView({ token }: { token: string }) {
           Shared by {data.shared_by} · {day(data.created_at)}
           {data.expires_at ? ` · link works until ${day(data.expires_at)}` : ""}
         </p>
+        {continuable && (
+          <div className="pt-2" data-print="hide">
+            <Button variant="outline" size="sm" disabled={fork.isPending} onClick={() => fork.mutate()}>
+              {fork.isPending ? (
+                <Loader2 className="animate-spin" data-icon="inline-start" />
+              ) : (
+                <MessageSquarePlus data-icon="inline-start" />
+              )}
+              Continue in my chats
+            </Button>
+          </div>
+        )}
       </header>
       {data.withheld > 0 && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">

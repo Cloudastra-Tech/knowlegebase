@@ -73,6 +73,18 @@ def revoke_share(sid: str, user=Depends(current_user), audit=audited("share.revo
     return {"ok": True}
 
 
+@router.post("/api/shared/{token}/continue")
+def continue_share(token: str = TOKEN, user=Depends(current_user), role=Depends(current_role),
+                   audit=audited("share.continue")):
+    """"Continue in my chats": a new chat of the viewer's own with a copy of the
+    shared one, holding only what the link shows them now. A withheld answer is
+    left out with its question; they can ask it themselves."""
+    conv, skipped = shares.continue_share(token, user, role)
+    audit.record("conversation", conv["id"], {"from_share": True, "skipped": skipped},
+                 user=user)
+    return {"id": conv["id"], "title": conv["title"] or "New chat", "skipped": skipped}
+
+
 @router.get("/api/shared/{token}")
 def open_share(token: str = TOKEN, user=Depends(current_user), role=Depends(current_role)):
     """A shared chat or answer, as the signed-in viewer may see it: an answer built

@@ -58,7 +58,7 @@ export function AlertsPanel() {
               ` A spike is ${t.spike_factor}× the week's median (at least ${t.spike_min} questions); one person, over ${t.user_per_hour} an hour.`}
           </p>
         </div>
-        <Tabs value={show} onValueChange={(v) => setShow(v as "open" | "all")}>
+        <Tabs panels={false} value={show} onValueChange={(v) => setShow(v as "open" | "all")}>
           <TabsList>
             <TabsTrigger value="open">Open</TabsTrigger>
             <TabsTrigger value="all">All</TabsTrigger>

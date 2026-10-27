@@ -42,6 +42,9 @@ export const draftsApi = {
   summarise: (provider: string, folder?: string | null) =>
     request<Draft>("/drafts/summarise", json("POST", { provider, folder: folder ?? null })),
   fromGap: (gapId: number) => request<Draft>("/drafts/from-gap", json("POST", { gap_id: gapId })),
+  // A doc answering one unanswered question (Insights > Not found).
+  fromQuestion: (questionId: number) =>
+    request<Draft>("/drafts/from-question", json("POST", { question_id: questionId })),
   save: (id: string, body: { title?: string; content?: string }) =>
     request<Draft>(`/drafts/${seg(id)}`, json("PATCH", body)),
   publish: (id: string, acl: string[], name: string) =>

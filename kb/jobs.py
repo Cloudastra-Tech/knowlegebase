@@ -366,6 +366,19 @@ def lane_jobs(lane, kinds):
         conn.close()
 
 
+def recent(workspace, limit=50):
+    """A workspace's jobs, newest first, as dicts (finished ones are pruned after
+    KEEP_DAYS). Only that workspace's: the platform's jobs (no workspace) never
+    show."""
+    conn = _connect()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM jobs WHERE workspace = ? ORDER BY id DESC LIMIT ?",
+            (workspace, int(limit))).fetchall()]
+    finally:
+        conn.close()
+
+
 def ensure_periodic(kinds, now=None):
     """Queue each periodic kind among `kinds` that has no job waiting or running,
     to run `every()` seconds after its last run finished (or from now)."""

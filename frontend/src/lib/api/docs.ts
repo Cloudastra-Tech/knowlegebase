@@ -8,6 +8,7 @@ import type {
   Doc,
   IndexStatus,
   KnowledgeItem,
+  WorkspaceJob,
   UploadLimits,
   WhoCanSee,
 } from "@/lib/api/types"
@@ -39,7 +40,11 @@ export const docsApi = {
     form.append("acl", JSON.stringify(acl))
     return request<{ saved: string[] }>("/docs/upload", { method: "POST", body: form })
   },
-  reindex: () => request<IndexStatus>("/reindex", { method: "POST" }),
+  // full: rebuild the whole index from scratch (every chunk embedded again).
+  reindex: (full = false) =>
+    request<IndexStatus>(full ? "/reindex?full=true" : "/reindex", { method: "POST" }),
+  // The workspace's recent background jobs (admins).
+  jobs: () => request<{ jobs: WorkspaceJob[] }>("/admin/jobs").then((r) => r.jobs),
   indexStatus: () => request<IndexStatus>("/index/status"),
 
   // rules: the workspace's source rules, for HR / Admin only.

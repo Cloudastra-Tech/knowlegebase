@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react-router"
-import { ArrowDown, CornerUpLeft, Info, MoreHorizontal, Pencil, Share2, SquarePen, Trash2 } from "lucide-react"
+import {
+  ArrowDown,
+  CornerUpLeft,
+  Download,
+  Info,
+  MoreHorizontal,
+  Pencil,
+  Printer,
+  Share2,
+  SquarePen,
+  Trash2,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { AttachButton, AttachmentChips } from "@/components/attachment-chips"
@@ -45,6 +56,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   api,
   ApiError,
+  saveFile,
   spaces,
   type AnswerState,
   type Attachment,
@@ -610,7 +622,7 @@ export function ChatView({ role }: { role: Role }) {
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
 
   return (
-    <SidebarProvider className="relative h-full min-h-0">
+    <SidebarProvider className="relative h-full min-h-0" data-print="flow">
       <SidebarEvents />
       <ChatSidebar
         activeId={urlId}
@@ -621,7 +633,7 @@ export function ChatView({ role }: { role: Role }) {
         onNewChat={newChat}
         onDeleted={(id) => id === urlId && open("/chat")}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col" data-print="flow">
         <ChatHeader
           conversation={conversation}
           title={title}
@@ -642,6 +654,7 @@ export function ChatView({ role }: { role: Role }) {
         <div
           ref={scrollRef}
           className="relative flex-1 overflow-y-auto"
+          data-print="flow"
           onScroll={(e) => {
             const el = e.currentTarget
             setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
@@ -753,7 +766,7 @@ export function ChatView({ role }: { role: Role }) {
             )}
           </div>
           {!atBottom && messages.length > 0 && (
-            <div className="pointer-events-none sticky bottom-2 flex justify-center">
+            <div className="pointer-events-none sticky bottom-2 flex justify-center" data-print="hide">
               <Button
                 variant="outline"
                 size="sm"
@@ -774,7 +787,10 @@ export function ChatView({ role }: { role: Role }) {
           {announce}
         </p>
 
-        <div className="pointer-events-none bg-gradient-to-t from-background via-background to-transparent pt-6">
+        <div
+          className="pointer-events-none bg-gradient-to-t from-background via-background to-transparent pt-6"
+          data-print="hide"
+        >
           {conversation?.role_changed && !loading && (
             <p className="pointer-events-auto mx-auto mb-2 flex max-w-3xl items-center gap-2 px-4 text-xs text-muted-foreground">
               <Info className="size-3.5 shrink-0" />
@@ -910,7 +926,7 @@ function UserMessage({
       <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
         {message.text}
       </div>
-      <div className="flex items-center gap-0.5 text-muted-foreground">
+      <div className="flex items-center gap-0.5 text-muted-foreground" data-print="hide">
         <BranchNav message={message} onBranch={onBranch} disabled={busy} />
         {message.id && (
           <Tooltip>
@@ -935,7 +951,8 @@ function UserMessage({
   )
 }
 
-// Above the chat: the history button, its title, New chat, and Share / Rename / Delete.
+// Above the chat: the history button, its title, New chat, and Share / Download / Print /
+// Rename / Delete. Printed, only the title is left (index.css, data-print).
 function ChatHeader({
   conversation,
   title,
@@ -970,6 +987,17 @@ function ChatHeader({
     }
   }
 
+  // The chat as shown, as markdown: the server writes it, leaving out answers you
+  // can't see now (C25).
+  async function download() {
+    if (!conversation) return
+    try {
+      saveFile(await api.exportConversation(conversation.id))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't download it.")
+    }
+  }
+
   async function remove() {
     if (!conversation) return
     try {
@@ -986,7 +1014,11 @@ function ChatHeader({
     <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3">
       <Tooltip>
         <TooltipTrigger asChild>
-          <SidebarTrigger aria-label="Chat history" className="text-muted-foreground pointer-coarse:size-10" />
+          <SidebarTrigger
+            aria-label="Chat history"
+            data-print="hide"
+            className="text-muted-foreground pointer-coarse:size-10"
+          />
         </TooltipTrigger>
         <TooltipContent>Chat history</TooltipContent>
       </Tooltip>
@@ -996,6 +1028,7 @@ function ChatHeader({
         size="sm"
         className="text-muted-foreground pointer-coarse:h-10"
         aria-label="New chat"
+        data-print="hide"
         onClick={onNewChat}
       >
         <SquarePen />
@@ -1008,6 +1041,7 @@ function ChatHeader({
               variant="ghost"
               size="icon-sm"
               aria-label="Chat options"
+              data-print="hide"
               className="text-muted-foreground pointer-coarse:size-10"
             >
               <MoreHorizontal />
@@ -1016,6 +1050,13 @@ function ChatHeader({
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={onShare}>
               <Share2 /> Share chat
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={download}>
+              <Download /> Download as Markdown
+            </DropdownMenuItem>
+            {/* After the menu has closed, so it isn't in the printout. */}
+            <DropdownMenuItem onSelect={() => window.setTimeout(() => window.print(), 100)}>
+              <Printer /> Print
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => {
