@@ -4,8 +4,14 @@
 # see deploy.md, step 4.
 services:
   knowledgebase:
-    build: .
-    image: cloudastra-knowledgebase
+    build:
+      context: .
+      args:                  # shown at /api/health (scripts/deploy.sh sets them)
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-unknown}
+    # One tag per commit (scripts/deploy.sh sets IMAGE_TAG), so going back to the
+    # previous version needs no rebuild; :latest is whatever was deployed last.
+    image: cloudastra-knowledgebase:${IMAGE_TAG:-latest}
     ports:
       - "8501:8501"          # host:container  ->  open http://localhost:8501
     env_file:

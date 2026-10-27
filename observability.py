@@ -6,7 +6,7 @@ works here too. Once on, unhandled errors and every log.exception() /
 log.error() line are sent, with:
 
     environment    APP_ENV (e.g. production, staging); default "production"
-    release        SENTRY_RELEASE if set (e.g. the git SHA of the image)
+    release        SENTRY_RELEASE, else the image's APP_VERSION (Dockerfile)
     tags           request_id (as in the X-Request-ID header and the log), or
                    job_id and job_kind, and workspace (kb/logs.py)
 
@@ -80,6 +80,8 @@ def init_error_tracking():
     import sentry_sdk
     sentry_sdk.init(dsn=dsn,
                     environment=(os.getenv("APP_ENV") or "production").strip(),
+                    release=(os.getenv("SENTRY_RELEASE") or os.getenv("APP_VERSION")
+                             or None),
                     send_default_pii=False,
                     include_local_variables=False,
                     max_request_body_size="never",

@@ -67,6 +67,13 @@ COPY . .
 # The built React site, served by api.py.
 COPY --from=web /web/dist ./frontend/dist
 
+# Which version this is (scripts/deploy.sh and the release workflow pass them):
+# shown at /api/health, and Sentry's release. Declared this late so a new commit
+# doesn't throw away the cached layers above.
+ARG APP_VERSION=dev
+ARG GIT_SHA=unknown
+ENV APP_VERSION=$APP_VERSION GIT_SHA=$GIT_SHA
+
 # Port 8501, which the reverse proxy (nginx) in front already points at.
 EXPOSE 8501
 
