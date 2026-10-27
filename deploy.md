@@ -389,7 +389,9 @@ reads the old collection, which this one drops 10 minutes after its rebuild.
 
 Google Drive, Notion, Outline, Confluence and Jira (Cloud and Data Center),
 SharePoint & OneDrive, Zendesk, GitHub, Linear, Dropbox, Box, Amazon S3,
-Intercom, Freshdesk, HubSpot, Salesforce Knowledge and websites are **connectors**
+Intercom, Freshdesk, HubSpot, Salesforce Knowledge, Asana, ClickUp, Coda, Teams
+channel messages and websites are **connectors** (and each member's own Gmail and
+Google Calendar, below)
 (`connectors/registry.py`), all synced the same way (`kb/services/sync.py`): each
 run asks the source only for what changed since its last cursor (Drive's change
 feed, Notion's and Outline's newest edits, a Confluence CQL search on
@@ -607,6 +609,69 @@ articles and GitHub, which also refreshes captured permissions), to find deletio
   as everyone's under *As shared in Salesforce*; every other article is HR and
   admins (Salesforce's profiles and data category visibility don't map onto
   members here). Disconnecting revokes the refresh token.
+- **Asana.** Create an app in the Asana developer console (My apps → *Create new
+  app*): redirect URL `<PUBLIC_URL>/api/integrations/asana/callback`, **Full
+  permissions** (Asana's granular scopes don't cover project briefs, memberships
+  or the events API yet; nothing is ever written). Put its client id and secret
+  in `ASANA_CLIENT_ID` / `ASANA_CLIENT_SECRET`. Workspaces or single projects
+  are picked on the card; tasks (with their comments) and project briefs sync.
+  Access tokens last an hour and are refreshed; changes come from
+  `modified_since`, deletions from the events API (its sync tokens expire within
+  a day: then that project is listed again), everything once a day. Project
+  members (read by email) are captured; a whole team added to a project isn't
+  expanded. 150 requests a minute per token on free Asana domains.
+- **ClickUp.** Create an OAuth app (ClickUp Settings → *Apps* → *Create new
+  app*): redirect URL `<PUBLIC_URL>/api/integrations/clickup/callback`; put its
+  client id and secret in `CLICKUP_CLIENT_ID` / `CLICKUP_CLIENT_SECRET`. The
+  person connecting picks which ClickUp Workspaces to authorize; Spaces,
+  Folders or Lists are then picked on the card. Tasks (open and closed, with
+  comments) and Docs (as Markdown) sync; tasks by `date_updated`, Docs are
+  listed every run (ClickUp has no Doc change feed). Each List's explicit
+  members are captured; Docs on a Folder or a public Space have no readable
+  audience and are for no one under *As shared in ClickUp*. 100 requests a
+  minute on most plans. Tokens don't expire; disconnecting deletes ours (remove
+  the app in ClickUp to revoke it there).
+- **Coda** (now "Superhuman Docs") needs nothing on the server: a workspace admin
+  pastes an API token (Account settings → API settings; read-only is enough) and
+  picks docs (only docs that account has opened are listed). Pages are exported
+  as Markdown; a doc whose `updatedAt` didn't move isn't read again. A doc's
+  sharing is captured where Coda shows it to the token (people, domains, anyone
+  with the link); *As shared in Coda* is only offered once every picked doc's
+  sharing could be read.
+- **Teams messages** (channel conversations, a *source*: separate from the Teams
+  bot above). A multitenant Entra app registration, Web redirect URI
+  `<PUBLIC_URL>/api/integrations/teams_messages/callback`, Microsoft Graph
+  **application** permissions `Team.ReadBasic.All`, `Channel.ReadBasic.All`,
+  `ChannelMessage.Read.All`, `TeamMember.Read.All`, `ChannelMember.Read.All`
+  (and delegated `openid profile email`), in `TEAMS_MESSAGES_CLIENT_ID` /
+  `TEAMS_MESSAGES_CLIENT_SECRET`. **Microsoft treats channel messages as a
+  protected API**: the app must also be approved by Microsoft (the protected APIs
+  request form linked from Graph's 403) before any tenant can sync; until then a
+  sync stops with *Microsoft hasn't approved this app for Teams' protected APIs*
+  and waits. A tenant admin connects (signs in, then approves the app for the
+  organisation), picks teams or channels; a connection is **locked to HR and
+  admins** until an admin turns on *Let members ask* in the picker, after which
+  *As shared in Teams* follows channel membership (a standard channel: the team's
+  members and its Microsoft 365 group; a private or shared channel: its own
+  members). Threads (root + replies) of the last eight months sync through the
+  channel delta query; chats are never read.
+- **Gmail and Google Calendar** are **each member's own** (*My connections*, in the
+  account menu), never a workspace connection: what a member syncs is searchable
+  by them alone (`user:<them>` on every chunk), never listed, counted, digested or
+  sent to webhooks for anyone else, admins included; removing or erasing the
+  member, or deleting the workspace, revokes the token and deletes the copies.
+  They use the Google client above; add the redirect URIs
+  `<PUBLIC_URL>/api/integrations/gmail/callback` and
+  `<PUBLIC_URL>/api/integrations/google_calendar/callback`, enable the Gmail and
+  Calendar APIs, and turn them on with `GMAIL_SYNC=on` / `CALENDAR_SYNC=on`.
+  **Google's review comes first:** `gmail.readonly` is a *restricted* scope — an
+  app that keeps Gmail data on a server needs restricted-scope verification and
+  an **annual CASA security assessment** by a Google-approved assessor before
+  users outside the Google Cloud project's organisation can grant it (until then
+  it's limited to 100 test users behind the "unverified app" screen);
+  `calendar.readonly` is *sensitive* (verification, no assessment). Members pick
+  Gmail labels (threads of the last 180 days) and calendars (events ending within
+  the last year or later; recurring series once).
 - These capture source permissions (Confluence space permissions and page
   restrictions; Jira project browse grants and security levels; SharePoint item
   permissions; Zendesk user segments; GitHub visibility and collaborators; Linear
@@ -825,6 +890,71 @@ with a test account before telling a customer they work; for the sign-in paths,
    next sync shows *Access expired*; *Reconnect* works. With rotation on, check
    the stored refresh token changes after a refresh (an expired session).
 8. *Disconnect*: the token is gone from the org's OAuth usage.
+
+### Checking Asana, ClickUp, Coda, Teams messages, Gmail and Calendar by hand (no accounts here: not run live)
+
+Built against each vendor's documentation and tested with recorded answers
+(`tests/fixtures/connectors/`, written by `make_work_tools.py`); no real account
+was available. `PUBLIC_URL` must be reachable by the vendor for the sign-ins.
+
+**Asana**
+1. Connect; the card shows the account's email. Pick one workspace: every
+   unarchived project's tasks and its brief sync; comments appear oldest first,
+   activity ("assigned to") doesn't.
+2. Edit a task, *Sync now*: incremental (asks with `modified_since`), 1 upserted.
+   Delete a task: 1 deleted (events). Wait a day (or clear the cursor): the
+   events token is renewed after a 412 and a full listing runs.
+3. *As shared in Asana*: a project member who is a member here can ask about its
+   tasks; someone outside the project can't.
+4. Wait an hour, sync: the token is refreshed. Revoke the app (My settings → Apps):
+   *Access expired*. *Disconnect* revokes the refresh token.
+
+**ClickUp**
+1. Connect, authorize one Workspace. Open it in the picker: Spaces → Folders →
+   Lists. Pick a Folder: its Lists' tasks and the Docs on its Lists sync.
+2. Edit a task and add a comment, sync: incremental, the comment is there. Delete
+   a Doc: it's removed at the next run.
+3. *As shared in ClickUp*: members of the List can ask; a Doc on the Folder itself
+   is for no one (ClickUp doesn't say who can read it).
+4. Watch for 429s on a large Workspace (100 a minute): the sync waits and goes on.
+
+**Coda**
+1. Paste an API token; a bad token says so. Pick a doc with several pages and an
+   embed page: the pages sync as Markdown (headings, lists, tables), the embed is
+   listed as skipped.
+2. Edit a page, sync: only that doc's pages are listed again. Don't edit, sync:
+   nothing but the doc's metadata is read.
+3. With a token of the doc's owner, *As shared in Coda* is offered and a person
+   the doc is shared with can ask. With a token of someone who can't share it,
+   the sharing can't be read: the card offers only HR / everyone and says why.
+
+**Teams messages** (after Microsoft has approved the app's protected-API request)
+1. Before approval: connect, pick a channel, sync: the card says Microsoft hasn't
+   approved the app for protected APIs and nothing is retried.
+2. After approval: a tenant admin connects (sign-in, then the consent screen) and
+   picks a team: its channels' threads sync with replies; system messages
+   ("X joined") aren't there. The card says *Members can ask: no*.
+3. Ask as a member: nothing from Teams. Turn on *Let members ask*, choose *As
+   shared in Teams*: a team member can ask about a standard channel; only a
+   private channel's members about it.
+4. Edit a message and delete another, sync: incremental (the delta link), 1
+   upserted, 1 deleted. Remove the app's consent in Entra: *Access expired*.
+
+**Gmail and Google Calendar** (a Google Cloud project in Testing with the test user
+added, or after verification and CASA)
+1. With `GMAIL_SYNC=on`: account menu → *My connections* → *Connect your Gmail*;
+   untick the Gmail permission on Google's screen: it says the permission is
+   missing. Connect again with it: choose labels; threads with them sync.
+2. Ask about an email as that member: it's cited. Sign in as an admin viewing as
+   HR: the same question finds nothing; Knowledge, Integrations, Insights and the
+   audit log show no mailbox, no label names, no subjects.
+3. Remove the label from a thread, sync: it's deleted. Leave the connection for
+   over a week: the history id is too old and a full listing runs.
+4. Calendar: connect, pick the primary calendar: upcoming events and recurring
+   series sync with attendees; cancel one: it goes at the next sync.
+5. Remove the member (Access → Members): both connections are revoked at Google
+   (myaccount.google.com → Security → third-party access no longer lists the app)
+   and their copies are gone.
 
 ## Slack app
 

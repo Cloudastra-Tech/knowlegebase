@@ -113,7 +113,12 @@ class Recorded:
         parts = urlsplit(url)
         bare = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
         query = dict(parse_qsl(parts.query))
-        query.update({k: str(v) for k, v in (params or {}).items()})
+        pairs = (params or {}).items() if isinstance(params, dict) else (params or ())
+        for k, v in pairs:                   # (a list of pairs may repeat a key: the
+            if k in query and k.endswith("[]"):  # values of a repeated "x[]" are joined)
+                query[k] = f"{query[k]},{v}"
+            else:
+                query[k] = str(v)
         self.calls.append({"method": method, "url": bare, "params": query, "json": json,
                            "data": data, "headers": dict(headers or {})})
         for ex in self.exchanges:

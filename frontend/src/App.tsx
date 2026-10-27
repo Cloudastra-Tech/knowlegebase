@@ -8,6 +8,7 @@ import {
   Mail,
   MessageSquareText,
   MonitorSmartphone,
+  Plug,
 } from "lucide-react"
 import { Link, Navigate, Outlet, useLocation } from "react-router"
 import { toast } from "sonner"
@@ -201,6 +202,11 @@ export default function App() {
                 <DropdownMenuItem asChild>
                   <Link to="/digests">
                     <Mail /> Digests
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/connections">
+                    <Plug /> My connections
                   </Link>
                 </DropdownMenuItem>
                 {user.billing?.can_view && (

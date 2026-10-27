@@ -26,3 +26,19 @@ export const TICKET_OPTIONS: Record<
       "Closed conversations with customer and teammate replies (internal notes stay in Intercom). They hold customers' details, so while this is on only HR and admins can ask about anything from Intercom.",
   },
 }
+
+// The opposite kind of option: a connection LOCKED to HR and admins until an admin lets
+// members ask (Teams channel messages: connectors/teams_messages.py check_options).
+export const MEMBER_OPTIONS: Record<
+  string,
+  { key: "members"; label: string; toggle: string; description: string; locked: string }
+> = {
+  teams_messages: {
+    key: "members",
+    label: "Members can ask",
+    toggle: "Let members ask",
+    description:
+      "Off: only HR and admins can ask about Teams messages. On: choose who can on the card, for example each channel's members.",
+    locked: "Locked to HR and admins until you let members ask (Edit selection).",
+  },
+}

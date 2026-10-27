@@ -188,6 +188,8 @@ def current_docs(ws):
     levels = integrations_store.chunk_access_levels(ws)
     connectors_dir = os.path.join(root, "connectors")
     for provider in sorted(os.listdir(connectors_dir)) if os.path.isdir(connectors_dir) else []:
+        if registry.is_personal(provider):
+            continue                    # a member's own mail or calendar: never in Insights
         for item in sync_store.items(ws, provider).values():
             name = item.get("file_name")
             if not name or not os.path.isfile(os.path.join(connectors_dir, provider, name)):
@@ -467,6 +469,8 @@ def connector_health(ws):
     out = []
     for row in integrations_store.list_for(ws):
         provider = row["provider"]
+        if registry.is_personal(provider):
+            continue                    # members' own connections are theirs to look after
         runs = sync_store.runs(ws, provider)
         last = runs[0] if runs else None
         ok = next((r for r in runs if r["status"] == "done"), None)

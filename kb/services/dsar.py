@@ -8,7 +8,8 @@ message, the feedback they gave, their API keys, invites and requests to join, t
 in, the files they attached or keep (names, not text), their saved prompts, and
 the audit events where they are the actor.
 
-ERASE: deletes their questions, chats (messages, feedback on them, share
+ERASE: disconnects their own Gmail and Calendar (personal connections: tokens
+revoked, synced copies and index entries deleted), deletes their questions, chats (messages, feedback on them, share
 links), folders, feedback, sign-in events, invites to them, requests to join, API keys, sessions,
 their place in access groups and team spaces, their own space, the files they
 attached or kept, their saved prompts, and the member itself. Documents shared with them
@@ -99,6 +100,23 @@ def export_member(ws, username):
     finally:
         conn.close()
     out["audit_events"] = audit_store.by_actor(ws, u)
+    out["personal_connections"] = _personal_connections(ws, u)
+    return out
+
+
+def _personal_connections(ws, username):
+    """Their own Gmail / Calendar connections: which, the account, how many items."""
+    import integrations_store
+    import sync_store
+    from connectors import registry
+    out = []
+    for c in registry.PERSONAL:
+        key = registry.personal_key(c.PROVIDER, username)
+        row = integrations_store.get(ws, key)
+        if row:
+            out.append({"provider": c.PROVIDER, "account": row.get("account"),
+                        "connected_at": row.get("connected_at"),
+                        "items": sync_store.counts(ws, key)[0]})
     return out
 
 
@@ -106,8 +124,11 @@ def erase_member(ws, username):
     """Erase one member of `ws` (see the top of this file). Returns (pseudonym,
     {what: rows}). The caller has checked they may be erased."""
     u = members_store.get(username)["username"]
+    # Their own Gmail / Calendar first: tokens revoked, copies and index entries gone.
+    from kb.services import sync
+    personal = sync.disconnect_member(ws, u)
     pseudonym = audit_store.erase_actor(ws, u)
-    counts = {}
+    counts = {"personal_connections": len(personal)} if personal else {}
     conn = db.connect()
     conn.isolation_level = None
     try:

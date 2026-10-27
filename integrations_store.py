@@ -64,6 +64,21 @@ def all_connected(provider):
             (provider,))]
 
 
+def all_personal(provider):
+    """Every member's own connection of a personal connector (connectors/base.py
+    is_personal: their keys are "<provider>~<hash>"), in every workspace."""
+    prefix = f"{provider}~"
+    with _lock, _db() as conn:
+        return [_row(r) for r in conn.execute(
+            "SELECT * FROM integrations WHERE substr(provider, 1, ?) = ? AND "
+            "status != 'disconnected'", (len(prefix), prefix))]
+
+
+def owner_of(row):
+    """The member a PERSONAL connection belongs to (settings["owner"]), else None."""
+    return ((row or {}).get("settings") or {}).get("owner") or None
+
+
 def connect(workspace, provider, account, secret, user):
     blob = secret_box.seal(secret, workspace)
     with _lock, _db() as conn:
@@ -111,7 +126,9 @@ def policy_of(row):
     A connection from before policies has its access level's; a LOCKED one
     (access_lock) is restricted whatever it says."""
     settings = (row or {}).get("settings") or {}
-    if settings.get("access_lock") == "restricted":
+    if settings.get("access_lock") == "restricted" or settings.get("owner"):
+        # (A personal connection's files are its owner's alone whatever this says:
+        # kb/services/permissions.py personal_acl.)
         return "restricted"
     policy = settings.get("policy")
     if policy in POLICIES:

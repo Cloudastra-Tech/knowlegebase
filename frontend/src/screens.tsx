@@ -77,6 +77,9 @@ const JoinRequested = lazy(() =>
 const ClaimWorkspace = lazy(() =>
   import("@/components/claim-workspace").then((m) => ({ default: m.ClaimWorkspace })),
 )
+const MyConnectionsView = lazy(() =>
+  import("@/components/my-connections-view").then((m) => ({ default: m.MyConnectionsView })),
+)
 const DigestsView = lazy(() =>
   import("@/components/digests-view").then((m) => ({ default: m.DigestsView })),
 )
@@ -435,6 +438,11 @@ const CONNECTOR_NAMES: Record<string, string> = {
   jira: "Jira",
   zendesk: "Zendesk",
   github: "GitHub",
+  asana: "Asana",
+  clickup: "ClickUp",
+  teams_messages: "Microsoft Teams messages",
+  gmail: "Gmail",
+  google_calendar: "Google Calendar",
 }
 // Back from Slack's consent screen (kb/routers/slack.py): ?slack=installed or ?slack_error=...
 const SLACK_ERRORS: Record<string, string> = {
@@ -486,6 +494,39 @@ export function IntegrationsScreen() {
         onOpenDocuments={() => navigate("/documents")}
         openPickerFor={openPickerFor}
       />
+    </Screen>
+  )
+}
+
+// /connections: a member's own Gmail and Calendar, and back from Google's consent screen
+// (/connections?connected=gmail&choose=1 or ?error=...).
+export function MyConnectionsScreen() {
+  const [params, setParams] = useSearchParams()
+  const [openPickerFor] = useState(() =>
+    params.get("choose") === "1" ? params.get("connected") : null,
+  )
+  const shown = useRef(false)
+  useEffect(() => {
+    if (shown.current) return
+    shown.current = true
+    const connected = params.get("connected")
+    const error = params.get("error")
+    if (!connected && !error) return
+    if (connected) {
+      const name = CONNECTOR_NAMES[connected] ?? "It"
+      toast.success(
+        params.get("choose") === "1"
+          ? `${name} connected. Now choose what to sync.`
+          : `${name} connected. Syncing…`,
+      )
+    }
+    if (error) toast.error(CONNECT_ERRORS[error] ?? "It was not connected.")
+    setParams({}, { replace: true })
+  }, [params, setParams])
+
+  return (
+    <Screen>
+      <MyConnectionsView openPickerFor={openPickerFor} />
     </Screen>
   )
 }

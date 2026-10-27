@@ -244,6 +244,8 @@ def delete_user(user_id: str, ctx=Depends(scim_token), audit=audited("scim.user.
     if not username:
         raise ScimError(404, f"User {user_id} not found.")
     sessions_store.delete_user(username, ctx["workspace"])
+    from kb.services import sync
+    sync.disconnect_member(ctx["workspace"], username)      # their own Gmail / Calendar
     webhooks.member_disabled(ctx["workspace"], username, "scim")
     _done(ctx, audit, None, "member", username,
           {"scim_id": user_id, "anonymise_after_days": scim_store.retention_days()},
