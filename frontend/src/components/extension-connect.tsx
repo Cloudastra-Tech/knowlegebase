@@ -1,7 +1,8 @@
 import { useState } from "react"
-import { Check, Loader2, PanelRight, TriangleAlert } from "lucide-react"
+import { PanelRight, TriangleAlert } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { extension } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
 
@@ -33,8 +34,9 @@ export function ExtensionConnect({ redirect }: { redirect: string }) {
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 py-12">
-      <div className="rounded-2xl border border-border/70 bg-background p-6">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-muted">
+      {/* A card floating on its own over the app's background: the chrome glass tier. */}
+      <Card variant="glass" className="gap-0 rounded-2xl p-6">
+        <div className="flex size-10 items-center justify-center rounded-xl border border-signal/25 bg-signal/10 text-signal">
           <PanelRight className="size-5" />
         </div>
         <h1 className="mt-4 text-lg font-semibold">Connect the browser extension?</h1>
@@ -51,7 +53,9 @@ export function ExtensionConnect({ redirect }: { redirect: string }) {
                 "Lasts 90 days. Disconnect it any time in Integrations or API keys.",
               ].map((line) => (
                 <li key={line} className="flex items-start gap-2">
-                  <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                  <span aria-hidden className="shrink-0 font-mono text-success">
+                    [✓]
+                  </span>
                   <span>{line}</span>
                 </li>
               ))}
@@ -70,8 +74,7 @@ export function ExtensionConnect({ redirect }: { redirect: string }) {
               >
                 Cancel
               </Button>
-              <Button onClick={connect} disabled={busy}>
-                {busy && <Loader2 className="size-4 animate-spin" />}
+              <Button onClick={connect} loading={busy}>
                 Connect
               </Button>
             </div>
@@ -83,7 +86,7 @@ export function ExtensionConnect({ redirect }: { redirect: string }) {
             there.
           </p>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

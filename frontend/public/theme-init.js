@@ -5,6 +5,15 @@ try {
   var theme = localStorage.getItem("theme") || "dark"
   if (theme === "system") theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
   if (theme !== "light") theme = "dark"
+  // The landing and sign-in pages are always dark (lib/forced-theme.ts): the landing
+  // only when signed out (signed in, / goes on to the chat), the sign-in pages always.
+  var path = location.pathname
+  if (
+    (path === "/" && !localStorage.getItem("kb_token")) ||
+    /^\/(login|signup|signup\/verify|join-requested|claim)\/?$/.test(path) ||
+    /^\/(invite|unsubscribe)\//.test(path)
+  )
+    theme = "dark"
   var root = document.documentElement
   root.classList.remove("light", "dark")
   root.classList.add(theme)
