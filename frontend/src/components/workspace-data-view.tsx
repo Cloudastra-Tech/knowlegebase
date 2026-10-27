@@ -165,8 +165,9 @@ function exportNote(e: WorkspaceExport) {
   if (e.status === "queued" || e.status === "running") return "Being made…"
   if (e.status === "failed") return `Failed${e.error ? ` (${e.error})` : ""}`
   if (e.status === "expired") return "Expired"
-  const mb = ((e.size ?? 0) / 1024 / 1024).toFixed(1)
-  return `${mb} MB · until ${when(e.expires_at ?? 0)}`
+  const size = e.size ?? 0
+  const shown = size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`
+  return `${shown} · until ${when(e.expires_at ?? 0)}`
 }
 
 function ExportPanel({ settings }: { settings: WorkspaceSettings }) {

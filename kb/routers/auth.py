@@ -78,7 +78,7 @@ async def login(body: LoginIn, request: Request):
         token = secrets.token_urlsafe(32)
         sessions_store.create(token, user, SESSION_SECONDS)   # survives restarts / deploys
         members_store.log_event(user["workspace"], "password", user["username"], "signed_in")
-        return {"token": token, "user": user}
+        return {"token": token, "user": _shown(user)}
     if member:                                 # right password, but SSO is required
         members_store.log_event(member["workspace"], "password", member["username"],
                                 "refused", "sso_required")
@@ -116,7 +116,7 @@ def sso_exchange(body: CodeIn, request: Request):
     seconds = (operators.support_seconds(user["workspace"]) if user.get("impersonator")
                else SESSION_SECONDS)
     sessions_store.create(token, user, seconds)
-    return {"token": token, "user": public_user(user)}
+    return {"token": token, "user": _shown(public_user(user))}
 
 
 @router.post("/api/auth/logout")
@@ -159,7 +159,11 @@ def logout_everywhere(user=Depends(current_user), audit=audited("session.sign_ou
 
 @router.get("/api/auth/me")
 def me(user=Depends(current_user)):
-    """Who's signed in, and where their workspace is in its life (lifecycle_store)."""
+    return _shown(public_user(user))
+
+
+def _shown(user):
+    """The user as the site gets it: with where their workspace is in its life
+    (lifecycle_store: being deleted shows a banner)."""
     st = lifecycle_store.state(user["workspace"])
-    return {**public_user(user), "workspace_status": st["status"],
-            "deleting_at": st["deleting_at"]}
+    return {**user, "workspace_status": st["status"], "deleting_at": st["deleting_at"]}

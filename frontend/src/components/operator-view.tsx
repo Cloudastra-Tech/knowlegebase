@@ -174,7 +174,7 @@ function WorkspaceRow({
           <p className="truncate text-xs text-muted-foreground">
             {ws.slug} · created {timeAgo(ws.created_at)}
             {ws.deleting_at
-              ? ` · purged ${new Date(ws.deleting_at * 1000).toLocaleDateString()}`
+              ? ` · to be purged ${new Date(ws.deleting_at * 1000).toLocaleDateString()}`
               : ""}
           </p>
         </div>
