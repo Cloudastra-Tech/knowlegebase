@@ -1,0 +1,218 @@
+{
+ "_source": [
+  "https://coda.io/apis/v1/openapi.json getDoc (id, name, owner, updatedAt, browserLink); listPages (items[] {id, name, contentType canvas | embed | syncPage, updatedAt, browserLink}; nextPageToken)",
+  "getPermissions (items[] {principal {type email | domain | anyone | group | workspace, email, domain}, access readonly | write | comment | none})",
+  "beginPageContentExport (POST {outputFormat: markdown} -> 202 {id, status, href}); getPageContentExportStatus ({status inProgress | failed | complete, downloadLink})"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "AbC1",
+     "type": "doc",
+     "name": "Team handbook",
+     "owner": "Owner@acme.example",
+     "updatedAt": "2026-10-10T10:00:00.000Z",
+     "browserLink": "https://coda.io/d/_dAbC1"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/acl/permissions"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "items": [
+      {
+       "id": "p1",
+       "access": "readonly",
+       "principal": {
+        "type": "email",
+        "email": "Ann@acme.example"
+       }
+      },
+      {
+       "id": "p2",
+       "access": "write",
+       "principal": {
+        "type": "domain",
+        "domain": "acme.example"
+       }
+      },
+      {
+       "id": "p3",
+       "access": "readonly",
+       "principal": {
+        "type": "group",
+        "groupId": "grp-1",
+        "groupName": "Sales"
+       }
+      },
+      {
+       "id": "p4",
+       "access": "none",
+       "principal": {
+        "type": "email",
+        "email": "gone@acme.example"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "items": [
+      {
+       "id": "canvas-1",
+       "name": "Leave",
+       "contentType": "canvas",
+       "updatedAt": "2026-10-10T09:00:00.000Z",
+       "browserLink": "https://coda.io/d/_dAbC1/Leave_su1"
+      },
+      {
+       "id": "canvas-2",
+       "name": "Travel",
+       "contentType": "canvas",
+       "updatedAt": "2026-10-09T09:00:00.000Z",
+       "browserLink": "https://coda.io/d/_dAbC1/Travel_su2"
+      }
+     ],
+     "nextPageToken": "pg-2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-1/export",
+    "json": {
+     "outputFormat": "markdown"
+    }
+   },
+   "response": {
+    "status": 202,
+    "json": {
+     "id": "req-canvas-1",
+     "status": "inProgress",
+     "href": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-1/export"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-1/export/req-canvas-1"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "req-canvas-1",
+     "status": "inProgress"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-1/export/req-canvas-1"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "req-canvas-1",
+     "status": "complete",
+     "downloadLink": "https://docs.superhuman.com/blobs/DOC_EXPORT_RENDERING/req-canvas-1"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/blobs/DOC_EXPORT_RENDERING/req-canvas-1"
+   },
+   "response": {
+    "status": 200,
+    "text": "# Leave\n\nEveryone gets **25 days**."
+   }
+  },
+  {
+   "request": {
+    "method": "POST",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-2/export",
+    "json": {
+     "outputFormat": "markdown"
+    }
+   },
+   "response": {
+    "status": 202,
+    "json": {
+     "id": "req-canvas-2",
+     "status": "inProgress",
+     "href": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-2/export"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages/canvas-2/export/req-canvas-2"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "id": "req-canvas-2",
+     "status": "complete",
+     "downloadLink": "https://docs.superhuman.com/blobs/DOC_EXPORT_RENDERING/req-canvas-2"
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/blobs/DOC_EXPORT_RENDERING/req-canvas-2"
+   },
+   "response": {
+    "status": 200,
+    "text": "# Travel\n\nBook through the portal."
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://docs.superhuman.com/apis/v1/docs/AbC1/pages",
+    "params": {
+     "pageToken": "pg-2"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "items": [
+      {
+       "id": "canvas-3",
+       "name": "Embedded map",
+       "contentType": "embed",
+       "updatedAt": "2026-10-09T09:00:00.000Z",
+       "browserLink": "https://coda.io/d/_dAbC1/Map_su3"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

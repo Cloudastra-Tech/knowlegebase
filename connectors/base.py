@@ -76,6 +76,14 @@ class MissingScope(ConnectorError):
     retry = False
 
 
+class ProtectedApi(ConnectorError):
+    """Microsoft Graph refused a Teams message API because the app hasn't been
+    approved for Teams' PROTECTED APIs (a request Microsoft reviews, per app):
+    nothing an admin of the workspace can change by reconnecting."""
+    code = "protected_api"
+    retry = False
+
+
 class ConnectRefused(ConnectorError):
     """finish_connect: connecting can't finish, for a reason the Integrations
     screen explains (`reason` is the callback's error code: wrong_account,
@@ -115,6 +123,9 @@ ERRORS = {
     "not_found": "Something picked to sync no longer exists. Check what it syncs.",
     "missing_scope": "The app is missing a permission it needs. Reconnect and approve every "
                      "permission it asks for.",
+    "protected_api": "Microsoft hasn't approved this app for Teams' protected APIs (channel "
+                     "messages) yet. The server's operator has to request access from "
+                     "Microsoft; the sync waits until then.",
     "mass_delete": "This sync would remove a large share of the synced items, so nothing was "
                    "removed. Confirm to remove them, or check the connection.",
     "unknown": "The last sync failed. It will be tried again; tell your admin if this stays.",
@@ -130,6 +141,19 @@ def message(code):
     """The plain-language message for a code; anything else is "unknown"'s (a
     connection whose last_error still holds raw text from before codes existed)."""
     return ERRORS.get(code or "", ERRORS["unknown"])
+
+
+# ---- Personal connections ------------------------------------------------------------
+# A PERSONAL connector (Gmail, Google Calendar) is connected by each member for
+# themselves: its connection's key is "<provider>~<hash of their username>"
+# (connectors/registry.py personal_key), and everything it syncs is for that
+# member alone (kb/services/permissions.py personal_acl).
+PERSONAL_MARK = "~"
+
+
+def is_personal(key):
+    """Is this a personal connection's key (or a doc key's provider part)?"""
+    return PERSONAL_MARK in (key or "")
 
 
 # ---- What a connector yields -------------------------------------------------------
@@ -238,6 +262,7 @@ class Connector:
     CALLBACK = ""                  # the callback path's provider, if it isn't this one
                                    # (Atlassian apps have one callback URL: Jira uses
                                    # Confluence's)
+    PERSONAL = False               # each member connects their own (see is_personal)
 
     def configured(self):
         """Can a workspace connect it on this server?"""
@@ -312,3 +337,8 @@ class Connector:
 
     def disconnect(self, workspace):
         """Revoke what can be revoked at the provider. Our side is removed by the caller."""
+
+    def revoke(self, workspace, key):
+        """disconnect() for the connection `key` (a personal connector's key holds
+        its member: connectors/registry.py personal_key)."""
+        return self.disconnect(workspace)

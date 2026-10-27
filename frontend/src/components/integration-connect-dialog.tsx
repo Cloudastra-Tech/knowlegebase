@@ -96,6 +96,15 @@ const TOKEN_COPY: Record<
     cloudflare: false,
     or: "or use a private app's token",
   },
+  coda: {
+    description:
+      "Read-only. Create an API token in Coda (Account settings → API settings → Generate API token; a read-only one is enough). It is stored encrypted and used only to sync the docs you pick.",
+    address: null,
+    placeholder: "",
+    token: "API token",
+    tokenHint: "Only docs this account has opened can be picked.",
+    cloudflare: false,
+  },
   hubspot: {
     description:
       "Read-only. Create a private app in HubSpot (Settings → Integrations → Private apps) with the cms.knowledge_base.articles.read scope, then paste its access token. It is stored encrypted.",

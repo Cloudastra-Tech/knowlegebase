@@ -23,6 +23,7 @@ DELETE /api/docs/{access}/{name} delete_doc require_hr,audited
 DELETE /api/drafts/{draft_id} delete_draft require_hr,current_viewer,audited
 DELETE /api/integrations/{provider} integration_disconnect require_hr,audited
 DELETE /api/me/api-keys/{key_id} revoke_my_key current_user,audited
+DELETE /api/me/integrations/{provider} my_integration_disconnect current_user,audited
 DELETE /api/messages/{mid}/feedback remove_feedback current_user,current_viewer,audited
 DELETE /api/onboarding/sample remove_sample_docs require_hr,audited
 DELETE /api/prompts/{prompt_id} delete_prompt current_user,current_role,audited
@@ -107,6 +108,8 @@ GET    /api/integrations/{provider}/containers integration_containers require_hr
 GET    /api/integrations/{provider}/runs integration_runs require_hr
 GET    /api/knowledge knowledge current_user,current_role,current_viewer
 GET    /api/me/api-keys my_keys current_user
+GET    /api/me/integrations list_my_integrations current_user
+GET    /api/me/integrations/{provider}/containers my_integration_containers current_user
 GET    /api/messages/{mid}/markdown answer_markdown current_user,current_viewer
 GET    /api/onboarding onboarding_view current_user,current_role,current_viewer
 GET    /api/operator/alerts operator_alerts require_operator
@@ -220,6 +223,8 @@ POST   /api/integrations/{provider}/permissions/sync integration_permissions_syn
 POST   /api/integrations/{provider}/setup integration_setup require_hr,audited
 POST   /api/integrations/{provider}/sync integration_sync require_hr,audited
 POST   /api/me/api-keys create_my_key current_user,audited
+POST   /api/me/integrations/{provider}/connect my_integration_connect current_user,audited
+POST   /api/me/integrations/{provider}/sync my_integration_sync current_user,audited
 POST   /api/onboarding/sample add_sample_docs require_hr,audited
 POST   /api/operator/alerts/{alert_id}/acknowledge operator_acknowledge_alert require_operator,audited
 POST   /api/operator/auth/exchange operator_exchange audited
@@ -277,6 +282,7 @@ PUT    /api/docs/{access}/{name}/acl set_doc_acl require_hr,audited
 PUT    /api/integrations/{provider}/access integration_access require_hr,audited
 PUT    /api/integrations/{provider}/containers integration_set_containers require_hr,audited
 PUT    /api/integrations/{provider}/policy integration_policy require_hr,audited
+PUT    /api/me/integrations/{provider}/containers my_integration_set_containers current_user,audited
 PUT    /api/messages/{mid}/feedback give_feedback current_user,current_viewer,audited
 PUT    /api/onboarding/dismissed dismiss_checklist require_admin,audited
 PUT    /api/operator/workspaces/{ws}/spend-caps operator_spend_caps require_operator,audited

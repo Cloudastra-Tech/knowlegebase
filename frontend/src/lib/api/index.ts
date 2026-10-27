@@ -16,6 +16,7 @@ import { groupsApi } from "@/lib/api/groups"
 import { insightsApi } from "@/lib/api/insights"
 import { integrationsApi } from "@/lib/api/integrations"
 import { membersApi } from "@/lib/api/members"
+import { myIntegrationsApi } from "@/lib/api/my-integrations"
 import { onboardingApi } from "@/lib/api/onboarding"
 import { signInSettingsApi } from "@/lib/api/sign-in-settings"
 import { slackApi } from "@/lib/api/slack"
@@ -48,7 +49,13 @@ export {
 } from "@/lib/api/client"
 export { m365StartUrl, signupStartUrl, ssoStartUrl } from "@/lib/api/auth"
 
-export const api = { ...authApi, ...chatApi, ...docsApi, ...integrationsApi }
+export const api = {
+  ...authApi,
+  ...chatApi,
+  ...docsApi,
+  ...integrationsApi,
+  ...myIntegrationsApi,
+}
 
 // Sign-in settings, members, invites and the audit log (admin only).
 export const signIn = { ...signInSettingsApi, ...membersApi, ...auditApi }

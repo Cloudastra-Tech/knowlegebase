@@ -200,6 +200,10 @@ def doc_meta(docs_folder, key, connector_access, doc_info=None, doc_acls=None):
         meta.update(title=os.path.basename(key),
                     provider=SAMPLES if key.startswith(SAMPLE_FOLDER + "/") else UPLOADS)
     acl = (doc_acls or {}).get(key)
+    if not acl and provider and "~" in provider:
+        # A member's own connection (connectors/base.py is_personal) whose owner
+        # isn't known here: no one's, never its level's.
+        acl = [access.NOBODY]
     meta["acl"] = access.clean_acl(acl) if acl else access.level_acl(level)
     meta["access"] = access.level_of_acl(meta["acl"])
     return meta

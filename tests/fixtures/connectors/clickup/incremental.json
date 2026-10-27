@@ -1,0 +1,250 @@
+{
+ "_source": [
+  "https://developer.clickup.com/reference/getauthorizedteams (teams[] {id, name})",
+  "https://developer.clickup.com/reference/getspaces (spaces[] {id, name, private, members[] {user {email}}})",
+  "https://developer.clickup.com/reference/getfolders (folders[] {id, name, lists[]})",
+  "https://developer.clickup.com/reference/getfolderlesslists (lists[] {id, name})",
+  "https://developer.clickup.com/reference/getlistmembers (members[] {email})",
+  "https://developer.clickup.com/reference/getfilteredteamtasks (page, list_ids[], date_updated_gt ms, include_closed, subtasks, include_markdown_description; tasks[])",
+  "https://developer.clickup.com/reference/gettaskcomments (comments[] {id, comment_text, user.username, date ms})",
+  "https://developer.clickup.com/reference/searchdocspublic (docs[] {id, name, parent {id, type 4 space | 5 folder | 6 list | 7 everything}, date_updated, deleted, archived}; next_cursor)",
+  "https://developer.clickup.com/reference/getdocpagespublic (content_format=text/md; [{id, name, content, pages[]}])"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/team"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "teams": [
+      {
+       "id": "900",
+       "name": "Acme"
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/team/900/space"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "spaces": [
+      {
+       "id": "s1",
+       "name": "Engineering",
+       "private": false,
+       "members": []
+      },
+      {
+       "id": "s2",
+       "name": "People",
+       "private": true,
+       "members": [
+        {
+         "user": {
+          "email": "HR@acme.example"
+         }
+        },
+        {
+         "user": {
+          "email": "ann@acme.example"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/space/s1/folder"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "folders": [
+      {
+       "id": "f1",
+       "name": "Runbooks",
+       "lists": [
+        {
+         "id": "l1",
+         "name": "On-call"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/space/s1/list"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "lists": [
+      {
+       "id": "l2",
+       "name": "Backlog"
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/space/s2/folder"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "folders": []
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/space/s2/list"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "lists": [
+      {
+       "id": "l3",
+       "name": "Policies"
+      }
+     ]
+    }
+   },
+   "repeat": true
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/team/900/task",
+    "params": {
+     "page": "0",
+     "list_ids[]": "l1",
+     "date_updated_gt~": "1"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "tasks": [
+      {
+       "id": "86a1",
+       "name": "Restart the queue",
+       "markdown_description": "Run `make restart-all`.",
+       "status": {
+        "status": "open"
+       },
+       "list": {
+        "id": "l1",
+        "name": "On-call"
+       },
+       "folder": {
+        "id": "f1",
+        "name": "Runbooks"
+       },
+       "assignees": [
+        {
+         "username": "Ann"
+        }
+       ],
+       "date_updated": "1760000500000",
+       "date_created": "1759000000000",
+       "url": "https://app.clickup.com/t/86a1"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/list/l1/member"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "members": [
+      {
+       "id": 1,
+       "email": "ann@acme.example"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v2/task/86a1/comment"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "comments": []
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://api.clickup.com/api/v3/workspaces/900/docs"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "docs": [
+      {
+       "id": "d1",
+       "name": "On-call guide",
+       "parent": {
+        "id": "l1",
+        "type": 6
+       },
+       "date_updated": 1760000000000,
+       "deleted": false,
+       "archived": false
+      },
+      {
+       "id": "d3",
+       "name": "Engineering wiki",
+       "parent": {
+        "id": "f1",
+        "type": 5
+       },
+       "date_updated": 1760000000000,
+       "deleted": true,
+       "archived": false
+      }
+     ],
+     "next_cursor": null
+    }
+   }
+  }
+ ]
+}

@@ -122,7 +122,7 @@ def _integration_info(ws, c, role):
             # Who may ask about its files (kb/services/permissions.py), and the
             # policies it may have (source: only when it reads the source's permissions).
             "policy": integrations_store.policy_of(row),
-            "policies": list(permissions.policies(provider)),
+            "policies": list(permissions.policies(provider, row)),
             "containers": settings.get(c.SETTINGS_KEY) or [],
             "held_deletes": state.get("pending_deletes") or 0,
             "last_run": _run_summary(last)}
@@ -213,18 +213,22 @@ def integration_callback(provider: str, request: Request, state: str = "", code:
     """The provider sends the browser back here. The one-time `state` ties it to the
     workspace and user who clicked Connect (a redirect carries no session header).
     A connector may need one more trip through the provider (SharePoint: sign-in,
-    then the tenant admin's consent): it gets a new one-time state and goes on."""
+    then the tenant admin's consent): it gets a new one-time state and goes on.
+    A member's own connection (Gmail, Calendar: kb/routers/my_integrations.py)
+    comes back here too, its state holding its key; it returns to My connections."""
     pending = kb.state.oauth_states.pop(state, None)
-    c = registry.get((pending or {}).get("provider") or "")
+    key = (pending or {}).get("provider") or ""
+    c = registry.connector_of(key)
     if (not pending or not c or pending["expires"] < time.time()
             or (c.CALLBACK or c.PROVIDER) != provider):
         return RedirectResponse("/#integrations?error=expired")
     provider = c.PROVIDER                  # the connector the state was made for
+    screen = "connections" if c.PERSONAL else "integrations"
     step = pending.get("step")
     if not error:
         code = c.callback_code(dict(request.query_params), step)
     if error or not code:
-        return RedirectResponse("/#integrations?error="
+        return RedirectResponse(f"/#{screen}?error="
                                 + CALLBACK_ERRORS.get(error, "cancelled" if not error else
                                                       "connect_failed"))
     ws = pending["workspace"]
@@ -241,15 +245,16 @@ def integration_callback(provider: str, request: Request, state: str = "", code:
                     ws, type(e).__name__, exc_info=not isinstance(e, base.ConnectorError))
         reason = (getattr(e, "reason", None)
                   or ("no_refresh_token" if "refresh token" in str(e) else "connect_failed"))
-        return RedirectResponse(f"/#integrations?error={reason}")
-    row = integrations_store.get(ws, provider) or {}
+        return RedirectResponse(f"/#{screen}?error={reason}")
+    row = integrations_store.get(ws, key) or {}
+    # (A member's own mailbox address stays out of the workspace's audit log.)
     kb.audit.record(request, ws, "integration.connect", pending["user"], "integration", provider,
-                    {"account": row.get("account")})
-    if sync.ready_to_sync(ws, provider):
-        sync.start_sync(ws, provider)
-        return RedirectResponse(f"/#integrations?connected={provider}")
-    # Nothing is synced until the admin picks what to sync.
-    return RedirectResponse(f"/#integrations?connected={provider}&choose=1")
+                    {"personal": True} if c.PERSONAL else {"account": row.get("account")})
+    if sync.ready_to_sync(ws, key):
+        sync.start_sync(ws, key)
+        return RedirectResponse(f"/#{screen}?connected={provider}")
+    # Nothing is synced until the admin (or the member) picks what to sync.
+    return RedirectResponse(f"/#{screen}?connected={provider}&choose=1")
 
 
 class SetupIn(BaseModel):
@@ -440,7 +445,7 @@ def integration_policy(provider: str, body: PolicyIn, user=Depends(require_hr),
     from kb.services import indexing
     ws = ws_of(user)
     c, row = _connected(ws, provider)
-    if body.policy not in permissions.policies(provider):
+    if body.policy not in permissions.policies(provider, row):
         raise HTTPException(400, f"{c.LABEL} doesn't read who may see each item at the "
                                  "source, so it can't follow the source's permissions.")
     if body.policy != "restricted" and (row.get("settings") or {}).get("access_lock"):
