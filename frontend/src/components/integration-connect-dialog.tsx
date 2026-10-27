@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { toast } from "sonner"
-import { ChevronDown, Loader2 } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -266,10 +266,10 @@ export function IntegrationConnectDialog({
                   type="button"
                   variant="outline"
                   onClick={signIn}
+                  loading={saving === "sign_in"}
                   disabled={saving !== false}
                   className="w-full"
                 >
-                  {saving === "sign_in" && <Loader2 className="animate-spin" />}
                   Sign in with {item.name}
                 </Button>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -369,8 +369,7 @@ export function IntegrationConnectDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving !== false}>
-              {saving === "form" && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving === "form"} disabled={saving !== false}>
               {website ? "Add website" : "Connect"}
             </Button>
           </DialogFooter>

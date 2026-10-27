@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router"
 
 import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
 import { KnowledgeView } from "@/components/knowledge-view"
@@ -78,7 +79,13 @@ describe("source rules on the Knowledge screen", () => {
         return rules[0]
       },
     })
-    render(withProviders(<KnowledgeView />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Source rules for 2021 policy.txt" }))
     const block = await screen.findAllByRole("menuitem", { name: "Block from answers" })
@@ -98,7 +105,13 @@ describe("source rules on the Knowledge screen", () => {
   it("shows no rule controls to someone viewing as public", async () => {
     session.setRole("public")
     mockApi({ "GET /api/knowledge": { workspace: "acme", items: [ITEM], outline: false } })
-    render(withProviders(<KnowledgeView />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
     expect(await screen.findByText("2021 policy.txt")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Source rules for/ })).not.toBeInTheDocument()
   })

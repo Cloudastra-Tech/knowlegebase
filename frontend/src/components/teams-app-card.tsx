@@ -5,7 +5,6 @@ import {
   ChevronDown,
   Download,
   ExternalLink,
-  Loader2,
   Lock,
   MessagesSquare,
   Settings2,
@@ -24,7 +23,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
+import { Panel } from "@/components/glass/panel"
+import { StatusDot } from "@/components/glass/status-dot"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -42,7 +42,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { teams, type TeamsApp, type TeamsMode, type TeamsStatus } from "@/lib/api"
 import { queries } from "@/lib/queries"
-import { timeAgo } from "@/lib/utils"
+import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
@@ -54,22 +54,12 @@ const STATUS: Record<TeamsStatus, { label: string; tone: "on" | "wait" | "off" }
 
 function StatusBadge({ status }: { status: TeamsStatus }) {
   const { label, tone } = STATUS[status]
-  if (tone === "on")
-    return (
-      <Badge className="gap-1.5 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-        <span className="size-1.5 rounded-full bg-emerald-500" /> {label}
-      </Badge>
-    )
-  if (tone === "wait")
-    return (
-      <Badge variant="secondary" className="gap-1.5 font-normal">
-        <span className="size-1.5 rounded-full bg-amber-500" /> {label}
-      </Badge>
-    )
   return (
-    <Badge variant="outline" className="font-normal text-muted-foreground">
-      {label}
-    </Badge>
+    <StatusDot
+      status={tone === "on" ? "live" : tone === "wait" ? "warning" : "off"}
+      label={label}
+      className={cn("shrink-0 whitespace-nowrap", tone === "off" && "text-muted-foreground")}
+    />
   )
 }
 
@@ -77,7 +67,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-medium">{value}</p>
+      <p className="truncate font-mono text-sm tabular-nums">{value}</p>
     </div>
   )
 }
@@ -254,8 +244,7 @@ function BotDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Save
             </Button>
           </DialogFooter>
@@ -291,7 +280,7 @@ export function TeamsAppCard() {
   if (isError) return null // not for this role
   const set = app && app.status !== "not_configured"
   return (
-    <div className="flex min-w-0 flex-col rounded-2xl border border-border/70 bg-background p-5">
+    <Panel className="flex min-w-0 flex-col">
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
           <MessagesSquare className="size-5" />
@@ -446,6 +435,6 @@ export function TeamsAppCard() {
           )}
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
