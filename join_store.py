@@ -231,8 +231,11 @@ def approve(workspace, request_id, role, by, now=None):
                            (request_id, workspace, now)).fetchone()
         if not row:
             raise RequestClosed("gone")
-        member = conn.execute("SELECT workspace FROM members WHERE username = ?",
-                              (row["email"],)).fetchone()
+        # Every workspace's members (db.platform): an admin's connection sees only
+        # their own, and the person may have joined another one meanwhile.
+        with members_store._platform_db() as everyone:
+            member = everyone.execute("SELECT workspace FROM members WHERE username = ?",
+                                      (row["email"],)).fetchone()
         if member and member["workspace"] != workspace:
             raise RequestClosed("taken")
         members_store._ensure_workspace(conn, workspace)

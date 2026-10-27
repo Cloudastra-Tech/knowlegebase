@@ -217,12 +217,11 @@ def remove_sample(ws):
 def forget_chunks(ws, keys):
     """Delete the chunks of these documents from the index questions use, and make
     the workspace's agents load it again (their keyword index included)."""
-    import chromadb
+    import vector_store                                # Chroma or pgvector
     collection = indexing.current(ws)[0]
     try:
         with ingest.CHROMA_LOCK:
-            client = chromadb.PersistentClient(path=ingest.DB_FOLDER)
-        col = client.get_collection(collection)
+            col = vector_store.existing(ingest.DB_FOLDER, collection)
     except Exception as e:
         if type(e).__name__ in ("NotFoundError", "InvalidCollectionException", "ValueError"):
             return 0                                   # nothing indexed yet

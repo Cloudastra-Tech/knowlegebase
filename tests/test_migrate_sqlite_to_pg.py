@@ -60,6 +60,8 @@ def source(tmp_path):
                  (ws,))
     conn.execute("INSERT INTO workspace_keys (workspace, version, wrapped_dek, created_at) "
                  "VALUES (?, 1, ?, 3)", (ws, b"\x00\x01binary"))
+    # A plan the operator changed: SQLite's row replaces the one 0020 seeds in Postgres.
+    conn.execute("UPDATE plans SET seat_price = 999 WHERE id = 'starter'")
     # An id given out and deleted since: never handed out again.
     conn.execute("UPDATE sqlite_sequence SET seq = 41 WHERE name = 'audit_events'")
     conn.commit()
@@ -84,6 +86,7 @@ def test_every_table_is_copied_and_verified(source, target):
             "SELECT id FROM messages ORDER BY created_at, rowid")] == ["m-b", "m-a"]
         assert pg.execute("SELECT wrapped_dek FROM workspace_keys").fetchone()[0] == \
             b"\x00\x01binary"
+        assert pg.execute("SELECT seat_price FROM plans WHERE id = 'starter'").fetchone()[0] == 999
         # The chat index is Postgres's own now, and finds the copied row.
         assert pg.execute("SELECT message_id FROM conversation_search WHERE "
                           "tsv @@ to_tsquery('kb_search', 'refund:*')").fetchone()[0] == "m-b"

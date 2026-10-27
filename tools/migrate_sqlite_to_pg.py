@@ -14,6 +14,7 @@ python -m tools.migrate_sqlite_to_pg  —  copy a SQLite config/app.db into Post
 3. Every table is copied, in an order that satisfies the foreign keys, with
    COPY. A table already in Postgres is:
        empty                       copied
+       plans (SEEDED)              its migration's rows replaced by SQLite's
        the same rows (checksum)    left as it is: running this again is safe
        different rows              refused (nothing is changed), unless
                                    --overwrite, which empties every table first
@@ -45,6 +46,10 @@ import psycopg
 # SQLite's own tables, FTS5's shadow tables and Alembic's: not copied.
 SKIP_PREFIXES = ("sqlite_", "conversation_search_")
 SKIP = {"alembic_version"}
+# Tables a migration fills in a new database (0020's plans): Postgres has those
+# rows before anything is copied, and SQLite's (perhaps edited by the operator)
+# replace them.
+SEEDED = {"plans"}
 
 
 def _head():
@@ -223,6 +228,13 @@ def copy(sqlite_path, url, overwrite=False, verify_only=False, out=print):
                 report[table] = (len(source), len(target), _checksum(target) == want and
                                  len(target) == len(source))
                 continue
+            if target and table in SEEDED:
+                try:
+                    with pg.transaction():
+                        pg.execute(f'DELETE FROM "{table}"')
+                    target = []
+                except psycopg.errors.ForeignKeyViolation:
+                    pass                    # copied rows point at them: refused below
             if target:
                 pg.rollback()
                 raise SystemExit(f"{table}: Postgres already has {len(target)} different rows. "

@@ -26,6 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 import access
 import api_keys_store
+import db
 import groups_store
 import lifecycle_store
 import members_store
@@ -147,6 +148,7 @@ def api_key(scope):
                                 headers={"WWW-Authenticate": "Bearer"} if e.status == 401
                                 else None)
         logs.bind_user(principal.user)
+        db.set_tenant(principal.workspace)     # row-level security, as for a signed-in user
         key_limit(principal.key_id, principal.workspace)
         return principal
     return Depends(api_key)

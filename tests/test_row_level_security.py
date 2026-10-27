@@ -115,6 +115,28 @@ def test_a_signed_in_request_runs_as_its_workspace(monkeypatch):
     assert set(seen) <= {None, a}
 
 
+def test_an_api_key_request_runs_as_its_workspace(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import api
+    import api_keys_store
+    import db_pg
+    a, _ = two_workspaces()
+    _, key = api_keys_store.create(a, f"admin@{a}.example", "probe", ["docs:read"], "admin")
+    seen = []
+    checkout = db_pg.Database.checkout
+
+    def spy(self, workspace):
+        seen.append(workspace)
+        return checkout(self, workspace)
+
+    monkeypatch.setattr(db_pg.Database, "checkout", spy)
+    r = TestClient(api.app).get("/api/v1/documents", headers={"Authorization": f"Bearer {key}"})
+    assert r.status_code == 200, r.text
+    # The key was looked up as the platform; the rest ran as the tenant.
+    assert None in seen and a in seen and set(seen) <= {None, a}
+
+
 def test_a_workspaces_job_runs_as_that_tenant(jobs_paused, monkeypatch):
     import db_pg
     from kb import jobs
