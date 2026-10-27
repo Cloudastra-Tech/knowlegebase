@@ -4,6 +4,7 @@
 import { json, request, seg } from "@/lib/api/client"
 import type {
   GroupRule,
+  JoinPolicy,
   NewProvider,
   OidcConnectionInput,
   SamlConnectionInput,
@@ -25,6 +26,12 @@ export const signInSettingsApi = {
   newProvider: () => request<NewProvider>("/admin/sign-in/new-provider"),
   setPolicy: (require_sso: boolean) =>
     request<{ require_sso: boolean }>("/admin/sign-in/policy", json("PUT", { require_sso })),
+  // Who joins by signing in from a verified domain (join_store.py)
+  setJoining: (policy: JoinPolicy) =>
+    request<{ join_policy: JoinPolicy }>("/admin/sign-in/joining", json("PUT", { policy })),
+  // One domain's own policy; null goes back to the workspace's
+  setDomainJoining: (domain: string, policy: JoinPolicy | null) =>
+    request<SignInDomain>(`/admin/sign-in/domains/${seg(domain)}/joining`, json("PUT", { policy })),
   addDomain: (domain: string) =>
     request<SignInDomain>("/admin/sign-in/domains", json("POST", { domain })),
   verifyDomain: (domain: string) =>

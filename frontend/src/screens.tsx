@@ -71,6 +71,12 @@ const InviteAccept = lazy(() =>
 const SignupVerify = lazy(() =>
   import("@/components/signup-verify").then((m) => ({ default: m.SignupVerify })),
 )
+const JoinRequested = lazy(() =>
+  import("@/components/join-requested").then((m) => ({ default: m.JoinRequested })),
+)
+const ClaimWorkspace = lazy(() =>
+  import("@/components/claim-workspace").then((m) => ({ default: m.ClaimWorkspace })),
+)
 const DigestsView = lazy(() =>
   import("@/components/digests-view").then((m) => ({ default: m.DigestsView })),
 )
@@ -150,6 +156,32 @@ export function InvitePage() {
     <LazyPage fullScreen>
       <LoginPage onBack={() => navigate("/")}>
         <InviteAccept token={token} onJoined={(u, t) => signedIn(u, t)} />
+      </LoginPage>
+    </LazyPage>
+  )
+}
+
+// /join-requested: a sign-in that asked to join a workspace (its joining policy is
+// "ask an admin"). No session: they wait for an admin.
+export function JoinRequestedPage() {
+  const navigate = useNavigate()
+  return (
+    <LazyPage fullScreen>
+      <LoginPage onBack={() => navigate("/")}>
+        <JoinRequested />
+      </LoginPage>
+    </LazyPage>
+  )
+}
+
+// /claim (?error=...): claim a workspace nobody can administer, with an operator's
+// code and Google Workspace. Success comes back through /sso as its new admin.
+export function ClaimPage() {
+  const navigate = useNavigate()
+  return (
+    <LazyPage fullScreen>
+      <LoginPage onBack={() => navigate("/")}>
+        <ClaimWorkspace />
       </LoginPage>
     </LazyPage>
   )

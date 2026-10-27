@@ -1,7 +1,7 @@
-// The workspace's members and invites (admin only, /api/admin/members).
+// The workspace's members, invites and requests to join (admin only, /api/admin/members).
 
 import { json, request, seg } from "@/lib/api/client"
-import type { AccountRole, Invite, Member } from "@/lib/api/types"
+import type { AccountRole, Invite, JoinPolicy, JoinRequest, Member } from "@/lib/api/types"
 
 export const membersApi = {
   members: () => request<{ members: Member[] }>("/admin/members"),
@@ -25,4 +25,16 @@ export const membersApi = {
     request<Invite>(`/admin/members/invites/${id}/resend`, json("POST")),
   revokeInvite: (id: number) =>
     request<{ ok: boolean }>(`/admin/members/invites/${id}`, json("DELETE")),
+  // Requests to join (the 'request' joining policy), oldest first.
+  joinRequests: () =>
+    request<{
+      requests: JoinRequest[]
+      policy: JoinPolicy
+      request_days: number
+      deny_days: number
+    }>("/admin/members/requests"),
+  approveRequest: (id: number, role: AccountRole) =>
+    request<JoinRequest>(`/admin/members/requests/${id}/approve`, json("POST", { role })),
+  denyRequest: (id: number) =>
+    request<JoinRequest>(`/admin/members/requests/${id}/deny`, json("POST")),
 }

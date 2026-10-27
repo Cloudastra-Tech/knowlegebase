@@ -13,6 +13,7 @@ import urllib.parse
 
 import pytest
 
+import join_store
 import saml_sp
 
 pytestmark = pytest.mark.skipif(not saml_sp.xmlsec_binary(),
@@ -97,6 +98,7 @@ def client():
     members_store.set_password("saml-admin", "Admin", auth.hash_password("correct-horse"),
                                "samlco", "admin")
     members_store.add_verified_domain("samlco", "samlco.example")
+    join_store.set_workspace_policy("samlco", "auto")   # people join at their first sign-in
     return TestClient(api.app, follow_redirects=False)
 
 
@@ -628,3 +630,37 @@ def test_the_metadata_can_ask_to_be_fetched_sooner_but_not_constantly(idp):
     assert saml_sp.read_idp_metadata(idp.metadata())["refresh_within"] is None
     wait = saml_refresh.next_refresh(saml_sp.read_idp_metadata(with_cache("PT1S"))) - time.time()
     assert wait >= saml_refresh.SAML_REFRESH_CHECK_EVERY - 1
+
+
+# ---- The joining policy (join_store.py; the other sign-in paths: test_joining.py) ----------
+@pytest.mark.parametrize("policy", ["auto", "request", "invite_only"])
+def test_the_joining_policy_applies_to_saml_sign_ins(client, conn, idp, policy):
+    import members_store
+    email = f"new-{policy.replace('_', '-')}@samlco.example"
+    join_store.set_workspace_policy("samlco", policy)
+    try:
+        result = sign_in(client, conn, idp, email=email)
+    finally:
+        join_store.set_workspace_policy("samlco", "auto")
+    pending = [r["email"] for r in join_store.pending("samlco")]
+    if policy == "auto":
+        assert client.get("/api/auth/me", headers=result).json()["username"] == email
+    elif policy == "request":
+        assert result == "/#join-requested"
+        assert members_store.get(email) is None and email in pending
+    else:
+        assert result.startswith("/#login?error=invite_only&ref=")
+        assert members_store.get(email) is None and email not in pending
+
+
+def test_a_saml_sign_in_uses_up_a_pending_invite(client, conn, idp):
+    import invites_store
+    import members_store
+    invites_store.create("samlco", "invited@samlco.example", "hr", "saml-admin")
+    join_store.set_workspace_policy("samlco", "invite_only")
+    try:
+        headers = sign_in(client, conn, idp, email="invited@samlco.example")
+    finally:
+        join_store.set_workspace_policy("samlco", "auto")
+    assert client.get("/api/auth/me", headers=headers).json()["role"] == "hr"
+    assert members_store.get("invited@samlco.example")["override_role"] == "hr"

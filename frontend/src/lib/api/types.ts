@@ -68,6 +68,7 @@ export interface SignInDomain {
   verified_at: number | null
   txt_name: string | null // the DNS record that proves it (null for domains set by the server)
   txt_value: string | null
+  join_policy: JoinPolicy | null // its own joining policy; null: the workspace's
 }
 
 export type Protocol = "oidc" | "saml"
@@ -229,6 +230,24 @@ export interface SignInSettings {
   password_login: boolean // the server allows passwords at all
   role_source: string | null // the one provider whose groups set roles
   group_admin_days: number // admin from groups lasts this long without a sign-in (0: forever)
+  join_policy: JoinPolicy // what happens when someone new signs in from a verified domain
+}
+
+// Joining policy (join_store.py): someone new on a verified domain is added (auto),
+// asks an admin (request) or needs an invite or SCIM (invite_only).
+export type JoinPolicy = "auto" | "request" | "invite_only"
+
+// A request to join, waiting for an admin (GET /admin/members/requests).
+export interface JoinRequest {
+  id: number
+  email: string
+  name: string | null
+  provider: string | null // what they signed in with ("Google", a provider's name, ...)
+  status: "pending" | "approved" | "denied" | "expired"
+  created_at: number
+  last_seen_at: number // their latest sign-in while it waited
+  expires_at: number
+  notified: boolean // the admins were emailed about it
 }
 
 // ---- Provisioning (SCIM): an identity provider adds and removes members ----
@@ -289,6 +308,7 @@ export interface SsoTestResult {
   role_source?: RoleSource
   groups?: string[] | null // null: the provider doesn't set roles
   new_member?: boolean
+  join_policy?: JoinPolicy | null // what the joining policy does with someone new
   sets_roles?: boolean // the provider is the role source
   sent: Record<string, string>
 }

@@ -118,6 +118,30 @@ TEMPLATES = {
         '<p style="color:#71717a;font-size:13px">Or open this link: {link}<br>'
         "It expires on {expires}. If you didn't ask for this, ignore this email.</p>",
     ),
+    # Join requests (kb/services/joining.py): to the workspace's admins, and back to
+    # the person once an admin let them in.
+    "join_request": (
+        "{requester} asked to join {workspace_name}",
+        "{requester} ({email}) signed in with {provider} and asked to join the "
+        "{workspace_name} workspace of the Knowledge assistant.\n\n"
+        "Approve (and pick their role) or deny it under Access > Members:\n{link}\n\n"
+        "Requests nobody answers expire after {days} days.\n",
+        "<p><strong>{requester}</strong> ({email}) signed in with {provider} and asked to "
+        "join the <strong>{workspace_name}</strong> workspace of the Knowledge assistant.</p>"
+        '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
+        'background:#18181b;color:#fafafa;text-decoration:none">Review the request</a></p>'
+        '<p style="color:#71717a;font-size:13px">Approve it (and pick their role) or deny it '
+        "under Access &gt; Members. Requests nobody answers expire after {days} days.</p>",
+    ),
+    "join_approved": (
+        "You can now sign in to {workspace_name}",
+        "An admin approved your request to join the {workspace_name} workspace of the "
+        "Knowledge assistant.\n\nSign in the way you did before:\n{link}\n",
+        "<p>An admin approved your request to join the <strong>{workspace_name}</strong> "
+        "workspace of the Knowledge assistant.</p>"
+        '<p><a href="{link}" style="display:inline-block;padding:10px 16px;border-radius:10px;'
+        'background:#18181b;color:#fafafa;text-decoration:none">Sign in</a></p>',
+    ),
     "notice": (
         "{title}",
         "{body}\n",

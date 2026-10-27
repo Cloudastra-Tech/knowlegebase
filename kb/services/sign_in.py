@@ -27,7 +27,11 @@ log = logging.getLogger("uvicorn.error")
 
 
 def login_error(error, ref=None, status_code=307, tab="login"):
-    """Back to the sign-in page (or its Create a workspace tab) with what went wrong."""
+    """Back to the sign-in page (or its Create a workspace tab) with what went wrong.
+    A sign-in that ended in a join request (kb/services/joining.py) isn't an error:
+    it goes to its own "request sent" page, with no session."""
+    if error == "join_requested":
+        return RedirectResponse("/#join-requested", status_code=status_code)
     query = {"error": error, **({"ref": ref} if ref else {})}
     return RedirectResponse(f"/#{tab}?" + urllib.parse.urlencode(query), status_code=status_code)
 

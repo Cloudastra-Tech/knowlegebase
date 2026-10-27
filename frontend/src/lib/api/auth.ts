@@ -63,4 +63,8 @@ export const authApi = {
     request<InviteInfo>("/auth/invite/lookup", json("POST", { token })),
   inviteAccept: (token: string, name: string, password: string) =>
     request<InviteAccepted>("/auth/invite/accept", json("POST", { token, name, password })),
+  // Claiming a workspace nobody can administer: check the operator's code, then go
+  // to `url` (a full-page navigation to Google).
+  claimStart: (code: string) =>
+    request<{ domain: string; url: string }>("/auth/claim", json("POST", { code })),
 }

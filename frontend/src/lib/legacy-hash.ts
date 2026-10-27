@@ -3,6 +3,8 @@
 //   /#login?error=...         /#signup?error=...      a failed sign-in or sign-up
 //   /#sso?code=...&welcome=1  back from Google, Microsoft or a workspace's provider
 //   /#sso-test                the window of an admin's "Test sign-in"
+//   /#join-requested          a sign-in that asked to join a workspace (no session)
+//   /#claim?error=...         a failed claim of a workspace (kb/services/joining.py)
 //   /#integrations?connected=google_drive&choose=1, ?error=...   back from a connector
 // legacyRedirect() says where each one lives now; routes.tsx redirects there.
 
@@ -30,6 +32,10 @@ export function legacyRedirect(pathname: string, hash: string): LegacyRedirect |
       return { to: `/${name}${search}` }
     case "sso-test":
       return { to: "/sso-test" }
+    case "join-requested":
+      return { to: "/join-requested" }
+    case "claim":
+      return { to: `/claim${search}` }
     case "sso": {
       const params = new URLSearchParams(query)
       return {

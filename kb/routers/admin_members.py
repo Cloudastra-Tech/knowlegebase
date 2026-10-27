@@ -1,5 +1,6 @@
-"""Members (admin): everyone in the workspace, their role and access. Every
-change goes in the audit log (kb/audit.py). Invites: routers/invites.py."""
+"""Members (admin): everyone in the workspace, their role and access, and the
+requests to join it (join_store.py, kb/services/joining.py). Every change goes
+in the audit log (kb/audit.py). Invites: routers/invites.py."""
 
 import logging
 import os
@@ -7,12 +8,13 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+import join_store
 import mailer
 import members_store
 import sessions_store
 from kb.audit import audited
 from kb.deps import require_admin, ws_of
-from kb.services import webhooks
+from kb.services import joining, webhooks
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
@@ -107,3 +109,57 @@ def sign_out_member(username: str, user=Depends(require_admin),
     ended = sessions_store.delete_user(member["username"], member["workspace"])
     audit.record("member", member["username"], {"sessions_ended": ended}, user=user)
     return {"ok": True, "ended": ended}
+
+
+# ---- Requests to join (the joining policy's 'request', Access > Sign-in) ------------------
+class ApproveIn(BaseModel):
+    role: str = Field(default="public", pattern=r"^(public|hr|admin)$")
+
+
+def _request_out(r):
+    return {"id": r["id"], "email": r["email"], "name": r["name"], "provider": r["provider"],
+            "status": r["status"], "created_at": r["created_at"],
+            "last_seen_at": r["last_seen_at"], "expires_at": r["expires_at"],
+            "notified": r["notified_at"] is not None}
+
+
+@router.get("/api/admin/members/requests")
+def list_join_requests(user=Depends(require_admin)):
+    """Pending requests, oldest first (overdue ones are expired first)."""
+    ws = ws_of(user)
+    joining.expire(ws)
+    return {"requests": [_request_out(r) for r in join_store.pending(ws)],
+            "policy": join_store.workspace_policy(ws),
+            "request_days": join_store.request_days(), "deny_days": join_store.deny_days()}
+
+
+_CLOSED = {"gone": (404, "This request was already answered, or it expired."),
+           "taken": (409, "That address joined another workspace meanwhile.")}
+
+
+@router.post("/api/admin/members/requests/{request_id}/approve")
+def approve_join_request(request_id: int, body: ApproveIn, user=Depends(require_admin),
+                         audit=audited("join_request.approve")):
+    """Let them in with the role picked; their next sign-in works."""
+    ws = ws_of(user)
+    try:
+        r = join_store.approve(ws, request_id, body.role, user["username"])
+    except join_store.RequestClosed as e:
+        raise HTTPException(*_CLOSED[e.reason])
+    audit.record("join_request", request_id, {"email": r["email"], "role": body.role},
+                 user=user)
+    joining.approved(ws, r)
+    return _request_out(r)
+
+
+@router.post("/api/admin/members/requests/{request_id}/deny")
+def deny_join_request(request_id: int, user=Depends(require_admin),
+                      audit=audited("join_request.deny")):
+    """Turn it down; they can't ask again for JOIN_DENY_DAYS."""
+    ws = ws_of(user)
+    try:
+        r = join_store.deny(ws, request_id, user["username"])
+    except join_store.RequestClosed as e:
+        raise HTTPException(*_CLOSED[e.reason])
+    audit.record("join_request", request_id, {"email": r["email"]}, user=user)
+    return _request_out(r)

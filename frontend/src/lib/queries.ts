@@ -104,6 +104,8 @@ export const queries = {
   // The workspace's lifecycle, exports, support access and audit retention (admin).
   workspace: () => queryOptions({ queryKey: ["workspace"], queryFn: workspace.settings }),
   invites: () => queryOptions({ queryKey: ["invites"], queryFn: signIn.invites }),
+  // Requests to join waiting for an admin (the 'request' joining policy).
+  joinRequests: () => queryOptions({ queryKey: ["join-requests"], queryFn: signIn.joinRequests }),
   // Access groups and their members (admins), and who a document can be shared with.
   groups: () => queryOptions({ queryKey: ["groups"], queryFn: groups.groups }),
   principals: () => queryOptions({ queryKey: ["principals"], queryFn: groups.principals }),

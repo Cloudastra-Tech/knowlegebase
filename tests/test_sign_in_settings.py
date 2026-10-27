@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+import join_store
 import url_guard
 
 ISSUER = "https://idp.acme.example/realms/acme"
@@ -272,6 +273,7 @@ def acme_sso(client, acme):
     import members_store
     import sso_setup
     members_store.add_verified_domain("acme", "acme.example")
+    join_store.set_workspace_policy("acme", "auto")   # people join at their first sign-in
     return members_store.create_connection("acme", "oidc", "Acme SSO", ISSUER, "kb",
                                            {"client_secret": "s3cret-value"},
                                            {k: DOC[k] for k in sso_setup.METADATA_KEYS
@@ -343,6 +345,7 @@ def test_a_workspace_provider_signs_people_in_to_that_workspace(client, idp, acm
 def test_a_workspace_provider_cant_vouch_for_anyone_else(client, idp, acme_sso, claims, error):
     import members_store
     members_store.add_verified_domain("globex", "globex.example")
+    join_store.set_workspace_policy("globex", "auto")   # people join at their first sign-in
     assert error_of(callback(client, idp, acme_sso, claims)) == error
 
 
@@ -623,6 +626,7 @@ def test_sso_can_only_be_required_once_someone_could_sign_in(client):
     r = client.put("/api/admin/sign-in/policy", headers=lonely, json={"require_sso": True})
     assert r.status_code == 400 and "Verify a domain" in r.json()["detail"]
     members_store.add_verified_domain("lonely", "lonely.example")
+    join_store.set_workspace_policy("lonely", "auto")   # people join at their first sign-in
     r = client.put("/api/admin/sign-in/policy", headers=lonely, json={"require_sso": True})
     assert r.status_code == 400 and "provider" in r.json()["detail"]
 
@@ -742,6 +746,7 @@ def test_an_admin_cant_lock_themselves_or_everyone_out(client, monkeypatch):
     members_store.set_password("solo-admin", "Solo", auth.hash_password("correct-horse"),
                                "solo", "admin")
     members_store.add_verified_domain("solo", "solo.example")
+    join_store.set_workspace_policy("solo", "auto")   # people join at their first sign-in
     conn = members_store.create_connection(
         "solo", "oidc", "Solo SSO", ISSUER, "kb", {"client_secret": "s"},
         {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test")
@@ -926,6 +931,7 @@ def workspace_with_providers(slug, *labels, password_admin=True):
         members_store.set_password(f"{slug}-admin", "Admin", auth.hash_password("correct-horse"),
                                    slug, "admin")
     members_store.add_verified_domain(slug, f"{slug}.example")
+    join_store.set_workspace_policy(slug, "auto")   # people join at their first sign-in
     return [members_store.create_connection(
         slug, "oidc", label, ISSUER, "kb", {"client_secret": "s"},
         {k: DOC[k] for k in sso_setup.METADATA_KEYS if k in DOC}, "test") for label in labels]

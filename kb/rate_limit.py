@@ -16,7 +16,7 @@ from kb.deps import ws_of
 from kb.settings import env_int
 
 LIMITS = {"login": 30, "discover": 30, "sso_start": 60, "saml_acs": 60, "dns_check": 20,
-          "signup": 10, "invite": 30, "extension_exchange": 20, "unsubscribe": 30}
+          "signup": 10, "claim": 10, "invite": 30, "extension_exchange": 20, "unsubscribe": 30}
 ALL_ADDRESSES = 20                       # x the per-address limit, per minute
 # Limits on what a signed-in person can make the server do (it costs OpenAI calls
 # or indexing time), per minute: (per person, per workspace). Each can be set in

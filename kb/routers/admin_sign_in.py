@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import auth
+import join_store
 import members_store
 import saml_sp
 import sso
@@ -54,7 +55,8 @@ class ConnectionPatch(BaseModel):
 def _domain_out(row):
     name, value = members_store.txt_record(row) if row["verify_token"] else (None, None)
     return {"domain": row["domain"], "verified": row["verified_at"] is not None,
-            "verified_at": row["verified_at"], "txt_name": name, "txt_value": value}
+            "verified_at": row["verified_at"], "txt_name": name, "txt_value": value,
+            "join_policy": row.get("join_policy")}      # None: the workspace's
 
 
 class SamlConnectionIn(BaseModel):
@@ -189,6 +191,7 @@ def sign_in_settings(request: Request, user=Depends(require_admin)):
     return {"domains": [_domain_out(d) for d in members_store.list_domains(ws)],
             "connections": [_connection_out(request, c) for c in connections],
             "require_sso": members_store.requires_sso(ws),
+            "join_policy": join_store.workspace_policy(ws),
             "role_source": members_store.role_source(ws),
             "group_admin_days": members_store.group_admin_days(ws),
             "password_login": auth.password_login_on(),
@@ -225,6 +228,36 @@ def set_policy(body: PolicyIn, user=Depends(require_admin), audit=audited("sign_
     members_store.set_requires_sso(ws, body.require_sso)
     audit.record("workspace", ws, {"require_sso": body.require_sso}, user=user)
     return {"require_sso": body.require_sso}
+
+
+class JoiningIn(BaseModel):
+    policy: str = Field(pattern=r"^(auto|request|invite_only)$")
+
+
+@router.put("/api/admin/sign-in/joining")
+def set_joining(body: JoiningIn, user=Depends(require_admin),
+                audit=audited("sign_in.joining")):
+    """Who joins by signing in from a verified domain: auto, request or invite_only."""
+    ws = ws_of(user)
+    before = join_store.workspace_policy(ws)
+    join_store.set_workspace_policy(ws, body.policy)
+    audit.record("workspace", ws, {"join_policy": body.policy, "was": before}, user=user)
+    return {"join_policy": body.policy}
+
+
+class DomainJoiningIn(BaseModel):
+    policy: str | None = Field(default=None, pattern=r"^(auto|request|invite_only)$")
+
+
+@router.put("/api/admin/sign-in/domains/{domain}/joining")
+def set_domain_joining(domain: str, body: DomainJoiningIn, user=Depends(require_admin),
+                       audit=audited("domain.joining")):
+    """One domain's own joining policy (null: the workspace's)."""
+    ws = ws_of(user)
+    if not join_store.set_domain_policy(ws, domain, body.policy):
+        raise HTTPException(404, "This workspace doesn't have that domain.")
+    audit.record("domain", domain.strip().lower(), {"join_policy": body.policy}, user=user)
+    return _domain_out(members_store.get_domain(ws, domain))
 
 
 @router.post("/api/admin/sign-in/domains")

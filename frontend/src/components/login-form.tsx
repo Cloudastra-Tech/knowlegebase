@@ -40,6 +40,9 @@ const ERRORS: Record<string, string> = {
   not_workspace: "Use your company's Google Workspace account, not a personal or guest one.",
   disabled: "Your access has been turned off. Ask your admin.",
   workspace_closed: "Your workspace is suspended or being deleted. Ask your admin.",
+  invite_only: "Your workspace only lets in people its admins invite. Ask an admin for an invite.",
+  join_denied:
+    "An admin declined your request to join this workspace recently. Ask an admin to invite you if you should have access.",
   unverified: "Your sign-in provider didn't confirm your email address.",
   cancelled: "Sign-in was cancelled.",
   sso_failed: "Single sign-on didn't finish. Please try again.",
@@ -805,6 +808,12 @@ export function LoginForm({
                   <Button variant="link" className="h-auto p-0" onClick={() => changeMode("sign-in")}>
                     Sign in
                   </Button>
+                  <span className="mt-1 block text-xs">
+                    It has no admin left?{" "}
+                    <Button variant="link" className="h-auto p-0 text-xs" onClick={() => navigate("/claim")}>
+                      Claim it with a code
+                    </Button>
+                  </span>
                 </>
               ) : signup ? (
                 <>
