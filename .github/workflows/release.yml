@@ -1,0 +1,112 @@
+# Builds the production image for a release tag (vX.Y.Z, made by release-please on
+# main: release-please.yml) and pushes it to GHCR as
+#   ghcr.io/cloudastra-tech/knowlegebase:<X.Y.Z>, :<X.Y>, :sha-<commit> and :latest
+# It stops there: deploying stays manual, with scripts/deploy.sh on the server
+# (deploy.md, "Deploying"), until the owner wires the secrets for the deploy job
+# sketched at the bottom.
+#
+# The image is built WITHOUT the Guardrails Hub token, on purpose: the toxicity
+# validator's install writes the token into the image (Dockerfile), and a pushed
+# image must never carry it. So these images run without the toxicity check
+# (/api/health says "toxicity": "missing"); with REQUIRE_TOXICITY_GUARD=1 they
+# refuse to start, and deploy.sh then goes back to the previous version. Production
+# keeps building on the server with the token (`scripts/deploy.sh vX.Y.Z`) until
+# the validator can get its token at run time.
+name: Release image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_call:              # from release-please.yml: its tags don't trigger this
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:          # build a tag again by hand
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.2.0"
+        type: string
+        required: true
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/cloudastra-tech/knowlegebase
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
+            type=raw,value=sha-${{ steps.commit.outputs.sha }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.commit.outputs.sha }}
+            org.opencontainers.image.version=${{ env.TAG }}
+      # No `secrets:` here: the Guardrails step in the Dockerfile skips itself.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ env.TAG }}
+            GIT_SHA=${{ steps.commit.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # The same check as CI's docker job, on what was pushed.
+      - name: No Guardrails token in the image
+        run: |
+          image="ghcr.io/cloudastra-tech/knowlegebase:sha-${{ steps.commit.outputs.sha }}"
+          if docker run --rm --entrypoint sh "$image" -c 'test -e /root/.guardrailsrc'; then
+            echo "::error::$image has /root/.guardrailsrc: it must never be pushed"; exit 1
+          fi
+
+  # Deploying from here, once the owner wants it (deploy.md, "Deploying"):
+  #   1. Settings > Environments > New environment "production": required reviewers,
+  #      deployment branches and tags: v*.
+  #   2. On the server, a deploy user whose authorized_keys line is
+  #        command="/root/knowlegebase/scripts/deploy.sh \"$SSH_ORIGINAL_COMMAND\"",no-pty,no-port-forwarding <key>
+  #      so the key can run deploy.sh and nothing else.
+  #   3. Environment secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY (that key's
+  #      private half) and DEPLOY_KNOWN_HOSTS (`ssh-keyscan <host>`).
+  #   4. Uncomment:
+  # deploy:
+  #   needs: image
+  #   runs-on: ubuntu-latest
+  #   environment: production          # waits for a reviewer's approval
+  #   concurrency: production
+  #   steps:
+  #     - name: deploy.sh on the server
+  #       env:
+  #         KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+  #         KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+  #       run: |
+  #         install -m 600 /dev/null ~/key && printf '%s\n' "$KEY" > ~/key
+  #         printf '%s\n' "$KNOWN_HOSTS" > ~/known_hosts
+  #         ssh -i ~/key -o UserKnownHostsFile=~/known_hosts \
+  #           "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "${{ inputs.tag || github.ref_name }}"
