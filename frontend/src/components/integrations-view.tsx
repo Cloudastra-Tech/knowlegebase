@@ -442,7 +442,13 @@ function ConnectorCard({
       {item.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">
           The server needs an OAuth app before {item.name} can be connected
-          {item.setup_env ? ` (${item.setup_env})` : ""}. Ask your admin to set it up.
+          {item.setup_env && (
+            <>
+              {" "}
+              (<code className="font-mono text-xs break-all">{item.setup_env}</code>)
+            </>
+          )}
+          . Ask your admin to set it up.
         </p>
       )}
 
