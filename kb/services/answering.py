@@ -76,7 +76,8 @@ def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=N
         # No waiting for re-indexing: it changes the index document by document, or
         # builds a new one beside it (services/indexing.py).
         run = question_log.tracked(agents.get_agent(ws, role), ws, user, role, surface, turn)
-        context = spaces.context_for(ws, user, turn["conversation"]) if turn else None
+        conversation = (turn or {}).get("conversation")    # a saved chat (not every surface)
+        context = spaces.context_for(ws, user, conversation) if conversation else None
         if context:
             asker["context"] = context
         answer, trace, sources = run(question, with_sources=True, on_event=on_event,
