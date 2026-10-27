@@ -27,6 +27,13 @@ agents_lock = threading.Lock()
 # ---- Connectors (kb/routers/integrations.py) ----------------------------------------
 oauth_states = {}         # state -> {"workspace", "user", "expires", "redirect_uri"}
 
+# ---- Slack (kb/services/slack.py) ----------------------------------------------------
+# Only saves Slack calls: the member, their role and whether they're turned off
+# are looked up on every question.
+slack_users = {}          # (team id, Slack user) -> (expires, {email, team_id, deleted, ...})
+slack_dms = {}            # (team id, Slack user) -> (expires, the bot's DM channel with them)
+slack_lock = threading.Lock()
+
 # ---- Sign-in (kb/services/sign_in.py, kb/routers/saml.py) ---------------------------
 sso_tests = {}            # "Test sign-in" ticket -> {"workspace", "cid", "expires", "result"}
 sso_tests_lock = threading.Lock()

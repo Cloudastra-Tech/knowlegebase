@@ -457,7 +457,7 @@ refreshes captured permissions), to find deletions.
 
 By default the jobs run inside the web process. To move the connector syncs and
 the SAML refresh to a process of their own (the same image, `.env` and volumes),
-give the web service `JOB_KINDS=index,retag,drop_collection` and start a worker
+give the web service `JOB_KINDS=index,retag,drop_collection,slack` and start a worker
 beside it that runs the rest:
 
 ```yaml
@@ -472,7 +472,7 @@ beside it that runs the rest:
 
 The index jobs stay in the web process for now: the search index is an
 embedded Chroma folder, which the process that answers questions should also be
-the one writing. Once Chroma runs as a server (engineering plan P2-1), set
+the one writing. Slack's answers (`slack`) stay with them: they answer from it. Once Chroma runs as a server (engineering plan P2-1), set
 `JOBS_IN_PROCESS=off` on the web service (it then only queues jobs) and drop
 `JOB_KINDS` from the worker so it runs them all. `JOB_WORKERS` is the number of
 jobs a process runs at once (default 2); several workers may run, since a job is
@@ -486,6 +486,125 @@ the other periodic jobs if you split the work. Optional knobs:
 `INSIGHTS_NEVER_CITED_DAYS` (30), `INSIGHTS_STALE_DAYS` (180),
 `INSIGHTS_STALE_MIN_CITED` (3), `INSIGHTS_GAP_WINDOW_DAYS` (30),
 `INSIGHTS_GAP_MIN_SIZE` (3) and `INSIGHTS_GAP_SIMILARITY` (0.75).
+
+## Slack app
+
+People can ask in Slack: a DM to the app, `@Knowledge` in a channel (answered in
+the thread), `/ask` (only the asker sees the answer) and the message shortcut
+"Ask about this thread". Answers cite their sources as numbered links and carry
+👍 / 👎 buttons that land in the same feedback as the web chat's. An admin
+installs it per workspace from **Integrations → Slack**.
+
+**Who gets answered.** The Slack user's email (`users.info`) is the member they
+are in the workspace that installed the app, with their role as it is now.
+People with no account are refused (default) or answered from public documents
+only (the card's setting); turned-off members, bots and people from another
+organisation in a Slack Connect channel are never answered.
+
+**The audience rule.** Anything posted where others can read it (a channel, a
+thread, a group DM, `/ask` outside the asker's own DM with the app) is answered
+from **public** documents only, whatever the asker's role. When a search as the
+asker finds restricted passages, they get an ephemeral "I found restricted
+sources; I've sent you a DM" and the full answer in their DM with the app. A
+channel shared with another organisation gets no answer at all: the asker is
+answered in a DM.
+
+**Two ways to run the app.**
+
+1. *This server's app* (hosted, for many companies): create one app from
+   `slack/manifest.yml` with `PUBLIC_URL` in place of `https://YOUR-KNOWLEDGE-HOST`,
+   turn on **Manage Distribution**, and put its Client ID, Client Secret and
+   Signing Secret in `.env` as `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`,
+   `SLACK_SIGNING_SECRET`. Every workspace's admin then clicks **Add to Slack**.
+   Installing in workspaces other than your own is *distribution*: Slack's API
+   terms (2025-10-10) require such an app to be listed in the Slack Marketplace,
+   and Marketplace review expects at least 10 active workspaces and 10 weekly
+   active users, a privacy policy saying how long data is kept and how the
+   model uses it, no training on Slack data, and the fewest scopes possible
+   ([terms](https://slack.com/terms-of-service/api),
+   [change](https://docs.slack.dev/changelog/2025/10/13/api-terms-update),
+   [guidelines](https://docs.slack.dev/slack-marketplace/slack-marketplace-app-guidelines-and-requirements)).
+   Since 2025-05-29, commercially distributed apps that aren't in the Marketplace
+   get `conversations.history` / `conversations.replies` at 1 request a minute and
+   15 messages a call for new installs; internal apps keep 50+ a minute
+   ([changelog](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps/)).
+   The app calls neither for answering; only the optional thread-reading of the
+   shortcut and auto-answer would feel it.
+2. *The customer's own app* (self-hosted, or a company that wants it internal):
+   the admin chooses **Your own app**, copies the manifest the card shows (this
+   server's URLs, and request URLs private to that app), creates the app in their
+   Slack, pastes its three credentials, then clicks **Add to Slack**. The app is
+   internal to their Slack, so none of the distribution rules above apply. The
+   secrets are sealed (`secret_box`) and never shown again.
+
+**Scopes** (bot, all in the manifest, each used): `app_mentions:read` (mentions),
+`chat:write` (post, update, ephemeral notes), `commands` (`/ask` and the
+shortcut), `im:history` (DMs to the app), `im:write` (`conversations.open`: the
+DM a restricted answer goes to), `users:read` and `users:read.email`
+(`users.info`: who is asking). `im:read` is **not** requested: nothing calls a
+method that needs it. Auto-answer in help channels (off by default; posts only
+confident, cited answers) needs `channels:history` and the `message.channels`
+event added to the app; with `channels:history` (and `groups:history` for private
+channels) the shortcut reads the whole thread instead of the one message.
+
+**Requests** from Slack are checked against the app's Signing Secret
+(`X-Slack-Signature`, at most 5 minutes old) before anything in them is read;
+events are taken in once however often Slack retries them; each answer is a job
+(`slack`), so Slack gets its reply within its 3 seconds. Every question is in
+the question log (surface `slack`) and the audit log (`slack.ask`, its length,
+never its text), as are installs and uninstalls (`slack.install`,
+`slack.uninstall`, including one done from Slack's side).
+
+### Checking it by hand
+
+Needs a Slack workspace where you may install apps, and this server reachable
+over https (Slack refuses http request URLs): in production `PUBLIC_URL`; on a
+laptop a tunnel, e.g. `cloudflared tunnel --url http://localhost:5180` with
+`PUBLIC_URL` set to the address it prints, then restart the API.
+
+1. **Create the app.** As an admin, Integrations → Slack → *Your own app* →
+   copy the manifest. At <https://api.slack.com/apps> → *Create New App* → *From a
+   manifest* → pick the workspace → paste → *Create*. Slack checks the event
+   request URL: *Event Subscriptions* shows **Verified**. (Or, for this server's
+   app, set the three `SLACK_*` variables and skip to step 3.)
+2. **Paste the credentials.** From *Basic Information → App Credentials*, paste
+   Client ID, Client Secret and Signing Secret into the dialog → *Save app*. The
+   card says **Not installed**; Activity (audit) shows `slack.app` with the client
+   ID and no secret.
+3. **Install.** *Add to Slack* → Slack's consent screen lists the seven scopes
+   above → *Allow*. Back on Integrations: a toast "Installed in Slack", the card
+   **Installed** with the Slack workspace's name; Activity shows `slack.install`.
+4. **DM it.** In Slack, open the app (Apps → Knowledge → *Messages*) and ask
+   something in your documents. "Looking that up…" appears within a second or
+   two, then becomes the answer: numbered `[1]` links, a sources line, 👍 / 👎 and
+   *Open in the app* (opens the saved chat). As an HR / Admin member, ask about a
+   restricted document: the DM answers from it.
+5. **Mention it in a channel.** `/invite @Knowledge` in a test channel, then
+   `@Knowledge <question>` as a **public** member: the answer comes in the
+   thread, from public documents only, and nobody gets a DM. Reply in the
+   thread with another `@Knowledge` follow-up: it's answered with the thread's
+   history (one chat in the app).
+6. **The restricted-source DM.** As an **HR / Admin** member, `@Knowledge` the same
+   restricted question in the channel: the thread gets the public-only answer,
+   you (only) see "I found restricted sources; I've sent you a DM", and your DM
+   with the app has "You asked in #channel: …" and the full answer. A colleague
+   in the channel sees neither the note nor the restricted answer.
+7. **/ask.** `/ask <question>` in the channel: an ephemeral "Looking that up…"
+   replaced by the answer, visible only to you, still public-only (HR also gets
+   the DM note). `/ask` in your DM with the app answers with your role. `/ask`
+   alone shows how to use it.
+8. **The shortcut.** On a message with a question, ⋮ → *Ask about this thread*:
+   an ephemeral answer to it.
+9. **Feedback.** Click 👎 on a channel answer as another member: "Thanks for
+   telling us…" (ephemeral). In the app, Insights → Feedback lists it with the
+   question and answer; Activity shows `feedback.set` with surface `slack`.
+10. **Who's refused.** A Slack user with no account here: a polite refusal
+    (ephemeral). Switch the card to *Answer from public documents only* and ask
+    again: answered, public-only. Turn a member off in Members: they're refused.
+11. **Uninstall.** *Uninstall* on the card → the app disappears from Slack;
+    Activity shows `slack.uninstall` (by admin). Install again, then remove the
+    app from Slack's side (*Manage apps → Remove app*): the card shows **Removed
+    in Slack**, and Activity has `slack.uninstall` by `slack` (system).
 
 ## Health checks and error tracking
 

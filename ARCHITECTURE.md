@@ -307,7 +307,7 @@ and to share links:
 
 Every surface asks through one service, `kb/services/answering.ask()`: the web
 chat, the public API and the MCP server get the same agent, guards, `[S#]`
-citations, `max_access` and question log (with `surface` web / api / mcp).
+citations, `max_access` and question log (with `surface` web / api / mcp / slack).
 
 ```
   browser session ──► /api/*   (the app's own API: changes with the site)
@@ -339,6 +339,36 @@ citations, `max_access` and question log (with `surface` web / api / mcp).
   the configs the API keys page shows (Claude Code, Claude Desktop through
   `mcp-remote`, Cursor). OAuth 2.1 sign-in for MCP clients (the MCP
   authorization spec, federating to this app's sign-in) is a follow-up.
+
+---
+
+## 💬 The Slack app
+
+People ask in Slack through the same `answering.ask()` (surface `slack`):
+`kb/routers/slack.py` takes Slack's requests, `kb/services/slack.py` answers them,
+`slack_store.py` keeps the installs (bot token sealed by `secret_box`).
+
+```
+  Slack ──signed request──► /api/slack/events | commands | interactions
+            (signature + 5-minute window checked first; event ids deduped)
+                    │  queue a "slack" job, reply within Slack's 3 s
+                    ▼
+  job: users.info email ──► the member (role looked up now; refused if off / unknown)
+       where was it asked?
+         the asker's own DM with the app ──► ask() as their role
+         anywhere else (channel, thread, /ask, shortcut) ──► ask() as PUBLIC
+              └─ a search as their role finds restricted passages?
+                   ──► ephemeral "I've sent you a DM" + ask() as their role in the DM
+       ──► Block Kit: answer, [n] links to the source (or /passages/<chunk>), 👍 / 👎
+```
+
+A Slack team is installed in one workspace. The app is ours (`SLACK_*` in
+`.env`, one set of request URLs) or the customer's own internal app (its
+secrets pasted on the Integrations card, sealed; its request URLs carry a key,
+so each request is checked with its own signing secret). Answers are saved as
+the asker's conversations (a Slack thread continues one), so 👍 / 👎 land in
+`message_feedback` and Insights like the web chat's. deploy.md, "Slack app",
+has the scopes, the Marketplace and rate-limit rules, and a by-hand checklist.
 
 ---
 
