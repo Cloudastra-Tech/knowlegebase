@@ -389,6 +389,20 @@ export interface Integration {
   limits?: { max_pages: number | null; max_depth: number | null }
   base_url?: string | null // Outline, Confluence / Jira Data Center, Zendesk's subdomain
   live_search?: boolean // Outline: the server's wiki is searched live instead
+  source_policy_note?: string | null // why "as shared at the source" isn't offered (S3)
+  s3?: S3Card // Amazon S3: the bucket, and how a role would be set up
+}
+
+// Amazon S3's card and form (connectors/s3.py card()).
+export interface S3Card {
+  bucket?: string | null
+  region?: string | null
+  prefix: string
+  endpoint?: string | null
+  roles: boolean // the server can assume a role in the customer's account
+  external_id?: string | null // this workspace's, for the role's trust policy
+  trust_policy?: Record<string, unknown> | null
+  read_policy: Record<string, unknown>
 }
 
 // A connector's own options (connectors/base.py check_options): Zendesk's tickets
@@ -445,6 +459,14 @@ export interface IntegrationSetup {
   cf_client_secret?: string
   max_pages?: number
   max_depth?: number
+  // Amazon S3: the bucket, and a role to assume or an IAM user's access keys
+  bucket?: string
+  region?: string
+  prefix?: string
+  endpoint?: string
+  role_arn?: string
+  access_key_id?: string
+  secret_access_key?: string
 }
 
 // Why a passage was found (agent.py _source): its rank among the search's matches

@@ -138,6 +138,45 @@ def test_outline_notion_and_websites(resolver):
     assert acl(resolver, {"public_web": True})[0] == ["everyone"]
 
 
+def test_linear_team_members(resolver):
+    got, dropped = acl(resolver, {"via": "linear", "team": "t1", "teams": ["t1"],
+                                  "users": [ALICE, "stranger@else.example"]})
+    assert got == [access.user(ALICE)] and dropped == 1
+    assert acl(resolver, {"via": "linear", "team": None, "users": [ALICE]})[0] == [access.NOBODY]
+    assert acl(resolver, {"via": "linear", "team": "t1", "users": []})[0] == [access.NOBODY]
+
+
+def test_dropbox_members_external_groups_and_invitees(resolver):
+    got, dropped = acl(resolver, {"via": "dropbox", "users": [ALICE],
+                                  "groups": ["dropbox:ext:eng@acme.example", "dropbox:group:g:2",
+                                             "dropbox:ext:unknown"],
+                                  "invitees": ["bob@acme.example"]})
+    # An IdP-synced group maps; a Dropbox-only group, an unknown one and an invitee don't.
+    assert got == sorted([access.user(ALICE), ENG]) and dropped == 3
+    # A group id that happens to equal an IdP group's key still isn't one: only ext: maps.
+    assert acl(resolver, {"via": "dropbox", "groups": ["dropbox:group:support"]})[0] == [
+        access.NOBODY]
+    assert acl(resolver, {"via": "dropbox", "users": [ALICE], "owner_only": True})[0] == [
+        access.user(ALICE)]
+
+
+def test_box_collaborators_groups_and_shared_links(resolver):
+    got, dropped = acl(resolver, {"via": "box", "users": [ALICE, "eve@else.example"],
+                                  "groups": ["box:group:77"], "shared_link": None})
+    assert got == [access.user(ALICE)] and dropped == 2
+    assert acl(resolver, {"via": "box", "users": [], "shared_link": "open"})[0] == ["everyone"]
+    assert acl(resolver, {"via": "box", "users": [], "shared_link": "company"})[0] == [
+        access.domain("acme.example")]
+    assert acl(resolver, {"via": "box", "users": [], "shared_link": "collaborators"})[0] == [
+        access.NOBODY]
+
+
+def test_s3_and_unknown_connectors_fail_closed(resolver):
+    assert acl(resolver, {"via": "s3"}) == ([access.NOBODY], 1)
+    assert acl(resolver, {"via": "someday", "users": [ALICE], "anyone": True}) == (
+        [access.NOBODY], 1)
+
+
 # ---- The principals algebra ---------------------------------------------------------------------
 def test_an_answers_audience_is_every_acl_it_read():
     eng, alice = access.group("eng"), access.user(ALICE)

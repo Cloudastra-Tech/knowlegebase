@@ -7,23 +7,24 @@ the landing page's "soon" list can be generated from here instead of drifting.
 Adding a connector = one module with a Connector subclass, listed in LIVE.
 """
 
-from connectors import (confluence, github, google_drive, jira, notion, outline, sharepoint,
-                        website, zendesk)
+from connectors import (box, confluence, dropbox, github, google_drive, jira, linear, notion,
+                        outline, s3, sharepoint, website, zendesk)
 
 LIVE = (google_drive.CONNECTOR, notion.CONNECTOR, outline.CONNECTOR, website.CONNECTOR,
         confluence.CLOUD_CONNECTOR, confluence.DC_CONNECTOR, sharepoint.CONNECTOR,
-        jira.CLOUD_CONNECTOR, jira.DC_CONNECTOR, zendesk.CONNECTOR, github.CONNECTOR)
+        jira.CLOUD_CONNECTOR, jira.DC_CONNECTOR, zendesk.CONNECTOR, github.CONNECTOR,
+        linear.CONNECTOR, dropbox.CONNECTOR, box.CONNECTOR, s3.CONNECTOR)
 CONNECTORS = {c.PROVIDER: c for c in LIVE}
 
 # Marketed as soon (connectors.md §3.1). `icon` is a simple-icons slug, if there is one.
 SOON = (
     {"id": "slack", "name": "Slack", "icon": None},
-    {"id": "dropbox", "name": "Dropbox", "icon": "dropbox"},
 )
 ICONS = {"google_drive": "googledrive", "notion": "notion", "outline": "outline",
          "website": None, "confluence": "confluence", "confluence_dc": "confluence",
          "sharepoint": None, "jira": "jira", "jira_dc": "jira", "zendesk": "zendesk",
-         "github": "github"}
+         "github": "github", "linear": "linear", "dropbox": "dropbox", "box": "box",
+         "s3": None}
 
 
 def get(provider):
@@ -41,6 +42,7 @@ def manifest(c):
             "picker": c.PICKER, "picker_required": c.PICKER_REQUIRED, "unit": c.UNIT,
             "acl": c.ACL, "icon": ICONS.get(c.PROVIDER), "setup_env": c.SETUP_ENV,
             "note": c.NOTE or None, "sign_in": c.can_sign_in(),
+            "source_policy_note": c.SOURCE_POLICY_NOTE or None,
             "availability": "live"}
 
 
