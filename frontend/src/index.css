@@ -2,12 +2,31 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` styles apply under a .dark ancestor (next-themes puts it on <html>; the
+   landing and sign-in pages also set it on their own root), and never in print. */
+@custom-variant dark {
+    @media not print {
+        &:is(.dark *) {
+            @slot;
+        }
+    }
+}
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
     --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    /* Answers, passages and shared chats (15px / 1.7); the ASCII art (11px / 1.15). */
+    --text-reading: 0.9375rem;
+    --text-reading--line-height: 1.7;
+    --text-ascii: 0.6875rem;
+    --text-ascii--line-height: 1.15;
+    --color-signal: var(--signal);
+    --color-signal-foreground: var(--signal-foreground);
+    --color-success: var(--success);
+    --color-warning: var(--warning);
+    --color-glass: var(--glass-bg);
+    --color-glass-strong: var(--glass-bg-strong);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,6 +67,17 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Motion (DESIGN.md, "Motion"; lib/motion.ts has the same for Motion). The curves are
+   Tailwind utilities (ease-out-strong, ...); durations are used as duration-(--dur-popover). */
+@theme {
+    --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1); /* enter, exit, feedback */
+    --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1); /* movement on screen */
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* sheets, the sidebar */
+    --ease-hover: cubic-bezier(0.25, 0.1, 0.25, 1); /* colour and background hovers */
+}
+
+/* "Signal Glass" (DESIGN.md). :root is the light theme ("Paper"); .dark, the default,
+   follows. One hue, the signal mint: live, cited, focused, done. Never large fills. */
 :root {
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
@@ -67,11 +97,15 @@
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
     --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --signal: oklch(0.52 0.12 160); /* 5.2:1 on white, for small text */
+    --signal-foreground: oklch(0.985 0 0);
+    --success: oklch(0.52 0.12 158);
+    --warning: oklch(0.56 0.12 70); /* 4.8:1 on white (the plan's 0.6 was 4.1:1) */
+    --chart-1: var(--signal);
+    --chart-2: oklch(0.55 0.08 190);
+    --chart-3: oklch(0.556 0.01 165);
+    --chart-4: oklch(0.66 0.13 75);
+    --chart-5: oklch(0.371 0.01 165);
     --radius: 0.625rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
@@ -81,47 +115,241 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    /* glass: frosted white */
+    --glass-bg: color-mix(in oklch, white 72%, transparent);
+    --glass-bg-strong: color-mix(in oklch, white 88%, transparent);
+    --glass-bg-subtle: color-mix(in oklch, var(--card) 72%, transparent);
+    --glass-bg-solid: var(--card);
+    --glass-border: oklch(0 0 0 / 8%);
+    --glass-highlight: oklch(1 0 0 / 70%);
+    --glass-shadow: 0 12px 40px -18px oklch(0 0 0 / 18%);
+    --glass-blur: 16px;
+    --glass-blur-md: 12px;
+    --glass-saturate: 140%;
+    --noise-opacity: 0.035;
+    /* ascii */
+    --ascii-ambient: oklch(0.145 0 0 / 5%);
+    --ascii-field: oklch(0.145 0 0 / 12%);
+    --ascii-ink: oklch(0.145 0 0 / 80%);
+    --ascii-signal: var(--signal);
+    /* motion: durations, and distances (zero with reduced motion, below) */
+    --dur-instant: 0ms;
+    --dur-press: 120ms;
+    --dur-hover: 150ms;
+    --dur-tooltip: 140ms;
+    --dur-popover: 180ms;
+    --dur-popover-exit: 120ms;
+    --dur-dialog: 220ms;
+    --dur-dialog-exit: 150ms;
+    --dur-sheet: 280ms;
+    --dur-sheet-exit: 200ms;
+    --dur-screen: 200ms;
+    --dur-swap: 150ms;
+    --dur-reveal: 240ms;
+    --stagger: 40ms;
+    --stagger-max: 6;
+    --enter-y: 6px;
+    --enter-scale: 0.97;
+    --press-scale: 0.97;
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    /* near-black and off-white, never pure: easier to read all day */
+    --background: oklch(0.155 0.004 165);
+    --foreground: oklch(0.93 0.004 165);
+    --card: oklch(0.19 0.005 165);
+    --card-foreground: var(--foreground);
+    --popover: oklch(0.205 0.005 165);
+    --popover-foreground: var(--foreground);
+    --primary: oklch(0.93 0.004 165);
+    --primary-foreground: oklch(0.17 0.005 165);
+    --secondary: oklch(0.245 0.005 165);
+    --secondary-foreground: var(--foreground);
+    --muted: oklch(0.245 0.005 165);
+    --muted-foreground: oklch(0.72 0.008 165);
+    --accent: oklch(0.26 0.006 165);
+    --accent-foreground: var(--foreground);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --border: oklch(1 0 0 / 9%);
+    --input: oklch(1 0 0 / 14%);
+    --ring: var(--signal); /* focus is the signal */
+    --signal: oklch(0.82 0.15 160);
+    --signal-foreground: oklch(0.2 0.04 160);
+    --success: oklch(0.8 0.14 158);
+    --warning: oklch(0.84 0.14 80);
+    --chart-1: var(--signal);
+    --chart-2: oklch(0.7 0.09 190);
+    --chart-3: oklch(0.6 0.02 165);
+    --chart-4: oklch(0.84 0.13 85);
+    --chart-5: oklch(0.5 0.01 165);
+    /* Opaque until the sidebar itself turns glass, with its blur. */
+    --sidebar: var(--card);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-primary: var(--signal);
+    --sidebar-primary-foreground: var(--signal-foreground);
+    --sidebar-accent: var(--accent);
+    --sidebar-accent-foreground: var(--foreground);
+    --sidebar-border: var(--border);
+    --sidebar-ring: var(--signal);
+    /* glass */
+    --glass-bg: color-mix(in oklch, var(--card) 66%, transparent);
+    --glass-bg-strong: color-mix(in oklch, var(--popover) 86%, transparent);
+    --glass-bg-subtle: color-mix(in oklch, var(--card) 72%, transparent);
+    --glass-bg-solid: var(--card);
+    --glass-border: oklch(1 0 0 / 8%);
+    --glass-highlight: oklch(1 0 0 / 6%);
+    --glass-shadow: 0 12px 40px -16px oklch(0 0 0 / 55%);
+    /* ascii */
+    --ascii-ambient: oklch(0.93 0 0 / 7%); /* the app's background field */
+    --ascii-field: oklch(0.93 0 0 / 16%); /* the landing's field */
+    --ascii-ink: oklch(0.93 0 0 / 85%);
+    --ascii-signal: var(--signal);
+}
+
+/* Glass that can't, or shouldn't, be see-through: no backdrop blur in this browser, a
+   request for less transparency, or the app's "Reduce effects" (lib/ascii-loop.ts,
+   setEffects). Surfaces go solid and the blur goes. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    :root,
+    .dark {
+        --glass-bg: var(--glass-bg-solid);
+        --glass-bg-strong: var(--popover);
+        --glass-bg-subtle: var(--card);
+    }
+}
+@media (prefers-reduced-transparency: reduce) {
+    :root,
+    .dark {
+        --glass-bg: var(--glass-bg-solid);
+        --glass-bg-strong: var(--popover);
+        --glass-bg-subtle: var(--card);
+        --glass-blur: 0px;
+        --glass-blur-md: 0px;
+        --noise-opacity: 0;
+    }
+}
+:root[data-effects="reduced"],
+:root[data-effects="reduced"] .dark {
+    --glass-bg: var(--glass-bg-solid);
+    --glass-bg-strong: var(--popover);
+    --glass-bg-subtle: var(--card);
+    --glass-blur: 0px;
+    --glass-blur-md: 0px;
+    --noise-opacity: 0;
+}
+/* Blur costs more on phones and tablets. */
+@media (pointer: coarse) {
+    :root {
+        --glass-blur: 12px;
+    }
+}
+
+/* The three glass tiers (DESIGN.md, "Glass"): at most three blurred surfaces at once,
+   never one inside another. Chrome: the header, the chat sidebar, the composer. */
+@utility glass {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
+}
+/* Floating: popovers, menus, tooltips, dialogs, sheets, toasts. */
+@utility glass-strong {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--glass-bg-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
+}
+/* Subtle: panels and cards inside a screen. No blur: the field is masked under content. */
+@utility glass-subtle {
+    background-color: var(--glass-bg-subtle);
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 1px 0 0 var(--glass-highlight);
+}
+/* Grain for large glass surfaces only; static, never animated. Goes with a glass tier. */
+@utility glass-noise {
+    &::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        border-radius: inherit;
+        pointer-events: none;
+        opacity: var(--noise-opacity);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        background-size: 160px;
+    }
+}
+
+/* Reduced motion is "fewer and gentler": movement goes, fades that help stay. */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --enter-y: 0px;
+        --enter-scale: 1;
+        --press-scale: 1;
+    }
+    .animate-in,
+    .animate-out {
+        --tw-enter-translate-x: 0 !important;
+        --tw-enter-translate-y: 0 !important;
+        --tw-enter-scale: 1 !important;
+        --tw-exit-translate-x: 0 !important;
+        --tw-exit-translate-y: 0 !important;
+        --tw-exit-scale: 1 !important;
+    }
+    html {
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Anything done from the keyboard is instant (lib/motion.ts, markInstant). */
+:root[data-instant] [data-screen],
+:root[data-instant] [data-slot] {
+    animation: none !important;
+    transition: none !important;
 }
 
 /* Printing a conversation (the chat's "Print", C25): the conversation alone, on paper
    that grows with it. Screen chrome carries data-print="hide"; the boxes that scroll
    on screen carry data-print="flow", so the whole chat lands on the page, not just
-   what was in view. */
+   what was in view. Paper is always light: black on white, whatever the screen's
+   theme (the `dark:` variant stays off in print too, above). */
 @media print {
+  :root,
+  .dark {
+    color-scheme: light !important;
+    --background: oklch(1 0 0);
+    --foreground: oklch(0 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.45 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --border: oklch(0.85 0 0);
+    --input: oklch(0.85 0 0);
+    --signal: oklch(0.45 0.1 160);
+    --success: oklch(0.45 0.1 158);
+    --warning: oklch(0.5 0.12 70);
+    --glass-bg: transparent;
+    --glass-bg-strong: transparent;
+    --glass-bg-subtle: transparent;
+    --glass-blur: 0px;
+    --glass-blur-md: 0px;
+    --glass-shadow: none;
+    --noise-opacity: 0;
+  }
   html, body {
     height: auto;
     overflow: visible;
