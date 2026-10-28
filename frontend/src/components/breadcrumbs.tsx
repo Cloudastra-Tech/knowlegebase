@@ -135,7 +135,7 @@ export function Breadcrumbs({ trail, className }: { trail: Trail; className?: st
         </Link>
       )}
       <Breadcrumb className={cn("min-w-0", back && "max-sm:hidden")}>
-        <BreadcrumbList className="flex-nowrap gap-1 text-sm">
+        <BreadcrumbList className="min-w-0 flex-nowrap gap-1 text-sm">
           {shown.map((crumb, i) => (
             <Fragment key={`${i}-${crumb.label}`}>
               {i > 0 && <BreadcrumbSeparator className={SEPARATOR} />}
@@ -172,7 +172,7 @@ export const ChatBreadcrumbs = memo(function ChatBreadcrumbs({ crumbs }: { crumb
   if (!crumbs.length) return <div data-slot="breadcrumbs" aria-hidden className="h-5" />
   return (
     <Breadcrumb className="flex h-5 min-w-0 items-center">
-      <BreadcrumbList className="flex-nowrap gap-1 text-sm">
+      <BreadcrumbList className="min-w-0 flex-nowrap gap-1 text-sm">
         {crumbs.map((crumb, i) => {
           const last = i === crumbs.length - 1
           return (
