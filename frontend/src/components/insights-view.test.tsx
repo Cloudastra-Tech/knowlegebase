@@ -113,6 +113,26 @@ describe("InsightsView", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
   })
 
+  it("says 1 question, not 1 questions", async () => {
+    mockApi({
+      "GET /api/admin/insights": {
+        ...REPORT,
+        totals: { ...REPORT.totals, active_users: 1, not_found: 1 },
+        surfaces: [{ surface: "slack", questions: 1, answered: 1 }],
+      },
+    })
+    render(
+      withProviders(
+        <MemoryRouter>
+          <InsightsView tab="overview" canEdit={false} onTabChange={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
+    expect(await screen.findByText("1 question · 100% answered")).toBeInTheDocument()
+    expect(screen.getByText("1 person asked")).toBeInTheDocument()
+    expect(screen.queryByText(/\b1 questions\b/)).not.toBeInTheDocument()
+  })
+
   it("saves a new logging mode for admins", async () => {
     const saved: unknown[] = []
     mockApi({
