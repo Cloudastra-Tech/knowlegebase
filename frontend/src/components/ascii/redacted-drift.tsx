@@ -128,7 +128,24 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
     // (the starters and recent chats arrive later) set how lines are drawn.
     const ro = new ResizeObserver(relayout)
     ro.observe(el)
-    for (const target of scene.watched()) ro.observe(target)
+    // Those elements can be swapped for new ones (the sidebar or the composer drawn
+    // again), and a detached one never reports: the sidebar folding would then move the
+    // composer with no new measure, leaving the lines at full ink where the glass was.
+    // So whatever is there now is what's watched (observing a new one measures again).
+    let watched: Element[] = []
+    const rewatch = () => {
+      const now = scene.watched()
+      if (now.length === watched.length && now.every((n, i) => n === watched[i])) return
+      for (const n of watched) if (!now.includes(n)) ro.unobserve(n)
+      for (const n of now) if (!watched.includes(n)) ro.observe(n)
+      watched = now
+    }
+    rewatch()
+    let pending = 0
+    const swapped = new MutationObserver(() => {
+      if (!pending) pending = requestAnimationFrame(() => ((pending = 0), rewatch()))
+    })
+    swapped.observe(document.body, { childList: true, subtree: true })
     // Scrolled (a tall empty state on a phone): measured again once it settles.
     let settle: ReturnType<typeof setTimeout> | undefined
     const root = scene.root()
@@ -152,6 +169,8 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
       loop.stop()
       ro.disconnect()
       mo.disconnect()
+      swapped.disconnect()
+      cancelAnimationFrame(pending)
       unlisten()
       window.removeEventListener("resize", scene.dirty)
       clearTimeout(settle)
