@@ -58,6 +58,18 @@
   );
 }
 
+/* Glass the empty chat's art frosts itself (redacted-drift.tsx marks it while the art
+   is behind it): it draws the lines under the glass already blurred, so the glass keeps
+   its tint, border and shadow but not its backdrop-filter, which blurred the moving art
+   again every frame. Still a stacking context and a containing block, as the filter
+   made it, so nothing in it moves. */
+[data-drift-frost] {
+  position: relative;
+  isolation: isolate;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 /* The spinner: a column of frames stepped through a one-line window. */
 @keyframes ascii-spin {
   to {

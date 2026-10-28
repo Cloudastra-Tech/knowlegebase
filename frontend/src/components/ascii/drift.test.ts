@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  blurTile,
   covered,
   DRIFT_SNIPPETS,
+  frostSlices,
   lensFalloff,
   lensSpan,
   lineSnippets,
@@ -194,5 +196,62 @@ describe("nearestLine", () => {
     expect([1, 2]).toContain(nearestLine(ys, 150, 30)) // 30 from both: either, but one
     expect(nearestLine(ys, 300, 30)).toBe(-1)
     expect(nearestLine(ys, 300)).toBe(3) // a tap: the nearest, however far
+  })
+})
+
+describe("frosting in the canvas", () => {
+  const sum = (a: Float32Array) => a.reduce((x, y) => x + y, 0)
+
+  it("blurs a line's tile without losing ink, and round again so tiles meet without a seam", () => {
+    // Two blocks on a 100px tile, one close to its right end.
+    const marks = [
+      { x: 10, w: 6, a: 1, band: 0 },
+      { x: 92, w: 6, a: 1, band: 0 },
+    ]
+    const t = blurTile(100, 20, marks, [{ top: 7, h: 6 }], 16, 0.25)
+    expect(t.w).toBe(25)
+    expect(t.pad).toBeGreaterThanOrEqual(48) // the blur's reach, 3 sigma, above and below
+    // The ink is all there, spread out: 2 blocks of 6×6 px, in samples of 4×4 px.
+    expect((sum(t.data) * t.gain * 16) / 72).toBeCloseTo(1, 1)
+    expect(Math.max(...t.data)).toBeCloseTo(1, 5) // its peak scaled to 1
+    // The ink near the right end carries round to the left: the tile's two ends match.
+    const mid = Math.floor(t.h / 2)
+    const row = t.data.slice(mid * t.w, (mid + 1) * t.w)
+    expect(Math.abs(row[0] - row[t.w - 1])).toBeLessThan(0.1)
+  })
+
+  it("leaves a line evenly under glass as strong across it, even at the edges", () => {
+    const slices = frostSlices([[0, 1000, 8]], 200, 600, 16)
+    expect(slices).toHaveLength(1)
+    expect(slices[0][0]).toBe(200)
+    expect(slices[0][1]).toBe(600)
+    expect(slices[0][2]).toBeCloseTo(8, 3) // mirrored edges: no fading towards them
+  })
+
+  it("softens a change of strength under glass as the blur would", () => {
+    // Fainter near the glass's ends (its rounded corners), full glass ink between.
+    const slices = frostSlices(
+      [
+        [0, 224, 1],
+        [224, 576, 8],
+        [576, 1000, 1],
+      ],
+      200,
+      600,
+      16,
+    )
+    const at = (x: number) => slices.find(([a, b]) => x >= a && x < b)![2]
+    expect(at(400)).toBeCloseTo(8, 0)
+    expect(at(202)).toBeGreaterThan(1)
+    expect(at(202)).toBeLessThan(4)
+    // Rising smoothly through the step, never past full ink.
+    let prev = 0
+    for (let x = 202; x < 400; x += 4) {
+      expect(at(x)).toBeGreaterThanOrEqual(prev - 1e-6)
+      expect(at(x)).toBeLessThanOrEqual(8.0001)
+      prev = at(x)
+    }
+    expect(at(222)).toBeGreaterThan(at(202))
+    expect(at(226)).toBeLessThan(at(260))
   })
 })

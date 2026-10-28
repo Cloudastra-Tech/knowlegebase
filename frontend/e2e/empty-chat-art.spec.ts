@@ -21,8 +21,9 @@ const fieldsShown = (page: Page) =>
     .filter((f) => f.getBoundingClientRect().width > 0)
     .map((f) => f.dataset.mode)`) as Promise<string[]>
 
+// The art's own frost under glass (canvas[data-frost], redacted-drift.tsx) isn't a field.
 const canvasesShown = (page: Page) =>
-  page.evaluate(`[...document.querySelectorAll("canvas")].filter((c) => c.getBoundingClientRect().width > 0).length`) as Promise<number>
+  page.evaluate(`[...document.querySelectorAll("canvas:not([data-frost])")].filter((c) => c.getBoundingClientRect().width > 0).length`) as Promise<number>
 
 test("an empty chat draws the art as its one field, and it moves", async ({ page }) => {
   await signIn(page, MEMBER)
