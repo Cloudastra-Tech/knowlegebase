@@ -101,7 +101,7 @@ function SourcePreview({ source }: { source: Source }) {
       </div>
       {place && <p className="text-xs font-medium text-muted-foreground">{place}</p>}
       {source.snippet && (
-        <p className="line-clamp-3 text-sm leading-snug">{previewOf(source.snippet)}</p>
+        <p className="line-clamp-3 text-sm leading-snug">{previewOf(source.snippet, source)}</p>
       )}
       {why && <p className="text-xs text-muted-foreground">Why this source: {why}</p>}
     </div>

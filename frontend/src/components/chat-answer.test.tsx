@@ -113,8 +113,10 @@ describe("answer states", () => {
       ],
     })
     expect(screen.getByText("General knowledge, not from your documents")).toBeInTheDocument()
-    // Under the title on phones, as a badge from sm.
-    expect(screen.getAllByText("General knowledge · Wikipedia")).toHaveLength(2)
+    expect(screen.getByRole("link", { name: /^Alan Turing, General knowledge · Wikipedia/ })).toHaveAttribute(
+      "href",
+      "https://en.wikipedia.org/wiki/Alan_Turing",
+    )
   })
 
   it("hides an answer the viewer's role can't see any more", () => {
