@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest"
 
-import { ACCOUNT, breadcrumbs, chatCrumbs, type Crumb } from "@/lib/breadcrumbs"
+import { breadcrumbs, chatCrumbs, type Crumb } from "@/lib/breadcrumbs"
 
 // The trail as text: "Spaces › Marketing team › Sources", each ancestor with where it
-// links ("Spaces→/spaces"), a menu as "Account▾".
+// links ("Spaces→/spaces"), a menu as "Name▾".
 const text = (crumbs: Crumb[]) =>
   crumbs.map((c) => (c.menu ? `${c.label}▾` : c.to ? `${c.label}→${c.to}` : c.label)).join(" › ")
 
@@ -68,22 +68,24 @@ describe("breadcrumbs", () => {
   })
 
   it.each([
-    ["/prompts", "My prompts"],
-    ["/api-keys", "API keys"],
-    ["/digests", "Digests"],
-    ["/connections", "My connections"],
-    ["/billing", "Plan & billing"],
-  ])("a personal screen, %s, is under the account menu", (url, name) => {
+    ["/settings/general", "General"],
+    ["/settings/chats", "Chats"],
+    ["/settings/connections", "Connections"],
+    ["/settings/prompts", "Prompts"],
+    ["/settings/digests", "Digests"],
+    ["/settings/api-keys", "API keys"],
+    ["/settings/billing", "Billing"],
+    ["/settings/security", "Security"],
+  ])("a settings section, %s, is Settings › %s, back to the list on a phone", (url, name) => {
     const trail = at(url)
-    expect(text(trail.crumbs)).toBe(`${ACCOUNT}▾ › ${name}`)
-    expect(trail.back).toBeNull()
+    expect(text(trail.crumbs)).toBe(`Settings→/settings › ${name}`)
+    expect(trail.back).toEqual({ label: "Settings", to: "/settings" })
   })
 
-  it("the account crumb opens the account menu's screens; billing only when allowed", () => {
-    const labels = (billing: boolean) =>
-      at("/api-keys", { billing }).crumbs[0].menu?.map((m) => m.label)
-    expect(labels(false)).toEqual(["Spaces", "My prompts", "API keys", "Digests", "My connections"])
-    expect(labels(true)).toContain("Plan & billing")
+  it("/settings itself, or a section it doesn't have, is just Settings", () => {
+    expect(text(at("/settings").crumbs)).toBe("Settings")
+    expect(text(at("/settings/nope").crumbs)).toBe("Settings")
+    expect(at("/settings").back).toBeNull()
   })
 
   it("a shared chat goes back to your chats", () => {

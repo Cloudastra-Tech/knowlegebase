@@ -65,20 +65,11 @@ export function currentSection(path: string, items: NavItem[]) {
     .sort((a, b) => b.length - a.length)[0]
 }
 
-// The screens reached from the account menu (components/account-menu.tsx), by name,
-// in its order.
-export const ACCOUNT_SCREENS: [string, string][] = [
-  ["/spaces", "Spaces"],
-  ["/prompts", "My prompts"],
-  ["/api-keys", "API keys"],
-  ["/digests", "Digests"],
-  ["/connections", "My connections"],
-  ["/billing", "Plan & billing"],
-]
-
-// Those and the screens reached from outside the app, for the phone's top bar.
+// The screens outside the sidebar's list (Spaces from the space switchers, Settings from
+// the account menu, the rest from outside the app), for the phone's top bar.
 const PERSONAL: [string, string][] = [
-  ...ACCOUNT_SCREENS,
+  ["/spaces", "Spaces"],
+  ["/settings", "Settings"],
   ["/extension", "Browser extension"],
   ["/passages", "Passage"],
 ]

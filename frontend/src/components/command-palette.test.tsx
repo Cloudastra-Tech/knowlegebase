@@ -84,6 +84,7 @@ describe("CommandPalette", () => {
       "Integrations",
       "Spaces",
       "My prompts",
+      "Settings",
       "Insights",
       "Verified",
       "Assistant",
@@ -101,6 +102,6 @@ describe("CommandPalette", () => {
 
   it("shows a member no admin screens", async () => {
     const member = { username: "pat@acme.example", role: "public" } as User
-    expect(await goTo(member, "public")).toEqual(["Chat", "Knowledge", "Spaces", "My prompts"])
+    expect(await goTo(member, "public")).toEqual(["Chat", "Knowledge", "Spaces", "My prompts", "Settings"])
   })
 })

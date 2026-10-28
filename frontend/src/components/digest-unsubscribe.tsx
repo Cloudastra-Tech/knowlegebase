@@ -59,7 +59,7 @@ export function DigestUnsubscribe({ token }: { token: string }) {
         <Heading title={<>This link <span className="font-serif font-light italic">doesn't work.</span></>}>
           {error} You can manage your digests after signing in.
         </Heading>
-        <Button className={pill} onClick={() => navigate("/digests")}>
+        <Button className={pill} onClick={() => navigate("/settings/digests")}>
           Manage digests
         </Button>
       </div>
@@ -89,7 +89,7 @@ export function DigestUnsubscribe({ token }: { token: string }) {
         <Button variant="outline" className={pill} onClick={toggle} loading={busy}>
           {result.enabled ? "Unsubscribe" : "Subscribe again"}
         </Button>
-        <Button className={pill} onClick={() => navigate("/digests")}>
+        <Button className={pill} onClick={() => navigate("/settings/digests")}>
           Manage digests
         </Button>
       </div>

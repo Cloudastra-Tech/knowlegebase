@@ -23,11 +23,16 @@ const SCREENS = [
   ["members", "/admin/members"],
   ["groups", "/admin/groups"],
   ["activity", "/admin/activity"],
-  ["digests", "/digests"],
   ["spaces", "/spaces"],
-  ["prompts", "/prompts"],
-  ["api-keys", "/api-keys"],
-  ["connections", "/connections"],
+  ["settings", "/settings"],
+  ["settings-general", "/settings/general"],
+  ["settings-chats", "/settings/chats"],
+  ["settings-connections", "/settings/connections"],
+  ["settings-prompts", "/settings/prompts"],
+  ["settings-digests", "/settings/digests"],
+  ["settings-api-keys", "/settings/api-keys"],
+  ["settings-billing", "/settings/billing"],
+  ["settings-security", "/settings/security"],
 ] as const
 
 async function serious(page: Page) {
