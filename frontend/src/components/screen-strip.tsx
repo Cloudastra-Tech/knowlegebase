@@ -17,7 +17,7 @@ export function ScreenStrip({ scroller }: { scroller: RefObject<HTMLElement | nu
     if (!box || typeof IntersectionObserver === "undefined") return
     let io: IntersectionObserver | null = null
     let watched: Element | null = null
-    const height = strip.current?.offsetHeight ?? 44
+    const height = strip.current?.offsetHeight || 44
     const watch = () => {
       const h2 = box.querySelector('[data-slot="screen-header"] h2')
       if (!h2 || h2 === watched) return

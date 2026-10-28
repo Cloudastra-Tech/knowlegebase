@@ -115,9 +115,9 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
-    /* glass: frosted white. The pane (the sidebar, the sticky strip) is a touch grey so
-       it reads as a sheet over the white ground; floating glass is whiter, and lifts
-       what's behind it (--glass-lift) so muted text on it keeps 4.5:1. */
+    /* glass: frosted white. The pane (the sidebar) is a touch grey so it reads as a
+       sheet over the white ground; floating glass is whiter and lifts what's behind it
+       (--glass-lift). Muted text on light glass is a step darker (after glass-pane). */
     --glass-bg: color-mix(in oklch, white 64%, transparent);
     --glass-bg-pane: color-mix(in oklch, oklch(0.975 0.002 165) 62%, transparent);
     --glass-bg-strong: color-mix(in oklch, white 76%, transparent);
@@ -129,7 +129,7 @@
     --glass-shadow: 0 12px 40px -18px oklch(0 0 0 / 22%);
     --glass-blur: 16px;
     --glass-blur-md: 16px;
-    --glass-blur-pane: 12px;
+    --glass-blur-pane: 8px; /* 12px cost a fifth more GPU over the moving field, and looked the same */
     --glass-saturate: 160%;
     --glass-lift: brightness(1.08);
     --noise-opacity: 0.035;
@@ -286,12 +286,12 @@
     :root {
         --glass-blur: 12px;
         --glass-blur-md: 12px;
-        --glass-blur-pane: 12px;
     }
 }
 
-/* The glass tiers (DESIGN.md, "Glass"): never one inside another. Chrome: the phone
-   top bar, the composer, the landing header and cards. */
+/* The glass tiers (DESIGN.md, "Glass"): never one inside another. Chrome: the sticky
+   strip at the top of a screen, the phone top bar, the composer, the landing header
+   and cards. */
 @utility glass {
     position: relative;
     isolation: isolate;
@@ -313,14 +313,20 @@
     border: 1px solid var(--glass-border);
     box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
 }
-/* Pane: chrome docked to an edge of the window, the app sidebar and the sticky strip
-   at the top of a screen. The fill and blur only: the component draws its one hairline
-   (--glass-edge) on the edge that faces the content. The app's field runs under the
-   sidebar at twice its ink (ascii.css), so there's something to frost. */
+/* Pane: the app sidebar, docked to the window's edge. The fill and blur only: the
+   sidebar draws its one hairline (--glass-edge) on the edge that faces the content.
+   The app's field runs under it at full ink (ascii.css), so there's something to frost. */
 @utility glass-pane {
     background-color: var(--glass-bg-pane);
     -webkit-backdrop-filter: blur(var(--glass-blur-pane)) saturate(var(--glass-saturate));
     backdrop-filter: blur(var(--glass-blur-pane)) saturate(var(--glass-saturate));
+}
+/* Muted text on light glass is a step darker: muted-foreground is 4.7:1 on white, so
+   anything frosted behind it (the field, a line of text) would take it under 4.5:1.
+   0.5 keeps 4.9:1 or more over blurred body text (DESIGN.md, "Glass"). Dark glass
+   needs nothing: its muted text is 6:1 and up there. */
+:root:not(.dark) :is(.glass, .glass-strong, .glass-pane) {
+    --muted-foreground: oklch(0.5 0 0);
 }
 /* Subtle: panels and cards inside a screen. No blur: the field is masked under content. */
 @utility glass-subtle {

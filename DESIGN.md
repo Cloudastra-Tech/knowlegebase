@@ -64,8 +64,10 @@ spacing:
   section: "80px"
   section-lg: "112px"
 glass:
-  chrome: { blur: "16px", saturate: "140%", fill: "card at 66%" }
-  floating: { blur: "12px", saturate: "140%", fill: "popover at 86%" }
+  # dark fill; light ("Paper") in comments
+  pane: { blur: "8px", saturate: "160%", fill: "card at 30%" } # light: oklch(0.975) at 62%
+  chrome: { blur: "16px", saturate: "160%", fill: "card at 58%" } # light: white at 64%
+  floating: { blur: "16px", saturate: "160%", backdrop: "brightness(0.92)", fill: "popover at 74%" } # light: white at 76%, brightness(1.08)
   subtle: { blur: "none", fill: "card at 72%" }
 motion:
   ease-out-strong: "cubic-bezier(0.23, 1, 0.32, 1)"
@@ -200,7 +202,7 @@ text colour; import `cn` from there, never from the `cn` package itself (the sha
 
 | Place | What | Motion |
 |---|---|---|
-| App background | one fixed field at `--ascii-ambient`, at full strength out to 36rem from the centre (the widest screen's edge, so the sides read as ASCII at 1280), fading to 15% by 26rem in, under the content; 15% everywhere on a phone. The chat draws its own (`chat-backdrop.tsx`, 22% under the reading column, a mint glow while thinking) | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
+| App background | one fixed field, full-bleed: under the sidebar at full ink (`--ascii-backdrop`) for its glass to frost, and beside it at `--ascii-ambient` (the mask's `--ascii-beside`), at that strength out to 36rem from the content's centre (the widest screen's edge, so the sides read as ASCII at 1280), fading to 15% by 26rem in, under the content; 15% everywhere on a phone. The chat draws its own the same way (`chat-backdrop.tsx`, 22% under the reading column, a mint glow while thinking) | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
 | Thinking | a braille spinner plus a status line that decodes on change | 80ms frames; decode ≤ 240ms |
 | Inline loading | an ASCII spinner in place of `Loader2` | 80ms `steps()`; a static `•••` with reduced motion |
 | Empty states | 6–14 rows of hand-drawn art with real text beside it | one scan or blink, no faster than every 2s |
@@ -336,6 +338,8 @@ Borders are 1px hairlines.
   of icons with tooltips that never goes away (kept in `localStorage` `kb.sidebar`; ⌘B at
   once, the button slides the panel 200ms `ease-drawer` while the reserved width snaps). On a
   phone, a sheet from the left behind a 48px top bar (menu, the screen's name, New chat).
+  The sidebar is the pane glass (`glass-pane`) over the field, open and as the rail, with one
+  hairline (`--glass-edge`) on its inner edge; the phone's sheet is the floating tier.
   Hover is a soft background; the open screen a soft background and its icon in the signal.
   Never an edge bar or stripe. The index progress is a 2px signal line along the top of the
   content; the strips (trial, support, deletion) sit above the screen.
@@ -343,7 +347,10 @@ Borders are 1px hairlines.
   `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
 - **Screen shell:** `ScreenHeader` (path eyebrow, the `h2`, description, actions) and `Panel`
   (`subtle` by default; `glass` straight on the field; `solid` for reading and tables).
-  `GlassPanel` is a bare surface of one tier.
+  `GlassPanel` is a bare surface of one tier. `ScreenStrip` (in `Screen`, from 768px): once
+  the `h2` has scrolled under the top, a 44px chrome-glass strip with the path and the title
+  fades in (150ms) over the content scrolling beneath it, lined up with the title;
+  `aria-hidden`, since the `h2` is the title.
 - **ASCII pieces** (`components/ascii/*`): `AsciiField`, `AppBackdrop`, `AsciiSpinner` (for
   `Loader2`), `AsciiThinking`, `ScrambleText`, `AsciiEmptyState`, `AsciiDivider`,
   `AsciiProgress`, `AsciiLoader`, `RedactedDrift` (the empty chat; the composer's focus and
