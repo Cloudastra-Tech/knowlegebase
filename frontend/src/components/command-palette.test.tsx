@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router"
 
 import { CommandPalette } from "@/components/command-palette"
 import type { User } from "@/lib/api"
+import { OPEN_SEARCH } from "@/lib/chat-events"
 import { mockApi, withProviders } from "@/test/render"
 
 const ADMIN = { username: "admin@acme.example", role: "admin" } as User
@@ -37,5 +38,29 @@ describe("CommandPalette", () => {
     await user.type(box, "know")
     await waitFor(() => expect(item("New chat")).toBeNull())
     expect(item("Knowledge")).toHaveAttribute("aria-selected", "true")
+  })
+
+  it("opens on a folder's chats from the new chat's home", async () => {
+    mockApi({
+      "GET /api/conversations": {
+        conversations: [
+          { id: "c1", title: "Leave policy", updated_at: 2, folder_id: "f1" },
+          { id: "c2", title: "Laptop setup", updated_at: 1, folder_id: null },
+        ],
+        folders: [{ id: "f1", name: "Policies", sort: 0, created_at: 1 }],
+      },
+      "GET /api/prompts": { prompts: [] },
+    })
+    render(
+      withProviders(
+        <MemoryRouter>
+          <CommandPalette user={ADMIN} role="hr" />
+        </MemoryRouter>,
+      ),
+    )
+    window.dispatchEvent(new CustomEvent(OPEN_SEARCH, { detail: { folderId: "f1" } }))
+    await waitFor(() => expect(item("Leave policy")).not.toBeNull())
+    expect(screen.getByText("Policies")).toBeInTheDocument() // the group's heading
+    expect(item("Laptop setup")).toBeNull()
   })
 })

@@ -7,11 +7,15 @@ import {
   clamp,
   hash01,
   inZone,
+  lensFalloff,
+  lensSpan,
   lineSlots,
   lineSnippets,
   mulberry32,
+  nearestLine,
   nextLine,
   redact,
+  union,
   zoneHalfWidth,
   zoneOf,
   type Box,
@@ -28,9 +32,19 @@ import { cn } from "@/lib/utils"
 // Focus or typing in the composer (composer-signal.ts, no React state) slows the
 // drift to about 30% and draws the nearest lines a few px towards it.
 //
+// It answers the pointer, quietly. With a mouse (a fine pointer that hovers), a soft
+// round "reading lens" follows it: the redacted cells inside resolve, through a short
+// scramble, into the line's own made-up record, and close again as it moves on. A
+// click on a line (or the empty space near one; a tap on a touch screen) decodes the
+// whole line for a while, with one faint ring where it landed. The pointer is listened
+// to on the chat column (the canvas takes no events, so everything above it works as
+// ever) and only written into the scene, never into React state. The lens and the
+// decodes only ever show the made-up records (drift.ts), never anything of yours.
+//
 // On the shared ASCII loop: 30 fps, the app's budget, resting while the page scrolls,
 // under a dialog, offscreen (off /chat the chat is hidden) and in a hidden tab. With
-// reduced motion or "Reduce effects" it's one still frame with one line readable.
+// reduced motion or "Reduce effects" it's one still frame with one line readable, and
+// neither the lens nor a click changes it.
 // Canvas, DPR-aware, aria-hidden. The chat mounts it on the empty state only
 // (chat-backdrop.tsx), and fades it out over 400ms when the first question is sent.
 
@@ -57,6 +71,27 @@ const PULL_RANGE = 230 // lines nearer the composer than this lean towards it
 const LENS = 0.45 // inside the zone the redaction is lighter: the zone's edge
 const DECODE_ALPHA = { dark: 0.56, light: 0.62 }
 const SCRAMBLE_ALPHA = 0.24
+// The reading lens: its radius (px), how fast it follows the pointer (s), how long a
+// cell scrambles coming into it and going out (ms), and how strongly it reads (below
+// a decode, which is the signal's).
+const LENS_R = 104
+const LENS_R_SMALL = 84 // under 640px
+const LENS_FOLLOW = 0.06
+const LENS_IN = 170
+const LENS_OUT = 150
+const LENS_ALPHA = { dark: 0.42, light: 0.48 }
+// A click: how near a line it must land (px; a tap takes the nearest), how far the
+// reveal runs out from it and how fast, and how long the line then stays readable.
+const CLICK_REACH = 30
+const CLICK_SPREAD = 520
+const CLICK_REVEAL = 380
+const CLICK_HOLD = 8000
+const RIPPLE_MS = 380
+const RIPPLE_R = 14
+// Where a press is the art's: the column's blank space (the empty transcript, the
+// space round the home's sections), never a control, the composer or any words.
+const BLANK =
+  '[data-drift-blank], [data-slot="message-scroller"], [data-slot="message-scroller-viewport"], [data-slot="message-scroller-content"]'
 
 export function RedactedDrift({ leaving = false, className }: { leaving?: boolean; className?: string }) {
   const box = useRef<HTMLDivElement>(null)
@@ -75,7 +110,7 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
       loop.redraw()
     }
     // The column, the composer (it grows with its text) and the empty state's words
-    // (the starters arrive later) set where lines run.
+    // (the starters and recent chats arrive later) set where lines run.
     const ro = new ResizeObserver(relayout)
     ro.observe(el)
     for (const target of scene.watched()) ro.observe(target)
@@ -93,6 +128,8 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
       loop.redraw()
     })
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
+    const unlisten = scene.listen()
+    window.addEventListener("resize", scene.dirty)
     let live = true
     whenFontsReady(el).then(() => live && relayout())
     return () => {
@@ -100,6 +137,8 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
       loop.stop()
       ro.disconnect()
       mo.disconnect()
+      unlisten()
+      window.removeEventListener("resize", scene.dirty)
       clearTimeout(settle)
       root.removeEventListener("scroll", onScroll, { capture: true })
     }
@@ -128,6 +167,7 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
 }
 
 type Depth = (typeof DEPTHS)[number] & { px: number; font: string; cw: number }
+type LensCell = { t: number; out: number; seen: boolean }
 type Line = {
   baseY: number
   y: number
@@ -137,6 +177,9 @@ type Line = {
   tileW: number
   sprite: HTMLCanvasElement
   offset: number
+  // Cells in (or just out of) the reading lens, by their index along the line: when
+  // each came in, and when it went out (-1 while in).
+  lens: Map<number, LensCell>
 }
 type Decode = {
   line: Line
@@ -144,6 +187,7 @@ type Decode = {
   len: number
   text: string
   still: boolean
+  free: boolean // a click's: the whole line, not held to the zone
   t0: number
   revealAt: number[]
   exitAt: Float64Array
@@ -159,6 +203,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
   let W = 0
   let H = 0
   let dpr = 1
+  let origin = { x: 0, y: 0 } // the box on the page, for the pointer
   let comp: Box = { x: 0, y: 0, w: 0, h: 0 }
   let content: Box | null = null
   let zone: Zone = { cx: 0, cy: 0, a: 1, b: 1 }
@@ -171,9 +216,18 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
   let lastT = 0
   let focus = 0
   let ink = { fg: "", read: "", dark: true }
+  let stillNow = false
+  // The pointer as the listeners leave it: the lens follows it each frame. A click
+  // waits for the next frame, which has the scene's clock.
+  const pointer = { x: 0, y: 0, in: false }
+  const lens = { x: 0, y: 0, r: LENS_R, on: false }
+  let click: { x: number; y: number; line: number } | null = null
+  let ripple: { x: number; y: number; t0: number } | null = null
+  let lensShown = false
 
   const composerEl = () => root.querySelector('[data-drift="composer"]')
   const contentEl = () => root.querySelector('[data-drift="content"]')
+  const belowEl = () => root.querySelector('[data-drift="below"]')
 
   function restyle() {
     const s = getComputedStyle(el)
@@ -226,6 +280,8 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     const r = el.getBoundingClientRect()
     W = r.width
     H = r.height
+    origin = { x: r.left, y: r.top }
+    lens.r = W < 640 ? LENS_R_SMALL : LENS_R
     cv.width = Math.max(1, Math.round(W * dpr))
     cv.height = Math.max(1, Math.round(H * dpr))
     cv.style.width = `${W}px`
@@ -238,8 +294,11 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     }
     comp = rel(composerEl()) ?? { x: W * 0.1, y: H - 96, w: W * 0.8, h: 72 }
     content = rel(contentEl())
+    const below = rel(belowEl())
     const viewport = rel(root.querySelector('[data-slot="message-scroller-viewport"]'))
-    zone = zoneOf(comp, W, H)
+    // The heading just over the composer (the centred new chat): the zone is round both.
+    const near = content !== null && comp.y - (content.y + content.h) < 80
+    zone = zoneOf(near && content ? union(content, comp) : comp, W, H)
     if (aura) {
       Object.assign(aura.style, {
         left: `${zone.cx - zone.a}px`,
@@ -267,30 +326,37 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         d.cw = ctx.measureText("0").width || d.cw
       }
     }
-    // Lines keep their place along the way when they're laid out again.
+    // Lines keep their place along the way when they're laid out again. What's below
+    // the composer, once it has words in it, they run under, never across.
     const prev = lines
     const rand = mulberry32(7)
-    lines = lineSlots({ top: viewport ? viewport.y : 44, content, composer: comp }, H).map((y, rank) => {
-      const d = depths[DEPTH_BY_RANK[rank] ?? 2]
-      let text = ""
-      const snips: Line["snips"] = []
-      for (const sn of lineSnippets(rank)) {
-        snips.push({ start: text.length, len: sn.length })
-        text += sn + GAP
-      }
-      const tileW = text.length * d.cw
-      return {
-        baseY: y,
-        y,
-        d,
-        text,
-        snips,
-        tileW,
-        sprite: sprite(redact(text), d),
-        offset: prev[rank]?.offset ?? rand() * tileW,
-      }
-    })
+    const words = below && below.h > 0 ? below : null
+    lines = lineSlots({ top: viewport ? viewport.y : 44, content, composer: comp, below: words }, H).map(
+      (y, rank) => {
+        const d = depths[DEPTH_BY_RANK[rank] ?? 2]
+        let text = ""
+        const snips: Line["snips"] = []
+        for (const sn of lineSnippets(rank)) {
+          snips.push({ start: text.length, len: sn.length })
+          text += sn + GAP
+        }
+        const tileW = text.length * d.cw
+        return {
+          baseY: y,
+          y,
+          d,
+          text,
+          snips,
+          tileW,
+          sprite: sprite(redact(text), d),
+          offset: prev[rank]?.offset ?? rand() * tileW,
+          lens: new Map(),
+        }
+      },
+    )
     decode = null
+    // For the e2e specs: where the lines run.
+    el.dataset.lines = lines.map((ln) => Math.round(ln.y)).join(",")
   }
 
   // A line can decode inside the zone, but not behind the composer or the words.
@@ -299,6 +365,14 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     if (ln.baseY > comp.y - 16 && ln.baseY < comp.y + comp.h + 16) return false
     if (content && ln.baseY > content.y - 10 && ln.baseY < content.y + content.h + 10) return false
     return true
+  }
+
+  // Where a line's tiles are this frame: the first tile's left edge (whole device
+  // pixels, for crisp blocks) and the line's own position of that tile. Cell n (its
+  // index along the line) is at x0 + n * cw - baseAbs.
+  function place(ln: Line) {
+    const off = mod(ln.offset, ln.tileW)
+    return { x0: Math.round(-off * dpr) / dpr, baseAbs: ln.offset - off }
   }
 
   // The record on this line that is wholly inside the zone (and on screen) with the
@@ -353,6 +427,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         len,
         text: ln.text.substr(hit.start, len),
         still,
+        free: false,
         t0: now,
         revealAt: Array.from({ length: len }, (_, j) =>
           still ? -Infinity : now + REVEAL_LEAD + (j / Math.max(1, len - 1)) * REVEAL_MS,
@@ -367,6 +442,35 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       return true
     }
     return false
+  }
+
+  // A click: the whole line on screen decodes, outwards from where it landed, and
+  // stays readable longer than the zone's do. The cells that drift in from the right
+  // meanwhile are part of it too.
+  function clickDecode(ln: Line, x: number, now: number) {
+    const cw = ln.d.cw
+    const { x0, baseAbs } = place(ln)
+    const n0 = Math.floor((baseAbs - x0) / cw)
+    const n1 = Math.ceil((W + baseAbs - x0) / cw) + Math.ceil(((CLICK_HOLD / 1000) * ln.d.speed + 40) / cw)
+    const len = n1 - n0
+    let text = ""
+    for (let n = n0; n < n1; n++) text += ln.text[mod(n, ln.text.length)]
+    const at = (x - x0 + baseAbs) / cw
+    decode = {
+      line: ln,
+      absX: n0 * cw,
+      len,
+      text,
+      still: false,
+      free: true,
+      t0: now,
+      revealAt: Array.from(
+        { length: len },
+        (_, j) => now + 40 + Math.min(1, (Math.abs(n0 + j - at) * cw) / CLICK_SPREAD) * CLICK_REVEAL,
+      ),
+      exitAt: new Float64Array(len).fill(-1),
+      holdUntil: now + 40 + CLICK_REVEAL + CLICK_HOLD,
+    }
   }
 
   const scrambleChar = (j: number, now: number, ch: string) =>
@@ -393,8 +497,8 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       }
       const x = base + j * cw
       if (dc.exitAt[j] < 0) {
-        if (now >= dc.holdUntil) dc.exitAt[j] = now + j * 14 // timed out: back, left to right
-        else if (now >= dc.revealAt[j] && !inZone(zone, x + cw / 2, ln.y, 0.95)) dc.exitAt[j] = now // left the zone
+        if (now >= dc.holdUntil) dc.exitAt[j] = now + j * (dc.free ? 5 : 14) // timed out: back, left to right
+        else if (!dc.free && now >= dc.revealAt[j] && !inZone(zone, x + cw / 2, ln.y, 0.95)) dc.exitAt[j] = now // left the zone
       }
       const e = dc.exitAt[j]
       const st = e >= 0 && now >= e + SCRAMBLE_OUT ? 0 : (e >= 0 && now >= e) || now < dc.revealAt[j] ? 1 : 2
@@ -403,12 +507,47 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         continue
       }
       alive = true
+      if (x > W || x + cw < 0) {
+        close()
+        continue // off screen: alive, not drawn
+      }
       if (runX < 0) runX = x
       runEnd = x + cw
       glyphs.push([st === 2 ? ch : scrambleChar(j, now, ch), x, st])
     }
     close()
     return { runs, glyphs, alive }
+  }
+
+  // The lens on one line: the cells now inside come in (scrambling first), the ones it
+  // has left go out (scrambling, then redacted again). Never a decode's cells, which
+  // read already. The cells to draw, or null for none.
+  function lensLine(ln: Line, now: number, x0: number, baseAbs: number, dc: Decode | null) {
+    const cw = ln.d.cw
+    const span = lens.on ? lensSpan(lens, ln.y, cw, x0 - baseAbs) : null
+    if (!span && !ln.lens.size) return null
+    const d0 = dc ? Math.round(dc.absX / cw) : 0
+    const d1 = dc ? d0 + dc.len : 0
+    for (const cell of ln.lens.values()) cell.seen = false
+    if (span) {
+      for (let n = span[0]; n <= span[1]; n++) {
+        if ((n >= d0 && n < d1) || ln.text[mod(n, ln.text.length)] === " ") continue
+        const cell = ln.lens.get(n)
+        if (!cell) ln.lens.set(n, { t: now, out: -1, seen: true })
+        else {
+          cell.seen = true
+          if (cell.out >= 0) {
+            cell.t = now
+            cell.out = -1
+          }
+        }
+      }
+    }
+    for (const [n, cell] of ln.lens) {
+      if (!cell.seen && cell.out < 0) cell.out = now
+      if ((cell.out >= 0 && now - cell.out > LENS_OUT) || (n >= d0 && n < d1)) ln.lens.delete(n)
+    }
+    return ln.lens.size ? ln.lens : null
   }
 
   function zonePath(c: CanvasRenderingContext2D) {
@@ -418,13 +557,13 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
 
   function drawLine(c: CanvasRenderingContext2D, ln: Line, now: number) {
     const d = ln.d
+    const cw = d.cw
     const sw = ln.sprite.width / dpr
     const sh = ln.sprite.height / dpr
     const top = Math.round((ln.y - sh / 2) * dpr) / dpr
-    const off = mod(ln.offset, ln.tileW)
-    const x0 = Math.round(-off * dpr) / dpr // whole device pixels: crisp blocks
+    const { x0, baseAbs } = place(ln)
     const dc = decode && decode.line === ln ? decode : null
-    const cells = dc ? decodeCells(dc, ln, now, x0 + dc.absX - (ln.offset - off)) : null
+    const cells = dc ? decodeCells(dc, ln, now, x0 + dc.absX - baseAbs) : null
     const tiles = () => {
       for (let x = x0; x < W; x += ln.tileW) c.drawImage(ln.sprite, x, top, sw, sh)
     }
@@ -440,16 +579,37 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     c.globalAlpha = d.alpha
     tiles()
     c.restore()
-    // Inside: lighter, less any cells decoding.
+    // Inside: lighter.
     if (crosses) {
       c.save()
       c.beginPath()
       zonePath(c)
-      if (cells) for (let i = 0; i < cells.runs.length; i += 2) c.rect(cells.runs[i], top, cells.runs[i + 1], sh)
-      c.clip("evenodd")
+      c.clip()
       c.globalAlpha = d.alpha * LENS
       tiles()
       c.restore()
+    }
+    // The cells that read (a decode's, the lens's) are cut out of the redacted line.
+    // A line is alone in its band (lines are 40px or more apart), so this clears
+    // nothing else.
+    if (cells) for (let i = 0; i < cells.runs.length; i += 2) c.clearRect(cells.runs[i], top, cells.runs[i + 1], sh)
+    const lensCells = lensLine(ln, now, x0, baseAbs, dc)
+    if (lensCells) {
+      c.font = d.font
+      c.textBaseline = "middle"
+      c.fillStyle = ink.fg
+      const read = LENS_ALPHA[ink.dark ? "dark" : "light"]
+      for (const [n, cell] of lensCells) {
+        const x = x0 + n * cw - baseAbs
+        c.clearRect(x - 0.5, top, cw + 1, sh)
+        const ch = ln.text[mod(n, ln.text.length)]
+        const scrambling = cell.out >= 0 || now - cell.t < LENS_IN
+        const dx = x + cw / 2 - lens.x
+        const dy = ln.y - lens.y
+        c.globalAlpha = scrambling ? SCRAMBLE_ALPHA : read * lensFalloff(Math.sqrt(dx * dx + dy * dy), lens.r)
+        c.fillText(scrambling ? scrambleChar(n, now, ch) : ch, x, ln.y + 0.5)
+      }
+      c.globalAlpha = 1
     }
     if (dc && cells) {
       c.font = d.font
@@ -471,6 +631,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     if (dirty) measure()
     if (!ctx || !W) return
     const still = t < 0
+    stillNow = still
     const now = still ? 0 : t * 1000
     const dt = still ? 0 : clamp(t - lastT, 0, 0.1)
     if (!still) lastT = t
@@ -482,6 +643,25 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       decode = null
       nextDecodeAt = now + 1200
     }
+    // The lens follows the pointer, from where it came in (never sweeping across); a
+    // click decodes its line. Neither in the still frame.
+    if (still || !pointer.in) {
+      lens.on = false
+      if (still) for (const ln of lines) ln.lens.clear()
+    } else {
+      if (!lens.on) {
+        lens.x = pointer.x
+        lens.y = pointer.y
+      }
+      lens.on = true
+      lens.x = approach(lens.x, pointer.x, dt, LENS_FOLLOW)
+      lens.y = approach(lens.y, pointer.y, dt, LENS_FOLLOW)
+    }
+    if (click && !still && lines[click.line]) {
+      clickDecode(lines[click.line], click.x, now)
+      ripple = { x: click.x, y: click.y, t0: now }
+    }
+    click = null
     ctx.clearRect(0, 0, W, H)
     const speed = 1 - 0.7 * focus // focused: about 30%
     const mid = comp.y + comp.h / 2
@@ -494,6 +674,20 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       ln.y = ln.baseY + Math.sign(dy) * pull * focus
       drawLine(ctx, ln, now)
     }
+    // A click's one faint ring, fading where it is (no growing).
+    if (ripple) {
+      const p = (now - ripple.t0) / RIPPLE_MS
+      if (still || p >= 1) ripple = null
+      else {
+        ctx.globalAlpha = 0.2 * (1 - p) * (1 - p)
+        ctx.strokeStyle = ink.fg
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(ripple.x, ripple.y, RIPPLE_R, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+      }
+    }
     if (!still && !decode) {
       nextDecodeAt ??= now + FIRST_DECODE
       // Nothing fits the zone just now (often, on a phone): look again shortly.
@@ -503,9 +697,69 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         else nextDecodeAt = now + 300
       }
     }
-    // For the e2e specs and a trace: whether a line reads right now.
+    // For the e2e specs and a trace: whether a line reads right now, and the lens.
     const reading = !!decode && !decode.still
     if (reading !== el.hasAttribute("data-decoding")) el.toggleAttribute("data-decoding", reading)
+    const lensing = lines.some((ln) => ln.lens.size > 0)
+    if (lensing !== lensShown) {
+      lensShown = lensing
+      el.toggleAttribute("data-lens", lensing)
+    }
+  }
+
+  // The pointer, on the chat column. A move only writes `pointer`. A press on blank
+  // space keeps the focus where it is (the composer's, usually); its click decodes the
+  // line nearest it. Anywhere else (a control, the composer, words that could be
+  // selected) a press is left alone.
+  function listen() {
+    const hover = window.matchMedia("(hover: hover) and (pointer: fine)")
+    let down: { x: number; y: number; type: string } | null = null
+    const ours = (target: EventTarget | null) =>
+      target === root || (target instanceof Element && target.matches(BLANK))
+    const onMove = (e: PointerEvent) => {
+      pointer.in = e.pointerType !== "touch" && hover.matches
+      pointer.x = e.clientX - origin.x
+      pointer.y = e.clientY - origin.y
+    }
+    const onLeave = () => {
+      pointer.in = false
+    }
+    const onDown = (e: PointerEvent) => {
+      down = { x: e.clientX, y: e.clientY, type: e.pointerType }
+    }
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button === 0 && !stillNow && ours(e.target)) e.preventDefault()
+    }
+    const onClick = (e: MouseEvent) => {
+      const from = down
+      down = null
+      if (stillNow || !lines.length || e.button !== 0 || e.detail > 1 || !ours(e.target)) return
+      if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > 6) return // a drag
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed) return
+      const x = e.clientX - origin.x
+      const y = e.clientY - origin.y
+      if (x < 0 || y < 0 || x > W || y > H) return
+      const touch = from !== null && from.type !== "mouse"
+      const line = nearestLine(
+        lines.map((ln) => ln.y),
+        y,
+        touch ? Infinity : CLICK_REACH,
+      )
+      if (line >= 0) click = { x, y, line }
+    }
+    root.addEventListener("pointermove", onMove, { passive: true })
+    root.addEventListener("pointerleave", onLeave)
+    root.addEventListener("pointerdown", onDown, { passive: true })
+    root.addEventListener("mousedown", onMouseDown)
+    root.addEventListener("click", onClick)
+    return () => {
+      root.removeEventListener("pointermove", onMove)
+      root.removeEventListener("pointerleave", onLeave)
+      root.removeEventListener("pointerdown", onDown)
+      root.removeEventListener("mousedown", onMouseDown)
+      root.removeEventListener("click", onClick)
+    }
   }
 
   return {
@@ -515,7 +769,8 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       dirty = true
     },
     root: () => root,
-    watched: () => [composerEl(), contentEl()].filter((n): n is Element => n !== null),
+    listen,
+    watched: () => [composerEl(), contentEl(), belowEl()].filter((n): n is Element => n !== null),
   }
 }
 
