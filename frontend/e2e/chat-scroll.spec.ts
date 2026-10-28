@@ -12,6 +12,9 @@ const viewport = (page: Page) => page.getByRole("region", { name: "Chat messages
 const jump = (page: Page) => page.locator('[data-slot="message-scroller-button"]')
 
 // Strings, so the e2e tsconfig needs no DOM types.
+// Also, from the question asked next: where it and its answer's row are on screen in
+// every frame (the spread of each, px), and the layout shifts that moved anything in
+// the question.
 const WATCH = `(() => {
   const v = document.querySelector('[data-slot="message-scroller-viewport"]')
   window.__scrolls = 0
@@ -22,7 +25,48 @@ const WATCH = `(() => {
     if (args[0] && args[0].behavior === "smooth") window.__smooth++
     return scrollTo.apply(this, args)
   }
+  const anchors = () => [...v.querySelectorAll('[data-scroll-anchor="true"]')]
+  const before = new Set(anchors())
+  const spread = { q: [Infinity, -Infinity], a: [Infinity, -Infinity] }
+  const add = (k, y) => { spread[k][0] = Math.min(spread[k][0], y); spread[k][1] = Math.max(spread[k][1], y) }
+  window.__frames = 0
+  window.__spread = () => ({ question: spread.q[1] - spread.q[0], answer: spread.a[1] - spread.a[0], frames: window.__frames })
+  const frame = () => {
+    const question = anchors().find((r) => !before.has(r))
+    if (question) {
+      const top = v.getBoundingClientRect().top
+      add("q", question.getBoundingClientRect().top - top)
+      const answer = question.nextElementSibling
+      if (answer) add("a", answer.getBoundingClientRect().top - top)
+      window.__frames++
+    }
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+  window.__shifted = 0
+  new PerformanceObserver((list) => {
+    const question = anchors().find((r) => !before.has(r))
+    for (const e of list.getEntries())
+      if (question && e.sources.some((s) => s.node && question.contains(s.node))) window.__shifted++
+  }).observe({ type: "layout-shift" })
 })()`
+const spread = (page: Page) =>
+  page.evaluate("window.__spread()") as Promise<{ question: number; answer: number; frames: number }>
+
+// The turn before has settled: nothing in the transcript is still moving. The fake
+// OpenAI writes a short answer in a few milliseconds, so it's done while its steps are
+// still folding away (250ms from its first word); a real answer takes far longer than
+// that. Asked during the fold, the question is pinned while the turn above it is still
+// getting shorter, which the scroller makes up for a frame later: not what this is about.
+async function settled(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        `document.querySelector('[data-slot="message-scroller-content"]').getAnimations({ subtree: true }).filter((a) => a.playState === "running").length`,
+      ),
+    )
+    .toBe(0)
+}
 
 interface View {
   top: number // the viewport's scrollTop
@@ -65,6 +109,7 @@ test("a new question is pinned to the top, its answer grows below it without scr
   await signIn(page, MEMBER)
   const log = conversation(page)
   await ask(page, "How many paid annual leave days do staff get?")
+  await settled(page)
 
   await page.evaluate(WATCH)
   await send(page, "What does the leave policy say about sick leave, in full detail?")
@@ -73,23 +118,34 @@ test("a new question is pinned to the top, its answer grows below it without scr
   // of the turn before it in sight, under the transcript's 24px padding).
   await expect.poll(async () => (await view(page)).pinned).toBeGreaterThan(40)
   await expect.poll(async () => (await view(page)).pinned).toBeLessThan(120)
-  // The answer has started (the earlier turn has settled: it loses its follow-ups, and
-  // the scroller keeps the question where it is while that happens).
+  // The answer has started (the earlier turn lost its follow-ups as the question went,
+  // before it was pinned).
   await expect(log.locator('[aria-label="Answer"]').last().locator("p").first()).toBeVisible()
   const pinned = await view(page)
   expect(pinned.top).toBeGreaterThan(0) // the first turn went up out of the way
 
-  // The answer grows by several lines while nothing scrolls: no scroll event, no
-  // smooth scroll, the same scrollTop, the question in the same place.
+  // The answer grows by several lines, past the bottom of the view, while nothing
+  // scrolls: no scroll event, no smooth scroll, the same scrollTop, the question in the
+  // same place.
   await expect
     .poll(async () => (await view(page)).answer, { timeout: 15_000 })
     .toBeGreaterThan(pinned.answer + 300)
+  await expect.poll(async () => (await view(page)).below, { timeout: 15_000 }).toBeGreaterThan(0)
   const grown = await view(page)
   expect(grown.top).toBe(pinned.top)
   expect(grown.scrolls).toBe(pinned.scrolls)
   expect(grown.smooth).toBe(0)
   expect(grown.pinned).toBeCloseTo(pinned.pinned, 0)
-  expect(grown.below).toBeGreaterThan(0) // it has run past the bottom of the view
+  // Nor for a single frame, from the moment it was asked: not the question (the answer
+  // getting shorter as its steps fold away left the view past the end of the scroll
+  // range, and the browser pulled it back, dropping the question, until the scroller
+  // put it back) and not its answer's row (the question's Edit button arriving pushed
+  // it down). No layout shift moved anything in the question.
+  const frames = await spread(page)
+  expect(frames.frames).toBeGreaterThan(10)
+  expect(frames.question).toBeLessThan(0.5)
+  expect(frames.answer).toBeLessThan(0.5)
+  expect(await page.evaluate("window.__shifted")).toBe(0)
   await expect(jump(page)).toHaveAttribute("data-active", "true")
   await shot(page, "chat-scroll-desktop-streaming")
 
@@ -136,12 +192,17 @@ test("at 390px with reduced motion, Jump to latest moves at once, and the answer
   await page.setViewportSize(PHONE)
   await signIn(page, MEMBER)
   await ask(page, "How many sick leave days do staff get?")
+  await settled(page)
 
+  await page.evaluate(WATCH)
   await send(page, "What does the leave policy say about annual leave, in full detail?")
   await expect.poll(async () => (await view(page)).pinned).toBeLessThan(120)
   const pinned = await view(page)
   await expect(jump(page)).toHaveAttribute("data-active", "true", { timeout: 15_000 })
   expect((await view(page)).top).toBe(pinned.top)
+  const frames = await spread(page)
+  expect(frames.question).toBeLessThan(0.5)
+  expect(frames.answer).toBeLessThan(0.5)
 
   // Instant: at the end straight after the click (smooth would still be on its way).
   await page.getByRole("button", { name: "Jump to latest" }).click()

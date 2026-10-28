@@ -817,6 +817,14 @@ export function ChatView({ role }: { role: Role }) {
                 // Room under the last answer for "Jump to latest", so it never covers
                 // the answer's last row (Stopped · Try again, the actions).
                 className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16"
+                // The spacer under a pinned question's answer is sized to let the view
+                // reach the question and no further, and only a frame after the answer
+                // changes. An answer getting shorter as it streams (its steps folding
+                // away once the text starts) would leave the view past the end for that
+                // frame: the browser pulls it back, the question drops by as much, and
+                // the scroller puts it back. 12rem more room under the spacer (only
+                // while there is one) takes the shrinking, so nothing moves.
+                spacerClassName="box-content pb-48"
                 aria-label="Conversation"
                 aria-busy={loading}
               >
@@ -1148,24 +1156,28 @@ function UserMessage({
       </Bubble>
       <div className="flex items-center gap-0.5 text-muted-foreground" data-print="hide">
         <BranchNav message={message} onBranch={onBranch} disabled={busy} />
-        {message.id && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                ref={editButton}
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Edit question"
-                disabled={busy}
-                onClick={onEdit}
-                className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
-              >
-                <Pencil />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Edit (↑ in an empty box edits the last one)</TooltipContent>
-          </Tooltip>
-        )}
+        {/* Its room is kept from the start (hidden until the question is saved and has
+            an id), so the row doesn't arrive under a question just asked and push the
+            answer down. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              ref={editButton}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Edit question"
+              disabled={busy || !message.id}
+              onClick={onEdit}
+              className={cn(
+                "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100",
+                !message.id && "invisible",
+              )}
+            >
+              <Pencil />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Edit (↑ in an empty box edits the last one)</TooltipContent>
+        </Tooltip>
       </div>
     </MessageRow>
   )
