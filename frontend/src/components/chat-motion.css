@@ -259,6 +259,13 @@
   .kb-chat-backdrop[data-thinking] .kb-chat-field {
     animation: none;
   }
+  /* The steps fold without moving: opening fades in at full height, folding is instant. */
+  .kb-trace [data-slot="trace-collapsible-content"][data-state="open"] {
+    animation: kb-fade 150ms var(--ease-out-strong);
+  }
+  .kb-trace [data-slot="trace-collapsible-content"][data-state="closed"] {
+    animation: none;
+  }
 }
 :root[data-effects="reduced"] .kb-chat-backdrop[data-thinking] .kb-chat-field,
 :root[data-effects="reduced"] .kb-caret {
