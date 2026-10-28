@@ -111,7 +111,7 @@ export function KitGallery() {
     return (
       <main className="mx-auto max-w-5xl space-y-6 px-4 py-6">
         <AppBackdrop />
-        <ScreenHeader title="Knowledge" eyebrow="~/knowledge" description="The app's field behind a plain screen." />
+        <ScreenHeader title="Knowledge" trail={{ crumbs: [{ label: "Knowledge" }], back: null }} description="The app's field behind a plain screen." />
         <div className="grid gap-4 sm:grid-cols-2">
           <Panel title="Sources" eyebrow="12 connected">
             <p className="text-sm text-muted-foreground">Panels inside a screen are subtle glass: no blur.</p>
@@ -127,7 +127,7 @@ export function KitGallery() {
   return (
     <main className="mx-auto max-w-5xl space-y-12 px-4 py-6">
       {backdrop && <AppBackdrop />}
-      <ScreenHeader title="Signal Glass kit" eyebrow="~/__kit" actions={controls} />
+      <ScreenHeader title="Signal Glass kit" trail={{ crumbs: [{ label: "Kit" }], back: null }} actions={controls} />
 
       <Section id="colours" label="colours">
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
@@ -292,7 +292,10 @@ export function KitGallery() {
             <ScreenHeader
               title="Members"
               icon={UserRound}
-              eyebrow="~/admin/members"
+              trail={{
+                crumbs: [{ label: "Access", to: "/admin/sign-in" }, { label: "Members" }],
+                back: null,
+              }}
               description="Everyone who can sign in to this workspace."
               actions={
                 <Button size="sm">

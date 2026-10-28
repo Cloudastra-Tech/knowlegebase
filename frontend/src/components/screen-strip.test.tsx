@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 describe("ScreenStrip", () => {
-  it("shows the path and title once the title has scrolled under it, and hides again", () => {
+  it("shows the title once it has scrolled under the strip, and hides again", () => {
     vi.stubGlobal("IntersectionObserver", TitleObserver)
     const { container } = render(
       <MemoryRouter initialEntries={["/knowledge"]}>
@@ -51,7 +51,6 @@ describe("ScreenStrip", () => {
     const rootBounds = { top: 0 } as DOMRectReadOnly
     act(() => report!({ isIntersecting: false, boundingClientRect: { top: -30 } as DOMRectReadOnly, rootBounds }))
     expect(strip).toHaveAttribute("data-shown")
-    expect(strip).toHaveTextContent("~/knowledge")
     expect(strip).toHaveTextContent("Knowledge base")
 
     act(() => report!({ isIntersecting: true, boundingClientRect: { top: 60 } as DOMRectReadOnly, rootBounds }))

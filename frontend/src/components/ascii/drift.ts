@@ -106,12 +106,20 @@ export const zoneHalfWidth = (z: Zone, y: number, k = 1) => {
   return t * t >= 1 ? 0 : z.a * k * Math.sqrt(1 - t * t)
 }
 
+// The box round two boxes.
+export function union(a: Box, b: Box): Box {
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }
+}
+
 // Where lines run: the free bands of the empty screen, never across its words. Up
 // from the composer to the empty state's last line, one through the composer itself
-// (frosted by its glass), and above the heading where there's room. At most `max`,
+// (frosted by its glass), above the heading where there's room, and under what sits
+// below the composer (recent chats, spaces: `below`), never across it. At most `max`,
 // the nearest the composer first.
 export function lineSlots(
-  { top, content, composer }: { top: number; content: Box | null; composer: Box },
+  { top, content, composer, below = null }: { top: number; content: Box | null; composer: Box; below?: Box | null },
   height: number,
   max = 8,
 ) {
@@ -120,8 +128,43 @@ export function lineSlots(
   const floor = content ? content.y + content.h + gap * 0.5 : top + gap * 0.5
   for (let y = composer.y - gap * 0.55; y > floor; y -= gap) ys.push(y)
   if (content) for (let y = content.y - gap * 0.6; y > top + 14; y -= gap) ys.push(y)
+  if (below) for (let y = below.y + below.h + gap * 0.6; y < height - 14; y += gap) ys.push(y)
   const mid = composer.y + composer.h / 2
   return ys.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid)).slice(0, max)
+}
+
+// The reading lens (the pointer, on a fine pointer): a circle in which the lines read.
+export type Lens = { x: number; y: number; r: number }
+
+// The cells of a line at height `y` whose centres are inside the lens, as the first
+// and last cell index (cell n's left edge is at originX + n * cw), or null for none.
+// A circle's slice is one run, so a range says it all.
+export function lensSpan(lens: Lens, y: number, cw: number, originX: number): [number, number] | null {
+  const dy = y - lens.y
+  const h2 = lens.r * lens.r - dy * dy
+  if (h2 <= 0 || cw <= 0) return null
+  const h = Math.sqrt(h2)
+  const first = Math.ceil((lens.x - h - originX) / cw - 0.5)
+  const last = Math.floor((lens.x + h - originX) / cw - 0.5)
+  return first <= last ? [first, last] : null
+}
+
+// How strongly a cell `d` px from the lens's centre reads: fully in the middle,
+// about a third at the edge, so the lens has a soft rim and no line.
+export const lensFalloff = (d: number, r: number) => 0.35 + 0.65 * clamp(1 - (d * d) / (r * r), 0, 1)
+
+// The line nearest height `y` (its index in `ys`), if one is within `max` px; -1 if not.
+export function nearestLine(ys: readonly number[], y: number, max = Infinity) {
+  let best = -1
+  let bestD = max
+  ys.forEach((ly, i) => {
+    const d = Math.abs(ly - y)
+    if (d <= bestD) {
+      best = i
+      bestD = d
+    }
+  })
+  return best
 }
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))

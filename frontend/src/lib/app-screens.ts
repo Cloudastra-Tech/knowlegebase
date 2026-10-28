@@ -65,16 +65,44 @@ export function currentSection(path: string, items: NavItem[]) {
     .sort((a, b) => b.length - a.length)[0]
 }
 
-// The screens reached from the account menu, by name, for the phone's top bar.
-const PERSONAL: [string, string][] = [
+// The screens reached from the account menu (components/account-menu.tsx), by name,
+// in its order.
+export const ACCOUNT_SCREENS: [string, string][] = [
   ["/spaces", "Spaces"],
   ["/prompts", "My prompts"],
   ["/api-keys", "API keys"],
   ["/digests", "Digests"],
   ["/connections", "My connections"],
   ["/billing", "Plan & billing"],
+]
+
+// Those and the screens reached from outside the app, for the phone's top bar.
+const PERSONAL: [string, string][] = [
+  ...ACCOUNT_SCREENS,
   ["/extension", "Browser extension"],
   ["/passages", "Passage"],
+]
+
+// The Access screen's tabs, each its own URL (/admin/<tab>, routes.tsx).
+export type AccessTab = "sign-in" | "members" | "groups" | "activity" | "api" | "webhooks" | "data"
+
+export const ACCESS_TABS: [AccessTab, string][] = [
+  ["sign-in", "Sign-in"],
+  ["members", "Members"],
+  ["groups", "Groups"],
+  ["activity", "Activity"],
+  ["api", "API & MCP"],
+  ["webhooks", "Webhooks"],
+  ["data", "Data"],
+]
+
+// The Insights screen's tabs: /admin/insights, /admin/insights/<tab>.
+export type InsightsTab = "overview" | "not-found" | "feedback"
+
+export const INSIGHTS_TABS: [InsightsTab, string][] = [
+  ["overview", "Overview"],
+  ["not-found", "Not found"],
+  ["feedback", "Feedback"],
 ]
 
 // The open screen's name (the phone's top bar).

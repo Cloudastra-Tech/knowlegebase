@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest"
 
-import { DRIFT_SNIPPETS, lineSlots, lineSnippets, nextLine, redact, zoneOf } from "@/components/ascii/drift"
+import {
+  DRIFT_SNIPPETS,
+  lensFalloff,
+  lensSpan,
+  lineSlots,
+  lineSnippets,
+  nearestLine,
+  nextLine,
+  redact,
+  zoneOf,
+} from "@/components/ascii/drift"
 
 const words = (s: string) => s.split(" ").map((w) => w.length)
 
@@ -63,5 +73,62 @@ describe("the layout", () => {
     for (const y of ys) expect(y < content.y || y > content.y + content.h).toBe(true)
     // one through the composer, frosted by its glass
     expect(ys[0]).toBe(composer.y + composer.h / 2)
+  })
+
+  it("with the composer centred, runs lines above the heading and under the recent chats, never across them", () => {
+    const centred = { x: 160, y: 330, w: 736, h: 86 }
+    const heading = { x: 160, y: 280, w: 736, h: 36 }
+    const below = { x: 200, y: 500, w: 640, h: 200 }
+    const ys = lineSlots({ top: 44, content: heading, composer: centred, below }, 800)
+    expect(ys.some((y) => y < heading.y)).toBe(true)
+    expect(ys.some((y) => y > below.y + below.h)).toBe(true)
+    for (const y of ys) {
+      expect(y < heading.y || y > heading.y + heading.h).toBe(true)
+      expect(y < below.y || y > below.y + below.h).toBe(true)
+      expect(y).toBeLessThan(800 - 14)
+    }
+  })
+})
+
+describe("the reading lens", () => {
+  const lens = { x: 200, y: 100, r: 100 }
+
+  it("takes the cells whose centres are inside its circle, and no others", () => {
+    const cw = 7
+    // Through the middle: a slice 200px wide, cells 7px.
+    const [first, last] = lensSpan(lens, 100, cw, 0)!
+    const centre = (n: number) => n * cw + cw / 2
+    expect(centre(first)).toBeGreaterThanOrEqual(100)
+    expect(centre(first - 1)).toBeLessThan(100)
+    expect(centre(last)).toBeLessThanOrEqual(300)
+    expect(centre(last + 1)).toBeGreaterThan(300)
+    // Near its top edge, a narrower slice; past it, none.
+    const [a, b] = lensSpan(lens, 180, cw, 0)!
+    expect(b - a).toBeLessThan(last - first)
+    for (let n = a; n <= b; n++) expect(Math.hypot(centre(n) - lens.x, 180 - lens.y)).toBeLessThan(lens.r)
+    expect(lensSpan(lens, 201, cw, 0)).toBeNull()
+    expect(lensSpan(lens, -1, cw, 0)).toBeNull()
+  })
+
+  it("follows the line as it drifts: cell indices shift with the line's origin", () => {
+    const [f0] = lensSpan(lens, 100, 7, 0)!
+    const [f1] = lensSpan(lens, 100, 7, -70)! // the line moved 70px (10 cells) left
+    expect(f1 - f0).toBe(10)
+  })
+
+  it("reads fully in the middle and softly at the rim", () => {
+    expect(lensFalloff(0, 100)).toBe(1)
+    expect(lensFalloff(100, 100)).toBeCloseTo(0.35)
+    expect(lensFalloff(50, 100)).toBeGreaterThan(lensFalloff(90, 100))
+  })
+})
+
+describe("nearestLine", () => {
+  it("finds the line a click is on or near, within reach", () => {
+    const ys = [400, 120, 180, 240]
+    expect(nearestLine(ys, 185)).toBe(2)
+    expect([1, 2]).toContain(nearestLine(ys, 150, 30)) // 30 from both: either, but one
+    expect(nearestLine(ys, 300, 30)).toBe(-1)
+    expect(nearestLine(ys, 300)).toBe(3) // a tap: the nearest, however far
   })
 })

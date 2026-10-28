@@ -1,3 +1,4 @@
+import { Profiler } from "react"
 import { render } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -12,6 +13,8 @@ let reduce = false
 type Glyph = { ch: string; x: number; y: number; alpha: number }
 let glyphs: Glyph[] = []
 let clears = 0
+let rings = 0
+let fine = true
 
 function step(n = 1, ms = 1000 / 60) {
   for (let i = 0; i < n; i++) {
@@ -42,6 +45,12 @@ function fakeContext() {
     moveTo() {},
     ellipse() {},
     clip() {},
+    strokeStyle: "",
+    lineWidth: 1,
+    arc() {},
+    stroke: () => {
+      rings++
+    },
     fillText(ch: string, x: number, y: number) {
       glyphs.push({ ch, x, y, alpha: ctx.globalAlpha })
     },
@@ -83,6 +92,8 @@ beforeEach(() => {
   reduce = false
   glyphs = []
   clears = 0
+  rings = 0
+  fine = true
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb))
   vi.stubGlobal("cancelAnimationFrame", () => {
     frames = []
@@ -103,7 +114,10 @@ beforeEach(() => {
     },
   )
   const realMatchMedia = window.matchMedia
-  vi.stubGlobal("matchMedia", (q: string) => ({ ...realMatchMedia(q), matches: q.includes("reduced-motion") && reduce }))
+  vi.stubGlobal("matchMedia", (q: string) => ({
+    ...realMatchMedia(q),
+    matches: q.includes("reduced-motion") ? reduce : q.includes("pointer: fine") ? fine : false,
+  }))
   fakeContext()
   layout()
 })
@@ -167,5 +181,151 @@ describe("RedactedDrift", () => {
     }
     const snippets = DRIFT_SNIPPETS.map((s) => s.replace(/ /g, ""))
     for (const d of decodes) expect(snippets).toContain(d.text)
+  })
+})
+
+// The pointer, as the chat column hears it (jsdom has no PointerEvent: a MouseEvent
+// of the same name carries what the scene reads).
+function point(target: Element, type: string, x: number, y: number, pointerType = "mouse") {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, detail: 1 })
+  Object.defineProperty(e, "pointerType", { value: pointerType })
+  target.dispatchEvent(e)
+}
+const linesOf = (container: HTMLElement) =>
+  (container.querySelector<HTMLElement>('[data-mode="drift"]')!.dataset.lines ?? "").split(",").map(Number)
+// One drawn frame's glyphs (the loop is 30 fps: some 60 Hz steps draw nothing).
+function frame() {
+  for (let i = 0; i < 4; i++) {
+    glyphs = []
+    const before = clears
+    step()
+    if (clears !== before) return glyphs
+  }
+  return glyphs
+}
+// The lens's glyphs: readable, but quieter than a decode (and not scrambling).
+const lensGlyphs = (gs: Glyph[]) => gs.filter((g) => g.alpha > 0.25 && g.alpha <= 0.5)
+
+describe("RedactedDrift and the pointer", () => {
+  it("reads the line under a mouse, within the lens's radius only, and closes it again", () => {
+    const { container } = render(<Column />)
+    const root = container.firstElementChild!
+    step(10)
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    const x = 500
+    point(root, "pointermove", x, y)
+    step(18) // 300ms: past the scramble in
+    const shown = lensGlyphs(frame())
+    expect(shown.length).toBeGreaterThan(8)
+    // Only the made-up records' own characters, and only inside the radius.
+    const theirs = new Set(DRIFT_SNIPPETS.join(""))
+    for (const g of shown) {
+      expect(Math.hypot(g.x + 3.5 - x, g.y - 0.5 - y)).toBeLessThan(104)
+      expect(theirs.has(g.ch)).toBe(true)
+    }
+    // Lines above and below read too, where the circle reaches them.
+    expect(new Set(shown.map((g) => g.y)).size).toBeGreaterThan(1)
+
+    // The pointer leaves: the cells scramble out, then the line is redacted again.
+    point(root, "pointerleave", x, y)
+    step(30)
+    expect(lensGlyphs(frame())).toHaveLength(0)
+  })
+
+  it("draws no lens for a touch", () => {
+    const { container } = render(<Column />)
+    const root = container.firstElementChild!
+    step(10)
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    point(root, "pointermove", 500, y, "touch")
+    step(18)
+    expect(lensGlyphs(frame())).toHaveLength(0)
+  })
+
+  it("draws no lens on a screen without a fine pointer that hovers", () => {
+    fine = false
+    const { container } = render(<Column />)
+    const root = container.firstElementChild!
+    step(10)
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    point(root, "pointermove", 500, y)
+    step(18)
+    expect(lensGlyphs(frame())).toHaveLength(0)
+  })
+
+  it("decodes the whole line a click lands on, with one faint ring", () => {
+    const { container } = render(<Column />)
+    const root = container.firstElementChild as HTMLElement
+    step(10)
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    point(root, "pointerdown", 300, y + 10)
+    point(root, "click", 300, y + 10)
+    step(2)
+    expect(rings).toBeGreaterThan(0)
+    step(40) // past the reveal
+    const read = readable(frame()).filter((g) => Math.abs(g.y - 0.5 - y) < 1)
+    const xs = read.map((g) => g.x)
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(700) // across the line, not one record
+    expect(container.querySelector('[data-mode="drift"]')).toHaveAttribute("data-decoding")
+    // Still readable after 5s, when a zone decode would have gone back.
+    step(6 * 60)
+    expect(readable(frame()).filter((g) => Math.abs(g.y - 0.5 - y) < 1).length).toBeGreaterThan(20)
+  })
+
+  it("ignores a click far from any line, on a control, or a drag", () => {
+    const { container } = render(
+      <div>
+        <Column />
+        <button type="button">A control</button>
+      </div>,
+    )
+    const root = container.querySelector('[data-slot="chat-backdrop"]')!.parentElement!
+    step(10)
+    const ys = linesOf(container)
+    const far = ys.reduce((a, b) => Math.max(a, b)) + 200
+    point(root, "pointerdown", 300, far)
+    point(root, "click", 300, far)
+    const y = ys.find((ly) => ly > 300 && ly < 640)!
+    point(root.querySelector('[data-drift="composer"]')!, "click", 300, y)
+    point(root, "pointerdown", 100, y)
+    point(root, "click", 300, y)
+    step(30)
+    expect(rings).toBe(0)
+    expect(container.querySelector('[data-mode="drift"]')).not.toHaveAttribute("data-decoding")
+  })
+
+  it("never draws React again for the pointer", () => {
+    let renders = 0
+    const { container } = render(
+      <Profiler id="drift" onRender={() => renders++}>
+        <Column />
+      </Profiler>,
+    )
+    const root = container.firstElementChild!
+    step(5)
+    const before = renders
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    for (let i = 0; i < 60; i++) {
+      point(root, "pointermove", 200 + i * 8, y)
+      step()
+    }
+    point(root, "pointerdown", 400, y)
+    point(root, "click", 400, y)
+    step(10)
+    expect(renders).toBe(before)
+  })
+
+  it("with reduced motion the still frame answers neither the lens nor a click", () => {
+    reduce = true
+    const { container } = render(<Column />)
+    const root = container.firstElementChild!
+    const drawn = clears
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    point(root, "pointermove", 500, y)
+    point(root, "pointerdown", 500, y)
+    point(root, "click", 500, y)
+    step(60)
+    expect(clears).toBe(drawn)
+    expect(rings).toBe(0)
   })
 })
