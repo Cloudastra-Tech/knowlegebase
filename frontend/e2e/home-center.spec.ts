@@ -8,6 +8,10 @@ import { ask, conversation, DESKTOP, fitsWidth, MEMBER, PHONE, signIn } from "./
 // pointer (redacted-drift.tsx): a reading lens under a mouse, a click decoding a line.
 // Strings to page.evaluate, so the e2e tsconfig needs no DOM types.
 
+// Headless Chromium hides scrollbars (Playwright passes --hide-scrollbars); shown, as a
+// desktop browser shows them, a sideways shift from a gutter would be measurable.
+test.use({ launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] } })
+
 type Box = { x: number; y: number; width: number; height: number }
 
 const composerBox = (page: Page) => page.locator('[data-drift="composer"]').boundingBox() as Promise<Box>
@@ -109,9 +113,6 @@ test("sending moves the composer down in one short move, and the question pins t
 })
 
 test.describe("with scrollbars shown", () => {
-  // Headless Chromium hides scrollbars; shown, a gutter would be measurable.
-  test.use({ launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] } })
-
   test("the home's sections stay centred under the composer, and don't move when they scroll", async ({ page }) => {
     await signIn(page, MEMBER)
     const recent = page.getByRole("region", { name: "Recent chats" })
