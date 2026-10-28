@@ -302,7 +302,8 @@ def test_switching_a_sides_provider_clears_its_models(fake_aws):
     assert models.for_workspace(w).answer_name == models.answer_model()
 
 
-def test_test_connection_only_lists_models_and_hides_the_key(client, recorder, fake_openai):
+def test_test_connection_lists_models_fails_a_missing_one_and_hides_the_key(
+        client, recorder, fake_openai):
     """Free: the provider lists its models (OpenAI's models.list), once per
     provider. No completion and no embedding is made (nothing is billed)."""
     w = new_workspace()
@@ -313,12 +314,25 @@ def test_test_connection_only_lists_models_and_hides_the_key(client, recorder, f
                           "chat_models": [{"provider": "openai", "model": "gpt-5"},
                                           {"provider": "openai", "model": "gpt-9-custom"}]})
     assert r.status_code == 200, r.text
-    assert r.json() == {"ok": True, "providers": [
-        {"provider": "openai", "label": "OpenAI", "ok": True, "models": 4,
-         "missing": ["gpt-9-custom"]}]}
+    # An enabled model it doesn't list (a mistyped custom id) fails the test, by
+    # name, and the workspace isn't marked tested.
+    assert r.json() == {"ok": False, "providers": [
+        {"provider": "openai", "label": "OpenAI", "ok": False, "models": 4,
+         "missing": ["gpt-9-custom"],
+         "error": "It lists 4 models, but not gpt-9-custom: check the model id and that "
+                  "this key can use it."}]}
     assert recorder == []                         # no ChatOpenAI, no OpenAIEmbeddings
     assert fake_openai.keys == [OPENAI_KEY] and fake_openai.lists == 1
     assert models.for_workspace(w).spec.api_keys is None              # nothing saved
+    assert not client.get("/api/admin/assistant/models", headers=h).json()["tested_at"]
+    # Every model it looks for listed: ok, and marked tested.
+    r = client.post("/api/admin/assistant/models/test", headers=h,
+                    json={"chat_provider": "openai", "embed_provider": "openai",
+                          "api_keys": {"openai": OPENAI_KEY},
+                          "chat_models": [{"provider": "openai", "model": "gpt-5"}]})
+    assert r.json() == {"ok": True, "providers": [
+        {"provider": "openai", "label": "OpenAI", "ok": True, "models": 4, "missing": []}]}
+    assert client.get("/api/admin/assistant/models", headers=h).json()["tested_at"]
 
     fake_openai.error = RuntimeError(f"Incorrect API key provided: {OPENAI_KEY}")
     r = client.post("/api/admin/assistant/models/test", headers=h,

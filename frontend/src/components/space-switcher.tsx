@@ -24,17 +24,21 @@ export function SpaceIcon({ space, className }: { space: SpaceSummary | null | u
 
 // The space a chat is asked in (chat.md C31): "All company" (everything you may
 // see), your own space (your files), or a team space (its sources). In the
-// history sidebar and as a chip in the composer; both open the same menu.
+// history sidebar and as a chip in the composer; both open the same menu, and its
+// "Manage spaces" is the way to the Spaces screen (a space is the workspace's, not
+// your account's, so Spaces is in neither the account menu nor Settings).
 export function SpaceSwitcher({
   value,
   onChange,
   trigger,
   align = "start",
+  onManage,
 }: {
   value: string | null
   onChange: (spaceId: string | null) => void
   trigger?: (current: SpaceSummary | null) => ReactNode
   align?: "start" | "end"
+  onManage?: () => void // "Manage spaces" picked (the phone's sheet closes)
 }) {
   const list = useQuery({ ...queries.spaces(), meta: { silent: true } })
   const spaces = list.data?.spaces ?? []
@@ -73,7 +77,7 @@ export function SpaceSwitcher({
         {teams.map(item)}
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to={current ? `/spaces/${current.id}` : "/spaces"}>
+          <Link to={current ? `/spaces/${current.id}` : "/spaces"} onClick={onManage}>
             <Settings2 />
             Manage spaces
           </Link>

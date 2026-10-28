@@ -3,13 +3,11 @@ import { Navigate, type RouteObject } from "react-router"
 import App from "@/App"
 import { AuthRoot } from "@/components/auth-root"
 import { SsoTestDone } from "@/components/sso-test-done"
+import { MOVED_TO_SETTINGS } from "@/lib/settings-sections"
 import {
   AccessScreen,
-  ApiKeysScreen,
   AssistantScreen,
-  BillingScreen,
   ClaimPage,
-  DigestsScreen,
   DocsScreen,
   ExtensionConnectScreen,
   HrOnly,
@@ -19,11 +17,11 @@ import {
   InvitePage,
   JoinRequestedPage,
   KnowledgeScreen,
-  MyConnectionsScreen,
+  MovedTo,
   OperatorScreen,
   PassageScreen,
-  PromptsScreen,
   Root,
+  SettingsScreen,
   SharedScreen,
   SignInPage,
   SignupVerifyPage,
@@ -39,11 +37,14 @@ import {
 //   /sso               back from a sign-in provider (see lib/legacy-hash.ts)
 //   /sso-test          the window of an admin's "Test sign-in"
 //   /chat, /knowledge  everyone signed in
-//   /api-keys          their own API keys (the public API and the MCP server)
+//   /settings, /settings/:section   their own settings (lib/settings-sections.ts):
+//                      general, chats, connections (their own Gmail and Google Calendar),
+//                      prompts, digests, api-keys, billing (BILLING=on: admins and billing
+//                      owners), security. On a desktop /settings is General; on a phone,
+//                      the list of sections
+//   /prompts, /api-keys, /digests, /connections, /billing   the old addresses of those:
+//                      they redirect to their section, keeping the query
 //   /spaces, /spaces/:spaceId   their own space and team spaces (sources, members, files)
-//   /prompts           their saved prompts and the workspace's
-//   /digests           their own digests of what changed (by email or Slack)
-//   /connections       their own Gmail and Google Calendar (for them alone)
 //   /unsubscribe/:token  a digest email's one-click unsubscribe (signed in or not)
 //   /chat/:id          one of their saved conversations
 //   /s/:token          a chat or answer shared by someone in their workspace
@@ -60,7 +61,6 @@ import {
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)
-//   /billing           Plan & billing (BILLING=on): admins see it, billing owners change it
 //   /signup/verify     ?token=: an email sign-up's link, then its DNS record
 //   /join-requested    a sign-in that asked to join (the workspace asks its admins first)
 //   /claim             claim a workspace nobody can administer (?error=... after a failed one)
@@ -112,13 +112,13 @@ export const routes: RouteObject[] = [
               { path: "s/:token", Component: SharedScreen },
               { path: "passages/:chunkId", Component: PassageScreen }, // a cited passage
               { path: "knowledge", Component: KnowledgeScreen },
-              { path: "api-keys", Component: ApiKeysScreen }, // everyone's own keys
               { path: "spaces", Component: SpacesScreen },
               { path: "spaces/:spaceId", Component: SpacesScreen },
-              { path: "prompts", Component: PromptsScreen },
-              { path: "digests", Component: DigestsScreen }, // everyone's own digests
-              { path: "connections", Component: MyConnectionsScreen }, // their own Gmail, Calendar
-              { path: "billing", Component: BillingScreen },
+              { path: "settings/:section?", Component: SettingsScreen },
+              ...MOVED_TO_SETTINGS.map(([from, section]) => ({
+                path: from.slice(1),
+                element: <MovedTo to={`/settings/${section}`} />,
+              })),
               { path: "extension/connect", Component: ExtensionConnectScreen },
               {
                 Component: HrOnly,

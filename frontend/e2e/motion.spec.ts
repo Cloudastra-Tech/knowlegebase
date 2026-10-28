@@ -64,11 +64,11 @@ test("the sign-in page and an overlay on it are dark with a Light choice", async
   await pickTheme(page, "Light")
   await expect.poll(() => htmlClass(page)).toContain("light")
 
-  // Signing out everywhere lands on the landing page with a toast (an overlay, in
-  // <body> outside the page). The pointer rests on it, which holds it up, while the
-  // keyboard opens the sign-in page.
-  await page.getByRole("button", { name: /^Account, / }).click()
-  await page.getByRole("menuitem", { name: "Sign out everywhere" }).click()
+  // Signing out everywhere (Settings › Security) lands on the landing page with a toast
+  // (an overlay, in <body> outside the page). The pointer rests on it, which holds it
+  // up, while the keyboard opens the sign-in page.
+  await page.goto("/settings/security")
+  await page.getByRole("button", { name: "Sign out everywhere" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Sign out everywhere" }).click()
   const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Signed out on every device." })
   await toast.hover()

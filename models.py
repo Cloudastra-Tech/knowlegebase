@@ -60,9 +60,10 @@ guards' classifiers, stays the workspace's default whatever is picked, and the
 credentials are the workspace's own. release() names the answer model, so the
 answer cache never serves one model's answer as another's.
 
-TEST CONNECTION is free: each provider lists its models (OpenAI's and
-Anthropic's models.list, Bedrock's ListFoundationModels); no completion and no
-embedding is made (test_connection).
+TEST CONNECTION costs as little as proves it (test_connection): OpenAI and
+Anthropic list their models, for free; Bedrock answers one token on its default
+chat model and, when it embeds, makes one short embedding (a list wouldn't show
+the model access granted, and would need a permission of its own).
 
 FAIL CLOSED. A workspace never falls back to another provider: a model that can't
 be made (no region, a role that can't be assumed, no API key) raises
@@ -436,17 +437,23 @@ class Models:
         """The chat models are Bedrock's."""
         return self.spec.provider == "bedrock"
 
+    @property
+    def providers(self):
+        """Every provider this work sends text to: the chat (fast) provider, the
+        answer provider (a chat's pick, with_answer) and the embeddings provider."""
+        return tuple(dict.fromkeys((self.provider, self.answer_provider, self.embed_provider)))
+
     def uses(self, name):
-        """Either the chat or the embeddings provider is `name`."""
-        return name in (self.provider, self.embed_provider)
+        """The chat, answer or embeddings provider is `name`. The answer provider
+        counts: a chat answered on its Bedrock pick reranks with the workspace's
+        own AWS (rerankers.BedrockReranker), never the server's."""
+        return name in self.providers
 
     @property
     def in_house(self):
         """Some of the workspace's text stays in its own cloud account (Bedrock):
         then nothing else (an API reranker) may see it either."""
-        return any(REGISTRY[p].in_house
-                   for p in (self.provider, self.answer_provider, self.embed_provider)
-                   if p in REGISTRY)
+        return any(REGISTRY[p].in_house for p in self.providers if p in REGISTRY)
 
     def _defaults(self, name):
         p = REGISTRY.get(name)
@@ -971,8 +978,8 @@ def model_arns(model, region):
 
 def permissions_policy(spec, enabled=()):
     """The IAM policy the workspace's role (or user) needs, for its models (and the
-    other Bedrock chat models it enables, `enabled`), and to list them: what
-    Test connection does, for free."""
+    other Bedrock chat models it enables, `enabled`). Test connection invokes
+    them too (test_connection), so it needs nothing more."""
     region = spec.region or "REGION"
     chat = sorted({a for m in {spec.chat_model, spec.fast_model, *enabled} if m
                    for a in model_arns(m, region)})
@@ -982,9 +989,7 @@ def permissions_policy(spec, enabled=()):
          "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
          "Resource": chat},
         {"Sid": "KnowledgeAssistantEmbeddings", "Effect": "Allow",
-         "Action": ["bedrock:InvokeModel"], "Resource": embed},
-        {"Sid": "KnowledgeAssistantTestConnection", "Effect": "Allow",
-         "Action": ["bedrock:ListFoundationModels"], "Resource": "*"}]}
+         "Action": ["bedrock:InvokeModel"], "Resource": embed}]}
 
 
 def trust_policy(external_id):
@@ -1000,7 +1005,7 @@ def trust_policy(external_id):
         "Condition": {"StringEquals": {"sts:ExternalId": external_id}}}]}
 
 
-TEST_PROMPT = "Reply with the single word OK."     # the test fakes' cue; nothing sends it now
+TEST_PROMPT = "Reply with the single word OK."     # Bedrock's test (test_connection)
 _KEYLIKE = re.compile(r"\b(sk|key)-[A-Za-z0-9_\-]{6,}")
 
 
@@ -1018,10 +1023,13 @@ def scrub(text, secrets=()):
     return _KEYLIKE.sub(lambda m: m.group(1) + "-***", text)
 
 
-# ---- Test connection: FREE calls only ---------------------------------------------------
-# Listing a provider's models costs nothing (OpenAI's and Anthropic's models.list,
-# Bedrock's ListFoundationModels), and proves the key or role works and which of
-# the enabled models it reaches. No completion and no embedding is made here.
+# ---- Test connection: as little paid usage as proves it ---------------------------------
+# OpenAI and Anthropic: listing the models is free and proves the key (and which
+# enabled models it reaches). Bedrock: listing proves neither the role's right to
+# invoke nor the model access granted in the account (ListFoundationModels lists
+# models with no access), and needs a permission of its own. So one Converse of a
+# single token on its default chat model and, when it embeds, one short embedding:
+# a fraction of a cent, with only the InvokeModel the policy already grants.
 TEST_TIMEOUT = 20
 
 
@@ -1048,34 +1056,44 @@ def _list_anthropic(on):
     return {m.id for m in _anthropic_client(key).models.list(limit=1000)}
 
 
-def _list_bedrock(on):
-    found = client(on.spec, "bedrock", timeout=TEST_TIMEOUT, retries=0).list_foundation_models(
-        byOutputModality="TEXT")
-    return {m["modelId"] for m in found.get("modelSummaries") or []}
-
-
 # provider -> its free list of model ids (tests replace one to stand in for its API).
-LISTS = {"openai": _list_openai, "anthropic": _list_anthropic, "bedrock": _list_bedrock}
+LISTS = {"openai": _list_openai, "anthropic": _list_anthropic}
 
 
-def _listed(model, ids, provider):
-    """Whether `model` is among the ids a provider listed. A Bedrock inference
-    profile (us.amazon.nova-pro-v1:0) is its foundation model's; an ARN can't be
-    told from the list, so it counts."""
-    if provider == "bedrock":
-        if model.startswith("arn:"):
-            return True
-        model = _PROFILE.sub("", model)
-    return model in ids
+def _check_bedrock(on, looked_for):
+    """Bedrock's test: one Converse of a single token on its default chat model
+    (the workspace's default when that's Bedrock's, else its first enabled Bedrock
+    model), and one short embedding when Bedrock embeds. -> the model ids it
+    reached. The other enabled Bedrock models aren't invoked: each would be paid."""
+    checked = []
+    chat = (on.answer_name if on.answer_provider == "bedrock"
+            else next((m for m in looked_for if m), None))
+    if chat:
+        runtime_client(on.spec, timeout=TEST_TIMEOUT, retries=0).converse(
+            modelId=chat, messages=[{"role": "user", "content": [{"text": TEST_PROMPT}]}],
+            inferenceConfig={"maxTokens": 1, "temperature": 0})
+        checked.append(chat)
+    if on.embed_provider == "bedrock":
+        on.embeddings().embed_query("connection test")
+        checked.append(on.embed_model)
+    return checked
+
+
+# provider -> its minimal real check (no free list proves enough): the models reached.
+CHECKS = {"bedrock": _check_bedrock}
 
 
 def test_connection(spec, wanted=()):
     """Test connection on the Assistant screen: each provider the spec uses lists
-    its models, for free. wanted: ((provider, model), ...), the chat models to
-    look for (their providers are tested too). -> {"ok", "providers": [{"provider",
-    "label", "ok", "models": how many it listed, "missing": wanted models it
-    didn't list, "error"?}]}. A provider with no such list (local) is ok without
-    a call. A provider's own failure is its row's error, the key blanked out."""
+    its models, for free (OpenAI, Anthropic), or makes its minimal real check
+    (Bedrock, CHECKS). wanted: ((provider, model), ...), the chat models to look
+    for, the default first (their providers are tested too). -> {"ok",
+    "providers": [{"provider", "label", "ok", "models": how many it listed (None:
+    no list), "missing": wanted models it didn't list, "checked"?: the models a
+    real call reached, "error"?}]}. A provider listing its models without one of
+    the wanted ones fails, saying which: an id mistyped, or a model the key
+    can't use. A provider with neither (local) is ok without a call. A
+    provider's own failure is its row's error, the key blanked out."""
     if spec.error:
         raise ProviderError(spec.error)
     on = Models(spec)
@@ -1088,17 +1106,23 @@ def test_connection(spec, wanted=()):
     for name, looked_for in by.items():
         row = {"provider": name, "label": provider_info(name).label, "ok": True,
                "models": None, "missing": []}
-        lister = LISTS.get(name)
-        if lister is not None:
-            try:
+        lister, check = LISTS.get(name), CHECKS.get(name)
+        try:
+            if lister is not None:
                 ids = lister(on)
                 row["models"] = len(ids)
                 row["missing"] = [m for m in dict.fromkeys(looked_for)
-                                  if m and not _listed(m, ids, name)]
-            except Exception as e:
-                text = (scrub(str(e), on.secrets()) if isinstance(e, ProviderError)
-                        else describe_error(e, on.secrets()))
-                row.update(ok=False, error=text[:500])
+                                  if m and m not in ids]
+                if row["missing"]:
+                    row.update(ok=False, error=(
+                        f"It lists {len(ids):,} models, but not {', '.join(row['missing'])}: "
+                        "check the model id and that this key can use it."))
+            elif check is not None:
+                row["checked"] = check(on, looked_for)
+        except Exception as e:
+            text = (scrub(str(e), on.secrets()) if isinstance(e, ProviderError)
+                    else describe_error(e, on.secrets()))
+            row.update(ok=False, error=text[:500])
         rows.append(row)
     return {"ok": all(r["ok"] for r in rows), "providers": rows}
 

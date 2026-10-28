@@ -1,23 +1,22 @@
-import { useContext } from "react"
 import { useLocation } from "react-router"
 
-import { ACCESS_TABS, ACCOUNT_SCREENS, INSIGHTS_TABS, isUnder } from "@/lib/app-screens"
-import { AuthContext } from "@/lib/auth-context"
+import { ACCESS_TABS, INSIGHTS_TABS, isUnder } from "@/lib/app-screens"
+import { settingsSection } from "@/lib/settings-sections"
 import { ALL_COMPANY } from "@/lib/spaces"
 
 // Where a screen sits, for the breadcrumbs over its title (components/breadcrumbs.tsx):
 // one model for every screen, from the address plus what only the screen knows (a
-// space's name, a draft's title). The first crumb is the sidebar's screen (or the
-// account menu, for the personal screens); a screen's tabs come after it; the last
-// crumb is the page itself.
+// space's name, a draft's title). The first crumb is the sidebar's screen (or Settings,
+// for the personal sections); a screen's tabs come after it; the last crumb is the page
+// itself.
 
 export interface CrumbLink {
   label: string
   to: string
 }
 
-// An ancestor links to its page; a group without a page of its own (the account
-// menu's screens) opens a menu of them instead; the last crumb, the page, has neither.
+// An ancestor links to its page, or opens a menu of pages (`menu`); the last crumb,
+// the page, has neither.
 export interface Crumb {
   label: string
   to?: string
@@ -36,11 +35,7 @@ export interface Trail {
 export interface CrumbData {
   name?: string // the open item's own name: a space's, a draft's, a shared chat's kind
   tab?: string // the open tab, when the address doesn't say (a space's)
-  billing?: boolean // Plan & billing is in the account menu (BILLING=on, and allowed)
 }
-
-// The account menu's screens, as a crumb: "Account", opening them.
-export const ACCOUNT = "Account"
 
 const SCREENS: [string, string][] = [
   ["/chat", "Chat"],
@@ -98,13 +93,12 @@ export function breadcrumbs(pathname: string, search = "", data: CrumbData = {})
   const access = ACCESS_TABS.find(([t]) => path === `/admin/${t}`)
   if (access) return trail([{ label: "Access", to: "/admin/sign-in" }, page(access[1])])
 
-  // The personal screens: under the account menu, which they're opened from.
-  const personal = ACCOUNT_SCREENS.find(([s]) => s !== "/spaces" && isUnder(path, s))
-  if (personal) {
-    const menu = ACCOUNT_SCREENS.filter(([s]) => s !== "/billing" || data.billing).map(
-      ([to, label]) => ({ to, label }),
-    )
-    return trail([{ label: ACCOUNT, menu }, page(personal[1])])
+  // Settings, then its open section; on a phone a section's way back is the list.
+  if (isUnder(path, "/settings")) {
+    const section = settingsSection(path.split("/")[2])
+    if (!section) return trail([page("Settings")])
+    const settings = { label: "Settings", to: "/settings" }
+    return trail([settings, page(section.label)], settings)
   }
 
   // A chat or answer someone shared: back to your own chats.
@@ -120,8 +114,7 @@ export function breadcrumbs(pathname: string, search = "", data: CrumbData = {})
 // The trail for the screen at this address (ScreenHeader).
 export function useTrail(data: CrumbData = {}): Trail {
   const { pathname, search } = useLocation()
-  const billing = useContext(AuthContext)?.user?.billing?.can_view ?? false
-  return breadcrumbs(pathname, search, { billing, ...data })
+  return breadcrumbs(pathname, search, data)
 }
 
 // The chat's header: the space it's asked in, then its title. A team space links to

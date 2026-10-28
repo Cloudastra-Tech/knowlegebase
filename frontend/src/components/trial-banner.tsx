@@ -41,7 +41,7 @@ export function TrialBanner({ user }: { user: User }) {
   const b = user.billing
   if (!b?.status) return null
   const link = b.can_view && (
-    <Link to="/billing" className="font-medium underline underline-offset-2">
+    <Link to="/settings/billing" className="font-medium underline underline-offset-2">
       {b.owner ? "Pick a plan" : "See the plan"}
     </Link>
   )

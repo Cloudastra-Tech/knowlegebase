@@ -48,12 +48,12 @@ describe("ScreenHeader", () => {
     expect(router.state.location.pathname).toBe("/spaces")
   })
 
-  it("puts the personal screens under the account menu", async () => {
-    renderAt("/api-keys", <ScreenHeader title="API keys" />)
+  it("puts a settings section under Settings, with a way back to the list", () => {
+    renderAt("/settings/api-keys", <ScreenHeader title="Settings" />)
     const nav = screen.getByRole("navigation", { name: "Breadcrumb" })
-    await userEvent.setup().click(within(nav).getByRole("button", { name: "Account" }))
-    expect(await screen.findByRole("menuitem", { name: "My prompts" })).toHaveAttribute("href", "/prompts")
-    expect(screen.getByRole("menuitem", { name: "API keys" })).toHaveAttribute("aria-current", "page")
+    expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings")
+    expect(within(nav).getByText("API keys")).toHaveAttribute("aria-current", "page")
+    expect(screen.getByRole("link", { name: "Back to Settings" })).toHaveAttribute("href", "/settings")
   })
 
   it("takes a trail of its own", () => {

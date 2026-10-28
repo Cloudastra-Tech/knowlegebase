@@ -88,7 +88,8 @@ def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, sta
                         acl=access.message_clauses(row),
                         latency_ms=int((time.monotonic() - started) * 1000),
                         message_id=turn["message_id"] if turn else None, cache_hit=hit.kind,
-                        **({"provider": model[0], "model": model[1]} if model else {}),
+                        # No model ran: no model logged (usage.model), as before picks.
+                        **({"provider": model[0]} if model else {}),
                         language=language.detect(question))
     return Answer(row["answer"], row["sources"], row["state"], row["max_access"], trace, None,
                   None, row["acl"], hit.kind)

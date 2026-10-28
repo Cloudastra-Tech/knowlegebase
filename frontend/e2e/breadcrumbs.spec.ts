@@ -69,13 +69,15 @@ test("Access › Webhooks: the tab is the crumb, and Access goes to its first ta
   await expect(page).toHaveURL(/\/admin\/sign-in$/)
   await expect(here(page)).toHaveText("Sign-in")
 
-  // A personal screen: under the account menu, which opens its screens.
+  // A personal screen's old address: its Settings section, under Settings.
   await page.goto("/api-keys")
+  await expect(page).toHaveURL(/\/settings\/api-keys$/)
   await expect(here(page)).toHaveText("API keys")
-  await crumbs(page).getByRole("button", { name: "Account" }).click()
-  await page.getByRole("menuitem", { name: "Digests" }).click()
-  await expect(page).toHaveURL(/\/digests$/)
+  await page.getByRole("navigation", { name: "Settings" }).getByRole("link", { name: "Digests" }).click()
+  await expect(page).toHaveURL(/\/settings\/digests$/)
   await expect(here(page)).toHaveText("Digests")
+  await crumbs(page).getByRole("link", { name: "Settings" }).click()
+  await expect(page).toHaveURL(/\/settings\/general$/)
 })
 
 // The crumb row is one height on every screen (the back button too, on a phone), so the

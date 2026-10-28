@@ -122,7 +122,7 @@ export function usePromptPicker({
       ) : (
         <p className="px-4 py-3 text-sm text-muted-foreground">
           {words ? "No saved prompt by that name. " : "No saved prompts yet. "}
-          <Link to="/prompts" className="font-medium text-foreground underline-offset-4 hover:underline">
+          <Link to="/settings/prompts" className="font-medium text-foreground underline-offset-4 hover:underline">
             Make one
           </Link>
         </p>

@@ -62,7 +62,7 @@ test("an admin's account menu fits a short window, with View as and Appearance b
   await signIn(page, ADMIN)
   await page.getByRole("button", { name: /^Account, / }).click()
   const menu = page.getByRole("menu")
-  await expect(menu.getByRole("menuitem", { name: "Sign out everywhere" })).toBeVisible()
+  await expect(menu.getByRole("menuitem", { name: "Sign out" })).toBeVisible()
   // Whole, without scrolling inside it.
   const box = (await menu.boundingBox())!
   expect(box.y).toBeGreaterThanOrEqual(0)
@@ -79,6 +79,37 @@ test("an admin's account menu fits a short window, with View as and Appearance b
     const radio = page.getByRole("menuitemradio", { name: item })
     await expect(radio).toBeVisible()
     expect(await onTop(page, "menuitemradio", (await radio.boundingBox())!)).toContain(item)
+  }
+})
+
+// Short, as ChatGPT's and Claude.ai's: everything personal is in Settings.
+test("the account menu is short: who you are, Settings, View as for an admin, Appearance, Sign out", async ({
+  page,
+}) => {
+  await page.setViewportSize(DESKTOP)
+  for (const [account, expected] of [
+    [MEMBER, ["Settings", "Appearance", "Keyboard shortcuts", "Sign out"]],
+    [ADMIN, ["Settings", "View as", "Appearance", "Keyboard shortcuts", "Sign out"]],
+  ] as const) {
+    await page.context().clearCookies()
+    await page.goto("/login")
+    await page.evaluate("localStorage.clear()")
+    await signIn(page, account)
+    await page.getByRole("button", { name: /^Account, / }).click()
+    const menu = page.getByRole("menu")
+    await expect(menu.getByText(account.email)).toBeVisible()
+    const items = (await menu.getByRole("menuitem").allTextContents()).map((t) =>
+      t.replace(/(Ctrl|⌘)\/$/, "").replace(/(HR \/ Admin|Public)$/, "").trim(),
+    )
+    expect(items).toEqual(expected)
+    // Keyboard shortcuts opens the list of them; Settings opens Settings.
+    await menu.getByRole("menuitem", { name: "Keyboard shortcuts" }).click()
+    await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible()
+    await page.keyboard.press("Escape")
+    await page.getByRole("button", { name: /^Account, / }).click()
+    await page.getByRole("menuitem", { name: "Settings" }).click()
+    await expect(page).toHaveURL(/\/settings\/general$/)
+    await expect(page.getByRole("heading", { level: 2, name: "Settings" })).toBeVisible()
   }
 })
 

@@ -203,7 +203,7 @@ export function ApiAccessView() {
             size="sm"
             headingLevel={4}
             title="Nobody has made a key yet."
-            description="Everyone can, under API keys in their account menu."
+            description="Everyone can, under API keys in their Settings."
           />
         )}
       </Section>

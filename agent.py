@@ -996,19 +996,28 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
     # A chat's own pick of answer model (kb/services/model_choice.py: one of the
     # workspace's enabled ones), made once per model and kept with the agent.
     # Only the answer follows it: the guards, HyDE and rewrites stay on `on`.
+    # The default (what the web sends on most questions) is `llm` itself. Another
+    # is made OUTSIDE the lock (it may assume an AWS role: a network call) and the
+    # first one made is kept, so a slow pick never holds up the others.
     picked = {}
     picked_lock = threading.Lock()
 
     def answer_llm(choice):
         if not choice:
             return llm
+        picked_on = on.with_answer(*choice)
+        if picked_on is on:
+            return llm
+        key = tuple(choice)
         with picked_lock:
-            found = picked.get(tuple(choice))
-            if found is None:
-                found = picked[tuple(choice)] = on.with_answer(*choice).answer(
-                    openai=ChatOpenAI, temperature=0,
-                    cache_key=models.prompt_cache_key(collection, role)).bind_tools(tools)
+            found = picked.get(key)
+        if found is not None:
             return found
+        made = picked_on.answer(openai=ChatOpenAI, temperature=0,
+                                cache_key=models.prompt_cache_key(collection, role)
+                                ).bind_tools(tools)
+        with picked_lock:
+            return picked.setdefault(key, made)
 
     SYSTEM = SystemMessage(content=(
         "You are the company's internal knowledge assistant. You solve multi-step "
