@@ -93,6 +93,7 @@ export interface Message {
 export interface AnswerActions {
   onRetry?: (message: Message) => void
   onRephrase?: (question: string) => void
+  onAskEverywhere?: (question: string) => void // set when the chat is in a space
   onFeedback?: (message: Message, feedback: Feedback | null) => void
   onRegenerate?: (message: Message) => void
   onShare?: (message: Message) => void
@@ -418,6 +419,11 @@ function AnswerBody({ message, actions, live }: { message: Message; actions: Ans
         <AlertDescription>
           <Markdown text={text} className="text-sm text-muted-foreground" />
           <div className="mt-2 flex flex-wrap gap-2">
+            {message.question && actions.onAskEverywhere && (
+              <Button variant="outline" size="sm" onClick={() => actions.onAskEverywhere!(message.question!)}>
+                Ask in All company
+              </Button>
+            )}
             {message.question && actions.onRephrase && (
               <Button variant="outline" size="sm" onClick={() => actions.onRephrase!(message.question!)}>
                 Rephrase
