@@ -34,12 +34,15 @@ export function ChatBackdrop({ empty = false, leaving = false }: { empty?: boole
     >
       <div className="kb-chat-glow absolute inset-0" />
       {!empty && (
-        // Its own box for the fade in, as the field breathes on its own opacity.
-        <div className={cn("size-full", leaving && "kb-chat-field-arrive")}>
+        // Its own box for the fade in, as the field breathes on its own opacity. Fixed to
+        // the window, so it runs under the sidebar as the app's field does, for the
+        // sidebar's glass to frost (full ink there; chat-motion.css masks it back
+        // beside the sidebar).
+        <div className={cn("fixed inset-0", leaving && "kb-chat-field-arrive")}>
           <AsciiField
             mode="ambient"
             pulseEvent={THINKING_EVENT}
-            className="kb-chat-field size-full text-(--ascii-ambient) dark:text-foreground/11"
+            className="kb-chat-field size-full text-(--ascii-backdrop)"
           />
         </div>
       )}

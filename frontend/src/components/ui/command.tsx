@@ -55,7 +55,7 @@ function CommandDialog({
       <DialogPortal>
         <DialogPrimitive.Overlay
           data-slot="dialog-overlay"
-          className="fixed inset-0 isolate z-50 bg-background/60"
+          className="fixed inset-0 isolate z-50 bg-background/40"
         />
         <DialogPrimitive.Content
           data-slot="dialog-content"

@@ -37,7 +37,14 @@ function storedOpen() {
 }
 
 // About 260px open, a 56px rail closed (components/ui/sidebar.tsx reads these).
-const SIDEBAR_WIDTHS = { "--sidebar-width": "16.25rem", "--sidebar-width-icon": "3.5rem" } as CSSProperties
+// --field-pane: the width the sidebar takes now, for the background field's mask
+// (components/ascii/ascii.css), which runs under it and centres on the content.
+const SIDEBAR_OPEN = {
+  "--sidebar-width": "16.25rem",
+  "--sidebar-width-icon": "3.5rem",
+  "--field-pane": "var(--sidebar-width)",
+} as CSSProperties
+const SIDEBAR_RAIL = { ...SIDEBAR_OPEN, "--field-pane": "var(--sidebar-width-icon)" } as CSSProperties
 
 // The signed-in app: the sidebar on the left (app-sidebar.tsx: the screens, the chats,
 // the account), and the screen at the current URL beside it (routes.tsx). There is no
@@ -84,7 +91,7 @@ export default function App() {
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={setSidebarOpen}
-      style={SIDEBAR_WIDTHS}
+      style={sidebarOpen ? SIDEBAR_OPEN : SIDEBAR_RAIL}
       className="h-dvh min-h-0"
       data-print="flow"
     >
@@ -95,14 +102,12 @@ export default function App() {
       >
         Skip to content
       </a>
-      {/* One ASCII field on every screen, fixed behind the content beside the sidebar
-          (centred on the content, not the window); it rests while anything scrolls and
-          under a dialog (lib/ascii-loop.ts). Not on the chat, which draws its own behind
-          its column (ChatBackdrop: faint under the text, breathing, a ripple per step and
-          a glow from the composer while the assistant works). */}
-      {!onChat && (
-        <AppBackdrop className={sidebarOpen ? "md:left-(--sidebar-width)" : "md:left-(--sidebar-width-icon)"} />
-      )}
+      {/* One ASCII field on every screen, fixed behind everything and under the sidebar,
+          whose glass frosts it (centred on the content, not the window); it rests while
+          anything scrolls and under a dialog (lib/ascii-loop.ts). Not on the chat, which
+          draws its own, as wide (ChatBackdrop: faint under the text, breathing, a ripple
+          per step and a glow from the composer while the assistant works). */}
+      {!onChat && <AppBackdrop />}
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts; ⌘B the sidebar. */}
       <CommandPalette user={user} role={activeRole} chatAt={chatAt} />
       <SidebarEvents />
