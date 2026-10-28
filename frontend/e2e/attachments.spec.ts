@@ -23,7 +23,8 @@ test("an attached file answers its chat, cited, and is gone from a new chat", as
   await expect(log).toContainText("renews on the first of June")
   const chip = log.getByRole("button", { name: /^Source \d+: acme-contract\.txt/ })
   await expect(chip).toBeVisible()
-  await expect(log.getByText("Attached file").filter({ visible: true }).first()).toBeVisible()
+  // Listed under the answer as the chat's attached file.
+  await expect(log.getByRole("button", { name: /^Open source \d+: acme-contract\.txt.*, Attached file$/ })).toBeVisible()
   await chip.click()
   const sheet = page.getByRole("dialog")
   await expect(sheet.getByLabel("Passage")).toContainText("ten percent discount")
