@@ -4,7 +4,7 @@
 // /api/admin/glossary, admins). Members read the assistant's name (/api/assistant).
 
 import { json, request, seg } from "@/lib/api/client"
-import type { Access, KnowledgeItem } from "@/lib/api/types"
+import type { Access, ChatModel, KnowledgeItem, ModelRef, ModelTier } from "@/lib/api/types"
 
 // ---- Verified answers ----
 export type VerifiedStatus = "current" | "due" | "expired"
@@ -203,6 +203,19 @@ export interface ProviderDefaults {
   embed_dims: number | null
 }
 
+// A model of a provider's curated list (models.CATALOGUE).
+export interface CatalogueModel {
+  id: string
+  label: string
+  tier: ModelTier
+  vision: boolean
+  tool_calls: boolean
+}
+
+export interface EnabledModel extends ChatModel {
+  default: boolean
+}
+
 export interface ModelProviderSettings {
   provider: ModelProvider
   chat_provider: string // "default" or a provider's name
@@ -214,6 +227,11 @@ export interface ModelProviderSettings {
   keys_saved: boolean
   access_key_hint: string | null
   api_keys_saved: Record<string, boolean> // only whether a key is saved, never the key
+  api_key_hints?: Record<string, string> // its last 4 characters
+  chat_models?: EnabledModel[] // the answer models people may pick, the default first
+  default_model?: ModelRef | null // null: chat is on the server's provider
+  catalogue?: Record<string, CatalogueModel[]> // per chat provider
+  max_models?: number
   chat_model: string | null // null: the provider's default
   fast_model: string | null
   embed_model: string | null
@@ -260,12 +278,26 @@ export interface ModelProviderChange {
   fast_model?: string | null
   embed_model?: string | null
   embed_dims?: number | null
+  chat_models?: ModelRef[]
+  default_model?: ModelRef
   confirm_reindex?: boolean
 }
 
-export type ConnectionTest =
-  | { ok: true; chat_model: string; reply: string; tokens: number; embed_model: string; dimensions: number }
-  | { ok: false; error: string }
+// Test connection lists each provider's models (free): no answer, no embedding.
+export interface ProviderTest {
+  provider: string
+  label: string
+  ok: boolean
+  models: number | null // how many it listed; null: it has no list (local)
+  missing: string[] // enabled models it didn't list
+  error?: string
+}
+
+export interface ConnectionTest {
+  ok: boolean
+  providers: ProviderTest[]
+  error?: string // the settings couldn't be tried at all
+}
 
 export const assistantApi = {
   // Everyone: the chat's greeting and whether members see the steps panel.

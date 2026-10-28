@@ -31,6 +31,7 @@ import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
 import { ChatHome } from "@/components/chat-home"
 import { LoggingNotice } from "@/components/logging-notice"
+import { ModelPicker } from "@/components/model-picker"
 import { SampleDocsToggle } from "@/components/onboarding-checklist"
 import { usePromptPicker } from "@/components/prompt-menu"
 import { ShareDialog } from "@/components/share-dialog"
@@ -83,12 +84,14 @@ import {
   type Attachment,
   type Conversation,
   type ConversationSummary,
+  type ModelRef,
   type Role,
   type SavedMessage,
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
 import { chatCrumbs } from "@/lib/breadcrumbs"
+import { sameModel } from "@/lib/chat-models"
 import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
 import { getEffects } from "@/lib/ascii-loop"
 import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking, type SearchDetail } from "@/lib/chat-events"
@@ -250,6 +253,10 @@ export function ChatView({ role }: { role: Role }) {
   const spaceList = useQuery({ ...queries.spaces(), meta: { silent: true } })
   const limits = useQuery({ ...queries.attachmentLimits(), meta: { silent: true } }).data
   const [chosenSpace, setChosenSpace] = useState<string | null>(storedSpace)
+  // The answer model picked in the composer, for the chat it was picked in (null: the
+  // new chat at /chat). The server checks it against the workspace's enabled models.
+  const chatModels = useQuery({ ...queries.chatModels(), meta: { silent: true } }).data
+  const [pick, setPick] = useState<{ chat: string | null; model: ModelRef } | null>(null)
   const [uploading, setUploading] = useState<string[]>([])
   // The empty chat's art fading out as the first question goes (ChatBackdrop).
   const [artLeaving, setArtLeaving] = useState(false)
@@ -282,6 +289,16 @@ export function ChatView({ role }: { role: Role }) {
       : null
   const spaceId = urlId ? (listed?.space_id ?? conversation?.space_id ?? null) : chosen
   const space = spaceList.data?.spaces.find((s) => s.id === spaceId) ?? null
+  // The model the next answer is written with: the one picked here, else the chat's
+  // own (a saved one), else the asker's last pick (a new one), else the default; one
+  // that isn't enabled any more gives way to the default.
+  const enabledModel = (ref: ModelRef | null | undefined) =>
+    chatModels?.models.some((m) => sameModel(m, ref)) ? ref : null
+  const model: ModelRef | null =
+    (pick && pick.chat === urlId ? enabledModel(pick.model) : null) ??
+    enabledModel(urlId ? conversation?.model : chatModels?.last) ??
+    chatModels?.default ??
+    null
   const attached = useQuery({ ...queries.attachments(urlId ?? ""), enabled: urlId !== null })
   const files: Attachment[] = urlId ? (attached.data ?? []) : []
   const picker = usePromptPicker({ input, setInput, inputRef })
@@ -528,6 +545,9 @@ export function ChatView({ role }: { role: Role }) {
     // The address follows the session in the same render, so it never shows another.
     const go = (id: string) => navigate(`/chat/${id}`, { flushSync: true })
     let savedIn: string | null = urlId
+    // The model goes with the question, and stays the chat's (a new one's too).
+    const asking = model
+    const keepModel = (id: string) => asking && setPick({ chat: id, model: asking })
 
     function onEvent(e: StreamEvent) {
       if (e.type === "conversation") {
@@ -543,6 +563,7 @@ export function ChatView({ role }: { role: Role }) {
         if (e.new_conversation) {
           // The role changed since this chat began: the question went to a new one.
           savedIn = e.id
+          keepModel(e.id)
           change((s) => ({
             ...s,
             id: e.id,
@@ -593,6 +614,7 @@ export function ChatView({ role }: { role: Role }) {
       if (!conversationId) {
         const created = await api.createConversation(chosen)
         conversationId = created.id
+        keepModel(created.id)
         savedIn = created.id
         change((s) => ({ ...s, id: created.id, conversation: created }))
         go(created.id)
@@ -603,6 +625,7 @@ export function ChatView({ role }: { role: Role }) {
         retryOf: again.retry?.id,
         regenerateOf: again.regenerate?.id,
         editOf: again.edit?.id,
+        model: asking ?? undefined,
         signal: controller.signal,
       })
       ended = reply.state
@@ -663,6 +686,8 @@ export function ChatView({ role }: { role: Role }) {
       setThinking(false)
       setAnnounce(ended ? (ENDED[ended] ?? "Answer ready.") : "")
       queryClient.invalidateQueries({ queryKey: ["conversations"] })
+      // The asker's last pick, and what's enabled now (a refused model was turned off).
+      queryClient.invalidateQueries({ queryKey: ["chat-models"] })
     }
   }
 
@@ -980,6 +1005,12 @@ export function ChatView({ role }: { role: Role }) {
             top={
               <>
                 <SpaceChip value={spaceId} onChange={chooseSpace} disabled={loading} />
+                <ModelPicker
+                  models={chatModels?.models ?? []}
+                  value={model}
+                  onChange={(m) => setPick({ chat: urlId, model: m })}
+                  disabled={loading}
+                />
                 <AttachmentChips files={files} uploading={uploading} onRemove={detach} />
               </>
             }

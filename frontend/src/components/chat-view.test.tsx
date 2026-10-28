@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
@@ -443,5 +443,88 @@ describe("the chat", () => {
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })
     const router = renderApp("/chat/gone")
     await waitFor(() => expect(router.state.location.pathname).toBe("/chat"))
+  })
+})
+
+describe("the model picker", () => {
+  const model = (provider: string, provider_label: string, id: string, label: string, tier: string) => ({
+    provider,
+    provider_label,
+    model: id,
+    label,
+    tier,
+    vision: true,
+    tool_calls: true,
+  })
+  const MINI = model("openai", "OpenAI", "gpt-4o-mini", "GPT-4o mini", "fast")
+  const OPUS = model("anthropic", "Anthropic", "claude-opus-5-5", "Claude Opus 5.5", "best")
+  const MODELS = {
+    models: [MINI, OPUS],
+    default: { provider: "openai", model: "gpt-4o-mini" },
+    last: null,
+  }
+  const NEW = { id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1 }
+
+  it("sits beside the space chip, grouped by provider, and the chat keeps the pick", async () => {
+    session.setToken("tok")
+    const asked: Record<string, unknown>[] = []
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/models": MODELS,
+      "POST /api/conversations": NEW,
+      "POST /api/chat/stream": (body: Record<string, unknown>) => {
+        asked.push(body)
+        return sse(
+          { type: "conversation", id: "c9", title: "Hi", user_message_id: `q${asked.length}`, message_id: `a${asked.length}`, new_conversation: false },
+          { type: "done", answer: `Answer ${asked.length}.`, sources: [], steps: [], state: "answered", message_id: `a${asked.length}` },
+        )
+      },
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    const chip = await screen.findByRole("button", { name: "Model: GPT-4o mini. Change model" })
+    await user.click(chip)
+    const menu = await screen.findByRole("menu")
+    // Portalled out of the composer's glass, one group per provider, the tier beside each.
+    expect(chip.closest("form")?.contains(menu)).toBe(false)
+    expect(within(menu).getByText("OpenAI")).toBeInTheDocument()
+    expect(within(menu).getByText("Anthropic")).toBeInTheDocument()
+    expect(within(menu).getByRole("menuitem", { name: /Claude Opus 5.5\s*Best/ })).toBeInTheDocument()
+    await user.click(within(menu).getByRole("menuitem", { name: /Claude Opus 5.5/ }))
+    expect(screen.getByRole("button", { name: "Model: Claude Opus 5.5. Change model" })).toBeInTheDocument()
+
+    const box = screen.getByRole("textbox", { name: "Your question" })
+    await user.type(box, "First?{Enter}")
+    expect(await screen.findByText("Answer 1.")).toBeInTheDocument()
+    await user.type(box, "Second?{Enter}")
+    expect(await screen.findByText("Answer 2.")).toBeInTheDocument()
+    const opus = { provider: "anthropic", model: "claude-opus-5-5" }
+    expect(asked.map((a) => a.model)).toEqual([opus, opus])
+    expect(screen.getByRole("button", { name: "Model: Claude Opus 5.5. Change model" })).toBeInTheDocument()
+  }, 15_000) // two questions typed and answered
+
+  it("opens a saved chat on its own model", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/models": MODELS,
+      "GET /api/conversations/c1": { ...SAVED, model: { provider: "anthropic", model: "claude-opus-5-5" } },
+    })
+    renderApp("/chat/c1")
+    expect(await screen.findByRole("button", { name: "Model: Claude Opus 5.5. Change model" })).toBeInTheDocument()
+  })
+
+  it("isn't there when the workspace offers one model", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/models": { ...MODELS, models: [MINI] },
+    })
+    renderApp("/chat")
+    await screen.findByRole("textbox", { name: "Your question" })
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Model:/ })).not.toBeInTheDocument())
   })
 })

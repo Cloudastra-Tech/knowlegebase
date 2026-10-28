@@ -518,7 +518,7 @@ export function AssistantView() {
             <Glossary settings={settings} />
             <Section
               title="Models"
-              description="Which AI provider writes the answers and which one searches your documents, chosen apart. Bring your own AWS to keep documents and questions in your own account, or search locally so documents never leave the server."
+              description="The providers and models that write the answers (people pick among the ones you enable, in the chat) and the one that searches your documents. Bring your own AWS to keep documents and questions in your own account, or search locally so documents never leave the server."
             >
               <ModelProviderSettings />
             </Section>
