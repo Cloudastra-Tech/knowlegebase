@@ -113,25 +113,70 @@ export function union(a: Box, b: Box): Box {
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }
 }
 
-// Where lines run: the free bands of the empty screen, never across its words. Up
-// from the composer to the empty state's last line, one through the composer itself
-// (frosted by its glass), above the heading where there's room, and under what sits
-// below the composer (recent chats, spaces: `below`), never across it. At most `max`,
-// the nearest the composer first.
-export function lineSlots(
-  { top, content, composer, below = null }: { top: number; content: Box | null; composer: Box; below?: Box | null },
-  height: number,
-  max = 8,
-) {
-  const gap = clamp(height * 0.07, 40, 58)
-  const ys: number[] = [composer.y + composer.h / 2]
-  const floor = content ? content.y + content.h + gap * 0.5 : top + gap * 0.5
-  for (let y = composer.y - gap * 0.55; y > floor; y -= gap) ys.push(y)
-  if (content) for (let y = content.y - gap * 0.6; y > top + 14; y -= gap) ys.push(y)
-  if (below) for (let y = below.y + below.h + gap * 0.6; y < height - 14; y += gap) ys.push(y)
-  const mid = composer.y + composer.h / 2
-  return ys.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid)).slice(0, max)
+// Where lines run: the whole page, top to bottom, evenly spaced, one through the
+// composer's middle and the rest a step (`gap`) apart up and down from it. Words and
+// glass over them don't move them: they're drawn fainter there (lineSpans). Sorted
+// by distance from the composer, so the nearest come first (depths go by rank).
+export function pageRows({ top, bottom, anchor }: { top: number; bottom: number; anchor: number }, height: number) {
+  const gap = clamp(height * 0.075, 42, 60)
+  const ys: number[] = []
+  for (let y = anchor; y > top + 12; y -= gap) ys.push(y)
+  for (let y = anchor + gap; y < bottom - 10; y += gap) ys.push(y)
+  return ys.sort((a, b) => Math.abs(a - anchor) - Math.abs(b - anchor))
 }
+
+// Something over the art: a box (in the art's coordinates) and how strongly the lines
+// under it are drawn, as a factor of their alpha (faint under words, full ink under
+// glass, whose blur and fill soften them). A stronger ink must never show past the
+// surface: `round` (its corner radius) keeps it off the rounded corners, and such a
+// cover only counts for a line wholly inside it, top to bottom.
+export type Cover = { box: Box; k: number; round?: number }
+
+// Whether the band of a line at height y (half its height `half`) meets a box, or for
+// a stronger cover lies wholly inside it.
+const meets = (c: Cover, y: number, half: number) =>
+  c.k > 1
+    ? y - half >= c.box.y && y + half <= c.box.y + c.box.h
+    : y + half > c.box.y && y - half < c.box.y + c.box.h
+// Where along a line a cover's strength applies: its box, less the rounded corners.
+const reach = (c: Cover): [number, number] => [c.box.x + (c.round ?? 0), c.box.x + c.box.w - (c.round ?? 0)]
+
+// Along a line at height y, the stretches it's drawn in and at what strength: under a
+// cover, the cover's own; in the readable zone (its half-width at y, about its centre
+// cx), `zoneK`; elsewhere full. Neighbouring stretches of one strength are one.
+// Returns [x0, x1, k] triples covering 0..width.
+export function lineSpans(
+  width: number,
+  y: number,
+  half: number,
+  zone: { cx: number; hx: number } | null,
+  zoneK: number,
+  covers: readonly Cover[],
+) {
+  const hits = covers.filter((c) => meets(c, y, half))
+  const cuts = new Set([0, width])
+  const add = (x: number) => x > 0 && x < width && cuts.add(x)
+  if (zone && zone.hx > 0) {
+    add(zone.cx - zone.hx)
+    add(zone.cx + zone.hx)
+  }
+  for (const c of hits) for (const x of reach(c)) add(x)
+  const xs = [...cuts].sort((a, b) => a - b)
+  const out: [number, number, number][] = []
+  for (let i = 0; i < xs.length - 1; i++) {
+    const mid = (xs[i] + xs[i + 1]) / 2
+    const cover = hits.find((c) => mid > reach(c)[0] && mid < reach(c)[1])
+    const k = cover ? cover.k : zone && Math.abs(mid - zone.cx) < zone.hx ? zoneK : 1
+    const last = out[out.length - 1]
+    if (last && last[2] === k) last[1] = xs[i + 1]
+    else out.push([xs[i], xs[i + 1], k])
+  }
+  return out
+}
+
+// Whether a point is under any cover: no cell reads there (a lens or a decode).
+export const covered = (covers: readonly Cover[], x: number, y: number) =>
+  covers.some((c) => x > c.box.x && x < c.box.x + c.box.w && y > c.box.y && y < c.box.y + c.box.h)
 
 // The reading lens (the pointer, on a fine pointer): a circle in which the lines read.
 export type Lens = { x: number; y: number; r: number }

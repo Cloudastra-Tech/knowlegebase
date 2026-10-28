@@ -46,22 +46,14 @@
 }
 
 /* The empty chat's art (redacted-drift.tsx): the readable zone's faint light round the
-   composer, and a soft frost right behind it. Plain fills, no backdrop blur: the
-   composer's own glass is the chat's third blurred surface. */
+   composer. A plain fill, no backdrop blur. The lines run on under the composer and
+   the recent chats, whose own glass frosts them. */
 .kb-drift-aura {
   border-radius: 9999px;
   background: radial-gradient(
     closest-side,
     color-mix(in oklab, var(--foreground) 4%, transparent),
     color-mix(in oklab, var(--foreground) 2.5%, transparent) 82%,
-    transparent
-  );
-}
-.kb-drift-halo {
-  border-radius: 9999px;
-  background: radial-gradient(
-    closest-side,
-    color-mix(in oklab, var(--background) 85%, transparent) 55%,
     transparent
   );
 }

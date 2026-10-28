@@ -906,15 +906,15 @@ export function ChatView({ role }: { role: Role }) {
           </MessageScroller>
         </MessageScrollerProvider>
         {/* The empty new chat, centred as on Claude.ai: the heading just over the
-            composer, the two in the middle of the column, and the home's sections
-            (starters, recent chats, spaces and folders) under it. The space round them
-            is the art's: a click there decodes a line (redacted-drift.tsx). One short
-            heading; how answers work is behind the (i), who you're searching as and
-            the logging notice sit under the composer. data-drift: the art's lines run
-            clear of these words. */}
+            composer, the two in the middle of the column, and the home's recent chats
+            (or starters) under it, then who you're searching as at the foot. The
+            space round them is the art's: a click there decodes a line
+            (redacted-drift.tsx). One short heading; how answers work is behind the
+            (i). data-drift: the art's lines run faint under these words. */}
         {empty && (
           <div
             data-drift="content"
+            data-drift-blank
             className="mx-auto flex w-full max-w-3xl shrink-0 items-center justify-center gap-1 px-4 text-center"
           >
             <h2 className="text-2xl font-semibold tracking-tight text-balance">
@@ -946,7 +946,7 @@ export function ChatView({ role }: { role: Role }) {
             composerSignal (no state, so no render per key). */}
         <div
           ref={composerRow}
-          className={cn("pointer-events-none relative", empty ? "pt-5" : "pt-6")}
+          className="pointer-events-none relative pt-6"
           data-print="hide"
           onFocus={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(true)}
           onBlur={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(false)}
@@ -993,26 +993,18 @@ export function ChatView({ role }: { role: Role }) {
             above={picker.menu}
             intercept={picker.intercept}
             onFiles={attachFiles}
-            footnote={
-              empty && (
-                <>
-                  Searching as{" "}
-                  <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
-                  <LoggingNotice inline />
-                </>
-              )
-            }
           />
           {picker.dialog}
         </div>
-        {/* Under the composer: the home's sections, scrolling on their own if they
-            don't fit. The scrollbar's room is kept on both sides, so they stay centred
-            under the composer and never move sideways when they start to scroll. */}
+        {/* Under the composer: the home's recent chats (or starters), scrolling on their
+            own if they don't fit. The scrollbar's room is kept on both sides, so they
+            stay centred under the composer and never move sideways when they start to
+            scroll. */}
         {empty && (
           <div
             data-drift-blank
             data-print="hide"
-            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges] max-sm:[scrollbar-gutter:auto]"
           >
             <ChatHome
               starters={starters}
@@ -1021,8 +1013,8 @@ export function ChatView({ role }: { role: Role }) {
               extra={
                 offerSample &&
                 (welcome.sample.available || welcome.sample.on) && (
-                  <div className="mt-2 flex max-w-xl flex-col items-center gap-2 text-center">
-                    <p className="text-xs text-muted-foreground">
+                  <div className="mt-2 flex max-w-xl flex-col items-start gap-2">
+                    <p className="px-1 text-xs text-muted-foreground">
                       {welcome.sample.on
                         ? "The sample HR handbook is in. Remove it before colleagues ask."
                         : "No documents yet? Try it on a made-up HR handbook first."}
@@ -1031,16 +1023,25 @@ export function ChatView({ role }: { role: Role }) {
                   </div>
                 )
               }
-              chats={list.data?.conversations ?? []}
-              folders={list.data?.folders ?? []}
-              spaces={spaceList.data?.spaces ?? []}
-              spaceId={spaceId}
+              chats={list.isError ? [] : list.data?.conversations}
               onOpen={(id) => open(`/chat/${id}`)}
               onViewAll={() => openSearch()}
-              onChooseSpace={chooseSpace}
-              onOpenFolder={(folder) => openSearch({ folderId: folder.id })}
             />
           </div>
+        )}
+        {/* The fine print, one line at the foot of the page as on Claude.ai: who
+            you're searching as, and whether questions are logged. On the column's
+            left edge, under the art (faint there), clear of a phone's home bar. */}
+        {empty && (
+          <p
+            data-slot="chat-fine-print"
+            data-drift="quiet"
+            data-print="hide"
+            className="mx-auto w-full max-w-3xl shrink-0 px-9 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs text-pretty text-muted-foreground"
+          >
+            Searching as <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
+            <LoggingNotice inline />
+          </p>
         )}
       </div>
       {sharing && urlId && (

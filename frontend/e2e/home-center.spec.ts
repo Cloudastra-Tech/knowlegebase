@@ -3,9 +3,11 @@ import { expect, test, type Page } from "@playwright/test"
 import { ask, conversation, DESKTOP, fitsWidth, MEMBER, PHONE, signIn } from "./helpers.ts"
 
 // The empty new chat, centred (chat-view.tsx, chat-home.tsx): the heading and the
-// composer in the middle of the column, the recent chats, spaces and folders under
-// them; sending moves the composer down to its place. And the art answering the
-// pointer (redacted-drift.tsx): a reading lens under a mouse, a click decoding a line.
+// composer in the middle of the column, the recent chats under them in one glass card
+// on the composer's width and left edge, who you search as at the foot; sending moves
+// the composer down to its place. And the art (redacted-drift.tsx): over the whole
+// page, frosted under the glass, answering the pointer with a reading lens under a
+// mouse and a click decoding a line.
 // Strings to page.evaluate, so the e2e tsconfig needs no DOM types.
 
 // Headless Chromium hides scrollbars (Playwright passes --hide-scrollbars); shown, as a
@@ -47,11 +49,66 @@ for (const size of [DESKTOP, PHONE]) {
     const box = await composerBox(page)
     const centre = box.y + box.height / 2
     expect(Math.abs(centre - size.height / 2)).toBeLessThan(size.height * 0.12)
-    // The fine print stays under it.
-    await expect(page.getByText(/Searching as/)).toBeVisible()
+    // Who you search as, and the logging notice: one line at the foot of the page,
+    // on the composer's left edge (the hint's), in view without scrolling.
+    const notice = page.getByText(/Searching as/)
+    await expect(notice).toBeVisible()
+    const line = (await notice.boundingBox()) as Box
+    expect(line.y).toBeGreaterThan(box.y + box.height)
+    expect(line.y + line.height).toBeLessThanOrEqual(size.height)
+    expect(line.y + line.height).toBeGreaterThan(size.height - 90)
+    expect(Math.abs(line.x - (box.x - 16))).toBeLessThanOrEqual(1)
+    expect(await page.evaluate(`getComputedStyle(document.querySelector('[data-slot="chat-fine-print"]')).paddingLeft`)).toBe("36px")
     expect(await fitsWidth(page)).toBe(true)
   })
 }
+
+test("the keys are said under the composer only while it's focused and empty", async ({ page }) => {
+  await signIn(page, MEMBER)
+  const hint = page.locator('[data-slot="composer-hint"]')
+  const input = page.getByRole("textbox", { name: "Your question" })
+  await input.blur()
+  await expect(hint).toHaveText("")
+  const row = (await hint.locator("..").boundingBox()) as Box
+  await input.focus()
+  await expect(hint).toHaveText(/^Enter to send/)
+  await input.fill("Leave")
+  await expect(hint).toHaveText("")
+  // Its row keeps its height: nothing moves as it comes and goes.
+  expect(await hint.locator("..").boundingBox()).toEqual(row)
+})
+
+test("the art covers the whole page, and the composer is frosted glass over it", async ({ page }) => {
+  await signIn(page, MEMBER)
+  const art = drift(page)
+  await expect(art).toHaveAttribute("data-lines", /\d/)
+  const column = (await page.locator('[data-slot="chat-backdrop"]').boundingBox()) as Box
+  const canvas = (await art.locator("canvas").boundingBox()) as Box
+  // The canvas is the whole window: the chat column top to bottom, and the sidebar's
+  // pane beside it, which frosts it.
+  expect(canvas.y).toBeLessThanOrEqual(column.y + 1)
+  expect(canvas.y + canvas.height).toBeGreaterThanOrEqual(column.y + column.height - 1)
+  expect(canvas.x).toBeLessThanOrEqual(1)
+  expect(canvas.x + canvas.width).toBeGreaterThanOrEqual(column.x + column.width - 1)
+  // Its lines run from near the top to near the bottom, under the home's sections too.
+  const ys = ((await art.getAttribute("data-lines")) ?? "").split(",").map((y) => canvas.y + Number(y))
+  expect(Math.min(...ys)).toBeLessThan(column.y + column.height * 0.15)
+  expect(Math.max(...ys)).toBeGreaterThan(column.y + column.height * 0.85)
+  const composer = await composerBox(page)
+  expect(ys.some((y) => y > composer.y + composer.height + 60)).toBe(true)
+
+  // Glass you can see through: a blur behind the composer (and the recent chats' card).
+  const blur = `getComputedStyle(document.querySelector('[data-drift="composer"]')).backdropFilter`
+  expect(await page.evaluate(blur)).toMatch(/blur\((?!0px)/)
+
+  // "Reduce effects": solid, no blur.
+  await page.evaluate(`localStorage.setItem("effects", "reduced")`)
+  await page.reload()
+  await expect(page.getByRole("textbox", { name: "Your question" })).toBeVisible()
+  expect(await page.evaluate(`document.documentElement.dataset.effects`)).toBe("reduced")
+  expect(await page.evaluate(blur)).toBe("none")
+  await page.evaluate(`localStorage.removeItem("effects")`)
+})
 
 test("recent chats are under the composer, and one opens from there", async ({ page }) => {
   await signIn(page, MEMBER)
@@ -64,11 +121,18 @@ test("recent chats are under the composer, and one opens from there", async ({ p
   await expect(recent).toBeVisible()
   const row = recent.getByRole("button", { name: /How do I claim travel expenses\?/ }).first()
   await expect(row).toBeVisible()
-  // Spaces to ask in, as chips.
-  await expect(page.getByRole("group", { name: "Spaces" }).getByRole("button", { name: "All company" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  )
+  // One glass card on the composer's width and left edge.
+  await expect(recent).toHaveAttribute("data-drift", "glass")
+  const card = (await recent.boundingBox()) as Box
+  const composer = await composerBox(page)
+  expect(Math.abs(card.x - composer.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(card.width - composer.width)).toBeLessThanOrEqual(1)
+  expect(card.y).toBeGreaterThan(composer.y + composer.height)
+  // No Spaces or Folders rows (the composer's space chip and the sidebar have them),
+  // and no starters for someone with chats.
+  await expect(page.getByRole("group", { name: "Spaces" })).toHaveCount(0)
+  await expect(page.getByRole("group", { name: "Folders" })).toHaveCount(0)
+  await expect(page.getByRole("group", { name: "Suggested questions" })).toHaveCount(0)
   await row.click()
   await expect(page).toHaveURL(new RegExp(`${saved}$`))
   await expect(conversation(page).getByRole("button", { name: "Copy" })).toHaveCount(1)
@@ -162,6 +226,37 @@ test("a mouse over the art reads the lines near it; a click decodes one and keep
   await input.focus()
   await page.mouse.click(rect.x + rect.width * 0.3, ys[ys.length > 1 ? 1 : 0])
   await expect(drift(page)).toHaveAttribute("data-decoding", "")
+  await expect(input).toBeFocused()
+})
+
+test("the lens and a click work in the bottom half too, beside the recent chats", async ({ page }) => {
+  await signIn(page, MEMBER)
+  await ask(page, "How do I claim travel expenses?")
+  await page.goto("/chat")
+  await expect(page.getByRole("region", { name: "Recent chats" })).toBeVisible()
+  const art = drift(page)
+  await expect(art).toHaveAttribute("data-lines", /\d/)
+  const rect = (await art.boundingBox()) as Box
+  const composer = await composerBox(page)
+  const ys = ((await art.getAttribute("data-lines")) ?? "")
+    .split(",")
+    .map((y) => rect.y + Number(y))
+    .filter((y) => y > composer.y + composer.height + 60)
+  expect(ys.length).toBeGreaterThan(0)
+  // Open space: left of the column's card.
+  const column = (await page.locator('[data-slot="chat-backdrop"]').boundingBox()) as Box
+  const x = (column.x + composer.x) / 2
+  const y = ys[0]
+  const away = await pixelsAround(page, x, y)
+  await page.mouse.move(x - 40, y)
+  await page.mouse.move(x, y, { steps: 6 })
+  await expect(art).toHaveAttribute("data-lens", "")
+  await expect.poll(() => pixelsAround(page, x, y)).not.toBe(away)
+  await page.mouse.move(2, 2)
+  const input = page.getByRole("textbox", { name: "Your question" })
+  await input.focus()
+  await page.mouse.click(x, y)
+  await expect(art).toHaveAttribute("data-decoding", "")
   await expect(input).toBeFocused()
 })
 

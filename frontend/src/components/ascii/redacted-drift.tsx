@@ -5,20 +5,23 @@ import { composerSignal } from "@/components/ascii/composer-signal"
 import {
   approach,
   clamp,
+  covered,
   hash01,
   inZone,
   lensFalloff,
   lensSpan,
-  lineSlots,
   lineSnippets,
+  lineSpans,
   mulberry32,
   nearestLine,
   nextLine,
+  pageRows,
   redact,
   union,
   zoneHalfWidth,
   zoneOf,
   type Box,
+  type Cover,
   type Zone,
 } from "@/components/ascii/drift"
 import { subscribe, whenFontsReady } from "@/lib/ascii-loop"
@@ -26,8 +29,10 @@ import { cn } from "@/lib/utils"
 
 // "Redacted drift": the empty new chat's art, in place of the chat's field (one field
 // on screen). Faint lines of made-up records drift sideways at three depths, redacted
-// (▪▪▪ · ░░, word lengths kept). Round the composer is a readable zone: about every
-// 8s one line passing through it decodes into a neutral record, faintly mint on dark,
+// (▪▪▪ · ░░, word lengths kept), over the whole window, under the sidebar too: fainter
+// under words, at full ink under glass, which frosts them (what's over the art says
+// which: data-drift). Round the composer is a readable zone: about every 8s one line
+// passing through it decodes into a neutral record, faintly mint on dark,
 // and scrambles back as it leaves or after about 5s. Decodes go round the lines.
 // Focus or typing in the composer (composer-signal.ts, no React state) slows the
 // drift to about 30% and draws the nearest lines a few px towards it.
@@ -58,6 +63,14 @@ const DEPTHS = [
   { size: 10, alpha: 0.08, speed: 10 },
 ]
 const DEPTH_BY_RANK = [1, 0, 0, 2, 1, 2, 1, 2] // by distance from the composer
+const DEPTH_FAR = [2, 1, 2, 0, 2, 1] // and further out, round again
+// Under what sits over the art (`data-drift` on it): faint under words (the heading,
+// the starters, the fine print), so they always read; at full ink under glass (the
+// composer, the recent chats' card, the sidebar's pane), as a blur averages faint
+// dashes to a flat tone: the glass, not a faded line, keeps the words on it readable,
+// and the lines show through it as soft shapes moving.
+const QUIET = 0.3
+const UNDER_GLASS = 8 // 0.64–0.96 of the text colour, by depth
 const GAP = "       "
 const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789"
 const DECODE_EVERY = 8000
@@ -97,20 +110,19 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
   const box = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const aura = useRef<HTMLDivElement>(null)
-  const halo = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = box.current
     const cv = canvas.current
     if (!el || !cv) return
-    const scene = driftScene(el, cv, aura.current, halo.current)
+    const scene = driftScene(el, cv, aura.current)
     const loop = subscribe(el, scene.draw, { fps: FPS, still: STILL, priority: "ambient" })
     const relayout = () => {
       scene.dirty()
       loop.redraw()
     }
-    // The column, the composer (it grows with its text) and the empty state's words
-    // (the starters and recent chats arrive later) set where lines run.
+    // The column, the composer (it grows with its text) and what sits over the art
+    // (the starters and recent chats arrive later) set how lines are drawn.
     const ro = new ResizeObserver(relayout)
     ro.observe(el)
     for (const target of scene.watched()) ro.observe(target)
@@ -152,16 +164,16 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
       data-mode="drift"
       data-leaving={leaving || undefined}
       className={cn(
-        "pointer-events-none absolute inset-0 overflow-hidden font-mono text-foreground select-none",
+        // Fixed to the window, as the chat's field is: it runs under the sidebar too.
+        "pointer-events-none fixed inset-0 overflow-hidden font-mono text-foreground select-none",
         "transition-opacity duration-(--dur-drift-exit) ease-out-strong data-leaving:opacity-0",
         className,
       )}
     >
-      {/* The zone's faint light, and the soft frost right round the composer (no blur:
-          the composer's own glass is the screen's third blurred surface). */}
+      {/* The zone's faint light. The lines run on under the composer and the recent
+          chats, where those surfaces' own glass frosts them. */}
       <div ref={aura} className="kb-drift-aura absolute" />
       <canvas ref={canvas} className="absolute top-0 left-0" />
-      <div ref={halo} className="kb-drift-halo absolute" />
     </div>
   )
 }
@@ -177,6 +189,8 @@ type Line = {
   tileW: number
   sprite: HTMLCanvasElement
   offset: number
+  // The stretches it's drawn in, and how strongly (lineSpans), for this layout.
+  spans: [number, number, number][]
   // Cells in (or just out of) the reading lens, by their index along the line: when
   // each came in, and when it went out (-1 while in).
   lens: Map<number, LensCell>
@@ -194,7 +208,7 @@ type Decode = {
   holdUntil: number
 }
 
-function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | null, halo: HTMLElement | null) {
+function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | null) {
   const ctx = cv.getContext("2d")
   const depths: Depth[] = DEPTHS.map((d) => ({ ...d, px: d.size, font: "", cw: 7 }))
   // The chat column: the composer and the empty state are in it.
@@ -206,6 +220,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
   let origin = { x: 0, y: 0 } // the box on the page, for the pointer
   let comp: Box = { x: 0, y: 0, w: 0, h: 0 }
   let content: Box | null = null
+  let covers: Cover[] = []
   let zone: Zone = { cx: 0, cy: 0, a: 1, b: 1 }
   let lines: Line[] = []
   let decode: Decode | null = null
@@ -227,7 +242,12 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
 
   const composerEl = () => root.querySelector('[data-drift="composer"]')
   const contentEl = () => root.querySelector('[data-drift="content"]')
+  // What sits over the art: the composer and glass (lines stronger), words (fainter).
+  // "below" is the home's sections' box, watched for its size: its parts say what they are.
   const belowEl = () => root.querySelector('[data-drift="below"]')
+  const coverEls = () => [...root.querySelectorAll('[data-drift]:not([data-drift="below"])')]
+  // The sidebar's pane, beside the column (a sheet on a phone, so nothing there then).
+  const paneEl = () => document.querySelector('[data-slot="sidebar-inner"]')
 
   function restyle() {
     const s = getComputedStyle(el)
@@ -294,7 +314,19 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     }
     comp = rel(composerEl()) ?? { x: W * 0.1, y: H - 96, w: W * 0.8, h: 72 }
     content = rel(contentEl())
-    const below = rel(belowEl())
+    covers = []
+    const pane = paneEl()
+    for (const n of pane ? [...coverEls(), pane] : coverEls()) {
+      const b = rel(n)
+      if (!b || !b.w || !b.h) continue
+      const kind = n === pane ? "glass" : n.getAttribute("data-drift")
+      // Words get a little room round them; glass is its own edge.
+      covers.push(
+        kind === "composer" || kind === "glass"
+          ? { box: b, k: UNDER_GLASS, round: n === pane ? 0 : parseFloat(getComputedStyle(n).borderTopLeftRadius) || 0 }
+          : { box: { x: b.x - 10, y: b.y - 4, w: b.w + 20, h: b.h + 8 }, k: QUIET },
+      )
+    }
     const viewport = rel(root.querySelector('[data-slot="message-scroller-viewport"]'))
     // The heading just over the composer (the centred new chat): the zone is round both.
     const near = content !== null && comp.y - (content.y + content.h) < 80
@@ -305,14 +337,6 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         top: `${zone.cy - zone.b}px`,
         width: `${zone.a * 2}px`,
         height: `${zone.b * 2}px`,
-      })
-    }
-    if (halo) {
-      Object.assign(halo.style, {
-        left: `${comp.x - 34}px`,
-        top: `${comp.y - 22}px`,
-        width: `${comp.w + 68}px`,
-        height: `${comp.h + 44}px`,
       })
     }
     const s = getComputedStyle(el)
@@ -326,14 +350,14 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         d.cw = ctx.measureText("0").width || d.cw
       }
     }
-    // Lines keep their place along the way when they're laid out again. What's below
-    // the composer, once it has words in it, they run under, never across.
+    // Lines keep their place along the way when they're laid out again. They run the
+    // whole page; under words and glass they're drawn as those want (lineSpans).
     const prev = lines
     const rand = mulberry32(7)
-    const words = below && below.h > 0 ? below : null
-    lines = lineSlots({ top: viewport ? viewport.y : 44, content, composer: comp, below: words }, H).map(
+    const top = viewport ? viewport.y : 44
+    lines = pageRows({ top, bottom: H, anchor: comp.y + comp.h / 2 }, H).map(
       (y, rank) => {
-        const d = depths[DEPTH_BY_RANK[rank] ?? 2]
+        const d = depths[DEPTH_BY_RANK[rank] ?? DEPTH_FAR[rank % DEPTH_FAR.length]]
         let text = ""
         const snips: Line["snips"] = []
         for (const sn of lineSnippets(rank)) {
@@ -350,6 +374,14 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
           tileW,
           sprite: sprite(redact(text), d),
           offset: prev[rank]?.offset ?? rand() * tileW,
+          spans: lineSpans(
+            W,
+            y,
+            d.px * 0.5 + 8, // and the 8px a line may lean towards the composer
+            Math.abs(y - zone.cy) < zone.b ? { cx: zone.cx, hx: zoneHalfWidth(zone, y) } : null,
+            LENS,
+            covers,
+          ),
           lens: new Map(),
         }
       },
@@ -359,12 +391,10 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     el.dataset.lines = lines.map((ln) => Math.round(ln.y)).join(",")
   }
 
-  // A line can decode inside the zone, but not behind the composer or the words.
+  // A line can decode inside the zone, but not behind the composer, glass or words.
   function candidate(ln: Line) {
     if (Math.abs(ln.baseY - zone.cy) > zone.b * 0.9) return false
-    if (ln.baseY > comp.y - 16 && ln.baseY < comp.y + comp.h + 16) return false
-    if (content && ln.baseY > content.y - 10 && ln.baseY < content.y + content.h + 10) return false
-    return true
+    return !covers.some((c) => ln.baseY > c.box.y - 16 && ln.baseY < c.box.y + c.box.h + 16)
   }
 
   // Where a line's tiles are this frame: the first tile's left edge (whole device
@@ -507,9 +537,9 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         continue
       }
       alive = true
-      if (x > W || x + cw < 0) {
+      if (x > W || x + cw < 0 || covered(covers, x + cw / 2, ln.y)) {
         close()
-        continue // off screen: alive, not drawn
+        continue // off screen, or under words or glass: alive, not drawn
       }
       if (runX < 0) runX = x
       runEnd = x + cw
@@ -532,6 +562,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     if (span) {
       for (let n = span[0]; n <= span[1]; n++) {
         if ((n >= d0 && n < d1) || ln.text[mod(n, ln.text.length)] === " ") continue
+        if (covered(covers, x0 + n * cw - baseAbs + cw / 2, ln.y)) continue
         const cell = ln.lens.get(n)
         if (!cell) ln.lens.set(n, { t: now, out: -1, seen: true })
         else {
@@ -550,11 +581,6 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     return ln.lens.size ? ln.lens : null
   }
 
-  function zonePath(c: CanvasRenderingContext2D) {
-    c.moveTo(zone.cx + zone.a, zone.cy)
-    c.ellipse(zone.cx, zone.cy, zone.a, zone.b, 0, 0, Math.PI * 2)
-  }
-
   function drawLine(c: CanvasRenderingContext2D, ln: Line, now: number) {
     const d = ln.d
     const cw = d.cw
@@ -564,30 +590,21 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     const { x0, baseAbs } = place(ln)
     const dc = decode && decode.line === ln ? decode : null
     const cells = dc ? decodeCells(dc, ln, now, x0 + dc.absX - baseAbs) : null
-    const tiles = () => {
-      for (let x = x0; x < W; x += ln.tileW) c.drawImage(ln.sprite, x, top, sw, sh)
-    }
-    const crosses = Math.abs(ln.y - zone.cy) < zone.b
-    // Outside the zone: full strength.
-    c.save()
-    if (crosses) {
-      c.beginPath()
-      c.rect(0, top, W, sh)
-      zonePath(c)
-      c.clip("evenodd")
-    }
-    c.globalAlpha = d.alpha
-    tiles()
-    c.restore()
-    // Inside: lighter.
-    if (crosses) {
-      c.save()
-      c.beginPath()
-      zonePath(c)
-      c.clip()
-      c.globalAlpha = d.alpha * LENS
-      tiles()
-      c.restore()
+    // Stretch by stretch (lineSpans): full in open space, lighter in the zone, faint
+    // under words, stronger under glass. Only the tiles that reach a stretch are drawn.
+    for (const [a, b, k] of ln.spans) {
+      const whole = a <= 0 && b >= W
+      if (!whole) {
+        c.save()
+        c.beginPath()
+        c.rect(a, top, b - a, sh)
+        c.clip()
+      }
+      c.globalAlpha = Math.min(1, d.alpha * k)
+      for (let x = x0 + Math.max(0, Math.floor((a - x0) / ln.tileW)) * ln.tileW; x < b; x += ln.tileW)
+        c.drawImage(ln.sprite, x, top, sw, sh)
+      if (!whole) c.restore()
+      else c.globalAlpha = 1
     }
     // The cells that read (a decode's, the lens's) are cut out of the redacted line.
     // A line is alone in its band (lines are 40px or more apart), so this clears
@@ -770,7 +787,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     },
     root: () => root,
     listen,
-    watched: () => [composerEl(), contentEl(), belowEl()].filter((n): n is Element => n !== null),
+    watched: () => [composerEl(), belowEl(), paneEl(), ...coverEls()].filter((n): n is Element => n !== null),
   }
 }
 

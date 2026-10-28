@@ -40,6 +40,29 @@ describe("the composer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("data-slot", "button")
   })
 
+  it("says the keys only while focused and empty, in a line that keeps its height", async () => {
+    render(<Harness />)
+    const hint = () => document.querySelector('[data-slot="composer-hint"]')
+    expect(hint()).toHaveTextContent("")
+    const user = userEvent.setup()
+    const box = screen.getByRole("textbox", { name: "Your question" })
+    await user.click(box)
+    expect(hint()).toHaveTextContent("Enter to send · Shift + Enter for a new line · / for saved prompts")
+    await user.type(box, "Leave")
+    expect(hint()).toHaveTextContent("")
+    await user.clear(box)
+    expect(hint()).toHaveTextContent("Enter to send")
+    await user.tab()
+    expect(hint()).toHaveTextContent("")
+    // One fixed-height row either way: nothing under it moves.
+    expect(hint()?.parentElement).toHaveClass("h-4")
+  })
+
+  it("says Esc to stop while an answer is written", () => {
+    render(<Harness busy />)
+    expect(document.querySelector('[data-slot="composer-hint"]')).toHaveTextContent("Esc to stop")
+  })
+
   it("sends on Enter and starts a new line on Shift+Enter", async () => {
     const onSend = vi.fn()
     render(<Harness onSend={onSend} />)

@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  covered,
   DRIFT_SNIPPETS,
   lensFalloff,
   lensSpan,
-  lineSlots,
   lineSnippets,
+  lineSpans,
   nearestLine,
   nextLine,
+  pageRows,
   redact,
   zoneOf,
 } from "@/components/ascii/drift"
@@ -65,28 +67,90 @@ describe("the layout", () => {
     expect(wide.a).toBeGreaterThan(735 / 2 + 60)
   })
 
-  it("runs lines in the free space, never across the empty state's words", () => {
-    const content = { x: 0, y: 100, w: 390, h: 250 }
-    const ys = lineSlots({ top: 44, content, composer }, 844)
-    expect(ys.length).toBeGreaterThanOrEqual(6)
-    expect(ys.length).toBeLessThanOrEqual(8)
-    for (const y of ys) expect(y < content.y || y > content.y + content.h).toBe(true)
-    // one through the composer, frosted by its glass
-    expect(ys[0]).toBe(composer.y + composer.h / 2)
+  it("runs lines down the whole page, evenly, one through the composer's middle", () => {
+    const centred = { x: 160, y: 330, w: 736, h: 86 }
+    const mid = centred.y + centred.h / 2
+    const ys = pageRows({ top: 44, bottom: 728, anchor: mid }, 728)
+    // the nearest first: the composer's own line
+    expect(ys[0]).toBe(mid)
+    const sorted = [...ys].sort((a, b) => a - b)
+    // from just under the top to just over the bottom, nothing past either
+    expect(sorted[0]).toBeGreaterThan(44 + 12)
+    expect(sorted[0]).toBeLessThan(44 + 12 + 60)
+    expect(sorted[sorted.length - 1]).toBeLessThan(728 - 10)
+    expect(sorted[sorted.length - 1]).toBeGreaterThan(728 - 10 - 60)
+    // calm: an even step of 42–60px
+    const steps = sorted.slice(1).map((y, i) => y - sorted[i])
+    for (const d of steps) {
+      expect(d).toBeCloseTo(steps[0], 5)
+      expect(d).toBeGreaterThanOrEqual(42)
+      expect(d).toBeLessThanOrEqual(60)
+    }
+    // a phone's page has its lines too, top to bottom
+    const phone = pageRows({ top: 48, bottom: 844, anchor: 400 }, 844)
+    expect(Math.min(...phone)).toBeLessThan(48 + 12 + 60)
+    expect(Math.max(...phone)).toBeGreaterThan(844 - 10 - 60)
+  })
+})
+
+describe("lineSpans", () => {
+  const heading = { box: { x: 300, y: 100, w: 400, h: 40 }, k: 0.3 }
+  const card = { box: { x: 160, y: 500, w: 736, h: 200 }, k: 1.8 }
+
+  it("draws a line in open space at full strength", () => {
+    expect(lineSpans(1000, 300, 6, null, 0.45, [heading, card])).toEqual([[0, 1000, 1]])
   })
 
-  it("with the composer centred, runs lines above the heading and under the recent chats, never across them", () => {
-    const centred = { x: 160, y: 330, w: 736, h: 86 }
-    const heading = { x: 160, y: 280, w: 736, h: 36 }
-    const below = { x: 200, y: 500, w: 640, h: 200 }
-    const ys = lineSlots({ top: 44, content: heading, composer: centred, below }, 800)
-    expect(ys.some((y) => y < heading.y)).toBe(true)
-    expect(ys.some((y) => y > below.y + below.h)).toBe(true)
-    for (const y of ys) {
-      expect(y < heading.y || y > heading.y + heading.h).toBe(true)
-      expect(y < below.y || y > below.y + below.h).toBe(true)
-      expect(y).toBeLessThan(800 - 14)
-    }
+  it("draws it faint under words and stronger under glass", () => {
+    expect(lineSpans(1000, 120, 6, null, 0.45, [heading, card])).toEqual([
+      [0, 300, 1],
+      [300, 700, 0.3],
+      [700, 1000, 1],
+    ])
+    expect(lineSpans(1000, 600, 6, null, 0.45, [heading, card])).toEqual([
+      [0, 160, 1],
+      [160, 896, 1.8],
+      [896, 1000, 1],
+    ])
+  })
+
+  it("draws it lighter in the readable zone, a cover over the zone winning", () => {
+    expect(lineSpans(1000, 300, 6, { cx: 500, hx: 300 }, 0.45, [])).toEqual([
+      [0, 200, 1],
+      [200, 800, 0.45],
+      [800, 1000, 1],
+    ])
+    expect(lineSpans(1000, 120, 6, { cx: 500, hx: 300 }, 0.45, [heading])).toEqual([
+      [0, 200, 1],
+      [200, 300, 0.45],
+      [300, 700, 0.3],
+      [700, 800, 0.45],
+      [800, 1000, 1],
+    ])
+  })
+
+  it("counts a cover of words the line's band only touches", () => {
+    expect(lineSpans(1000, 96, 6, null, 0.45, [heading])).toHaveLength(3)
+    expect(lineSpans(1000, 90, 6, null, 0.45, [heading])).toEqual([[0, 1000, 1]])
+  })
+
+  it("keeps full ink inside glass: not on a line half out of it, nor its rounded corners", () => {
+    const rounded = { ...card, round: 18 }
+    // half out at the bottom edge: drawn as in open space
+    expect(lineSpans(1000, 698, 6, null, 0.45, [rounded])).toEqual([[0, 1000, 1]])
+    // inside: full ink, but not out to the corners
+    expect(lineSpans(1000, 690, 6, null, 0.45, [rounded])).toEqual([
+      [0, 178, 1],
+      [178, 878, 1.8],
+      [878, 1000, 1],
+    ])
+  })
+
+  it("says where no cell reads: under any cover", () => {
+    expect(covered([heading, card], 400, 120)).toBe(true)
+    expect(covered([heading, card], 400, 600)).toBe(true)
+    expect(covered([heading, card], 100, 600)).toBe(false)
+    expect(covered([heading, card], 400, 300)).toBe(false)
   })
 })
 

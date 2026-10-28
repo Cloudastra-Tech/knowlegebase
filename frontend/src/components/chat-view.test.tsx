@@ -92,8 +92,8 @@ describe("the chat", () => {
     expect(
       await screen.findByRole("button", { name: "What does “Travel policy” cover?" }),
     ).toBeInTheDocument()
-    // One heading; how answers work is behind the (i), who you search as is under the
-    // composer.
+    // One heading; how answers work is behind the (i), who you search as is the line
+    // at the foot of the page.
     expect(screen.getByRole("heading", { level: 2, name: "Ask your company docs" })).toBeInTheDocument()
     expect(screen.getByText(/Searching as/)).toHaveTextContent("Searching as Public user")
     expect(screen.queryByText(/Answers come from/)).not.toBeInTheDocument()
