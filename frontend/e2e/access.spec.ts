@@ -31,7 +31,10 @@ test("an HR-only document answers HR, and is invisible to a public member", asyn
 
 test("an admin opens Access, then Activity, and sees the audit log", async ({ page }) => {
   await signIn(page, ADMIN)
-  await page.getByRole("navigation").getByRole("link", { name: "Access" }).click()
+  // Playwright's window is 720px tall, short enough that the Admin group starts folded.
+  const nav = page.getByRole("navigation", { name: "Screens" })
+  await nav.getByRole("button", { name: "Admin" }).click()
+  await nav.getByRole("link", { name: "Access" }).click()
   await page.getByRole("tab", { name: "Activity" }).click()
   await expect(page).toHaveURL(/\/admin\/activity/)
   const row = page.getByRole("row").filter({ hasText: "member@e2e.example" })

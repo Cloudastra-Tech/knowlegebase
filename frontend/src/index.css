@@ -289,8 +289,8 @@
 }
 
 /* The glass tiers (DESIGN.md, "Glass"): never one inside another. Chrome: the sticky
-   strip at the top of a screen, the phone top bar, the composer, the landing header
-   and cards. */
+   strip at the top of a screen, the composer, the landing header and cards. (The
+   phone's top bar is solid: nothing scrolls under it to frost.) */
 @utility glass {
     position: relative;
     isolation: isolate;

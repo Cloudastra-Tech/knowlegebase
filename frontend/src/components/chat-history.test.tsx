@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
 
@@ -119,6 +119,29 @@ describe("the history sidebar", () => {
     expect(within(nav).getAllByRole("link").map((l) => l.textContent)).toEqual(["Chat", "Knowledge"])
     expect(within(nav).getByRole("link", { name: "Knowledge" })).toHaveAttribute("aria-current", "page")
     expect(within(nav).queryByText("Admin")).not.toBeInTheDocument()
+  })
+
+  it("folds the Admin group under its label, and remembers it", async () => {
+    const ada: User = { username: "ada", name: "Ada Admin", workspace: "acme", role: "admin" }
+    session.setToken("tok")
+    mockApi({ ...BASE, "GET /api/auth/me": ada })
+    renderApp("/knowledge")
+    const nav = await screen.findByRole("navigation", { name: "Screens" })
+    // A tall window (the tests' matchMedia matches nothing): open.
+    const label = within(nav).getByRole("button", { name: "Admin" })
+    expect(label).toHaveAttribute("aria-expanded", "true")
+    expect(within(nav).getByRole("link", { name: "Verified" })).toBeInTheDocument()
+    await userEvent.setup().click(label)
+    expect(label).toHaveAttribute("aria-expanded", "false")
+    expect(within(nav).queryByRole("link", { name: "Verified" })).not.toBeInTheDocument()
+    expect(localStorage.getItem("kb.sidebar.admin")).toBe("closed")
+
+    // Next time, folded as it was left.
+    cleanup()
+    renderApp("/knowledge")
+    const again = await screen.findByRole("navigation", { name: "Screens" })
+    expect(within(again).getByRole("button", { name: "Admin" })).toHaveAttribute("aria-expanded", "false")
+    expect(within(again).queryByRole("link", { name: "Insights" })).not.toBeInTheDocument()
   })
 
   it("searches chats from the sidebar, in the palette, and marks the matches", async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react"
 
 // The strip at the top of a screen once its title has scrolled away: frosted glass
-// (the chrome tier, as the phone's top bar) with the screen's title, over the content
+// (the chrome tier) with the screen's title, over the content
 // scrolling under it. It fades in when the ScreenHeader's h2 goes under it and out
 // when it comes back, lined up with the title. Not on a phone, whose top bar already
 // says where you are. aria-hidden: the h2 is the screen's title.
