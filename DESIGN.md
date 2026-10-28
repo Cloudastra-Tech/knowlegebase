@@ -181,8 +181,21 @@ and palette overlays are a plain 40% dim, so the floating glass above them frost
   `lib/ascii-loop.ts`), every tier goes solid and `backdrop-filter` is `none` (not a 0px blur,
   which is still a pass). Touch screens get 12px chrome. Print is solid.
 - **Budget, measured** (headless Chrome on the real GPU, an Intel UHD 620, 1280×800, dark; 5s of
-  wheel scrolling, 10s idle, 10s idle with the account menu open; the median of 3 runs):
-  BUDGET_TABLE
+  wheel scrolling, 10s idle, 10s idle with the account menu open; the median of 3 runs). The
+  first pass had a 12px pane, rejected for the activity scroll:
+
+  | Screen, phase | Before (no blur on the sidebar) | Now | First pass, 12px pane |
+  |---|---|---|---|
+  | /chat, scrolling | 58 fps, p95 16.8ms, GPU 436ms/s | 59 fps, 16.7ms, 425 | 59 fps, 16.8ms, 533 |
+  | /chat, idle | 60 fps, 16.8ms, GPU 106 | 60 fps, 16.7ms, 49 | 60 fps, 16.7ms, 84 |
+  | /knowledge, idle | 60 fps, 16.8ms, GPU 153 | 60 fps, 16.7ms, 50 | 59 fps, 16.8ms, 62 |
+  | /admin/activity, scrolling (under the strip) | 60 fps, 16.7ms, GPU 813 | 60 fps, 16.8ms, 619 | **48 fps, 33.4ms**, 976 |
+  | any, a menu open 10s | 60 fps, GPU < 1 | 60 fps, GPU < 1 | 60 fps, GPU < 1 |
+  | "Reduce effects", idle | | 60 fps, GPU 0 to 0.3 | |
+
+  GPU busy time moves by half between runs on a laptop; the frame rate and p95 are the
+  steady signal.
+
   So the cap is no longer a count of blurred surfaces: it's **one pane (the sidebar) at 8px,
   plus the chrome pieces (16px) and one floating stack (12px)**. A pane blur over 8px over the
   moving field, or a second large pane, is what to measure before adding. No full-viewport blur.
