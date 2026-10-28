@@ -668,6 +668,16 @@ export function ChatView({ role }: { role: Role }) {
       setInput(question)
       inputRef.current?.focus()
     },
+    // Not found in a space: the same question, ready to ask across the workspace.
+    onAskEverywhere: spaceId
+      ? (question) => {
+          chooseSpace(null)
+          requestAnimationFrame(() => {
+            setInput(question)
+            inputRef.current?.focus()
+          })
+        }
+      : undefined,
     onFeedback: (message, feedback) =>
       edit((all) => all.map((m) => (m.key === message.key ? { ...m, feedback } : m))),
     onShare: (m) => setSharing({ messageId: m.id ?? null }),

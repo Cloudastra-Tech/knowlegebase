@@ -4,11 +4,15 @@ import {
   BadgeCheck,
   BookOpen,
   BookOpenText,
+  Ban,
   Calculator,
+  Check,
+  CircleDashed,
   FileSearch,
   Globe,
   History,
   Wrench,
+  X,
   type LucideIcon,
 } from "lucide-react"
 
@@ -61,12 +65,12 @@ const ICONS: Record<ToolKind, LucideIcon> = {
   other: Wrench,
 }
 
-// The status as a mono glyph (and a word for screen readers): never colour alone.
-const GLYPHS: Record<Exclude<StepStatus, "running">, { glyph: string; word: string; tone: string }> = {
-  done: { glyph: "✓", word: "Done:", tone: "text-success" },
-  blocked: { glyph: "⊘", word: "Blocked:", tone: "text-warning" },
-  error: { glyph: "✕", word: "Failed:", tone: "text-destructive" },
-  cancelled: { glyph: "◌", word: "Stopped:", tone: "text-muted-foreground" },
+// The status as an icon (and a word for screen readers): never colour alone.
+const GLYPHS: Record<Exclude<StepStatus, "running">, { icon: LucideIcon; word: string; tone: string }> = {
+  done: { icon: Check, word: "Done:", tone: "text-muted-foreground" },
+  blocked: { icon: Ban, word: "Blocked:", tone: "text-warning" },
+  error: { icon: X, word: "Failed:", tone: "text-destructive" },
+  cancelled: { icon: CircleDashed, word: "Stopped:", tone: "text-muted-foreground" },
 }
 
 // Trace's own line states: running shimmers, error is red, pending is dimmed.
@@ -91,9 +95,9 @@ function StatusGlyph({ status, animate }: { status: StepStatus; animate: boolean
     <span
       // A new key per status, so a change crossfades in (live answers only).
       key={status}
-      className={cn("flex w-3.5 shrink-0 justify-center font-mono text-xs leading-none", g.tone, animate && "kb-glyph-in")}
+      className={cn("flex w-3.5 shrink-0 justify-center", g.tone, animate && "kb-glyph-in")}
     >
-      <span aria-hidden>{g.glyph}</span>
+      <g.icon aria-hidden className="size-3.5" strokeWidth={2} />
       <span className="sr-only">{g.word}</span>
     </span>
   )
