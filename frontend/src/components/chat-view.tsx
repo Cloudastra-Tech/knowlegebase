@@ -28,6 +28,7 @@ import {
 import { composerSignal } from "@/components/ascii/composer-signal"
 import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
+import { ChatHome } from "@/components/chat-home"
 import { LoggingNotice } from "@/components/logging-notice"
 import { SampleDocsToggle } from "@/components/onboarding-checklist"
 import { usePromptPicker } from "@/components/prompt-menu"
@@ -87,9 +88,10 @@ import {
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
 import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
-import { CHOOSE_SPACE, FOCUS_COMPOSER, setThinking } from "@/lib/chat-events"
+import { getEffects } from "@/lib/ascii-loop"
+import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking, type SearchDetail } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
-import { dur, usePrefersReducedMotion } from "@/lib/motion"
+import { dur, ease, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { spaceLabel } from "@/lib/spaces"
 import { cn } from "@/lib/utils"
@@ -229,6 +231,10 @@ export function ChatView({ role }: { role: Role }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const lastAnswerRef = useRef<HTMLDivElement>(null)
+  // The composer's row, and where it was (its top, px) as the first question went:
+  // from the middle of the empty chat it moves down to its place (the FLIP below).
+  const composerRow = useRef<HTMLDivElement>(null)
+  const flipFrom = useRef<number | null>(null)
   const reduced = usePrefersReducedMotion()
   const knowledge = useQuery({ ...queries.knowledge(), meta: { silent: true } })
   // Someone who hasn't asked anything yet: "ask your first question" (the server's
@@ -473,7 +479,10 @@ export function ChatView({ role }: { role: Role }) {
     const target = again.retry ?? again.regenerate
     const q = (target ? (target.question ?? "") : text).trim()
     if (!q || loading) return
-    if (!messages.length) setArtLeaving(true)
+    if (!messages.length) {
+      setArtLeaving(true)
+      flipFrom.current = composerRow.current?.getBoundingClientRect().top ?? null
+    }
     if (!target && !again.edit) setInput("")
     setEditing(null)
     const key = `draft-${nextKey.current++}`
@@ -731,6 +740,27 @@ export function ChatView({ role }: { role: Role }) {
   const empty = messages.length === 0 && !opening
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
 
+  // The first question sent: the composer goes from the middle of the empty chat down
+  // to its place in one short move (FLIP: drawn there at once, then eased in from where
+  // it was), at once with reduced motion or "Reduce effects". Only then: a saved chat
+  // opened from the empty one, or New chat, changes the layout without moving anything.
+  useLayoutEffect(() => {
+    const from = flipFrom.current
+    flipFrom.current = null
+    const row = composerRow.current
+    if (from === null || empty || !row) return
+    const dy = from - row.getBoundingClientRect().top
+    if (Math.abs(dy) < 1 || reduced || getEffects() === "reduced") return
+    row.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], {
+      duration: dur.reveal * 1000,
+      easing: `cubic-bezier(${ease.out.join(", ")})`,
+    })
+  }, [empty, reduced])
+
+  // Search chats (the palette, chats alone), or a folder's chats in it.
+  const openSearch = (detail?: SearchDetail) =>
+    window.dispatchEvent(new CustomEvent<SearchDetail | undefined>(OPEN_SEARCH, { detail }))
+
   return (
     <div className="relative flex h-full min-h-0 w-full" data-print="flow">
       <div className="relative isolate flex min-w-0 flex-1 flex-col" data-print="flow">
@@ -761,7 +791,7 @@ export function ChatView({ role }: { role: Role }) {
           defaultScrollPosition="last-anchor"
           scrollPreviousItemPeek={PEEK}
         >
-          <MessageScroller className="flex-1" data-print="flow">
+          <MessageScroller className="flex-[1_1_0%]" data-print="flow">
             {/* No browser scroll anchoring: the scroller keeps the question in place
                 itself, and the two together nudged the view on every token. */}
             <MessageScrollerViewport
@@ -776,6 +806,8 @@ export function ChatView({ role }: { role: Role }) {
               onKeyDown={touch}
               // Not focus from a portal (the passage sheet), which React bubbles through here.
               onFocus={(e) => e.currentTarget.contains(e.target) && letGo(e.currentTarget)}
+              // Empty, it holds nothing to read: no stop for Tab.
+              tabIndex={empty ? -1 : undefined}
               data-print="flow"
               className="outline-none [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
             >
@@ -786,72 +818,11 @@ export function ChatView({ role }: { role: Role }) {
                 aria-label="Conversation"
                 aria-busy={loading}
               >
-                {empty && (
-                  <MessageScrollerItem>
-                    {/* data-drift: the art's lines run clear of these words. */}
-                    {/* One short heading; how answers work is behind the (i), and who
-                        you're searching as and the logging notice sit under the
-                        composer. The art carries the rest. */}
-                    <div data-drift="content" className="flex flex-col items-center pt-8 text-center sm:pt-16">
-                      <div className="flex items-center gap-1">
-                        <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                          {space
-                            ? `Ask in ${spaceLabel(space)}`
-                            : firstRun
-                              ? "Ask your first question"
-                              : "Ask your company docs"}
-                        </h2>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label="How answers work"
-                              className="text-muted-foreground"
-                            >
-                              <Info />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-72 text-sm text-muted-foreground">
-                            {space?.kind === "personal"
-                              ? "Answers come from the files you keep in your space and the sources you added to it, "
-                              : space
-                                ? "Answers come only from this space's sources that you can see, "
-                                : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
-                            with the sources cited under every answer. Attach a file to ask about it too.
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-                      <div className="mt-8 grid w-full max-w-xl gap-2" aria-label="Suggested questions">
-                        {firstRun && (
-                          <p className="text-left text-xs font-medium text-muted-foreground">
-                            Try one of these, from your workspace's documents, or type your own.
-                          </p>
-                        )}
-                        {starters.map((s) => (
-                          <Button
-                            key={s}
-                            variant="outline"
-                            onClick={() => ask(s)}
-                            className="h-auto justify-start whitespace-normal rounded-lg px-4 py-3 text-left font-normal"
-                          >
-                            {s}
-                          </Button>
-                        ))}
-                      </div>
-                      {offerSample && (welcome.sample.available || welcome.sample.on) && (
-                        <div className="mt-6 flex max-w-xl flex-col items-center gap-2">
-                          <p className="text-xs text-muted-foreground">
-                            {welcome.sample.on
-                              ? "The sample HR handbook is in. Remove it before colleagues ask."
-                              : "No documents yet? Try it on a made-up HR handbook first."}
-                          </p>
-                          <SampleDocsToggle sample={welcome.sample} />
-                        </div>
-                      )}
-                    </div>
-                  </MessageScrollerItem>
-                )}
+                {/* The empty chat's heading, starters and recent chats sit round the
+                    composer, below. Here a row with nothing in it stands in, so the
+                    scroller sees the first question arrive as it always has: the
+                    transcript's rows replacing one (the pin-to-top logic counts them). */}
+                {empty && <MessageScrollerItem aria-hidden className="hidden" />}
 
                 {forkedFrom && (
                   <MessageScrollerItem>
@@ -931,6 +902,38 @@ export function ChatView({ role }: { role: Role }) {
             </MessageScrollerButton>
           </MessageScroller>
         </MessageScrollerProvider>
+        {/* The empty new chat, centred as on Claude.ai: the heading just over the
+            composer, the two in the middle of the column, and the home's sections
+            (starters, recent chats, spaces and folders) under it. The space round them
+            is the art's: a click there decodes a line (redacted-drift.tsx). One short
+            heading; how answers work is behind the (i), who you're searching as and
+            the logging notice sit under the composer. data-drift: the art's lines run
+            clear of these words. */}
+        {empty && (
+          <div
+            data-drift="content"
+            className="mx-auto flex w-full max-w-3xl shrink-0 items-center justify-center gap-1 px-4 text-center"
+          >
+            <h2 className="text-2xl font-semibold tracking-tight text-balance">
+              {space ? `Ask in ${spaceLabel(space)}` : firstRun ? "Ask your first question" : "Ask your company docs"}
+            </h2>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="How answers work" className="text-muted-foreground">
+                  <Info />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm text-muted-foreground">
+                {space?.kind === "personal"
+                  ? "Answers come from the files you keep in your space and the sources you added to it, "
+                  : space
+                    ? "Answers come only from this space's sources that you can see, "
+                    : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
+                with the sources cited under every answer. Attach a file to ask about it too.
+              </PopoverContent>
+            </Popover>
+          </div>
+        )}
         {/* Said once an answer ends, not word by word as it streams. */}
         <p className="sr-only" role="status" aria-live="polite">
           {announce}
@@ -939,7 +942,8 @@ export function ChatView({ role }: { role: Role }) {
         {/* The composer's row. Its focus and typing reach the empty chat's art through
             composerSignal (no state, so no render per key). */}
         <div
-          className="pointer-events-none relative pt-6"
+          ref={composerRow}
+          className={cn("pointer-events-none relative", empty ? "pt-5" : "pt-6")}
           data-print="hide"
           onFocus={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(true)}
           onBlur={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(false)}
@@ -998,6 +1002,43 @@ export function ChatView({ role }: { role: Role }) {
           />
           {picker.dialog}
         </div>
+        {/* Under the composer: the home's sections, scrolling on their own if they
+            don't fit. The scrollbar's room is kept on both sides, so they stay centred
+            under the composer and never move sideways when they start to scroll. */}
+        {empty && (
+          <div
+            data-drift-blank
+            data-print="hide"
+            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+          >
+            <ChatHome
+              starters={starters}
+              firstRun={firstRun}
+              onAsk={(s) => ask(s)}
+              extra={
+                offerSample &&
+                (welcome.sample.available || welcome.sample.on) && (
+                  <div className="mt-2 flex max-w-xl flex-col items-center gap-2 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      {welcome.sample.on
+                        ? "The sample HR handbook is in. Remove it before colleagues ask."
+                        : "No documents yet? Try it on a made-up HR handbook first."}
+                    </p>
+                    <SampleDocsToggle sample={welcome.sample} />
+                  </div>
+                )
+              }
+              chats={list.data?.conversations ?? []}
+              folders={list.data?.folders ?? []}
+              spaces={spaceList.data?.spaces ?? []}
+              spaceId={spaceId}
+              onOpen={(id) => open(`/chat/${id}`)}
+              onViewAll={() => openSearch()}
+              onChooseSpace={chooseSpace}
+              onOpenFolder={(folder) => openSearch({ folderId: folder.id })}
+            />
+          </div>
+        )}
       </div>
       {sharing && urlId && (
         <ShareDialog
