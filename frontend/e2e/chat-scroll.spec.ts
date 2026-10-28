@@ -93,10 +93,10 @@ test("a new question is pinned to the top, its answer grows below it without scr
   await expect(jump(page)).toHaveAttribute("data-active", "true")
   await shot(page, "chat-scroll-desktop-streaming")
 
-  // Moved some other way than the wheel (here, the focus going to the first answer's
-  // source, above, as Tab would), the view stays where that put it while the answer
-  // goes on growing.
-  await log.getByRole("button", { name: /^Open source 1:/ }).first().focus()
+  // Moved some other way than the wheel (here, the focus going to the first answer,
+  // above, as a skip or Shift+Tab would), the view stays where that put it while the
+  // answer goes on growing.
+  await log.getByLabel("Answer", { exact: true }).first().focus()
   await expect.poll(async () => (await view(page)).top).toBeLessThan(pinned.top)
   const moved = await view(page)
   await expect.poll(async () => (await view(page)).answer).toBeGreaterThan(moved.answer + 100)

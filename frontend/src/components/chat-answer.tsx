@@ -27,13 +27,11 @@ import {
 import { toast } from "sonner"
 
 import "@/components/chat-motion.css"
-import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { Markdown } from "@/components/chat-markdown"
 import { StepsTrace } from "@/components/chat-steps"
 import { SourceSheet } from "@/components/citations"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -106,66 +104,83 @@ export interface AnswerActions {
   hideSteps?: boolean // the workspace's admin turned the steps panel off for members
 }
 
-// One line of the sources under an answer. A cited passage opens in the source
-// viewer (numbered like its [S#] chips); a page read whole opens its link.
-function SourceCard({
-  source,
-  index,
+// The sources under an answer, kept quiet: one small pill per document, its cited
+// passages as numbered buttons (named like its [S#] chips) that open the source
+// viewer; a page read whole links out instead.
+function sourceLabel(source: Source) {
+  return source.kind === "general_knowledge" ? `General knowledge · ${source.provider}` : source.provider
+}
+
+function SourceGroup({
+  sources,
   onOpen,
 }: {
-  source: Source
-  index: number
+  sources: { source: Source; n: number }[]
   onOpen: (source: Source) => void
 }) {
-  const general = source.kind === "general_knowledge"
-  const isWiki = source.provider.toLowerCase().includes("outline")
-  const Icon = general ? Globe : isWiki ? BookOpen : FileText
-  const label = general ? `General knowledge · ${source.provider}` : source.provider
-  const place = placeOf(source)
-  const passage = source.chunk_id || source.snippet
-  const body = (
-    <div className="glass-subtle flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors duration-(--dur-hover) ease-(--ease-hover) hover:bg-muted/60">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-signal/12 font-mono text-xs font-medium text-signal tabular-nums">
-        {source.n ?? index}
-      </span>{" "}
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      {/* On a phone the provider goes under the title, so the title keeps the width.
-          The spaces keep the words apart in the text a screen reader checks the
-          button's name against. */}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{source.title}</span>{" "}
-        {place && <span className="block truncate text-xs text-muted-foreground">{place}</span>}{" "}
-        <span className="block truncate text-xs text-muted-foreground sm:hidden">{label}</span>
-      </span>{" "}
-      <Badge
-        variant={general ? "outline" : "secondary"}
-        className="hidden max-w-[45%] sm:inline-flex"
-      >
-        <span className="truncate">{label}</span>
-      </Badge>
-      {source.url && !passage && <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />}
+  const first = sources[0].source
+  const general = first.kind === "general_knowledge"
+  const Icon = general ? Globe : first.provider.toLowerCase().includes("outline") ? BookOpen : FileText
+  const label = sourceLabel(first)
+  const linkOnly = !first.chunk_id && !first.snippet && first.url
+  const title = (
+    <>
+      <Icon className="size-3.5 shrink-0" />
+      <span className="max-w-[16rem] truncate">{first.title}</span>
+    </>
+  )
+  return (
+    <div className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full bg-foreground/5 pr-1 pl-2.5 text-xs text-muted-foreground">
+      {linkOnly ? (
+        <a
+          href={first.url!}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`${first.title}, ${label} (opens in a new tab)`}
+          className="flex min-w-0 items-center gap-1.5 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {title}
+          <ExternalLink className="size-3 shrink-0" />
+        </a>
+      ) : (
+        <span className="flex min-w-0 items-center gap-1.5" title={`${first.title} · ${label}`}>
+          {title}
+        </span>
+      )}
+      {!linkOnly &&
+        sources.map(({ source, n }) => {
+          const place = placeOf(source)
+          return (
+            <Tooltip key={source.chunk_id ?? n}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onOpen(source)}
+                  // All its visible text is in its name (WCAG 2.5.3), the provider too.
+                  aria-label={`Open source ${n}: ${source.title}${place ? `, ${place}` : ""}, ${label}`}
+                  className="flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-[11px] tabular-nums transition-colors duration-(--dur-hover) ease-(--ease-hover) outline-none hover:bg-foreground/10 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {n}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{place || label}</TooltipContent>
+            </Tooltip>
+          )
+        })}
     </div>
   )
-  if (passage) {
-    return (
-      <button
-        type="button"
-        onClick={() => onOpen(source)}
-        // All its visible text is in its name (WCAG 2.5.3), the provider too.
-        aria-label={`Open source ${source.n ?? index}: ${source.title}${place ? `, ${place}` : ""}, ${label}`}
-        className="min-w-0 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        {body}
-      </button>
-    )
-  }
-  return source.url ? (
-    <a href={source.url} target="_blank" rel="noreferrer" className="min-w-0">
-      {body}
-    </a>
-  ) : (
-    body
-  )
+}
+
+// Sources in citation order, grouped by document (first appearance wins the order).
+function groupSources(sources: Source[]) {
+  const groups = new Map<string, { source: Source; n: number }[]>()
+  sources.forEach((source, i) => {
+    const key = `${source.provider}\u0000${source.title}\u0000${source.url ?? ""}`
+    const list = groups.get(key) ?? []
+    list.push({ source, n: source.n ?? i + 1 })
+    groups.set(key, list)
+  })
+  return [...groups.values()]
 }
 
 // Too many questions in the last minute: a pause, not a failure, so no red.
@@ -746,15 +761,13 @@ export function AssistantMessage({
           )}
 
           {sources.length > 0 && (
-            <div className="space-y-2">
-              <AsciiDivider label="Sources" className="text-muted-foreground" />
-              <div className="grid min-w-0 grid-cols-1 gap-2">
-                {sources.map((s, i) => (
-                  <div key={s.chunk_id ?? `${s.provider}-${s.title}`} {...rise(i)} >
-                    <SourceCard source={s} index={i + 1} onOpen={setOpened} />
-                  </div>
-                ))}
-              </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Sources">
+              <span className="mr-0.5 text-xs text-muted-foreground">Sources</span>
+              {groupSources(sources).map((group, i) => (
+                <div key={`${group[0].source.provider}-${group[0].source.title}`} className="min-w-0 max-w-full" {...rise(i)}>
+                  <SourceGroup sources={group} onOpen={setOpened} />
+                </div>
+              ))}
             </div>
           )}
 
