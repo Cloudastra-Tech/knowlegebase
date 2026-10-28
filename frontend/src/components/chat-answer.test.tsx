@@ -47,6 +47,18 @@ describe("answer states", () => {
     expect(actions.onRephrase).toHaveBeenCalledWith("Where do I park?")
   })
 
+  it("offers to ask across the workspace when a space doesn't cover it", async () => {
+    const onAskEverywhere = vi.fn()
+    show({ state: "not_found", text: "I don't know.", question: "What is DevIQ?" }, { onAskEverywhere })
+    await userEvent.setup().click(screen.getByRole("button", { name: "Ask in All company" }))
+    expect(onAskEverywhere).toHaveBeenCalledWith("What is DevIQ?")
+  })
+
+  it("doesn't offer All company outside a space", () => {
+    show({ state: "not_found", text: "I don't know.", question: "What is DevIQ?" })
+    expect(screen.queryByRole("button", { name: "Ask in All company" })).not.toBeInTheDocument()
+  })
+
   it("lets someone tell an admin a document is missing", async () => {
     const fetch = mockApi({
       "PUT /api/messages/m1/feedback": { rating: -1, reasons: ["missing"], comment: null },
