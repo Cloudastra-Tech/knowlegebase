@@ -49,15 +49,27 @@ export async function whenFontsReady(el: HTMLElement) {
 export type LoopPriority = "hero" | "ambient" | "ui"
 // idle: ms without input after which it rests, holding its frame, once `settled()`
 // says it's at a good moment to hold (default: any moment).
+// visibleAt: how much of the element must be on screen before it moves (0 to 1; a
+// scene that tells a story starts once it can be seen, not at its first pixel). An
+// element taller than the window needs at most nine tenths of what fits.
 export type LoopOptions = {
   fps?: number
   still: number
   priority?: LoopPriority
   idle?: number
   settled?: () => boolean
+  visibleAt?: number
 }
 // setFps: a new frame rate from the next frame (the budget still caps it).
-export type LoopHandle = { redraw(): void; stop(): void; setFps(fps: number): void }
+// rest(ms): hold the frame for `ms` (the clock waits, no frames are drawn); wake():
+// move again now, as at the end of a rest.
+export type LoopHandle = {
+  redraw(): void
+  stop(): void
+  setFps(fps: number): void
+  rest(ms: number): void
+  wake(): void
+}
 
 type Sub = {
   el: HTMLElement
@@ -67,6 +79,9 @@ type Sub = {
   priority: LoopPriority
   idle: number // 0: never rests for want of input
   settled?: () => boolean
+  visibleAt: number
+  until: number // performance.now() before which it rests (rest(ms)); 0 for none
+  timer?: ReturnType<typeof setTimeout> // ends the rest
   visible: boolean
   last: number // when it last drew (rAF time), -1 while resting
   elapsed: number // its own clock, in seconds: runs only while it draws
@@ -148,6 +163,7 @@ function fpsOf(sub: Sub) {
 
 function resting(sub: Sub, now: number) {
   if (!sub.visible || document.hidden || isStill() || fpsOf(sub) <= 0) return true
+  if (now < sub.until) return true
   if (sub.priority === "ambient" && (modalOpen || now < pausedUntil)) return true
   // Nobody's here: hold the frame (at a moment the piece says it can), once there is one.
   if (sub.idle && sub.draws > 0 && now - lastInput > sub.idle && (sub.settled?.() ?? true)) {
@@ -274,13 +290,28 @@ function onBodyChange() {
   wake()
 }
 
+// Whether an observed element is on screen enough for `sub`.
+function seen(sub: Sub, entry: IntersectionObserverEntry) {
+  if (!entry.isIntersecting) return false
+  if (!sub.visibleAt || entry.intersectionRatio === undefined) return true
+  const fits = entry.rootBounds && entry.boundingClientRect.height
+    ? entry.rootBounds.height / entry.boundingClientRect.height
+    : 1
+  return entry.intersectionRatio >= Math.min(sub.visibleAt, fits * 0.9) - 0.001
+}
+
+const THRESHOLDS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+
 function start() {
-  io = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      for (const sub of subs) if (sub.el === entry.target) sub.visible = entry.isIntersecting
-    }
-    wake()
-  })
+  io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        for (const sub of subs) if (sub.el === entry.target) sub.visible = seen(sub, entry)
+      }
+      wake()
+    },
+    { threshold: THRESHOLDS },
+  )
   mql = window.matchMedia(REDUCED_QUERY)
   reduced = mql.matches
   if (mql.addEventListener) mql.addEventListener("change", onReducedChange)
@@ -327,6 +358,8 @@ export function subscribe(el: HTMLElement, draw: (t: number) => void, opts: Loop
     priority: opts.priority ?? "hero",
     idle: opts.idle ?? 0,
     settled: opts.settled,
+    visibleAt: opts.visibleAt ?? 0,
+    until: 0,
     visible: false,
     last: -1,
     elapsed: 0,
@@ -340,7 +373,21 @@ export function subscribe(el: HTMLElement, draw: (t: number) => void, opts: Loop
     setFps: (fps: number) => {
       sub.fps = fps
     },
+    rest: (ms: number) => {
+      sub.until = performance.now() + ms
+      clearTimeout(sub.timer)
+      sub.timer = setTimeout(() => {
+        sub.until = 0
+        wake()
+      }, ms)
+    },
+    wake: () => {
+      clearTimeout(sub.timer)
+      sub.until = 0
+      wake()
+    },
     stop: () => {
+      clearTimeout(sub.timer)
       if (!subs.delete(sub)) return
       if (![...subs].some((s) => s.el === el)) io?.unobserve(el)
       if (!subs.size) end()
@@ -394,16 +441,16 @@ export function useAsciiLoop(
     latest.current = draw
   })
   const handle = useRef<LoopHandle | null>(null)
-  const { fps, still, priority, idle } = opts
+  const { fps, still, priority, idle, visibleAt } = opts
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const h = subscribe(el, (t) => latest.current(t), { fps, still, priority, idle })
+    const h = subscribe(el, (t) => latest.current(t), { fps, still, priority, idle, visibleAt })
     handle.current = h
     return () => {
       h.stop()
       handle.current = null
     }
-  }, [ref, fps, still, priority, idle])
+  }, [ref, fps, still, priority, idle, visibleAt])
   return handle
 }
