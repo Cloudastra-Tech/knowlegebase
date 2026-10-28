@@ -21,7 +21,14 @@ uses for it ("Bring your own provider" on the Assistant screen):
     external_id      generated here for the workspace, once; the admin puts it in the
                      role's trust policy (AWS's guard against the "confused deputy":
                      another customer naming this role can't make the server assume it)
-    chat_model, fast_model   the chat provider's models; empty: its defaults (.env)
+    chat_model, fast_model   the chat provider's models; empty: its defaults (.env).
+                     chat_provider + chat_model is the workspace's DEFAULT answer
+                     model; fast_model (the guards, HyDE, titles) stays on it
+    chat_models      the answer models members may pick from in the chat (JSON:
+                     [{provider, model}], 0026), across the chat providers the
+                     workspace has credentials for. Always holds the default (a
+                     model of null: its provider's default). Empty while chat is
+                     on the server's: the server's one model, no choice
     embed_model, embed_dims  the embeddings provider's; empty: its defaults
 
 A side on `default` takes the server's provider AND its models. A workspace that
@@ -35,6 +42,7 @@ Only SQL and validation live here; the routes are kb/routers/assistant.py.
 """
 
 import contextlib
+import json
 import re
 import secrets
 import time
@@ -49,7 +57,8 @@ secret_box.register("model_providers", "api_keys", ("workspace",))
 AUTHS = ("role", "keys")
 FIELDS = ("provider", "chat_provider", "embed_provider", "region", "auth", "role_arn",
           "chat_model", "fast_model", "embed_model", "embed_dims", "access_key_id",
-          "secret_access_key", "api_keys")
+          "secret_access_key", "api_keys", "chat_models", "default_model")
+MAX_MODELS = 24                 # enabled chat models per workspace
 KEY_ID = r"^[A-Z0-9]{16,128}$"
 API_KEY = re.compile(r"^[\x21-\x7e]{16,512}$")      # printable, no spaces
 
@@ -117,6 +126,52 @@ def sides(row):
             (row or {}).get("embed_provider") or legacy)
 
 
+def _default_chat_model(provider):
+    p = models.REGISTRY.get(provider)
+    return p.defaults().get("chat_model") if p else None
+
+
+def default_model(row):
+    """(provider, model) the workspace answers with unless a chat picks another,
+    or None while chat is on the server's."""
+    chat = sides(row)[0]
+    if chat == "default":
+        return None
+    return chat, (row or {}).get("chat_model") or _default_chat_model(chat)
+
+
+def _stored_models(row):
+    try:
+        listed = json.loads((row or {}).get("chat_models") or "[]")
+    except ValueError:
+        listed = []
+    return [(e.get("provider"), e.get("model")) for e in listed if isinstance(e, dict)]
+
+
+def enabled(row):
+    """[(provider, model), ...]: the answer models the workspace's members may pick
+    from, the default first. A stored model of null is its provider's default.
+    Nothing while chat is on the server's (its one model: no choice)."""
+    default = default_model(row)
+    if default is None:
+        return []
+    out = [default]
+    for provider, model in _stored_models(row):
+        if provider not in models.chat_providers():
+            continue                  # a provider since removed from the registry
+        pair = (provider, model or _default_chat_model(provider))
+        if pair[1] and pair not in out:
+            out.append(pair)
+    return out
+
+
+def _providers_of(row):
+    """Every provider the row uses: chat, embeddings and the enabled models'."""
+    chat, embed = sides(row)
+    return [p for p in dict.fromkeys((chat, embed, *(p for p, _ in enabled(row))))
+            if p != "default"]
+
+
 def legacy_provider(chat, embed):
     """What the old `provider` column says for these sides (0025)."""
     return "bedrock" if "bedrock" in (chat, embed) else "default"
@@ -133,10 +188,24 @@ def view(workspace):
             "role_arn": row["role_arn"], "external_id": row["external_id"],
             "keys_saved": bool(keys), "access_key_hint": keys[0][-4:] if keys else None,
             "api_keys_saved": {p: True for p, k in _api_keys(workspace, row).items() if k},
+            # Its last 4 characters, as the provider's own console shows them.
+            "api_key_hints": {p: k[-4:] for p, k in _api_keys(workspace, row).items() if k},
+            "chat_models": [{**describe_model(p, m), "default": i == 0}
+                            for i, (p, m) in enumerate(enabled(row))],
+            "default_model": ({"provider": default_model(row)[0], "model": default_model(row)[1]}
+                              if default_model(row) else None),
             "chat_model": row["chat_model"], "fast_model": row["fast_model"],
             "embed_model": row["embed_model"], "embed_dims": row["embed_dims"],
             "tested_at": row["tested_at"], "updated_by": row["updated_by"],
             "updated_at": row["updated_at"]}
+
+
+def describe_model(provider, model):
+    """A model as the screens show it: its provider and id, the catalogue's label,
+    tier and abilities (models.CATALOGUE; a custom id's own)."""
+    info = models.model_info(provider, model).describe()
+    del info["id"]
+    return {"provider": provider, "provider_label": _label(provider), "model": model, **info}
 
 
 def _keys(workspace, row):
@@ -182,13 +251,14 @@ def _spec_of(row, keys, api_keys, workspace):
         embed_model = row["embed_model"] or d.get("embed_model")
         dims = row["embed_dims"] or (d.get("embed_dims") if embed_model == d.get("embed_model")
                                      else _default_dims(embed_model))
-    own_aws = "bedrock" in (chat, embed)
+    # Every provider it uses (chat, embeddings, the enabled models') has the
+    # workspace's own credentials: its AWS, its API keys. Never the server's.
+    used = _providers_of(row)
     aws = (dict(region=row["region"], auth=row["auth"], role_arn=row["role_arn"],
                 external_id=row["external_id"], keys=keys if row["auth"] == "keys" else None)
-           if own_aws else dict(region=server.region, auth=server.auth)
+           if "bedrock" in used else dict(region=server.region, auth=server.auth)
            if "bedrock" in (chat_p, embed_p) else {})
-    own = tuple((p, api_keys.get(p)) for p in dict.fromkeys((chat, embed))
-                if p != "default" and models.REGISTRY[p].api_key_env)
+    own = tuple((p, api_keys.get(p)) for p in used if models.REGISTRY[p].api_key_env)
     return models.Spec(provider=chat_p, embed_provider=None if embed_p == chat_p else embed_p,
                        chat_model=chat_model, fast_model=fast_model, embed_model=embed_model,
                        embed_dims=dims, api_keys=own or None, workspace=workspace, **aws)
@@ -273,6 +343,14 @@ def clean(change, current):
                 raise Invalid("That isn't an AWS secret access key.")
         elif key == "api_keys":
             value = _clean_api_keys(value)
+        elif key == "chat_models":
+            if not isinstance(value, list):
+                raise Invalid("The enabled models are a list.")
+            value = list(dict.fromkeys(_model_ref(v) for v in value))
+            if len(value) > MAX_MODELS:
+                raise Invalid(f"Enable at most {MAX_MODELS} models.")
+        elif key == "default_model":
+            value = _model_ref(value) if value is not None else None
         out[key] = value
     # Known embedding models only make the sizes they make.
     model = out.get("embed_model", current.get("embed_model"))
@@ -281,6 +359,19 @@ def clean(change, current):
         sizes = ", ".join(map(str, models.EMBED_DIMENSIONS[model]))
         raise Invalid(f"{model} makes embeddings of {sizes} numbers.")
     return out
+
+
+def _model_ref(value):
+    """{provider, model} -> (provider, model id), checked. Raises Invalid."""
+    if not isinstance(value, dict):
+        raise Invalid("A model is given as its provider and id.")
+    provider = value.get("provider")
+    if provider not in models.chat_providers():
+        raise Invalid(f"Choose a chat provider: {', '.join(models.chat_providers())}.")
+    model = _text(value.get("model"), 256)
+    if not model or not models.MODEL_ID.match(model):
+        raise Invalid(f"That isn't a {_label(provider)} model id.")
+    return provider, model
 
 
 def _clean_api_keys(value):
@@ -304,15 +395,16 @@ def _clean_api_keys(value):
 def complete(row, keys, api_keys=None):
     """Why the row can't be used yet (None: it can)."""
     chat, embed = sides(row)
-    if "bedrock" in (chat, embed):
+    used = _providers_of(row)
+    if "bedrock" in used:
         if not row["region"]:
             return "Choose the AWS region your Bedrock models are in."
         if row["auth"] == "role" and not row["role_arn"]:
             return "Paste the ARN of the role to assume."
         if row["auth"] == "keys" and not keys:
             return "Paste the access key id and secret access key."
-    for p in dict.fromkeys((chat, embed)):
-        if p != "default" and models.REGISTRY[p].api_key_env and not (api_keys or {}).get(p):
+    for p in used:
+        if models.REGISTRY[p].api_key_env and not (api_keys or {}).get(p):
             return f"Paste your {models.REGISTRY[p].label} API key."
     if embed not in ("default", "bedrock") and row.get("embed_dims"):
         return "The embedding size can only be chosen for Bedrock's models."
@@ -326,10 +418,14 @@ def _merge(workspace, current, change):
     key_id = change.pop("access_key_id", None)
     secret = change.pop("secret_access_key", None)
     api_change = change.pop("api_keys", None) or {}
+    listed = change.pop("chat_models", None)
+    default = change.pop("default_model", None)
     chat, embed = sides(current)
     legacy = change.pop("provider", None)
     if legacy:
         chat = embed = legacy
+    if default:
+        change["chat_provider"], change["chat_model"] = default
     chat = change.pop("chat_provider", None) or chat
     embed = change.pop("embed_provider", None) or embed
     before = sides(current)
@@ -342,11 +438,26 @@ def _merge(workspace, current, change):
         change.setdefault("embed_dims", None)
     merged = {**current, **change, "chat_provider": chat, "embed_provider": embed,
               "provider": legacy_provider(chat, embed)}
+    # The enabled models: as given, else as they were. A provider whose key is
+    # removed takes its models with it; with chat on the server's, there's no choice.
+    if chat == "default" and listed:
+        raise Invalid("Choose a provider of your own for answers to let people pick a "
+                      "model: the server's has one.")
+    listed = enabled(current) if listed is None else listed
+    removed = {p for p, k in api_change.items() if not k}
+    listed = [] if chat == "default" else [(p, m) for p, m in listed if p not in removed]
+    merged["chat_models"] = _dump_models(listed)
+    merged["chat_models"] = _dump_models(enabled(merged))      # with the default, first
     api_keys = {**_api_keys(workspace, current), **api_change}
     # Only the providers in use keep a key: one left behind is a secret for nothing.
-    api_keys = {p: k for p, k in api_keys.items() if k and p in (chat, embed)}
+    used = _providers_of(merged)
+    api_keys = {p: k for p, k in api_keys.items() if k and p in used}
     aws = (key_id, secret) if key_id and secret else _keys(workspace, current)
     return merged, aws, api_keys, (key_id, secret), api_change
+
+
+def _dump_models(listed):
+    return json.dumps([{"provider": p, "model": m} for p, m in listed]) if listed else None
 
 
 def draft(workspace, change):
@@ -361,6 +472,12 @@ def draft(workspace, change):
     if sides(merged) == ("default", "default"):
         return None
     return _spec_of(merged, aws, api_keys, workspace)
+
+
+def draft_enabled(workspace, change):
+    """The enabled chat models the row would have with `change` applied, without
+    saving it (Test connection looks for each). Raises Invalid."""
+    return enabled(_merge(workspace, ensure(workspace), change)[0])
 
 
 def save(workspace, change, by):
@@ -384,7 +501,8 @@ def save(workspace, change, by):
         raise Invalid(problem)
     merged["api_keys"] = secret_box.seal(api_keys, workspace) if api_keys else None
     cols = [k for k in merged if k in FIELDS and k not in (
-        "access_key_id", "secret_access_key", "api_keys")] + ["access_keys", "api_keys"]
+        "access_key_id", "secret_access_key", "api_keys", "default_model")] + [
+        "access_keys", "api_keys"]
     values = [merged[k] for k in cols]
     with _db() as conn:
         conn.execute(f"UPDATE model_providers SET {', '.join(f'{c} = ?' for c in cols)}, "

@@ -115,6 +115,7 @@ GET    /api/me/api-keys my_keys current_user
 GET    /api/me/integrations list_my_integrations current_user
 GET    /api/me/integrations/{provider}/containers my_integration_containers current_user
 GET    /api/messages/{mid}/markdown answer_markdown current_user,current_viewer
+GET    /api/models chat_models current_user
 GET    /api/onboarding onboarding_view current_user,current_role,current_viewer
 GET    /api/operator/alerts operator_alerts require_operator
 GET    /api/operator/audit operator_audit require_operator

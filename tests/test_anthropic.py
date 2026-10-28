@@ -22,7 +22,8 @@ import model_providers_store
 import models
 from tests.anthropic_fakes import FakeAnthropic, api_error, text_of_request
 from tests.test_bedrock import client, fake_aws, indexed, login, new_workspace  # noqa: F401
-from tests.test_model_providers import Recorder, recorder, server_env  # noqa: F401
+from tests.test_model_providers import (Recorder, fake_openai, recorder,  # noqa: F401
+                                        server_env)
 
 ANTHROPIC_KEY = "sk-ant-api03-workspace000000000000000000own"
 SERVER_KEY = "sk-ant-api03-server0000000000000000000000"
@@ -32,6 +33,7 @@ SERVER_KEY = "sk-ant-api03-server0000000000000000000000"
 def fake(monkeypatch):
     made = FakeAnthropic()
     monkeypatch.setattr(anthropic, "Client", made)
+    monkeypatch.setattr(models, "_anthropic_client", lambda key: made(api_key=key))
     monkeypatch.setenv("ANTHROPIC_API_KEY", SERVER_KEY)
     return made
 
@@ -128,20 +130,26 @@ def test_an_invalid_key_fails_the_question_plainly(client, indexed, fake, record
     assert not [m for m in recorder if "model" in m and m["model"].startswith("gpt")]
 
 
-def test_test_connection_says_why_and_never_echoes_the_key(client, fake, recorder):
+def test_test_connection_says_why_and_never_echoes_the_key(client, fake, recorder, fake_openai):
+    """Each provider lists its models (free): Anthropic's and OpenAI's models.list,
+    with the workspace's own keys. Never a message, never an embedding."""
     w = new_workspace()
     h = login(client, w)
     body = {"chat_provider": "anthropic", "embed_provider": "openai",
             "api_keys": {"anthropic": ANTHROPIC_KEY, "openai": "sk-proj-embeddings000000000000"}}
     r = client.post("/api/admin/assistant/models/test", headers=h, json=body)
     assert r.status_code == 200, r.text
-    assert r.json() == {"ok": True, "chat_model": "claude-sonnet-5-5", "reply": "OK",
-                        "tokens": 78, "embed_model": "text-embedding-3-small", "dimensions": 8}
+    assert r.json() == {"ok": True, "providers": [
+        {"provider": "anthropic", "label": "Anthropic", "ok": True, "models": 3, "missing": []},
+        {"provider": "openai", "label": "OpenAI", "ok": True, "models": 4, "missing": []}]}
+    assert fake.calls == [] and recorder == []       # no message, no embedding
+    assert fake.keys == [ANTHROPIC_KEY] and fake_openai.keys == ["sk-proj-embeddings000000000000"]
     fake.error = api_error(anthropic.AuthenticationError, 401, "authentication_error",
                            f"invalid x-api-key {ANTHROPIC_KEY}")
     r = client.post("/api/admin/assistant/models/test", headers=h, json=body)
     assert r.json()["ok"] is False
-    assert "authentication_error" in r.json()["error"]
+    anthropic_row, openai_row = r.json()["providers"]
+    assert "authentication_error" in anthropic_row["error"] and openai_row["ok"]
     assert ANTHROPIC_KEY not in r.text
 
 
