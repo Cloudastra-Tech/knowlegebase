@@ -92,7 +92,13 @@ describe("the chat", () => {
     expect(
       await screen.findByRole("button", { name: "What does “Travel policy” cover?" }),
     ).toBeInTheDocument()
-    expect(screen.getByText(/Answers come from your company's documents, with/)).toBeInTheDocument()
+    // One heading; how answers work is behind the (i), who you search as is under the
+    // composer.
+    expect(screen.getByRole("heading", { level: 2, name: "Ask your company docs" })).toBeInTheDocument()
+    expect(screen.getByText(/Searching as/)).toHaveTextContent("Searching as Public user")
+    expect(screen.queryByText(/Answers come from/)).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole("button", { name: "How answers work" }))
+    expect(await screen.findByText(/Answers come from your company's documents, with/)).toBeInTheDocument()
     expect(screen.queryByText(/Outline/)).not.toBeInTheDocument()
     expect(screen.queryByText(/AI Delivery Intelligence Platform/)).not.toBeInTheDocument()
   })
@@ -101,6 +107,7 @@ describe("the chat", () => {
     session.setToken("tok")
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: true } })
     renderApp("/chat")
+    await userEvent.setup().click(await screen.findByRole("button", { name: "How answers work" }))
     expect(await screen.findByText(/and the Outline wiki/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: GENERIC_STARTERS[0] })).toBeInTheDocument()
   })
@@ -136,6 +143,51 @@ describe("the chat", () => {
     expect(await screen.findByText("Twenty days a year.")).toBeInTheDocument()
     expect(router.state.location.pathname).toBe("/chat/c9")
     expect(asked).toEqual([{ question: "How many leave days?", conversation_id: "c9" }])
+  })
+
+  it("draws the empty chat's art on the empty state only, and the chat's field once asked", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "POST /api/conversations": {
+        id: "c9",
+        title: "New chat",
+        role_used: "public",
+        role_changed: false,
+        created_at: 1,
+        updated_at: 1,
+      },
+      "POST /api/chat/stream": () =>
+        sse(
+          { type: "conversation", id: "c9", title: "Hi", user_message_id: "q9", message_id: "a9", new_conversation: false },
+          { type: "done", answer: "Twenty days a year.", sources: [], steps: [], state: "answered", message_id: "a9" },
+        ),
+    })
+    renderApp("/chat")
+    const fields = () => [...document.querySelectorAll('[data-slot="chat-backdrop"] [data-slot="ascii-field"]')]
+    const box = await screen.findByRole("textbox", { name: "Your question" })
+    // One field on screen: the art, in the chat field's place.
+    expect(fields().map((f) => f.getAttribute("data-mode"))).toEqual(["drift"])
+
+    await userEvent.setup().type(box, "How many leave days?{Enter}")
+    expect(await screen.findByText("Twenty days a year.")).toBeInTheDocument()
+    // It fades out (400ms) and the chat's own field takes over.
+    await waitFor(() => expect(fields().map((f) => f.getAttribute("data-mode"))).toEqual(["ambient"]))
+    expect(screen.queryByText(/Searching as/)).not.toBeInTheDocument()
+  })
+
+  it("draws no art on a saved conversation", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": SAVED,
+    })
+    renderApp("/chat/c1")
+    expect(await screen.findByText("Refunds are paid within thirty days.")).toBeInTheDocument()
+    expect(document.querySelector('[data-mode="drift"]')).toBeNull()
+    expect(document.querySelectorAll('[data-slot="chat-backdrop"] [data-slot="ascii-field"]')).toHaveLength(1)
   })
 
   it("shows a saved conversation again at its address, and asks follow-ups in it", async () => {

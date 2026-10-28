@@ -204,6 +204,7 @@ text colour; import `cn` from there, never from the `cn` package itself (the sha
 | Thinking | a braille spinner plus a status line that decodes on change | 80ms frames; decode ≤ 240ms |
 | Inline loading | an ASCII spinner in place of `Loader2` | 80ms `steps()`; a static `•••` with reduced motion |
 | Empty states | 6–14 rows of hand-drawn art with real text beside it | one scan or blink, no faster than every 2s |
+| The empty new chat | "Redacted drift" (`redacted-drift.tsx`), in the chat field's place: 6–8 lines of made-up records at three depths (8–12% of the text colour), redacted (`▪▪▪ · ░░`, word lengths kept) except in a zone round the composer, where the blocks are lighter and about every 8s one line decodes (faint mint on dark, grey on Paper), going round the lines. The page says one heading and the composer; who you search as and the logging notice are the line under it | 30 fps on the ambient budget, 10–20 px/s; focus or typing slows it to 30% and draws near lines 4–8px in; fades out in 400ms when the first question is sent; a still frame with one line readable with reduced motion or "Reduce effects". Never on a saved chat or a shared one |
 | Section headers, timelines, progress | box-drawing rules, `├─` rows, `[██████░░░░] 62%` | static |
 | Streaming cursor | `▌` in signal | 1s blink; steady with reduced motion |
 | Landing and sign-in | the brain, the field, the ticker | 30 fps |
@@ -260,7 +261,8 @@ loading, an animation that blocks a click.
 
 - **One `requestAnimationFrame`** for every subscriber (`subscribe(el, draw, { fps, still,
   priority })`, `useAsciiLoop`, and the original `runLoop`). It is idle when nothing is visible.
-- **Caps:** landing hero 30 fps, sign-in panel 24, ticker 30, the app field 12, spinners 12.5.
+- **Caps:** landing hero 30 fps, sign-in panel 24, ticker 30, the app field 12, spinners 12.5,
+  the empty chat's drift 30 (ambient: it rests and steps down like the field).
 - **Rests** offscreen (IntersectionObserver), in a hidden tab, and, for the app field
   (`priority: "ambient"`), while the page scrolls (150ms) and while a dialog holds the page
   (Radix's `data-scroll-locked` on `<body>`); `pauseFor(ms)` rests it on demand.
@@ -331,7 +333,8 @@ Borders are 1px hairlines.
   `GlassPanel` is a bare surface of one tier.
 - **ASCII pieces** (`components/ascii/*`): `AsciiField`, `AppBackdrop`, `AsciiSpinner` (for
   `Loader2`), `AsciiThinking`, `ScrambleText`, `AsciiEmptyState`, `AsciiDivider`,
-  `AsciiProgress`, `AsciiLoader`. New fields draw on canvas: axe weighs `aria-hidden` text on
+  `AsciiProgress`, `AsciiLoader`, `RedactedDrift` (the empty chat; the composer's focus and
+  typing reach it through `composer-signal.ts`, not React state). New fields draw on canvas: axe weighs `aria-hidden` text on
   contrast too, and a dim `<pre>` with nothing over it fails. Art in empty states uses the full
   `muted-foreground` for the same reason.
 - **Glass pieces** (`components/glass/*`): `Panel`, `GlassPanel`, `StatusDot` (live, syncing,
@@ -348,6 +351,9 @@ Borders are 1px hairlines.
   motion (and moves again when it's switched off); `html.dark` is the default and a Light choice
   survives a reload; the sign-in page and a toast on it are dark with Light chosen; a chat
   opened from history has no running animation.
+- `frontend/e2e/empty-chat-art.spec.ts`: an empty /chat has the drift as its one field, moving,
+  and still with reduced motion; once a question is sent it's gone and the chat's field moves;
+  a saved chat opened from an empty one has no drift and no running animation.
 - `frontend/e2e/ux-a11y.spec.ts`: axe on every main screen at 1280 and 390; at 390 the page fits
   and no scrolling box inside it is pushed sideways (`overflowingScrollers`; a box meant to scroll
   sideways carries an `overflow-x-auto` or `overflow-auto` class).

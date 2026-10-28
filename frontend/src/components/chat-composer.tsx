@@ -10,6 +10,8 @@ import {
 } from "react"
 import { ArrowUp, Square } from "lucide-react"
 
+import "@/components/chat-motion.css"
+
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
@@ -32,6 +34,7 @@ interface ComposerProps {
   above?: ReactNode // over the box: the "/" menu of saved prompts
   intercept?: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean // true: handled (the "/" menu)
   onFiles?: (files: File[]) => void // dropped or pasted files, to attach
+  footnote?: ReactNode // a quiet line under the box (the empty chat: who you search as, logging)
 }
 
 // Where a question is typed. Enter sends, Shift+Enter starts a new line, Esc stops
@@ -50,6 +53,7 @@ export function Composer({
   above,
   intercept,
   onFiles,
+  footnote,
 }: ComposerProps) {
   const counterId = useId()
   const over = value.length > QUESTION_LIMIT
@@ -100,14 +104,19 @@ export function Composer({
       className="pointer-events-auto relative mx-auto max-w-3xl px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
     >
       {above}
+      {/* Chrome-tier glass with grain, 22px, the chat's one lifted thing: the field (or
+          the empty chat's art) blurred behind it. Focus is the signal: its border and a
+          soft ring (chat-motion.css, kb-composer), at once, as focus is often from the
+          keyboard. data-drift: the empty chat's art reads where it is. */}
       <div
         onClick={() => inputRef.current?.focus()}
         onDragOver={(e) => onFiles && e.preventDefault()}
         onDrop={onDrop}
+        data-drift="composer"
+        data-over={over || undefined}
         className={cn(
-          "cursor-text rounded-3xl border border-border/70 bg-background py-2 pr-2 shadow-[0_2px_20px_-6px_rgba(0,0,0,0.12)] transition-[border-color,box-shadow] duration-(--dur-hover) ease-hover focus-within:border-foreground/25 focus-within:shadow-[0_4px_28px_-8px_rgba(0,0,0,0.2)]",
+          "kb-composer glass glass-noise cursor-text rounded-3xl py-2 pr-2",
           leading ? "pl-2" : "pl-5",
-          over && "border-destructive/60 focus-within:border-destructive/60",
         )}
       >
         {top && <div className="mb-1 flex flex-wrap items-center gap-1.5 pl-1">{top}</div>}
@@ -165,6 +174,7 @@ export function Composer({
           </span>
         )}
       </div>
+      {footnote && <p className="mt-1 text-center text-xs text-pretty text-muted-foreground">{footnote}</p>}
     </form>
   )
 }

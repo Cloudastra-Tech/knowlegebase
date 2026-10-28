@@ -152,6 +152,8 @@
     --dur-step: 180ms;
     --dur-collapse: 250ms;
     --dur-pop: 160ms;
+    /* the empty chat's art leaving once the first question is sent */
+    --dur-drift-exit: 400ms;
     --stagger: 40ms;
     --stagger-max: 6;
     --stagger-sources: 30ms;

@@ -33,6 +33,7 @@ export const dur = {
   step: 0.18, // a step line enters
   collapse: 0.25, // the steps fold to one line
   pop: 0.16, // a citation chip resolves
+  driftExit: 0.4, // the empty chat's art fades as the first question goes
 } as const
 
 // For anything a person can interrupt. No bounce in the app (0.15 is for marketing).
