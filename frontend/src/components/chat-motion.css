@@ -23,6 +23,23 @@
   padding: 0.625rem 1rem;
 }
 
+/* The composer (chat-composer.tsx): the glass tier's own border and shadow, and on
+   focus the signal, its border and a soft ring round it, with the glass's shadow
+   kept. No transition: focus often comes from the keyboard (/, Tab). Over the
+   character limit, the border is the destructive token instead. Unlayered, so it wins
+   over the glass utility's border. */
+.kb-composer:focus-within {
+  border-color: color-mix(in oklab, var(--signal) 40%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-highlight),
+    var(--glass-shadow),
+    0 0 0 3px color-mix(in oklab, var(--signal) 14%, transparent);
+}
+.kb-composer[data-over],
+.kb-composer[data-over]:focus-within {
+  border-color: color-mix(in oklab, var(--destructive) 60%, transparent);
+}
+
 /* A step line arriving (step_start): up 4px and in. Lines that start together are
    40ms apart (--i, from lib/chat-steps.ts staggerOf). */
 @keyframes kb-line-in {
@@ -169,6 +186,15 @@
     #000 calc(50% + 32rem),
     #000 100%
   );
+}
+/* After the first question, as the empty chat's art fades out (--dur-drift-exit). */
+@keyframes kb-field-arrive {
+  from {
+    opacity: 0;
+  }
+}
+.kb-chat-backdrop .kb-chat-field-arrive {
+  animation: kb-field-arrive var(--dur-drift-exit) var(--ease-out-strong) both;
 }
 .kb-chat-backdrop .kb-chat-glow {
   opacity: 0;

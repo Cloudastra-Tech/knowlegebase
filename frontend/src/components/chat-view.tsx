@@ -24,6 +24,7 @@ import {
   type LiveStep,
   type Message,
 } from "@/components/chat-answer"
+import { composerSignal } from "@/components/ascii/composer-signal"
 import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
 import { ChatSidebar } from "@/components/chat-sidebar"
@@ -60,6 +61,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Message as MessageRow } from "@/components/ui/message"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -87,7 +89,7 @@ import {
 import { useUser } from "@/lib/auth-context"
 import { CHOOSE_SPACE, FOCUS_COMPOSER, setThinking, TOGGLE_SIDEBAR } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
-import { usePrefersReducedMotion } from "@/lib/motion"
+import { dur, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { spaceLabel } from "@/lib/spaces"
 import { cn } from "@/lib/utils"
@@ -251,6 +253,13 @@ export function ChatView({ role }: { role: Role }) {
   const limits = useQuery({ ...queries.attachmentLimits(), meta: { silent: true } }).data
   const [chosenSpace, setChosenSpace] = useState<string | null>(storedSpace)
   const [uploading, setUploading] = useState<string[]>([])
+  // The empty chat's art fading out as the first question goes (ChatBackdrop).
+  const [artLeaving, setArtLeaving] = useState(false)
+  useEffect(() => {
+    if (!artLeaving) return
+    const t = setTimeout(() => setArtLeaving(false), dur.driftExit * 1000)
+    return () => clearTimeout(t)
+  }, [artLeaving])
 
   // What's on screen: this screen's own session while it is the one at the address
   // (and the role it began under), else the saved conversation there, if any.
@@ -448,6 +457,7 @@ export function ChatView({ role }: { role: Role }) {
     const target = again.retry ?? again.regenerate
     const q = (target ? (target.question ?? "") : text).trim()
     if (!q || loading) return
+    if (!messages.length) setArtLeaving(true)
     if (!target && !again.edit) setInput("")
     setEditing(null)
     const key = `draft-${nextKey.current++}`
@@ -708,7 +718,7 @@ export function ChatView({ role }: { role: Role }) {
         onDeleted={(id) => id === urlId && open("/chat")}
       />
       <div className="relative isolate flex min-w-0 flex-1 flex-col" data-print="flow">
-        <ChatBackdrop />
+        <ChatBackdrop empty={empty} leaving={artLeaving} />
         <ChatHeader
           conversation={conversation}
           title={title}
@@ -762,27 +772,40 @@ export function ChatView({ role }: { role: Role }) {
               >
                 {empty && (
                   <MessageScrollerItem>
-                    <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
-                      <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                        {space
-                          ? `Ask in ${spaceLabel(space)}`
-                          : firstRun
-                            ? "Ask your first question"
-                            : "Ask your company docs"}
-                      </h2>
-                      <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                        {space?.kind === "personal"
-                          ? "Answers come from the files you keep in your space and the sources you added to it, "
-                          : space
-                            ? "Answers come only from this space's sources that you can see, "
-                            : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
-                        with the sources cited under every answer. Attach a file to ask about it too.
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Searching as{" "}
-                        <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
-                      </p>
-                      <LoggingNotice />
+                    {/* data-drift: the art's lines run clear of these words. */}
+                    {/* One short heading; how answers work is behind the (i), and who
+                        you're searching as and the logging notice sit under the
+                        composer. The art carries the rest. */}
+                    <div data-drift="content" className="flex flex-col items-center pt-8 text-center sm:pt-16">
+                      <div className="flex items-center gap-1">
+                        <h2 className="text-2xl font-semibold tracking-tight text-balance">
+                          {space
+                            ? `Ask in ${spaceLabel(space)}`
+                            : firstRun
+                              ? "Ask your first question"
+                              : "Ask your company docs"}
+                        </h2>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="How answers work"
+                              className="text-muted-foreground"
+                            >
+                              <Info />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-72 text-sm text-muted-foreground">
+                            {space?.kind === "personal"
+                              ? "Answers come from the files you keep in your space and the sources you added to it, "
+                              : space
+                                ? "Answers come only from this space's sources that you can see, "
+                                : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
+                            with the sources cited under every answer. Attach a file to ask about it too.
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                       <div className="mt-8 grid w-full max-w-xl gap-2" aria-label="Suggested questions">
                         {firstRun && (
                           <p className="text-left text-xs font-medium text-muted-foreground">
@@ -897,10 +920,26 @@ export function ChatView({ role }: { role: Role }) {
           {announce}
         </p>
 
+        {/* The composer's row. Its focus and typing reach the empty chat's art through
+            composerSignal (no state, so no render per key). */}
         <div
-          className="pointer-events-none bg-gradient-to-t from-background via-background to-transparent pt-6"
+          className="pointer-events-none relative pt-6"
           data-print="hide"
+          onFocus={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(true)}
+          onBlur={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(false)}
+          onInput={() => composerSignal.typed()}
         >
+          {/* The fade over the field behind the composer: none on the empty chat, where
+              the art runs round it (and its own frost is behind the composer). Its own
+              layer, so no opacity sits on an ancestor of the composer's glass. */}
+          <div
+            aria-hidden
+            className={cn(
+              "absolute inset-0 -z-10 bg-gradient-to-t from-background via-background to-transparent",
+              empty && "opacity-0",
+              artLeaving && "transition-opacity duration-(--dur-drift-exit) ease-out-strong",
+            )}
+          />
           {conversation?.role_changed && !loading && (
             <p className="pointer-events-auto mx-auto mb-2 flex max-w-3xl items-center gap-2 px-4 text-xs text-muted-foreground">
               <Info className="size-3.5 shrink-0" />
@@ -931,6 +970,15 @@ export function ChatView({ role }: { role: Role }) {
             above={picker.menu}
             intercept={picker.intercept}
             onFiles={attachFiles}
+            footnote={
+              empty && (
+                <>
+                  Searching as{" "}
+                  <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
+                  <LoggingNotice inline />
+                </>
+              )
+            }
           />
           {picker.dialog}
         </div>
