@@ -147,6 +147,7 @@ function SpaceRow() {
         port?.actions()?.chooseSpace(id)
         if (isMobile) setOpenMobile(false)
       }}
+      onManage={() => isMobile && setOpenMobile(false)}
       trigger={(current) => (
         <SidebarMenuButton
           aria-label={`Asking in: ${spaceLabel(current)}. Change space`}

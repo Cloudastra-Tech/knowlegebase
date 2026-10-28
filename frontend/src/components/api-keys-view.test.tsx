@@ -56,8 +56,9 @@ describe("ApiKeysView", () => {
     render(withProviders(<MemoryRouter><ApiKeysView /></MemoryRouter>))
     const user = userEvent.setup()
 
-    expect(await screen.findByText(/No keys yet/)).toBeInTheDocument()
-    expect(screen.getAllByText("https://kb.example/mcp").length).toBeGreaterThan(0)
+    // Empty: what a key is for, and the one action; no setup panels yet.
+    expect(await screen.findByText("No API keys yet")).toBeInTheDocument()
+    expect(screen.queryByText("https://kb.example/mcp")).not.toBeInTheDocument()
     // Only the scopes the role may give are offered.
     await user.click(screen.getByRole("button", { name: /New key/ }))
     const dialog = await screen.findByRole("dialog")
@@ -73,6 +74,8 @@ describe("ApiKeysView", () => {
     expect(await screen.findByText("Laptop")).toBeInTheDocument()
     expect(screen.getByText("kb_live_abcdef123456_…")).toBeInTheDocument()
     expect(screen.queryByText(secret, { exact: false })).not.toBeInTheDocument()
+    // With a key, how to use it: the MCP server.
+    expect(screen.getAllByText("https://kb.example/mcp").length).toBeGreaterThan(0)
     expect(fetch).toHaveBeenCalled()
   })
 
@@ -90,7 +93,9 @@ describe("ApiKeysView", () => {
     })
     render(withProviders(<MemoryRouter><ApiKeysView /></MemoryRouter>))
     const user = userEvent.setup()
-    await user.click(await screen.findByRole("button", { name: "Revoke" }))
+    // In the key's row menu, then a confirm.
+    await user.click(await screen.findByRole("button", { name: "Laptop: actions" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Revoke" }))
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
     expect(await screen.findByText("Revoked")).toBeInTheDocument()
   })

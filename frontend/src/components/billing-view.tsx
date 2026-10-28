@@ -4,16 +4,18 @@ import { Check, CreditCard, ExternalLink, Minus, Trash2, TriangleAlert } from "l
 import { useSearchParams } from "react-router"
 import { toast } from "sonner"
 
-import { AsciiDivider } from "@/components/ascii/ascii-divider"
-import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
-import { AsciiProgress } from "@/components/ascii/ascii-progress"
 import { Panel } from "@/components/glass/panel"
-import { ScreenHeader } from "@/components/screen-header"
+import {
+  SettingsEmpty,
+  SettingsError,
+  SettingsSection,
+  SettingsSkeleton,
+} from "@/components/settings/settings-section"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Progress } from "@/components/ui/progress"
 import { billing, type Billing, type BillingStatus, type Plan } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -66,7 +68,9 @@ function statusLine(b: On) {
 function Usage({ b }: { b: On }) {
   return (
     <Panel
+      tone="solid"
       title="Usage"
+      titleAs="h4"
       description={
         <>
           Questions start again on {new Date(`${b.resets_on}T00:00:00Z`).toLocaleDateString(undefined, { dateStyle: "medium" })}.
@@ -91,10 +95,10 @@ function Usage({ b }: { b: On }) {
               {u.limit === null ? (
                 <p className="mt-1 text-xs text-muted-foreground">No limit on your plan</p>
               ) : (
-                <AsciiProgress
+                <Progress
                   value={share}
                   className="mt-2"
-                  label={`${u.label}: ${u.used} of ${u.limit}`}
+                  aria-label={`${u.label}: ${u.used} of ${u.limit}`}
                 />
               )}
             </li>
@@ -131,14 +135,11 @@ function PlanCard({
 }) {
   return (
     <li
-      className={cn(
-        "glass-subtle flex min-w-0 flex-col rounded-2xl p-5",
-        plan.current && "border-signal/40",
-      )}
+      className="flex min-w-0 flex-col rounded-2xl border bg-card p-5 text-card-foreground"
       aria-label={`${plan.name} plan`}
     >
       <div className="flex items-center justify-between gap-2">
-        <h4 className="font-semibold tracking-tight">{plan.name}</h4>
+        <h5 className="font-semibold tracking-tight">{plan.name}</h5>
         {plan.current && <Badge variant="signal">Current plan</Badge>}
       </div>
       <p className="mt-1 text-2xl font-semibold tracking-tight">
@@ -209,7 +210,9 @@ function Owners({ b }: { b: On }) {
 
   return (
     <Panel
+      tone="solid"
       title="Billing owners"
+      titleAs="h4"
       description="Only they can change the plan or payment details. Admins see this page; Cloudastra support never changes it."
       className="min-w-0"
     >
@@ -256,7 +259,7 @@ function Owners({ b }: { b: On }) {
   )
 }
 
-// /billing (BILLING=on): the plan, usage against its limits, seats, the trial, and
+// Settings › Billing (BILLING=on): the plan, usage against its limits, seats, the trial, and
 // Stripe Checkout / the Customer Portal for the workspace's billing owners.
 export function BillingView() {
   const query = useQuery(queries.billing())
@@ -285,35 +288,25 @@ export function BillingView() {
 
   const b = query.data
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
-      <ScreenHeader
-        icon={CreditCard}
-        title="Plan & billing"
-        description="Your workspace's plan, what it uses of it, and who pays."
-      />
-
-      {!b && (
-        <div className="mt-6 grid gap-4">
-          <Skeleton className="h-28 rounded-2xl" />
-          <Skeleton className="h-48 rounded-2xl" />
-        </div>
-      )}
-      {b && !b.on && (
-        <Panel className="mt-6">
-          <AsciiEmptyState art="plug" title="Billing isn't turned on on this server." />
-        </Panel>
-      )}
-      {b?.on && !b.managed && (
-        <Panel className="mt-6">
-          <AsciiEmptyState
-            art="inbox"
-            title="No plan to manage"
-            description="This workspace isn't on a paid plan or a trial here, so nothing is limited. Cloudastra sets its plan if that changes."
-          />
-        </Panel>
-      )}
-      {b?.on && b.managed && b.plan && b.status && (
-        <div className="mt-6 flex flex-col gap-6">
+    <SettingsSection title="Plan & billing" description="Your workspace's plan, what it uses of it, and who pays.">
+      {query.isPending ? (
+        <SettingsSkeleton rows={2} label="Loading the plan" />
+      ) : !b ? (
+        <SettingsError what="the plan" onRetry={() => void query.refetch()} />
+      ) : !b.on ? (
+        <SettingsEmpty
+          icon={CreditCard}
+          title="Billing is off"
+          description="This server doesn't bill workspaces, so nothing here is limited."
+        />
+      ) : !b.managed || !b.plan || !b.status ? (
+        <SettingsEmpty
+          icon={CreditCard}
+          title="No plan to manage"
+          description="This workspace isn't on a paid plan or a trial, so nothing is limited. Cloudastra sets its plan if that changes."
+        />
+      ) : (
+        <>
           {b.read_only && (
             <Alert variant="destructive">
               <TriangleAlert />
@@ -324,10 +317,10 @@ export function BillingView() {
               </AlertDescription>
             </Alert>
           )}
-          <Panel className="flex flex-wrap items-start justify-between gap-4">
+          <Panel tone="solid" className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-lg font-semibold tracking-tight">{b.plan.name}</h3>
+                <h4 className="text-lg font-semibold tracking-tight">{b.plan.name}</h4>
                 <Badge variant={b.read_only || b.status === "past_due" ? "destructive" : "secondary"}>
                   {b.expired ? "Trial ended" : STATUS[b.status]}
                 </Badge>
@@ -349,9 +342,11 @@ export function BillingView() {
 
           <Usage b={b} />
 
-          <section aria-labelledby="billing-plans">
-            <AsciiDivider as="h3" id="billing-plans" label="Plans" />
-            <p className="mt-3 text-sm text-pretty text-muted-foreground">
+          <section aria-labelledby="billing-plans" className="flex flex-col gap-3">
+            <h4 id="billing-plans" className="text-sm font-medium text-muted-foreground">
+              Plans
+            </h4>
+            <p className="text-sm text-pretty text-muted-foreground">
               {b.is_owner
                 ? `Billed monthly for each seat in use (${Math.max(1, b.seats.used)} now), through Stripe.`
                 : `Only a billing owner (${b.owners.map((o) => o.username).join(", ") || "none yet"}) can change the plan.`}
@@ -359,7 +354,7 @@ export function BillingView() {
                 " Payments are off: this server has a live Stripe key without STRIPE_ALLOW_LIVE."}
               {!b.stripe.configured && !b.stripe.live_key_refused && " Payments aren't set up on this server yet."}
             </p>
-            <ul className="mt-4 grid gap-4 md:grid-cols-3">
+            <ul className="grid gap-4 lg:grid-cols-3">
               {b.plans.map((p) => (
                 <PlanCard
                   key={p.id}
@@ -373,8 +368,8 @@ export function BillingView() {
           </section>
 
           <Owners b={b} />
-        </div>
+        </>
       )}
-    </div>
+    </SettingsSection>
   )
 }

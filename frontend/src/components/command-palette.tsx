@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Keyboard, Layers, MessageSquareText, PanelLeft, SquarePen } from "lucide-react"
+import { Keyboard, Layers, MessageSquareText, PanelLeft, Settings, SquarePen } from "lucide-react"
 
 import {
   Command,
@@ -22,6 +22,7 @@ import {
   INSERT_PROMPT,
   MOD_KEY as MOD,
   OPEN_SEARCH,
+  OPEN_SHORTCUTS,
   tellChat as tell,
   TOGGLE_SIDEBAR,
 } from "@/lib/chat-events"
@@ -96,11 +97,14 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
       setChatsOnly(true)
       setOpen(true)
     }
+    const onShortcuts = () => setHelp(true)
     window.addEventListener("keydown", onKey)
     window.addEventListener(OPEN_SEARCH, onSearch)
+    window.addEventListener(OPEN_SHORTCUTS, onShortcuts)
     return () => {
       window.removeEventListener("keydown", onKey)
       window.removeEventListener(OPEN_SEARCH, onSearch)
+      window.removeEventListener(OPEN_SHORTCUTS, onShortcuts)
     }
   }, [newChat])
 
@@ -119,7 +123,8 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
   const screens = [
     ...main,
     { to: "/spaces", label: "Spaces", icon: Layers },
-    { to: "/prompts", label: "My prompts", icon: MessageSquareText },
+    { to: "/settings/prompts", label: "My prompts", icon: MessageSquareText },
+    { to: "/settings", label: "Settings", icon: Settings },
     ...admin,
   ]
   const words = q.toLowerCase()

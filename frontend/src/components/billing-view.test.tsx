@@ -127,7 +127,7 @@ describe("TrialBanner", () => {
   it("counts down for the people who can pick a plan", () => {
     banner({ ...user, billing: summary })
     expect(screen.getByTestId("trial-banner")).toHaveTextContent("2 days left in your trial.")
-    expect(screen.getByRole("link", { name: "Pick a plan" })).toHaveAttribute("href", "/billing")
+    expect(screen.getByRole("link", { name: "Pick a plan" })).toHaveAttribute("href", "/settings/billing")
   })
 
   it("shows nothing to a member until the workspace is read-only", () => {

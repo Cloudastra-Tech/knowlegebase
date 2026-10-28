@@ -35,7 +35,7 @@ for (const [size, viewport] of [
       await shot(page, `trial-banner-${size}`)
 
       await banner.getByRole("link", { name: "Pick a plan" }).click()
-      await expect(page).toHaveURL(/\/billing$/)
+      await expect(page).toHaveURL(/\/settings\/billing$/)
       await expect(page.getByRole("heading", { name: "Plan & billing" })).toBeVisible()
       await expect(page.getByText("5 days left in your trial", { exact: false }).last()).toBeVisible()
       await expect(page.getByText("Questions this month")).toBeVisible()
