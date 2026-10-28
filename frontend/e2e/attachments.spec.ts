@@ -27,7 +27,7 @@ test("an attached file answers its chat, cited, and is gone from a new chat", as
   await expect(log.getByRole("button", { name: /^Open source \d+: acme-contract\.txt.*, Attached file$/ })).toBeVisible()
   await chip.click()
   const sheet = page.getByRole("dialog")
-  await expect(sheet.getByLabel("Passage")).toContainText("ten percent discount")
+  await expect(sheet.getByLabel("Passage", { exact: true })).toContainText("ten percent discount")
   await page.keyboard.press("Escape")
 
   // A new chat has no file attached, and its answers never read it.
