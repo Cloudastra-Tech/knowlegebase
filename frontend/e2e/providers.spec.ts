@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test"
 import { ADMIN, signIn } from "./helpers.ts"
 
 // Assistant → Models: an admin brings an Anthropic key for answers. Saving it makes no
-// model call (Test connection only lists models, and this spec doesn't press it), so
+// model call (Test connection only lists Anthropic's models, and this spec doesn't press it), so
 // no network. The key is write-only: after saving, the page only says "Key saved"
 // with its last 4 characters.
 const KEY = "sk-ant-e2e-" + "0123456789abcdef0123456789"

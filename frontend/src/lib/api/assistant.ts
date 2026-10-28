@@ -283,13 +283,15 @@ export interface ModelProviderChange {
   confirm_reindex?: boolean
 }
 
-// Test connection lists each provider's models (free): no answer, no embedding.
+// Test connection: OpenAI and Anthropic list their models (free); Bedrock answers one
+// token on its default model and makes one short embedding.
 export interface ProviderTest {
   provider: string
   label: string
-  ok: boolean
-  models: number | null // how many it listed; null: it has no list (local)
+  ok: boolean // false too when it lists its models but not an enabled one (missing)
+  models: number | null // how many it listed; null: it has no list (Bedrock, local)
   missing: string[] // enabled models it didn't list
+  checked?: string[] // the models a real call reached (Bedrock)
   error?: string
 }
 

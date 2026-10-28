@@ -184,15 +184,15 @@ def _tools(trace):
 
 def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(), sources=(),
            max_access="restricted", latency_ms=None, usage=None, message_id=None,
-           cache_hit=None, unsupported=None, language=None, provider=None, acl=None,
-           model=None):
+           cache_hit=None, unsupported=None, language=None, provider=None, acl=None):
     """Write one row. Never raises: a question is never failed by its log. A
     question the documents couldn't answer is also a question.unanswered webhook,
     with its text only as the log keeps it (none in metadata mode). acl: the
     answer's audience (access.py clauses), which Insights reads it by; None: by
-    max_access. provider / model: the answer model the chat picked
-    (kb/services/model_choice.py); None: the workspace's provider, and the model
-    that used the most tokens."""
+    max_access. provider: who answered, the provider of the answer model the chat
+    picked (kb/services/model_choice.py); None: the workspace's. The model is
+    always usage.model, the one that used the most tokens, as on every surface:
+    the column's meaning (and Insights' cost) never depends on a pick."""
     try:
         mode = store.settings(ws)["mode"]
         mask = assistant.pii_policy(ws).log if mode == "redacted" else None
@@ -207,7 +207,7 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
             tokens_in=usage.tokens_in if usage else None,
             tokens_out=usage.tokens_out if usage else None,
             tokens_cached=usage.tokens_cached if usage else None,
-            model=model or (usage.model if usage else None), cache_hit=cache_hit,
+            model=usage.model if usage else None, cache_hit=cache_hit,
             unsupported=unsupported, language=language,
             provider=provider or _provider(ws), acl=acl)
         if outcome == "not_found":
@@ -259,9 +259,9 @@ def tracked(run, ws, user, role, surface, turn=None):
                 fields["max_access"] = conversations.max_access(levels)
                 fields["acl"] = access.clauses(found)
             unsupported = out.get("unsupported")
-            picked = kwargs.get("answer_model") or (getattr(run, "provider", None), None)
+            picked = kwargs.get("answer_model")
             record(ws, user, role, surface, question, outcome, usage=usage,
-                   provider=picked[0], model=picked[1],
+                   provider=picked[0] if picked else getattr(run, "provider", None),
                    latency_ms=int((time.monotonic() - started) * 1000), message_id=message_id,
                    unsupported=None if unsupported is None else len(unsupported),
                    language=out.get("language"), **fields)

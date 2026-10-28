@@ -8,9 +8,10 @@ every question.
                        chat on the server's provider: its one model, no choice
     resolve(...)       the model a question is answered with: the one the
                        request names, else the chat's own, else the asker's last
-                       pick (if still enabled), else the default. A model the
-                       request or the chat names that isn't enabled (any more) is
-                       REFUSED (Refused), never swapped for another silently
+                       pick, else the default (each only while it's enabled). A
+                       model the REQUEST names that isn't enabled is refused
+                       (Refused), never swapped for another silently; a chat whose
+                       model was turned off since starts on the default
     remember(...)      the chat keeps its pick (conversations.model_provider/_id)
 
 Only the answer model follows the pick. The fast model (the guards' classifiers,
@@ -62,7 +63,8 @@ def _last(ws, owner, listed):
 def resolve(ws, requested=None, conversation=None, owner=None):
     """(provider, model) to answer with. requested: {provider, model} from the
     request (None: not named). conversation: the chat's row, whose own pick
-    comes next. Raises Refused for a model named that isn't enabled."""
+    comes next (the default once it's turned off). Raises Refused for a model
+    the request names that isn't enabled."""
     listed = enabled(ws)
     if requested:
         pair = (requested.get("provider"), requested.get("model"))
@@ -72,10 +74,9 @@ def resolve(ws, requested=None, conversation=None, owner=None):
         return pair
     if conversation and conversation.get("model_id"):
         pair = (conversation.get("model_provider"), conversation["model_id"])
-        if pair not in listed:
-            raise Refused(f"This chat's model ({pair[1]}) isn't available any more. "
-                          "Choose another in the model menu.")
-        return pair
+        # Turned off since: the chat starts on the default, as the Remove dialog
+        # says and the chat screen shows. Never an error.
+        return pair if pair in listed else listed[0]
     if owner:
         last = _last(ws, owner, listed)
         if last:
