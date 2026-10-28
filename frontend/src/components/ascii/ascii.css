@@ -8,17 +8,35 @@
    the centre column. Full strength reaches in to the widest screen's edge (max-w-6xl,
    36rem from the centre), so at 1280 the sides read as ASCII, and it has faded by the
    settings screens' text (max-w-5xl plus a panel's padding, about 26rem in). On a
-   phone it's the 15% everywhere. */
+   phone it's the 15% everywhere.
+   The field runs full-bleed, under the sidebar too (--field-pane, the width App.tsx
+   reserves for it; 0 on a phone), so the sidebar's glass has something to frost. Its
+   glyphs are dots and dashes, which a blur averages to nothing at the ambient ink, so
+   it's drawn at full ink (--ascii-backdrop) and the mask takes it back to the ambient
+   ink beside the sidebar (--ascii-beside): the gutters and the column look as they
+   did, and only the glass sees the strong field. Centred on the content, not the
+   window. */
 .ascii-mask-reading-column {
+  --pane: var(--field-pane, 0px);
+  --mid: calc(50% + var(--pane) / 2);
+  --beside: var(--ascii-beside, 100%);
+  --under: calc(var(--beside) * 0.15);
   mask-image: linear-gradient(
     to right,
     #000 0,
-    #000 calc(50% - 36rem),
-    rgb(0 0 0 / 15%) calc(50% - 26rem),
-    rgb(0 0 0 / 15%) calc(50% + 26rem),
-    #000 calc(50% + 36rem),
-    #000 100%
+    #000 calc(var(--pane) - 3rem),
+    rgb(0 0 0 / var(--beside)) var(--pane),
+    rgb(0 0 0 / var(--beside)) calc(var(--mid) - 36rem),
+    rgb(0 0 0 / var(--under)) calc(var(--mid) - 26rem),
+    rgb(0 0 0 / var(--under)) calc(var(--mid) + 26rem),
+    rgb(0 0 0 / var(--beside)) calc(var(--mid) + 36rem),
+    rgb(0 0 0 / var(--beside)) 100%
   );
+}
+@media (width < 48rem) {
+  .ascii-mask-reading-column {
+    --pane: 0px;
+  }
 }
 .ascii-mask-radial {
   mask-image: radial-gradient(closest-side, #000 30%, transparent);
