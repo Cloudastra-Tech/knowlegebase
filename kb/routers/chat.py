@@ -20,7 +20,8 @@ import members_store
 import models
 from kb.deps import current_role, current_user, current_viewer, ws_of
 from kb.rate_limit import user_limit
-from kb.services import answering, attachments, conversations, indexing, passages, suggestions
+from kb.services import (answering, attachments, conversations, indexing, model_choice, passages,
+                         suggestions)
 from kb.services.answering import Cancelled
 
 router = APIRouter()
@@ -34,8 +35,14 @@ class ChatIn(BaseModel):
     question: str = ""
 
 
+class ModelRef(BaseModel):
+    provider: str
+    model: str
+
+
 class StreamIn(ChatIn):
     conversation_id: str | None = None   # saved in it, with its history; None: a one-off
+    model: ModelRef | None = None        # the answer model picked (model_choice.py)
     retry_of: str | None = None          # ask the question of this failed answer again
     regenerate_of: str | None = None     # a new answer beside this finished one
     edit_of: str | None = None           # `question` replaces this earlier question
@@ -128,12 +135,25 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
     steps_shown = (user["role"] in members_store.STAFF_ROLES
                    or assistant_store.settings(ws)["show_steps"])
 
+    # The answer model: the one picked, else the chat's own, else the asker's last
+    # pick or the workspace's default. One that isn't enabled (any more) is refused
+    # here, before the question is saved.
+    conv = (conversations_store.get(ws, user["username"], body.conversation_id)
+            if body.conversation_id else None)
+    try:
+        answer_model = await run_in_threadpool(
+            model_choice.resolve, ws, body.model.model_dump() if body.model else None,
+            conv, user["username"])
+    except model_choice.Refused as e:
+        raise HTTPException(400, str(e))
     turn = None
     if body.conversation_id:
         turn = await run_in_threadpool(conversations.start_turn, ws, user["username"], viewer,
                                        body.conversation_id, question, body.retry_of,
                                        body.regenerate_of, body.edit_of)
         question = turn["question"]
+        await run_in_threadpool(model_choice.remember, ws, user["username"],
+                                turn["conversation"]["id"], answer_model)
     history_access = turn["history_access"] if turn else "public"
     history_acl = turn["history_acl"] if turn else []
     # A new chat's title, written beside the answer (one small model call at most).
@@ -207,7 +227,8 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
             return out["standalone"] if out.get("standalone") not in (None, question) else None
         try:
             done = answering.ask(ws, user, viewer, question, surface="web", turn=turn,
-                                 on_event=on_event, cancel=stop, out=out, cache=not again)
+                                 on_event=on_event, cancel=stop, out=out, cache=not again,
+                                 model=answer_model)
             with models.scope_for(ws):
                 followups = suggestions.followups(question, done.answer, done.state,
                                                   done.sources)

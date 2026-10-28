@@ -18,6 +18,26 @@ const PROVIDERS = [
   { name: "anthropic", label: "Anthropic", chat: true, embeddings: false, in_house: false, api_key: true },
 ].map((p) => ({ vision: false, prompt_caching: "none", tool_calls: true, ...p }))
 
+const m = (id: string, label: string, tier: string) => ({ id, label, tier, vision: true, tool_calls: true })
+const CATALOGUE = {
+  openai: [m("gpt-5", "GPT-5", "best"), m("gpt-4o-mini", "GPT-4o mini", "fast")],
+  bedrock: [m("amazon.nova-pro-v1:0", "Amazon Nova Pro", "balanced")],
+  anthropic: [
+    m("claude-opus-5-5", "Claude Opus 5.5", "best"),
+    m("claude-sonnet-5-5", "Claude Sonnet 5.5", "balanced"),
+  ],
+}
+const enabled = (provider: string, model: string, label: string, tier: string, isDefault = false) => ({
+  provider,
+  provider_label: PROVIDERS.find((p) => p.name === provider)?.label,
+  model,
+  label,
+  tier,
+  vision: true,
+  tool_calls: true,
+  default: isDefault,
+})
+
 const SETTINGS = {
   provider: "default",
   chat_provider: "default",
@@ -29,6 +49,11 @@ const SETTINGS = {
   keys_saved: false,
   access_key_hint: null,
   api_keys_saved: {},
+  api_key_hints: {},
+  chat_models: [],
+  default_model: null,
+  catalogue: CATALOGUE,
+  max_models: 24,
   chat_model: null,
   fast_model: null,
   embed_model: null,
@@ -62,6 +87,19 @@ const SETTINGS = {
   trust_policy: { Statement: [{ Condition: { StringEquals: { "sts:ExternalId": "kb-0123" } } }] },
   permissions_policy: { Statement: [{ Action: ["bedrock:InvokeModel"] }] },
 }
+// Anthropic and OpenAI keys saved; Opus (the default) and GPT-5 enabled.
+const TWO = {
+  ...SETTINGS,
+  chat_provider: "anthropic",
+  chat_model: "claude-opus-5-5",
+  api_keys_saved: { anthropic: true, openai: true },
+  api_key_hints: { anthropic: "9xyz", openai: "4abc" },
+  chat_models: [
+    enabled("anthropic", "claude-opus-5-5", "Claude Opus 5.5", "best", true),
+    enabled("openai", "gpt-5", "GPT-5", "best"),
+  ],
+  default_model: { provider: "anthropic", model: "claude-opus-5-5" },
+}
 const ROLE = "arn:aws:iam::123456789012:role/kb-bedrock"
 const KEY = "sk-ant-test-0000000000000000000000"
 
@@ -88,8 +126,13 @@ async function options(user: ReturnType<typeof userEvent.setup>, picker: string)
   return names
 }
 
+async function addProvider(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(await screen.findByRole("button", { name: "Add a provider" }))
+  await user.click(await screen.findByRole("menuitem", { name: label }))
+}
+
 describe("ModelProviderSettings", () => {
-  it("builds each picker from the providers the server lists, by what they offer", async () => {
+  it("offers the chat providers to add, and search from those with embeddings", async () => {
     mockApi({
       "GET /api/admin/assistant/models": {
         ...SETTINGS,
@@ -98,13 +141,15 @@ describe("ModelProviderSettings", () => {
       },
     })
     const user = renderSettings()
-    expect(await options(user, "Answers (chat)")).toEqual([
-      "Server default (OpenAI)",
+    expect(await screen.findByText(/Answers use the server's model \(OpenAI, gpt-4o-mini\)/)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Add a provider" }))
+    expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual([
       "OpenAI",
       "AWS Bedrock",
       "Anthropic",
       "Acme AI",
     ])
+    await user.keyboard("{Escape}")
     expect(await options(user, "Search (embeddings)")).toEqual([
       "Server default (OpenAI)",
       "OpenAI",
@@ -125,7 +170,7 @@ describe("ModelProviderSettings", () => {
     expect(screen.queryByText("credentials")).not.toBeInTheDocument()
   })
 
-  it("sends a typed key once and then only says it's saved, never showing it", async () => {
+  it("adds a provider, ticks its models, picks the default, and sends the key once", async () => {
     const puts: Record<string, unknown>[] = []
     mockApi({
       "GET /api/admin/assistant/models": SETTINGS,
@@ -135,48 +180,99 @@ describe("ModelProviderSettings", () => {
           ...SETTINGS,
           chat_provider: "anthropic",
           api_keys_saved: { anthropic: true },
-          effective: { ...SETTINGS.effective, provider: "anthropic", chat_model: "claude-sonnet-5-5" },
+          api_key_hints: { anthropic: "0000" },
+          chat_models: [
+            enabled("anthropic", "claude-opus-5-5", "Claude Opus 5.5", "best", true),
+            enabled("anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", "balanced"),
+          ],
+          default_model: { provider: "anthropic", model: "claude-opus-5-5" },
+          effective: { ...SETTINGS.effective, provider: "anthropic", chat_model: "claude-opus-5-5" },
           updated_at: 2,
         }
       },
     })
     const user = renderSettings()
-    await choose(user, "Answers (chat)", "Anthropic")
-    expect(screen.getByText("claude-sonnet-5-5 · fast claude-haiku-5-5")).toBeInTheDocument()
+    await addProvider(user, "Anthropic")
+    // Its default model starts ticked; the rest of its list is there to tick.
+    const models = screen.getByRole("list", { name: "Anthropic models" })
+    expect(within(models).getByRole("checkbox", { name: /Claude Sonnet 5.5/ })).toBeChecked()
+    await user.click(within(models).getByRole("checkbox", { name: /Claude Opus 5.5/ }))
+    await choose(user, "Default model", "Claude Opus 5.5")
     const field = screen.getByLabelText("Anthropic API key")
     expect(field).toHaveAttribute("type", "password")
     await user.click(field)
     await user.paste(KEY)
     await user.click(screen.getByRole("button", { name: "Save" }))
 
-    // Chat only: search stays where it is, so nothing asks about a rebuild.
+    // Answers only: search stays where it is, so nothing asks about a rebuild.
     await waitFor(() => expect(puts).toHaveLength(1))
     expect(screen.queryByText("Rebuild search?")).not.toBeInTheDocument()
-    expect(puts[0]).toMatchObject({ chat_provider: "anthropic", api_keys: { anthropic: KEY } })
+    expect(puts[0]).toMatchObject({
+      default_model: { provider: "anthropic", model: "claude-opus-5-5" },
+      chat_models: [
+        { provider: "anthropic", model: "claude-sonnet-5-5" },
+        { provider: "anthropic", model: "claude-opus-5-5" },
+      ],
+      api_keys: { anthropic: KEY },
+    })
     expect(await screen.findByText("Key saved")).toBeInTheDocument()
+    expect(screen.getByText("••••0000")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Replace the Anthropic key" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Remove the Anthropic key" })).toBeInTheDocument()
     expect(screen.queryByLabelText("Anthropic API key")).not.toBeInTheDocument()
     expect(document.body.innerHTML).not.toContain(KEY)
-    expect(document.body.innerHTML).not.toContain(KEY.slice(-4))
   })
 
-  it("removes a saved key by moving its side back to the server default", async () => {
+  it("adds a custom model id, and the default follows what's enabled", async () => {
+    const puts: Record<string, unknown>[] = []
+    mockApi({
+      "GET /api/admin/assistant/models": TWO,
+      "PUT /api/admin/assistant/models": (body: Record<string, unknown>) => {
+        puts.push(body)
+        return { ...TWO, updated_at: 2 }
+      },
+    })
+    const user = renderSettings()
+    expect(await screen.findByText("••••9xyz")).toBeInTheDocument()
+    await user.type(screen.getByRole("textbox", { name: "Another OpenAI model id" }), "gpt-9-preview{Enter}")
+    const openai = screen.getByRole("list", { name: "OpenAI models" })
+    expect(within(openai).getByRole("checkbox", { name: /gpt-9-preview/ })).toBeChecked()
+    // Opus off: the default can't stay on it.
+    const anthropic = screen.getByRole("list", { name: "Anthropic models" })
+    await user.click(within(anthropic).getByRole("checkbox", { name: /Claude Opus 5.5/ }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toMatchObject({
+      default_model: { provider: "openai", model: "gpt-5" },
+      chat_models: [
+        { provider: "openai", model: "gpt-5" },
+        { provider: "openai", model: "gpt-9-preview" },
+      ],
+    })
+    expect(puts[0]).not.toHaveProperty("api_keys")
+  })
+
+  it("removes a saved provider with its key and models, keeping the rest", async () => {
     const puts: unknown[] = []
     mockApi({
-      "GET /api/admin/assistant/models": { ...SETTINGS, chat_provider: "anthropic", api_keys_saved: { anthropic: true } },
+      "GET /api/admin/assistant/models": TWO,
       "PUT /api/admin/assistant/models": (body: unknown) => {
         puts.push(body)
         return { ...SETTINGS, updated_at: 2 }
       },
     })
     const user = renderSettings()
-    await user.click(await screen.findByRole("button", { name: "Remove the Anthropic key" }))
+    await user.click(await screen.findByRole("button", { name: "Remove Anthropic" }))
     const dialog = await screen.findByRole("alertdialog")
-    expect(within(dialog).getByText(/removing it puts answers back on the server default/)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole("button", { name: "Remove key" }))
+    expect(within(dialog).getByText(/its models leave the chat's model menu/)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole("button", { name: "Remove" }))
     await waitFor(() =>
-      expect(puts).toEqual([{ api_keys: { anthropic: null }, chat_provider: "default" }]),
+      expect(puts).toEqual([
+        {
+          api_keys: { anthropic: null },
+          chat_models: [{ provider: "openai", model: "gpt-5" }],
+          default_model: { provider: "openai", model: "gpt-5" },
+        },
+      ]),
     )
   })
 
@@ -202,7 +298,7 @@ describe("ModelProviderSettings", () => {
     expect(within(dialog).getByText(/costs no embedding calls/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole("button", { name: "Save and rebuild" }))
     await waitFor(() => expect(puts).toHaveLength(1))
-    expect(puts[0]).toMatchObject({ embed_provider: "local", confirm_reindex: true })
+    expect(puts[0]).toMatchObject({ embed_provider: "local", chat_provider: "default", confirm_reindex: true })
     expect(await screen.findByText("Search is being rebuilt")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "See indexing progress" })).toHaveAttribute(
       "href",
@@ -213,7 +309,15 @@ describe("ModelProviderSettings", () => {
   it("still asks when the server says a save would rebuild (409)", async () => {
     const puts: Record<string, unknown>[] = []
     mockApi({
-      "GET /api/admin/assistant/models": { ...SETTINGS, chat_provider: "bedrock", embed_provider: "bedrock", region: "eu-west-1", index_embeddings: "bedrock:amazon.titan-embed-text-v2:0:1024" },
+      "GET /api/admin/assistant/models": {
+        ...SETTINGS,
+        chat_provider: "bedrock",
+        embed_provider: "bedrock",
+        region: "eu-west-1",
+        chat_models: [enabled("bedrock", "amazon.nova-pro-v1:0", "Amazon Nova Pro", "balanced", true)],
+        default_model: { provider: "bedrock", model: "amazon.nova-pro-v1:0" },
+        index_embeddings: "bedrock:amazon.titan-embed-text-v2:0:1024",
+      },
       "PUT /api/admin/assistant/models": (body: Record<string, unknown>) => {
         puts.push(body)
         if (!body.confirm_reindex) return json({ detail: "This changes the embedding model." }, 409)
@@ -230,56 +334,72 @@ describe("ModelProviderSettings", () => {
     expect(puts[1]).toMatchObject({ role_arn: ROLE, region: "eu-west-1", confirm_reindex: true })
   })
 
-  it("tests the chosen pair and shows success with a status dot", async () => {
+  it("tests by listing each provider's models, and says which enabled ones it didn't list", async () => {
     const tests: unknown[] = []
     mockApi({
-      "GET /api/admin/assistant/models": SETTINGS,
+      "GET /api/admin/assistant/models": TWO,
       "POST /api/admin/assistant/models/test": (body: unknown) => {
         tests.push(body)
         return {
           ok: true,
-          chat_model: "claude-sonnet-5-5",
-          reply: "OK",
-          tokens: 16,
-          embed_model: "BAAI/bge-small-en-v1.5",
-          dimensions: 384,
+          providers: [
+            { provider: "anthropic", label: "Anthropic", ok: true, models: 12, missing: [] },
+            { provider: "openai", label: "OpenAI", ok: true, models: 80, missing: ["gpt-5"] },
+          ],
         }
       },
     })
     const user = renderSettings()
-    await choose(user, "Answers (chat)", "Anthropic")
-    await choose(user, "Search (embeddings)", "Local (on this server)")
-    await user.click(screen.getByRole("button", { name: /Test connection/ }))
+    await user.click(await screen.findByRole("button", { name: /Test connection/ }))
     const status = await screen.findByRole("status")
-    expect(within(status).getByText("Connected")).toBeInTheDocument()
+    expect(within(status).getByText("Anthropic: connected")).toBeInTheDocument()
+    expect(within(status).getByText(/lists 80 models, but not gpt-5/)).toBeInTheDocument()
     expect(status.querySelector('[data-slot="status-dot"]')).toHaveAttribute("data-status", "live")
-    expect(tests).toHaveLength(1)
-    expect(tests[0]).toMatchObject({ chat_provider: "anthropic", embed_provider: "local" })
+    expect(screen.getByText(/it answers nothing, so it costs nothing/)).toBeInTheDocument()
+    expect(tests[0]).toMatchObject({
+      default_model: { provider: "anthropic", model: "claude-opus-5-5" },
+      chat_models: [
+        { provider: "anthropic", model: "claude-opus-5-5" },
+        { provider: "openai", model: "gpt-5" },
+      ],
+    })
   })
 
-  it("shows the server's reason when the test fails, and only that", async () => {
+  it("shows a provider's reason when its test fails, and only that", async () => {
     mockApi({
-      "GET /api/admin/assistant/models": SETTINGS,
+      "GET /api/admin/assistant/models": TWO,
       "POST /api/admin/assistant/models/test": {
         ok: false,
-        error: "AnthropicAuthenticationError: invalid x-api-key",
+        providers: [
+          {
+            provider: "anthropic",
+            label: "Anthropic",
+            ok: false,
+            models: null,
+            missing: [],
+            error: "AuthenticationError (authentication_error): invalid x-api-key",
+          },
+        ],
       },
     })
     const user = renderSettings()
     await user.click(await screen.findByRole("button", { name: /Test connection/ }))
-    const alert = await screen.findByRole("alert")
-    expect(within(alert).getByText("Couldn't connect")).toBeInTheDocument()
-    expect(within(alert).getByText("AnthropicAuthenticationError: invalid x-api-key")).toBeInTheDocument()
+    const status = await screen.findByRole("status")
+    expect(within(status).getByText("Anthropic: couldn't connect")).toBeInTheDocument()
+    expect(within(status).getByText(/invalid x-api-key/)).toBeInTheDocument()
+    expect(status.querySelector('[data-slot="status-dot"]')).toHaveAttribute("data-status", "error")
   })
 
-  it("shows a refused test's reason (400) in the same notice", async () => {
+  it("shows a refused test's reason (400) in a notice", async () => {
     mockApi({
       "GET /api/admin/assistant/models": SETTINGS,
       "POST /api/admin/assistant/models/test": json({ detail: "Paste your Anthropic API key." }, 400),
     })
     const user = renderSettings()
-    await choose(user, "Answers (chat)", "Anthropic")
+    await addProvider(user, "Anthropic")
     await user.click(screen.getByRole("button", { name: /Test connection/ }))
-    expect(await screen.findByText("Paste your Anthropic API key.")).toBeInTheDocument()
+    const alert = await screen.findByRole("alert")
+    expect(within(alert).getByText("Couldn't connect")).toBeInTheDocument()
+    expect(within(alert).getByText("Paste your Anthropic API key.")).toBeInTheDocument()
   })
 })

@@ -1,10 +1,9 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronDown, CircleCheck, PlugZap, RefreshCw, TriangleAlert } from "lucide-react"
+import { ChevronDown, CircleCheck, Plus, PlugZap, RefreshCw, TriangleAlert } from "lucide-react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 
-import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { StatusDot } from "@/components/glass/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -19,7 +18,14 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Field,
   FieldDescription,
@@ -35,7 +41,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -46,28 +54,35 @@ import {
   ApiError,
   assistant,
   type AwsAuth,
+  type CatalogueModel,
   type ConnectionTest,
   type ModelProviderChange,
   type ModelProviderSettings as Settings,
+  type ModelRef,
   type ProviderInfo,
 } from "@/lib/api"
+import { sameModel, TIER_LABEL } from "@/lib/chat-models"
 import { useIndexStatus } from "@/lib/index-status-context"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
-// The workspace's model providers (Assistant screen, admins): one for answers (chat)
-// and one for search (embeddings), each the server's or one of the registry's
-// (`providers`, so a new one shows up by itself). A provider that takes an API key
-// takes the workspace's own, write-only: the screen only ever says "Key saved".
-// Bedrock runs in the company's own AWS account (a role the server assumes with the
-// ExternalId generated here, or access keys, sealed). Test connection makes one tiny
-// chat call and one embedding with what's typed, saved or not. A change of search
-// model rebuilds the index, so it's confirmed first. Nothing ever falls back to
-// another provider: a chosen one that fails fails the question with its reason.
+// The workspace's model providers (Assistant screen, admins). ANSWERS: the workspace
+// holds credentials for several chat providers at once (API keys, write-only: only
+// "Key saved ••••last4" comes back; or its own AWS for Bedrock), the admin ticks the
+// models people may pick in the chat (each provider's curated list, or a custom id),
+// and one of them is the default. With none, answers use the server's model. SEARCH:
+// one embeddings provider, never picked per chat; changing it rebuilds the index, so
+// it's confirmed first. Test connection only lists each provider's models (free):
+// nothing is answered or embedded. Nothing ever falls back to another provider.
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const DEFAULT = "default"
 const SAME = "__default__" // the embedding size Select's "model default"
+const keyOf = (m: ModelRef) => `${m.provider}\u0000${m.model}`
+const refOf = (key: string): ModelRef => {
+  const [provider, model] = key.split("\u0000")
+  return { provider, model }
+}
 
 type Side = "chat" | "embeddings"
 
@@ -141,17 +156,17 @@ function JsonBlock({ label, value }: { label: string; value: object }) {
 }
 
 // A provider's API key: write-only. Typed into an uncontrolled field (so the value
-// is never copied into the page's markup), sent once, then only "Key saved".
+// is never copied into the page's markup), sent once, then only "Key saved ••••last4".
 function ApiKeyField({
   provider,
   saved,
+  hint,
   onChange,
-  onRemove,
 }: {
   provider: ProviderInfo
   saved: boolean
+  hint?: string
   onChange: (key: string) => void
-  onRemove: () => void
 }) {
   const [replacing, setReplacing] = useState(false)
   const id = `mp-key-${provider.name}`
@@ -193,6 +208,7 @@ function ApiKeyField({
           <span className="mr-1 inline-flex items-center gap-1.5 text-sm">
             <CircleCheck className="size-4 text-success" aria-hidden />
             Key saved
+            {hint && <span className="font-mono text-xs text-muted-foreground">••••{hint}</span>}
           </span>
           <Button
             type="button"
@@ -203,22 +219,93 @@ function ApiKeyField({
           >
             Replace
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove the ${provider.label} key`}
-            onClick={onRemove}
-          >
-            Remove
-          </Button>
         </div>
       )}
       <FieldDescription>
-        Encrypted with this workspace's key and never shown again. A provider chosen here never
-        uses the server's key.
+        Encrypted with this workspace's key and never shown again. A provider set up here never uses
+        the server's key.
       </FieldDescription>
     </Field>
+  )
+}
+
+// One provider's answer models: its curated list (and any custom ids enabled), each
+// with a checkbox, and a field to add another model id.
+function ProviderModels({
+  provider,
+  catalogue,
+  enabled,
+  onToggle,
+  onAdd,
+  full,
+}: {
+  provider: ProviderInfo
+  catalogue: CatalogueModel[]
+  enabled: ModelRef[]
+  onToggle: (model: string, on: boolean) => void
+  onAdd: (model: string) => void
+  full: boolean
+}) {
+  const [custom, setCustom] = useState("")
+  const mine = enabled.filter((m) => m.provider === provider.name)
+  const extra = mine.filter((m) => !catalogue.some((c) => c.id === m.model))
+  const rows = [
+    ...catalogue.map((c) => ({ id: c.id, label: c.label, tier: TIER_LABEL[c.tier] })),
+    ...extra.map((m) => ({ id: m.model, label: m.model, tier: "Custom" })),
+  ]
+  const add = () => {
+    const id = custom.trim()
+    if (!id) return
+    onAdd(id)
+    setCustom("")
+  }
+  return (
+    <div className="grid gap-2">
+      <ul className="grid gap-1" aria-label={`${provider.label} models`}>
+        {rows.map((row) => {
+          const id = `mp-model-${provider.name}-${row.id}`
+          const on = mine.some((m) => m.model === row.id)
+          return (
+            <li key={row.id} className="flex min-w-0 items-center gap-3 py-1">
+              <Checkbox
+                id={id}
+                aria-label={row.label}
+                checked={on}
+                disabled={!on && full}
+                onCheckedChange={(v) => onToggle(row.id, v === true)}
+              />
+              <Label htmlFor={id} className="min-w-0 flex-1 font-normal">
+                <span className="truncate">{row.label}</span>
+                <span className="hidden truncate font-mono text-xs text-muted-foreground sm:inline">
+                  {row.id !== row.label ? row.id : ""}
+                </span>
+              </Label>
+              <span className="text-xs text-muted-foreground">{row.tier}</span>
+            </li>
+          )
+        })}
+      </ul>
+      <div className="flex items-center gap-2">
+        <Input
+          aria-label={`Another ${provider.label} model id`}
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              add()
+            }
+          }}
+          placeholder="Another model id"
+          autoComplete="off"
+          spellCheck={false}
+          className="h-8 sm:w-72"
+        />
+        <Button type="button" variant="outline" size="sm" onClick={add} disabled={!custom.trim() || full}>
+          Add
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -229,16 +316,30 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   const info = (name: string) => providers.find((p) => p.name === name)
   const known = providers.map((p) => p.name)
   const defaults = settings.provider_defaults ?? {}
+  const catalogue = settings.catalogue ?? {}
+  const maxModels = settings.max_models ?? 24
+  const savedModels: ModelRef[] = (settings.chat_models ?? []).map((m) => ({
+    provider: m.provider,
+    model: m.model,
+  }))
+  const savedDefault = settings.default_model ?? null
+  // Providers that can hold this workspace's credentials for answers: a key, or AWS.
+  const keyable = providers.filter((p) => p.chat && (p.api_key || p.name === "bedrock"))
 
-  const [chat, setChat] = useState(settings.chat_provider ?? DEFAULT)
   const [embed, setEmbed] = useState(settings.embed_provider ?? DEFAULT)
+  const [added, setAdded] = useState<string[]>(() => {
+    const saved = Object.keys(settings.api_keys_saved ?? {}).filter((p) => info(p)?.chat)
+    const used = savedModels.map((m) => m.provider)
+    return keyable.map((p) => p.name).filter((p) => saved.includes(p) || used.includes(p))
+  })
+  const [enabled, setEnabled] = useState<ModelRef[]>(savedModels)
+  const [chosenDefault, setChosenDefault] = useState<ModelRef | null>(savedDefault)
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
   const [region, setRegion] = useState(settings.region ?? "")
   const [auth, setAuth] = useState<AwsAuth>(settings.auth)
   const [roleArn, setRoleArn] = useState(settings.role_arn ?? "")
   const [keyId, setKeyId] = useState("")
   const [secret, setSecret] = useState("")
-  const [chatModel, setChatModel] = useState(settings.chat_model ?? "")
   const [fastModel, setFastModel] = useState(settings.fast_model ?? "")
   const [embedModel, setEmbedModel] = useState(settings.embed_model ?? "")
   const [embedDims, setEmbedDims] = useState<number | null>(settings.embed_dims)
@@ -248,30 +349,61 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
 
   const serverChat = settings.server.chat_provider ?? settings.server.provider
   const serverEmbed = settings.server.embed_provider ?? settings.server.provider
-  const bedrock = chat === "bedrock" || embed === "bedrock"
-  const inUse = [...new Set([chat, embed])].filter((p) => p !== DEFAULT)
-  const keyed = inUse.map(info).filter((p): p is ProviderInfo => !!p?.api_key)
+  // The default: the one chosen while it's enabled, else the first enabled one; none
+  // enabled, the server's model.
+  const defaultModel =
+    enabled.find((m) => sameModel(m, chosenDefault)) ?? (enabled.length ? enabled[0] : null)
+  const chatProvider = defaultModel?.provider ?? DEFAULT
+  const bedrock = added.includes("bedrock") || embed === "bedrock"
+  // Every provider that needs a key here: the answer providers added, and search's.
+  const keyed = [...new Set([...added, embed])]
+    .map(info)
+    .filter((p): p is ProviderInfo => !!p?.api_key)
   const embedDefault = embed !== DEFAULT ? defaults[embed]?.embed_model : null
   const sizes = embed === "bedrock" ? settings.embed_dimensions[embedModel || embedDefault || ""] : undefined
+  const full = enabled.length >= maxModels
+  const labelOf = (m: ModelRef) =>
+    catalogue[m.provider]?.find((c) => c.id === m.model)?.label ?? m.model
 
-  function pickChat(value: string) {
-    setChat(value)
+  function toggle(provider: string, model: string, on: boolean) {
     setTested(null)
-    // Another provider's model ids mean nothing to this one.
-    const back = value === settings.chat_provider
-    setChatModel(back ? (settings.chat_model ?? "") : "")
-    setFastModel(back ? (settings.fast_model ?? "") : "")
+    setEnabled((all) =>
+      on
+        ? all.some((m) => m.provider === provider && m.model === model)
+          ? all
+          : [...all, { provider, model }]
+        : all.filter((m) => !(m.provider === provider && m.model === model)),
+    )
   }
-  function pickEmbed(value: string) {
-    setEmbed(value)
+  function addProvider(p: ProviderInfo) {
     setTested(null)
-    const back = value === settings.embed_provider
-    setEmbedModel(back ? (settings.embed_model ?? "") : "")
-    setEmbedDims(back ? settings.embed_dims : null)
+    setAdded((all) => (all.includes(p.name) ? all : [...all, p.name]))
+    // Start it with its default model ticked: one to pick, and a valid save.
+    const first = defaults[p.name]?.chat_model ?? catalogue[p.name]?.[0]?.id
+    if (first) toggle(p.name, first, true)
+  }
+  // A provider that was only added here (nothing saved yet) goes without asking.
+  function dropProvider(p: ProviderInfo) {
+    const saved = !!settings.api_keys_saved?.[p.name] || savedModels.some((m) => m.provider === p.name)
+    if (saved) {
+      setRemoving(p)
+      return
+    }
+    setAdded((all) => all.filter((x) => x !== p.name))
+    setEnabled((all) => all.filter((m) => m.provider !== p.name))
+    setApiKeys((all) => ({ ...all, [p.name]: "" }))
   }
 
   function change(): ModelProviderChange {
-    const out: ModelProviderChange = { chat_provider: chat, embed_provider: embed }
+    const out: ModelProviderChange = { embed_provider: embed }
+    if (defaultModel) {
+      out.default_model = defaultModel
+      out.chat_models = enabled
+      // The fast model belongs to the default's provider: another one starts from its own.
+      out.fast_model = defaultModel.provider === settings.chat_provider ? fastModel.trim() || null : null
+    } else {
+      out.chat_provider = DEFAULT
+    }
     const keys = Object.fromEntries(
       keyed.map((p) => [p.name, apiKeys[p.name]?.trim()]).filter(([, k]) => k),
     )
@@ -283,8 +415,6 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
         out.secret_access_key = secret
       }
     }
-    if (chat !== DEFAULT)
-      Object.assign(out, { chat_model: chatModel.trim() || null, fast_model: fastModel.trim() || null })
     if (embed !== DEFAULT) {
       out.embed_model = embedModel.trim() || null
       if (embed === "bedrock") out.embed_dims = embedDims
@@ -321,6 +451,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
       setRemoving(null)
       queryClient.setQueryData(queries.modelProvider().queryKey, saved)
       void queryClient.invalidateQueries({ queryKey: ["assistant", "settings"] })
+      void queryClient.invalidateQueries({ queryKey: queries.chatModels().queryKey })
       if (saved.reindex) {
         toast.success("Saved. Search is being rebuilt with the new model.")
         refreshIndex()
@@ -347,7 +478,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
       void queryClient.invalidateQueries({ queryKey: queries.modelProvider().queryKey })
     },
     // A 400 is the server's reason the settings can't be tried (a key not pasted...).
-    onError: (err) => setTested({ ok: false, error: errorText(err) }),
+    onError: (err) => setTested({ ok: false, providers: [], error: errorText(err) }),
   })
 
   // The search provider the confirmation is about, and the one the index has now.
@@ -357,12 +488,115 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   const indexProvider = parseEmbedName(settings.index_embeddings, known).provider
   const localModel = nextEmbed === "local" ? (defaults.local?.embed_model ?? "") : ""
 
+  // A provider's API key (answers and search share it), and the workspace's AWS
+  // (Bedrock, for answers and search alike).
+  const keyField = (p: ProviderInfo) => (
+    <ApiKeyField
+      key={`key-${p.name}`}
+      provider={p}
+      saved={!!settings.api_keys_saved?.[p.name]}
+      hint={settings.api_key_hints?.[p.name]}
+      onChange={(key) => setApiKeys((all) => ({ ...all, [p.name]: key }))}
+    />
+  )
+  const awsFields = (
+    <>
+      <Field>
+        <FieldLabel htmlFor="mp-region">AWS region</FieldLabel>
+        <Input
+          id="mp-region"
+          className="sm:w-60"
+          value={region}
+          onChange={(e) => setRegion(e.target.value)}
+          placeholder={settings.server.region ?? "us-east-1"}
+          autoComplete="off"
+        />
+        <FieldDescription>Where your Bedrock models are enabled.</FieldDescription>
+      </Field>
+
+      <FieldSet>
+        <FieldLegend variant="label">How the server signs in to AWS</FieldLegend>
+        <RadioGroup
+          value={auth}
+          onValueChange={(v) => setAuth(v as AwsAuth)}
+          className="grid gap-3 sm:grid-cols-2"
+        >
+          <Label
+            htmlFor="mp-auth-role"
+            className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal has-data-[state=checked]:border-signal/50"
+          >
+            <RadioGroupItem value="role" id="mp-auth-role" className="mt-0.5" />
+            <span className="grid gap-0.5">
+              <span className="font-medium">A role it assumes</span>
+              <span className="text-xs text-muted-foreground">
+                Recommended: no AWS secret is stored here.
+              </span>
+            </span>
+          </Label>
+          <Label
+            htmlFor="mp-auth-keys"
+            className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal has-data-[state=checked]:border-signal/50"
+          >
+            <RadioGroupItem value="keys" id="mp-auth-keys" className="mt-0.5" />
+            <span className="grid gap-0.5">
+              <span className="font-medium">Access keys</span>
+              <span className="text-xs text-muted-foreground">
+                An IAM user's keys, encrypted with this workspace's key.
+              </span>
+            </span>
+          </Label>
+        </RadioGroup>
+      </FieldSet>
+
+      {auth === "role" ? (
+        <div className="grid min-w-0 gap-4">
+          <Field>
+            <FieldLabel htmlFor="mp-role">Role ARN</FieldLabel>
+            <Input
+              id="mp-role"
+              value={roleArn}
+              onChange={(e) => setRoleArn(e.target.value)}
+              placeholder="arn:aws:iam::123456789012:role/knowledge-assistant-bedrock"
+              autoComplete="off"
+            />
+          </Field>
+          <CopyField label="External ID (put it in the role's trust policy)" value={settings.external_id} />
+          <JsonBlock label="Trust policy for the role" value={settings.trust_policy} />
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="mp-key-id">Access key ID</FieldLabel>
+            <Input
+              id="mp-key-id"
+              value={keyId}
+              onChange={(e) => setKeyId(e.target.value)}
+              placeholder={
+                settings.keys_saved ? `Saved (…${settings.access_key_hint ?? ""})` : "AKIA…"
+              }
+              autoComplete="off"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="mp-secret">Secret access key</FieldLabel>
+            <Input
+              id="mp-secret"
+              type="password"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder={settings.keys_saved ? "Saved: type to replace" : ""}
+              autoComplete="new-password"
+            />
+          </Field>
+        </div>
+      )}
+
+      <JsonBlock label="Permissions the role or user needs" value={settings.permissions_policy} />
+    </>
+  )
   const effectiveEmbed = settings.effective.embed_provider ?? settings.effective.provider
-  const sidesOnRemoving = removing
-    ? [settings.chat_provider === removing.name && "answers", settings.embed_provider === removing.name && "search"]
-        .filter(Boolean)
-        .join(" and ")
-    : ""
+  const addable = keyable.filter((p) => !added.includes(p.name))
+  const serverChatInfo = serverChat ? info(serverChat) : undefined
 
   return (
     <form
@@ -379,6 +613,9 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
               {info(settings.effective.provider)?.label ?? settings.effective.provider}
             </Badge>
             <span className="min-w-0 font-mono text-xs break-all">{settings.effective.chat_model}</span>
+            {savedModels.length > 1 && (
+              <span className="text-xs">· people can pick from {savedModels.length} models</span>
+            )}
           </p>
           <p className="flex flex-wrap items-center gap-1.5">
             Searching with
@@ -391,142 +628,147 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
           </p>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2">
-          <ProviderPicker
-            id="mp-chat-provider"
-            label="Answers (chat)"
-            side="chat"
-            value={chat}
-            onChange={pickChat}
-            settings={settings}
-            server={serverChat}
-          />
-          <ProviderPicker
-            id="mp-embed-provider"
-            label="Search (embeddings)"
-            side="embeddings"
-            value={embed}
-            onChange={pickEmbed}
-            settings={settings}
-            server={serverEmbed}
-          />
-        </div>
+        <FieldSet>
+          <FieldLegend>Answers</FieldLegend>
+          <FieldDescription>
+            Add the providers this workspace has keys for, then tick the models people can pick in
+            the chat. The default answers until someone picks another; guards and titles stay on
+            the default's fast model.
+          </FieldDescription>
+          {added.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Answers use the server's model
+              {serverChatInfo ? ` (${serverChatInfo.label}, ${defaults[serverChatInfo.name]?.chat_model ?? ""})` : ""}.
+              Add a provider to bring your own and offer a choice.
+            </p>
+          )}
+          <div className="grid gap-4">
+            {added.map((name) => {
+              const p = info(name)
+              if (!p) return null
+              return (
+                <section
+                  key={name}
+                  aria-label={p.label}
+                  className="grid gap-3 rounded-xl border border-border/70 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="grid gap-0.5">
+                      <h3 className="text-sm font-medium">{p.label}</h3>
+                      <p className="text-xs text-muted-foreground">{describe(p, "chat")}</p>
+                    </div>
+                    {!(name === "bedrock" && embed === "bedrock") && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove ${p.label}`}
+                        onClick={() => dropProvider(p)}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  {p.api_key && keyField(p)}
+                  {name === "bedrock" && awsFields}
+                  <ProviderModels
+                    provider={p}
+                    catalogue={catalogue[name] ?? []}
+                    enabled={enabled}
+                    onToggle={(model, on) => toggle(name, model, on)}
+                    onAdd={(model) => toggle(name, model, true)}
+                    full={full}
+                  />
+                </section>
+              )
+            })}
+          </div>
+          {addable.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="w-fit">
+                  <Plus data-icon="inline-start" />
+                  Add a provider
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                {addable.map((p) => (
+                  <DropdownMenuItem key={p.name} onSelect={() => addProvider(p)}>
+                    {p.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {enabled.length > 0 && (
+            <Field>
+              <FieldLabel htmlFor="mp-default">Default model</FieldLabel>
+              <Select
+                value={defaultModel ? keyOf(defaultModel) : undefined}
+                onValueChange={(v) => {
+                  setChosenDefault(refOf(v))
+                  setTested(null)
+                }}
+              >
+                <SelectTrigger id="mp-default" className="w-full sm:w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {added.map((name) =>
+                    enabled.some((m) => m.provider === name) ? (
+                      <SelectGroup key={name}>
+                        <SelectLabel>{info(name)?.label ?? name}</SelectLabel>
+                        {enabled
+                          .filter((m) => m.provider === name)
+                          .map((m) => (
+                            <SelectItem key={keyOf(m)} value={keyOf(m)}>
+                              {labelOf(m)}
+                            </SelectItem>
+                          ))}
+                      </SelectGroup>
+                    ) : null,
+                  )}
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {enabled.length === 1
+                  ? "With one model enabled, the chat shows no model menu."
+                  : `People pick from ${enabled.length} models in the chat; new chats start on this one.`}
+              </FieldDescription>
+            </Field>
+          )}
+        </FieldSet>
+
+        <ProviderPicker
+          id="mp-embed-provider"
+          label="Search (embeddings)"
+          side="embeddings"
+          value={embed}
+          onChange={(value) => {
+            setEmbed(value)
+            setTested(null)
+            const back = value === settings.embed_provider
+            setEmbedModel(back ? (settings.embed_model ?? "") : "")
+            setEmbedDims(back ? settings.embed_dims : null)
+          }}
+          settings={settings}
+          server={serverEmbed}
+        />
         <p className="text-xs text-muted-foreground">
-          The workspace never falls back to another provider: if the one chosen fails, the
-          question fails with its reason.
+          Search uses one provider for everyone, and isn't picked per chat. The workspace never falls
+          back to another provider: if the one chosen fails, the question fails with its reason.
         </p>
 
-        {(keyed.length > 0 || bedrock) && <AsciiDivider label="credentials" />}
-        {keyed.map((p) => (
-          <ApiKeyField
-            key={p.name}
-            provider={p}
-            saved={!!settings.api_keys_saved?.[p.name]}
-            onChange={(key) => setApiKeys((all) => ({ ...all, [p.name]: key }))}
-            onRemove={() => setRemoving(p)}
-          />
-        ))}
-
-        {bedrock && (
-          <>
-            <Field>
-              <FieldLabel htmlFor="mp-region">AWS region</FieldLabel>
-              <Input
-                id="mp-region"
-                className="sm:w-60"
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                placeholder={settings.server.region ?? "us-east-1"}
-                autoComplete="off"
-              />
-              <FieldDescription>Where your Bedrock models are enabled.</FieldDescription>
-            </Field>
-
-            <FieldSet>
-              <FieldLegend variant="label">How the server signs in to AWS</FieldLegend>
-              <RadioGroup
-                value={auth}
-                onValueChange={(v) => setAuth(v as AwsAuth)}
-                className="grid gap-3 sm:grid-cols-2"
-              >
-                <Label
-                  htmlFor="mp-auth-role"
-                  className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal has-data-[state=checked]:border-signal/50"
-                >
-                  <RadioGroupItem value="role" id="mp-auth-role" className="mt-0.5" />
-                  <span className="grid gap-0.5">
-                    <span className="font-medium">A role it assumes</span>
-                    <span className="text-xs text-muted-foreground">
-                      Recommended: no AWS secret is stored here.
-                    </span>
-                  </span>
-                </Label>
-                <Label
-                  htmlFor="mp-auth-keys"
-                  className="flex items-start gap-3 rounded-xl border border-border/70 p-3 font-normal has-data-[state=checked]:border-signal/50"
-                >
-                  <RadioGroupItem value="keys" id="mp-auth-keys" className="mt-0.5" />
-                  <span className="grid gap-0.5">
-                    <span className="font-medium">Access keys</span>
-                    <span className="text-xs text-muted-foreground">
-                      An IAM user's keys, encrypted with this workspace's key.
-                    </span>
-                  </span>
-                </Label>
-              </RadioGroup>
-            </FieldSet>
-
-            {auth === "role" ? (
-              <div className="grid min-w-0 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="mp-role">Role ARN</FieldLabel>
-                  <Input
-                    id="mp-role"
-                    value={roleArn}
-                    onChange={(e) => setRoleArn(e.target.value)}
-                    placeholder="arn:aws:iam::123456789012:role/knowledge-assistant-bedrock"
-                    autoComplete="off"
-                  />
-                </Field>
-                <CopyField label="External ID (put it in the role's trust policy)" value={settings.external_id} />
-                <JsonBlock label="Trust policy for the role" value={settings.trust_policy} />
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor="mp-key-id">Access key ID</FieldLabel>
-                  <Input
-                    id="mp-key-id"
-                    value={keyId}
-                    onChange={(e) => setKeyId(e.target.value)}
-                    placeholder={
-                      settings.keys_saved ? `Saved (…${settings.access_key_hint ?? ""})` : "AKIA…"
-                    }
-                    autoComplete="off"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="mp-secret">Secret access key</FieldLabel>
-                  <Input
-                    id="mp-secret"
-                    type="password"
-                    value={secret}
-                    onChange={(e) => setSecret(e.target.value)}
-                    placeholder={settings.keys_saved ? "Saved: type to replace" : ""}
-                    autoComplete="new-password"
-                  />
-                </Field>
-              </div>
-            )}
-
-            <JsonBlock label="Permissions the role or user needs" value={settings.permissions_policy} />
-          </>
+        {/* Search on a provider no answers use: its credentials here. */}
+        {embed !== DEFAULT && !added.includes(embed) && (
+          <div className="grid gap-4 rounded-xl border border-border/70 p-4">
+            {embed === "bedrock" ? awsFields : info(embed)?.api_key ? keyField(info(embed)!) : null}
+          </div>
         )}
 
-        {(chat !== DEFAULT || embed !== DEFAULT) && (
-          <Collapsible
-            defaultOpen={!!(settings.chat_model || settings.fast_model || settings.embed_model || settings.embed_dims)}
-          >
+
+        {(chatProvider !== DEFAULT || embed !== DEFAULT) && (
+          <Collapsible defaultOpen={!!(settings.fast_model || settings.embed_model || settings.embed_dims)}>
             <CollapsibleTrigger asChild>
               <Button
                 type="button"
@@ -534,36 +776,27 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                 size="sm"
                 className="w-fit px-1 [&[data-state=open]>svg]:rotate-180"
               >
-                Advanced: model names <ChevronDown />
+                Advanced: fast and embedding models <ChevronDown />
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-3">
               <div className="grid gap-4 sm:grid-cols-2">
-                {chat !== DEFAULT && (
-                  <>
-                    <Field>
-                      <FieldLabel htmlFor="mp-chat">Chat model</FieldLabel>
-                      <Input
-                        id="mp-chat"
-                        value={chatModel}
-                        onChange={(e) => setChatModel(e.target.value)}
-                        placeholder={defaults[chat]?.chat_model ?? ""}
-                        autoComplete="off"
-                      />
-                      <FieldDescription>Writes the answers. It must support tool use.</FieldDescription>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="mp-fast">Fast model</FieldLabel>
-                      <Input
-                        id="mp-fast"
-                        value={fastModel}
-                        onChange={(e) => setFastModel(e.target.value)}
-                        placeholder={defaults[chat]?.fast_model ?? ""}
-                        autoComplete="off"
-                      />
-                      <FieldDescription>The guards' checks, titles, summaries.</FieldDescription>
-                    </Field>
-                  </>
+                {chatProvider !== DEFAULT && (
+                  <Field>
+                    <FieldLabel htmlFor="mp-fast">Fast model</FieldLabel>
+                    <Input
+                      id="mp-fast"
+                      value={chatProvider === settings.chat_provider ? fastModel : ""}
+                      onChange={(e) => setFastModel(e.target.value)}
+                      disabled={chatProvider !== settings.chat_provider}
+                      placeholder={defaults[chatProvider]?.fast_model ?? ""}
+                      autoComplete="off"
+                    />
+                    <FieldDescription>
+                      The guards' checks, titles, summaries. {info(chatProvider)?.label}'s, whichever
+                      model a chat picks.
+                    </FieldDescription>
+                  </Field>
                 )}
                 {embed !== DEFAULT && (
                   <Field>
@@ -607,22 +840,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
           </Collapsible>
         )}
 
-        {tested &&
-          (tested.ok ? (
-            <div role="status" className="grid gap-1">
-              <StatusDot status="live" label="Connected" className="text-sm" />
-              <p className="text-xs text-muted-foreground">
-                {tested.chat_model} replied “{tested.reply}” ({tested.tokens} tokens), and{" "}
-                {tested.embed_model} made a {tested.dimensions.toLocaleString()}-number embedding.
-              </p>
-            </div>
-          ) : (
-            <Alert variant="destructive">
-              <TriangleAlert />
-              <AlertTitle>Couldn't connect</AlertTitle>
-              <AlertDescription className="break-words">{tested.error.slice(0, 500)}</AlertDescription>
-            </Alert>
-          ))}
+        {tested && <TestResult tested={tested} />}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button type="submit" loading={save.isPending}>
@@ -633,6 +851,9 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
             {test.isPending ? "Testing…" : "Test connection"}
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Testing only lists each provider's models: it answers nothing, so it costs nothing.
+        </p>
         {(settings.updated_by || settings.tested_at) && (
           <p className="text-xs text-muted-foreground">
             {settings.updated_by && `Last changed by ${settings.updated_by} · ${timeAgo(settings.updated_at)}`}
@@ -679,11 +900,11 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove the {removing?.label} key?</AlertDialogTitle>
+            <AlertDialogTitle>Remove {removing?.label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              A provider chosen here only ever uses this workspace's own key, so removing it puts{" "}
-              {sidesOnRemoving || "it"} back on the server default. To keep {removing?.label}, replace
-              the key instead.
+              Its key is deleted and its models leave the chat's model menu
+              {removing && settings.embed_provider === removing.name ? "; search goes back to the server default" : ""}
+              . Chats that used one of them start on the default model next time.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -693,14 +914,19 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                 e.preventDefault()
                 if (!removing) return
                 const p = removing.name
-                const body: ModelProviderChange = { api_keys: { [p]: null } }
-                if (settings.chat_provider === p) body.chat_provider = DEFAULT
+                const left = savedModels.filter((m) => m.provider !== p)
+                const body: ModelProviderChange = {}
+                if (removing.api_key) body.api_keys = { [p]: null }
+                if (left.length) {
+                  body.chat_models = left
+                  body.default_model = left.find((m) => sameModel(m, savedDefault)) ?? left[0]
+                } else body.chat_provider = DEFAULT
                 if (settings.embed_provider === p) body.embed_provider = DEFAULT
                 setRemoving(null)
                 submit(body)
               }}
             >
-              Remove key
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -709,8 +935,42 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   )
 }
 
-// One side's choice: Server default, then every provider that offers it, with a
-// plain line about the one chosen and its default models under it.
+// Test connection's result: a line per provider, with the enabled models it didn't list.
+function TestResult({ tested }: { tested: ConnectionTest }) {
+  if (tested.error)
+    return (
+      <Alert variant="destructive">
+        <TriangleAlert />
+        <AlertTitle>Couldn't connect</AlertTitle>
+        <AlertDescription className="break-words">{tested.error.slice(0, 500)}</AlertDescription>
+      </Alert>
+    )
+  return (
+    <ul role="status" className="grid gap-2">
+      {tested.providers.map((p) => (
+        <li key={p.provider} className="grid gap-0.5">
+          <StatusDot
+            status={p.ok ? "live" : "error"}
+            label={p.ok ? `${p.label}: connected` : `${p.label}: couldn't connect`}
+            className="text-sm"
+          />
+          <p className="pl-4 text-xs break-words text-muted-foreground">
+            {!p.ok
+              ? p.error
+              : p.models === null
+                ? "Runs on this server: nothing to reach."
+                : `It lists ${p.models.toLocaleString()} models${
+                    p.missing.length ? `, but not ${p.missing.join(", ")}: check the id and your access.` : "."
+                  }`}
+          </p>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// The search side's choice: Server default, then every provider with embeddings, with
+// a plain line about the one chosen and its default model under it.
 function ProviderPicker({
   id,
   label,
@@ -739,7 +999,7 @@ function ProviderPicker({
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} className="w-full">
+        <SelectTrigger id={id} className="w-full sm:w-96">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

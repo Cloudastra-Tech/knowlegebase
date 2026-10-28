@@ -606,8 +606,32 @@ export interface ConversationSummary {
   pinned: boolean
   folder_id: string | null
   space_id?: string | null // asked in this space (its sources only)
+  model?: ModelRef | null // the answer model it was last asked with; null: the default
   created_at: number
   updated_at: number
+}
+
+// ---- The chat's model picker (GET /api/models) ----
+export type ModelTier = "fast" | "balanced" | "best"
+
+// A model as the server names it: its provider and id (never a key).
+export interface ModelRef {
+  provider: string
+  model: string
+}
+
+export interface ChatModel extends ModelRef {
+  provider_label: string
+  label: string
+  tier: ModelTier
+  vision: boolean
+  tool_calls: boolean
+}
+
+export interface ChatModels {
+  models: ChatModel[] // the enabled ones, the workspace's default first
+  default: ModelRef
+  last: ModelRef | null // the asker's last pick, while it's still enabled
 }
 
 export interface ChatFolder {

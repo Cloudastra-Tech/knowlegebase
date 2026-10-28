@@ -58,6 +58,16 @@ class FakeAnthropic:
         create = SimpleNamespace(create=self._create)
         self.messages = SimpleNamespace(with_raw_response=create)
         self.beta = SimpleNamespace(messages=SimpleNamespace(with_raw_response=create))
+        # models.list (Test connection's free call): the models the key reaches.
+        self.listed = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+        self.lists = 0
+        self.models = SimpleNamespace(list=self._list)
+
+    def _list(self, **params):
+        self.lists += 1
+        if self.error is not None:
+            raise self.error
+        return [SimpleNamespace(id=m) for m in self.listed]
 
     def __call__(self, api_key=None, **params):
         self.keys.append(api_key)

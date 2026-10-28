@@ -59,6 +59,9 @@ def _summary(conv, role):
             "role_used": conv["role_used"], "role_changed": conv["role_used"] != role,
             "pinned": conv.get("pinned_at") is not None, "folder_id": conv.get("folder_id"),
             "space_id": conv.get("space_id"),
+            # The answer model it was last asked with (kb/services/model_choice.py).
+            "model": ({"provider": conv["model_provider"], "model": conv["model_id"]}
+                      if conv.get("model_id") else None),
             "created_at": conv["created_at"], "updated_at": conv["updated_at"]}
 
 

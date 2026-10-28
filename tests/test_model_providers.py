@@ -41,6 +41,32 @@ class Recorder:
         return [[0.5] * 8 for _ in texts]
 
 
+class FakeOpenAI:
+    """openai.OpenAI as Test connection uses it (models._openai_client): models.list
+    only, recording the keys it was made with. error: what listing raises."""
+
+    def __init__(self, listed=("gpt-4o-mini", "gpt-5", "gpt-5-mini", "text-embedding-3-small")):
+        self.keys, self.listed, self.error, self.lists = [], list(listed), None, 0
+        self.models = SimpleNamespace(list=self._list)
+
+    def __call__(self, key=None):
+        self.keys.append(key)
+        return self
+
+    def _list(self):
+        self.lists += 1
+        if self.error is not None:
+            raise self.error
+        return [SimpleNamespace(id=m) for m in self.listed]
+
+
+@pytest.fixture
+def fake_openai(monkeypatch):
+    made = FakeOpenAI()
+    monkeypatch.setattr(models, "_openai_client", made)
+    return made
+
+
 @pytest.fixture
 def recorder(monkeypatch):
     Recorder.made = []
@@ -276,33 +302,31 @@ def test_switching_a_sides_provider_clears_its_models(fake_aws):
     assert models.for_workspace(w).answer_name == models.answer_model()
 
 
-def test_test_connection_tests_the_chosen_providers_and_hides_the_key(client, recorder,
-                                                                       monkeypatch):
+def test_test_connection_only_lists_models_and_hides_the_key(client, recorder, fake_openai):
+    """Free: the provider lists its models (OpenAI's models.list), once per
+    provider. No completion and no embedding is made (nothing is billed)."""
     w = new_workspace()
     h = login(client, w)
-
-    class Chat(Recorder):
-        def invoke(self, messages):
-            return SimpleNamespace(content="OK", usage_metadata={"input_tokens": 9,
-                                                                 "output_tokens": 1})
-    monkeypatch.setattr(models, "_openai_chat", lambda: Chat)
     r = client.post("/api/admin/assistant/models/test", headers=h,
                     json={"chat_provider": "openai", "embed_provider": "openai",
-                          "api_keys": {"openai": OPENAI_KEY}})
+                          "api_keys": {"openai": OPENAI_KEY},
+                          "chat_models": [{"provider": "openai", "model": "gpt-5"},
+                                          {"provider": "openai", "model": "gpt-9-custom"}]})
     assert r.status_code == 200, r.text
-    assert r.json() == {"ok": True, "chat_model": models.answer_model(), "reply": "OK",
-                        "tokens": 10, "embed_model": "text-embedding-3-small", "dimensions": 8}
-    assert all(m.get("api_key") == OPENAI_KEY for m in recorder)
+    assert r.json() == {"ok": True, "providers": [
+        {"provider": "openai", "label": "OpenAI", "ok": True, "models": 4,
+         "missing": ["gpt-9-custom"]}]}
+    assert recorder == []                         # no ChatOpenAI, no OpenAIEmbeddings
+    assert fake_openai.keys == [OPENAI_KEY] and fake_openai.lists == 1
     assert models.for_workspace(w).spec.api_keys is None              # nothing saved
 
-    class Refused(Recorder):
-        def invoke(self, messages):
-            raise RuntimeError(f"Incorrect API key provided: {OPENAI_KEY}")
-    monkeypatch.setattr(models, "_openai_chat", lambda: Refused)
+    fake_openai.error = RuntimeError(f"Incorrect API key provided: {OPENAI_KEY}")
     r = client.post("/api/admin/assistant/models/test", headers=h,
                     json={"chat_provider": "openai", "api_keys": {"openai": OPENAI_KEY}})
-    assert r.json()["ok"] is False and "Incorrect API key" in r.json()["error"]
-    assert OPENAI_KEY not in r.text
+    (row,) = r.json()["providers"]
+    assert r.json()["ok"] is False and row["ok"] is False
+    assert "Incorrect API key" in row["error"]
+    assert OPENAI_KEY not in r.text and recorder == []
 
 
 # ---- The index: only an embeddings change rebuilds it ----------------------------------------------

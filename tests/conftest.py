@@ -159,6 +159,19 @@ def no_data_keys_kept_between_tests():
         sys.modules["secret_box"].forget()
 
 
+@pytest.fixture(autouse=True)
+def no_provider_model_lists(monkeypatch):
+    """Test connection lists a provider's models over the network (models.LISTS).
+    No test reaches a real provider: the SDK clients raise unless a test puts its
+    own stand-in in their place (tests/test_model_choice.py)."""
+    import models
+
+    def offline(key=None):
+        raise AssertionError("A test tried to reach a model provider's API.")
+    monkeypatch.setattr(models, "_openai_client", offline)
+    monkeypatch.setattr(models, "_anthropic_client", offline)
+
+
 @pytest.fixture
 def jobs_paused(monkeypatch):
     """No job runner in this process: jobs stay queued until the test runs them

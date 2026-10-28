@@ -11,9 +11,12 @@ removed from the index, unblocked ones are added back.
 The model providers (admins; models.py, model_providers_store.py): the server's,
 or the workspace's own, for chat and for embeddings apart: a provider with the
 workspace's API key, or AWS Bedrock in the company's own account ("Bring your
-own AWS"), with Test connection. Switching the embedding provider or model
-rebuilds the index (a shadow rebuild: questions keep the old one meanwhile), so
-it must be confirmed."""
+own AWS"), with Test connection (free: each provider lists its models). Chat
+can hold several providers' credentials at once, with the answer models members
+may pick from in the chat (chat_models) and the default; GET /api/models is what
+the picker offers (kb/services/model_choice.py). Switching the embedding provider
+or model rebuilds the index (a shadow rebuild: questions keep the old one
+meanwhile), so it must be confirmed."""
 
 from dataclasses import replace
 
@@ -27,7 +30,7 @@ import pii
 import question_log_store
 from kb.audit import audited
 from kb.deps import current_user, require_admin, require_hr, ws_of
-from kb.services import assistant, indexing
+from kb.services import assistant, indexing, model_choice
 
 router = APIRouter()
 
@@ -60,6 +63,8 @@ class ProviderIn(BaseModel):
     fast_model: str | None = None
     embed_model: str | None = None
     embed_dims: int | None = None
+    chat_models: list[dict[str, str]] | None = None   # [{provider, model}]: enabled for chats
+    default_model: dict[str, str] | None = None       # {provider, model}: the default
     confirm_reindex: bool = False            # the admin agreed to rebuild the index
 
 
@@ -100,6 +105,14 @@ def assistant_info(user=Depends(current_user)):
     steps panel (HR and admins always do)."""
     s = store.settings(ws_of(user))
     return {"assistant_name": s["assistant_name"], "show_steps": s["show_steps"]}
+
+
+@router.get("/api/models")
+def chat_models(user=Depends(current_user)):
+    """The answer models the chat's model picker offers: {models: [{provider,
+    provider_label, model, label, tier, vision, tool_calls}], default: {provider,
+    model}, last: the asker's last pick while it's enabled, or null}. Never a key."""
+    return model_choice.available(ws_of(user), user["username"])
 
 
 # ---- Settings (admins) ----------------------------------------------------------------------
@@ -143,7 +156,9 @@ def _provider_view(ws):
         server = models.server_spec()
     except models.ProviderError:
         server = None
-    spec = model_providers_store.bedrock_preview(ws, model_providers_store.ensure(ws))
+    row = model_providers_store.ensure(ws)
+    spec = model_providers_store.bedrock_preview(ws, row)
+    on_bedrock = [m for p, m in model_providers_store.enabled(row) if p == "bedrock"]
     return {**view,
             "effective": {"provider": on.provider, "embed_provider": on.embed_provider,
                           "chat_model": on.answer_name, "fast_model": on.fast_name,
@@ -153,13 +168,17 @@ def _provider_view(ws):
                        "embed_provider": server.embeddings_provider if server else None,
                        "region": models.server_region()},
             "providers": [p.describe() for p in models.REGISTRY.values()],
+            # The curated chat models per provider (an admin can add any other id).
+            "catalogue": {name: [m.describe() for m in models.CATALOGUE.get(name, ())]
+                          for name in models.chat_providers()},
+            "max_models": model_providers_store.MAX_MODELS,
             "provider_defaults": {name: p.defaults() for name, p in models.REGISTRY.items()},
             "defaults": {"chat_model": spec.chat_model, "fast_model": spec.fast_model,
                          "embed_model": spec.embed_model, "embed_dims": spec.embed_dims},
             "embed_dimensions": {k: list(v) for k, v in models.EMBED_DIMENSIONS.items()},
             "index_embeddings": indexing.embeddings_of(ws),
             "trust_policy": models.trust_policy(view["external_id"]),
-            "permissions_policy": models.permissions_policy(spec)}
+            "permissions_policy": models.permissions_policy(spec, on_bedrock)}
 
 
 def _provider_details(change, view):
@@ -172,6 +191,8 @@ def _provider_details(change, view):
     if change.get("api_keys"):
         out["api_keys"] = {p: "replaced" if k else "removed"
                            for p, k in change["api_keys"].items()}
+    if "chat_models" in change:
+        out["chat_models"] = [m["model"] for m in view.get("chat_models") or []]
     return out
 
 
@@ -214,12 +235,14 @@ def save_provider(body: ProviderIn, user=Depends(require_admin),
 @router.post("/api/admin/assistant/models/test")
 def test_provider(body: ProviderIn, user=Depends(require_admin),
                   audit=audited("model_provider.test")):
-    """Test connection: one tiny call to the chat model and one embedding, with the
-    settings as typed (saved or not), so a role or a key can be checked before
-    switching to it. {"ok", ...} or {"ok": false, "error"}: the provider's reason.
-    Without chat_provider / embed_provider it tests the providers saved, or
-    Bedrock for both when the workspace is on the server's (the Bring your own
-    AWS form, as before)."""
+    """Test connection, with the settings as typed (saved or not), so a role or a
+    key can be checked before switching to it. FREE: each provider in use (chat,
+    embeddings, the enabled models') lists its models (models.test_connection);
+    no completion and no embedding is ever made. {"ok", "providers": [{provider,
+    label, ok, models, missing, error?}]}, or {"ok": false, "error"} when the
+    settings can't be tried. Without chat_provider / embed_provider it tests the
+    providers saved, or Bedrock for both when the workspace is on the server's
+    (the Bring your own AWS form, as before)."""
     ws = ws_of(user)
     change = body.model_dump(exclude_unset=True)
     change.pop("confirm_reindex", None)
@@ -231,21 +254,29 @@ def test_provider(body: ProviderIn, user=Depends(require_admin),
     try:
         spec = (model_providers_store.draft(ws, change)
                 or replace(models.server_spec(), workspace=ws))
+        wanted = model_providers_store.draft_enabled(ws, change)
     except (model_providers_store.Invalid, models.ProviderError) as e:
         raise HTTPException(400, str(e))
+    on = models.Models(spec)
+    wanted = wanted or [(on.provider, on.answer_name)]
     try:
-        result = {"ok": True, **models.test_connection(spec)}
-        model_providers_store.mark_tested(ws)
+        result = models.test_connection(spec, wanted)
+        if result["ok"]:
+            model_providers_store.mark_tested(ws)
     except models.ProviderError as e:
-        result = {"ok": False, "error": str(e)[:500]}
+        result = {"ok": False, "error": str(e)[:500], "providers": []}
     finally:
         models.forget(ws)                  # nothing typed here stays in a cached client
+    failed = "; ".join(f"{r['label']}: {r['error']}" for r in result["providers"]
+                       if not r["ok"])
     audit.record("workspace", ws, {"ok": result["ok"], "provider": spec.provider,
                                    "embed_provider": spec.embeddings_provider,
                                    "region": spec.region,
-                                   "auth": spec.auth, "chat_model": spec.chat_model,
+                                   "auth": spec.auth, "chat_model": on.answer_name,
                                    "embed_model": spec.embed_model,
-                                   **({} if result["ok"] else {"error": result["error"][:200]})},
+                                   "providers": [r["provider"] for r in result["providers"]],
+                                   **({} if result["ok"] else
+                                      {"error": (result.get("error") or failed)[:200]})},
                  user=user)
     return result
 

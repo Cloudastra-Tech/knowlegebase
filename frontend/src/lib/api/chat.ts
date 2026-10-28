@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/client"
 import type {
   ChatFolder,
+  ChatModels,
   ChatReply,
   ChatSearchResult,
   ChatSettings,
@@ -23,6 +24,7 @@ import type {
   ConversationSummary,
   Feedback,
   FeedbackReason,
+  ModelRef,
   Passage,
   SharedChat,
   ShareLink,
@@ -34,6 +36,7 @@ export interface StreamOptions {
   retryOf?: string // ask the question of this failed or stopped answer again
   regenerateOf?: string // a new answer beside this finished one (a new branch)
   editOf?: string // the question replaces this earlier question (a new branch)
+  model?: ModelRef // the answer model picked; refused (400) unless it's enabled
   signal?: AbortSignal // aborting stops the answer (the server saves it as stopped)
 }
 
@@ -47,7 +50,7 @@ export const chatApi = {
   async chatStream(
     question: string,
     onEvent: (e: StreamEvent) => void,
-    { conversationId, retryOf, regenerateOf, editOf, signal }: StreamOptions = {},
+    { conversationId, retryOf, regenerateOf, editOf, model, signal }: StreamOptions = {},
   ): Promise<ChatReply> {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
@@ -62,6 +65,7 @@ export const chatApi = {
         retry_of: retryOf,
         regenerate_of: regenerateOf,
         edit_of: editOf,
+        model,
       }),
       signal,
     })
@@ -96,6 +100,9 @@ export const chatApi = {
     }
     throw new ApiError(500, "The answer stream ended unexpectedly.")
   },
+
+  // The answer models the composer's picker offers (the workspace's enabled ones).
+  chatModels: () => request<ChatModels>("/models"),
 
   // A cited passage with the text around it; 404 when it's gone from the index or
   // the role the app is viewed as can't see it.

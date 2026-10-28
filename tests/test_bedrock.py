@@ -304,34 +304,35 @@ def test_a_role_that_cant_be_assumed_fails_closed_with_awss_reason(fake_aws):
 
 
 # ---- Test connection, and the settings screen's API ----------------------------------------------
-def test_test_connection_makes_one_converse_call_and_one_embedding(client, fake_aws):
+def _listing(*ids):
+    return {"modelSummaries": [{"modelArn": f"arn:aws:bedrock:{REGION}::foundation-model/{m}",
+                                "modelId": m} for m in ids]}
+
+
+def test_test_connection_lists_the_models_and_invokes_none(client, fake_aws):
+    """Free: one ListFoundationModels on the control plane. No Converse, no
+    InvokeModel (bedrock-runtime is never called)."""
     w = new_workspace()
     h = login(client, w)
-    runtime = boto3.client("bedrock-runtime", region_name=REGION, aws_access_key_id="x",
+    control = boto3.client("bedrock", region_name=REGION, aws_access_key_id="x",
                            aws_secret_access_key="y")
-    stub = Stubber(runtime)
-    stub.add_response("converse", {
-        "output": {"message": {"role": "assistant", "content": [{"text": "OK"}]}},
-        "stopReason": "end_turn", "metrics": {"latencyMs": 120},
-        "usage": {"inputTokens": 14, "outputTokens": 2, "totalTokens": 16}},
-        {"modelId": models.BEDROCK_CHAT, "system": [], "inferenceConfig": {
-            "maxTokens": 10, "temperature": 0},
-         "messages": [{"role": "user", "content": [{"text": models.TEST_PROMPT}]}]})
-    data = json.dumps({"embedding": [0.1] * 1024, "inputTextTokenCount": 2}).encode()
-    stub.add_response("invoke_model", {"body": StreamingBody(io.BytesIO(data), len(data)),
-                                       "contentType": "application/json"},
-                      {"modelId": models.BEDROCK_EMBED, "accept": "application/json",
-                       "contentType": "application/json",
-                       "body": json.dumps({"inputText": "connection test", "dimensions": 1024})})
-    fake_aws.made["stubs"]["bedrock-runtime"] = runtime
+    stub = Stubber(control)
+    stub.add_response("list_foundation_models",
+                      _listing(models.BEDROCK_CHAT, models.BEDROCK_FAST),
+                      {"byOutputModality": "TEXT"})
+    fake_aws.made["stubs"]["bedrock"] = control
     with stub:
         r = client.post("/api/admin/assistant/models/test", headers=h,
                         json={"region": REGION, "auth": "keys", "access_key_id": KEY_ID,
-                              "secret_access_key": SECRET})
+                              "secret_access_key": SECRET,
+                              "chat_models": [{"provider": "bedrock",
+                                               "model": "us.amazon.nova-micro-v1:0"}]})
         stub.assert_no_pending_responses()
     assert r.status_code == 200, r.text
-    assert r.json() == {"ok": True, "chat_model": models.BEDROCK_CHAT, "reply": "OK",
-                        "tokens": 16, "embed_model": models.BEDROCK_EMBED, "dimensions": 1024}
+    assert r.json() == {"ok": True, "providers": [
+        {"provider": "bedrock", "label": "AWS Bedrock", "ok": True, "models": 2,
+         "missing": ["us.amazon.nova-micro-v1:0"]}]}
+    assert fake_aws.runtime.calls == [] and "bedrock-runtime" not in fake_aws.made
     # Testing saves nothing but when it last worked: the workspace is still on OpenAI.
     assert models.for_workspace(w).provider == "openai"
     assert client.get("/api/admin/assistant/models", headers=h).json()["tested_at"]
@@ -341,18 +342,19 @@ def test_a_failed_test_says_why_and_is_audited(client, fake_aws):
     import audit_store
     w = new_workspace()
     h = login(client, w)
-    runtime = boto3.client("bedrock-runtime", region_name=REGION, aws_access_key_id="x",
+    control = boto3.client("bedrock", region_name=REGION, aws_access_key_id="x",
                            aws_secret_access_key="y")
-    stub = Stubber(runtime)
-    stub.add_client_error("converse", "AccessDeniedException",
-                          "You don't have access to the model with the specified model ID.")
-    fake_aws.made["stubs"]["bedrock-runtime"] = runtime
+    stub = Stubber(control)
+    stub.add_client_error("list_foundation_models", "AccessDeniedException",
+                          "User is not authorized to perform: bedrock:ListFoundationModels")
+    fake_aws.made["stubs"]["bedrock"] = control
     with stub:
         r = client.post("/api/admin/assistant/models/test", headers=h,
                         json={"region": REGION, "auth": "keys", "access_key_id": KEY_ID,
                               "secret_access_key": SECRET})
     assert r.status_code == 200
-    assert r.json()["ok"] is False and "AccessDeniedException" in r.json()["error"]
+    (row,) = r.json()["providers"]
+    assert r.json()["ok"] is False and "AccessDeniedException" in row["error"]
     (event,) = [e for e in audit_store.list_events(w, limit=20)[0]
                 if e["action"] == "model_provider.test"]
     assert event["details"]["ok"] is False
@@ -370,7 +372,8 @@ def test_the_screen_shows_the_external_id_and_policies_never_the_secret(client, 
     trust = body["trust_policy"]["Statement"][0]
     assert trust["Action"] == "sts:AssumeRole"
     assert trust["Condition"] == {"StringEquals": {"sts:ExternalId": body["external_id"]}}
-    chat, embed = body["permissions_policy"]["Statement"]
+    chat, embed, listing = body["permissions_policy"]["Statement"]
+    assert listing["Action"] == ["bedrock:ListFoundationModels"]      # Test connection
     assert chat["Action"] == ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
     # An inference profile needs the profile AND its foundation model in every region.
     assert f"arn:aws:bedrock:{REGION}:*:inference-profile/us.amazon.nova-pro-v1:0" \
