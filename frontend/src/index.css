@@ -119,7 +119,7 @@
        sheet over the white ground; floating glass is whiter and lifts what's behind it
        (--glass-lift). Muted text on light glass is a step darker (after glass-pane). */
     --glass-bg: color-mix(in oklch, white 64%, transparent);
-    --glass-bg-pane: color-mix(in oklch, oklch(0.975 0.002 165) 62%, transparent);
+    --glass-bg-pane: color-mix(in oklch, oklch(0.975 0.002 165) 66%, transparent);
     --glass-bg-strong: color-mix(in oklch, white 62%, transparent);
     --glass-bg-subtle: color-mix(in oklch, var(--card) 72%, transparent);
     --glass-bg-solid: var(--card);
@@ -129,7 +129,7 @@
     --glass-shadow: 0 12px 40px -18px oklch(0 0 0 / 22%);
     --glass-blur: 16px;
     --glass-blur-md: 12px; /* small enough that what is behind reads as soft shapes */
-    --glass-blur-pane: 8px; /* 12px cost a fifth more GPU over the moving field, and looked the same */
+    --glass-blur-pane: 16px; /* as the composer: at 8px the field's lines showed through as smudges */
     --glass-saturate: 160%;
     --glass-lift: brightness(1.12);
     --noise-opacity: 0.035;
@@ -214,7 +214,7 @@
     /* glass: smoked, lighter than the ground so it reads as a sheet, with a white
        hairline (--glass-edge) on the pane's inner edge and along the top of floating glass */
     --glass-bg: color-mix(in oklch, var(--card) 58%, transparent);
-    --glass-bg-pane: color-mix(in oklch, var(--card) 30%, transparent);
+    --glass-bg-pane: color-mix(in oklch, var(--card) 58%, transparent);
     --glass-bg-strong: color-mix(in oklch, var(--popover) 60%, transparent);
     --glass-bg-subtle: color-mix(in oklch, var(--card) 72%, transparent);
     --glass-bg-solid: var(--card);
