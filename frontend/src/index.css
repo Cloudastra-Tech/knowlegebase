@@ -480,6 +480,26 @@
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     }
+  /* No layout shift from scrollbars: every vertical scroller keeps its scrollbar's
+     room whether or not it scrolls (a screen loading in, a list growing, a dialog
+     getting long). Sideways-only scrollers (overflow-x-auto) are left alone. Thin,
+     quiet bars keep that room small. */
+  html,
+  [class*="overflow-y-auto"],
+  [class*="overflow-auto"]:not([class*="overflow-x-auto"]) {
+    scrollbar-gutter: stable;
+    }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+    }
+  /* A modal locks the page's scroll (Radix, react-remove-scroll-bar) and pads the
+     body by the scrollbar's width to make up for it: with the gutter already kept,
+     that padding would push everything left. */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+    --removed-body-scroll-bar-size: 0px;
+    }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
     }
