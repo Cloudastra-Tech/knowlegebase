@@ -1034,6 +1034,7 @@ export function ChatView({ role }: { role: Role }) {
             left edge, under the art (faint there), clear of a phone's home bar. */}
         {empty && (
           <p
+            data-slot="chat-fine-print"
             data-drift="quiet"
             data-print="hide"
             className="mx-auto w-full max-w-3xl shrink-0 px-9 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs text-pretty text-muted-foreground"

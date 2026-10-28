@@ -29,7 +29,8 @@ import { cn } from "@/lib/utils"
 
 // "Redacted drift": the empty new chat's art, in place of the chat's field (one field
 // on screen). Faint lines of made-up records drift sideways at three depths, redacted
-// (▪▪▪ · ░░, word lengths kept). Round the composer is a readable zone: about every
+// (▪▪▪ · ░░, word lengths kept), down the whole page: fainter under words, stronger
+// under glass, whose frost softens them (what's over the art says which: data-drift). Round the composer is a readable zone: about every
 // 8s one line passing through it decodes into a neutral record, faintly mint on dark,
 // and scrambles back as it leaves or after about 5s. Decodes go round the lines.
 // Focus or typing in the composer (composer-signal.ts, no React state) slows the

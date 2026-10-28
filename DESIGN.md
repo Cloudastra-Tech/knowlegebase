@@ -155,11 +155,18 @@ Three tiers, as utilities in `index.css`. No more than three blurred surfaces vi
 
 | Tier | Utility | Blur | Fill | For |
 |---|---|---|---|---|
-| Chrome | `glass` | 16px, saturate 140% | card at 66% | the phone top bar, the composer, the landing header, landing cards |
+| Chrome | `glass` | 16px, saturate 140% | card at 66% | the phone top bar, the composer and the new chat's Recent chats card (both `kb-frost`), the landing header, landing cards |
 | Floating | `glass-strong` | 12px | popover at 86% | popovers, menus, selects, tooltips, dialogs, sheets, the command palette, toasts |
 | Subtle | `glass-subtle` | none | card at 72% | the app sidebar, panels and cards inside a screen |
 
 `glass-noise` adds static grain to a large glass surface; it never animates.
+
+**Frost you can see** (`kb-frost`, `chat-motion.css`): the composer and the new chat's
+Recent chats card are the chrome tier with a thinner fill (card at 52%), a 10px blur and a
+brighter hairline (10% border, 9% top highlight on dark), so the empty chat's art reads as
+motion through them. It changes only the tier's own variables, on those two surfaces, and only
+where glass is see-through: without `backdrop-filter`, with reduced transparency or "Reduce
+effects" they are solid with no `backdrop-filter` at all.
 
 - **Fallbacks:** without `backdrop-filter`, under `prefers-reduced-transparency: reduce`, or with
   the app's "Reduce effects" (`:root[data-effects="reduced"]`, set by `setEffects()` in
@@ -204,7 +211,7 @@ text colour; import `cn` from there, never from the `cn` package itself (the sha
 | Thinking | a braille spinner plus a status line that decodes on change | 80ms frames; decode ≤ 240ms |
 | Inline loading | an ASCII spinner in place of `Loader2` | 80ms `steps()`; a static `•••` with reduced motion |
 | Empty states | 6–14 rows of hand-drawn art with real text beside it | one scan or blink, no faster than every 2s |
-| The empty new chat | "Redacted drift" (`redacted-drift.tsx`), in the chat field's place: 6–8 lines of made-up records at three depths (8–12% of the text colour), redacted (`▪▪▪ · ░░`, word lengths kept) except in a zone round the composer, where the blocks are lighter and about every 8s one line decodes (faint mint on dark, grey on Paper), going round the lines. Lines run above the heading and under the home's sections, never across words or chat rows. With a mouse, a soft reading lens (about 100px round the pointer, 84px under 640px) resolves the cells inside into the line's own record through a 170ms scramble, at most 42% of the text colour (48% on Paper) with a soft rim, and closes them again (150ms) as it moves on. A click on blank space on or near a line (within 30px; a tap takes the nearest) decodes the whole line outwards from it, readable for 8s, with one faint ring that only fades (380ms). The page says one heading and the composer; who you search as and the logging notice are the line under it | 30 fps on the ambient budget, 10–20 px/s; focus or typing slows it to 30% and draws near lines 4–8px in; the lens follows the pointer with a 60ms lerp, fine pointers that hover only; the pointer is read on the chat column (the canvas takes no events) into the scene, never React state, and a press on blank space keeps the focus where it is; fades out in 400ms when the first question is sent; a still frame with one line readable with reduced motion or "Reduce effects", where the lens and clicks do nothing. Only ever the made-up records. Never on a saved chat or a shared one |
+| The empty new chat | "Redacted drift" (`redacted-drift.tsx`), in the chat field's place, over the whole chat column, top to bottom: lines of made-up records 42–60px apart (7.5% of the height), one through the composer's middle, at three depths (8–12% of the text colour), redacted (`▪▪▪ · ░░`, word lengths kept) except in a zone round the composer, where the blocks are lighter and about every 8s one line decodes (faint mint on dark, grey on Paper), going round the lines. What sits over the art says so with `data-drift`: under words (the heading, the starters, the key hint, the fine print: `content`, `quiet`) the lines are drawn at 30%, so the words always read; under glass (`composer`, `glass`: the composer, the Recent chats card) at 180%, which the frost softens to a drift you see moving. Nothing reads under either: no decode, no lens. With a mouse, a soft reading lens (about 100px round the pointer, 84px under 640px) resolves the cells inside into the line's own record through a 170ms scramble, at most 42% of the text colour (48% on Paper) with a soft rim, and closes them again (150ms) as it moves on. A click on blank space on or near a line (within 30px; a tap takes the nearest) decodes the whole line outwards from it, readable for 8s, with one faint ring that only fades (380ms). The page says one heading and the composer; who you search as and the logging notice are the one line at its foot | 30 fps on the ambient budget, 10–20 px/s; focus or typing slows it to 30% and draws near lines 4–8px in; the lens follows the pointer with a 60ms lerp, fine pointers that hover only; the pointer is read on the chat column (the canvas takes no events) into the scene, never React state, and a press on blank space keeps the focus where it is; fades out in 400ms when the first question is sent; a still frame with one line readable with reduced motion or "Reduce effects", where the lens and clicks do nothing. Only ever the made-up records. Never on a saved chat or a shared one |
 | Section headers, timelines, progress | box-drawing rules, `├─` rows, `[██████░░░░] 62%` | static |
 | Streaming cursor | `▌` in signal | 1s blink; steady with reduced motion |
 | Landing and sign-in | the brain, the field, the ticker | 30 fps |
@@ -240,7 +247,7 @@ Tokens in `index.css` (and `lib/motion.ts` for Motion):
 | Dialog | 220ms in / 150ms out, from the centre |
 | Sheet | full-edge slide, 280 / 200ms, `ease-drawer` |
 | Screen change | content rises `--enter-y` with a fade on non-glass children, 200ms; no exit |
-| New chat → first question | the empty chat is centred: the heading and the composer in the middle of the column, the home's sections under them. Sending moves the composer down to its place in one transform (FLIP, `reveal` 240ms, `ease-out-strong`), at once with reduced motion or "Reduce effects"; the heading and the sections go at once. Opening a saved chat or New chat changes the layout without moving anything |
+| New chat → first question | the empty chat is centred: the heading and the composer in the middle of the column, the recent chats under them. Sending moves the composer down to its place in one transform (FLIP, `reveal` 240ms, `ease-out-strong`), at once with reduced motion or "Reduce effects"; the heading and the sections go at once. Opening a saved chat or New chat changes the layout without moving anything |
 | Chat | a question just sent is pinned to the top and its answer grows below it; nothing scrolls while it streams, and "Jump to latest" is instant with reduced motion. New messages rise 6px; history never animates (a chat opened from history shows Jump to latest without its entrance until it's scrolled or asked in); citations stagger once on completion |
 | Toast | Sonner's own motion |
 
@@ -341,14 +348,21 @@ Borders are 1px hairlines.
   Never an edge bar or stripe. The index progress is a 2px signal line along the top of the
   content; the strips (trial, support, deletion) sit above the screen.
 - **New chat home** (`chat-home.tsx`, under the composer on the empty new chat, as on
-  Claude.ai): the starter questions as chips; Recent chats, the last five (four on a phone),
-  title and how long ago, with View all (Search chats); then Spaces (All company, My space,
-  team spaces; the one asked in pressed) and Folders (the ones with chats; a folder opens
-  Search chats on its chats). Ghost buttons in muted text, a soft background on hover, no
-  icons on chat rows, Lucide icons on chips. A part with nothing in it isn't drawn. The
-  space under the composer is shared 1 : 1.45 with the space above the heading, so the
-  composer sits a little above the middle and the sections scroll on their own if they
-  don't fit.
+  Claude.ai): one column, the composer's width and left edge, on an 8px rhythm. Someone with
+  chats sees Recent chats, the last five (four on a phone), in one `kb-frost` glass card: a
+  small muted label with View all (Search chats) as a quiet ghost button in its row, then
+  rows of a Lucide chat icon, the title and how long ago (muted, tabular, on the right), a
+  soft background on hover. Someone without chats sees the starter questions instead, as
+  quiet left-aligned chips (and, on a first run, where they come from and the sample
+  handbook), drawn only once the chats are in so they never show and then go. No Spaces or
+  Folders: the composer's space chip and the sidebar have them. The keys ("Enter to send…",
+  "Esc to stop") are a small line under the composer, on its inner left edge, only while it's
+  focused and empty or an answer is being written; the row keeps its height. Who you search
+  as and the logging notice are one muted line at the foot of the page, on the same left
+  edge, clear of a phone's home bar. The space under the composer is shared 1 : 1.45 with
+  the space above the heading, so the composer sits a little above the middle; at 1366 × 728
+  everything fits without scrolling, and the recent chats scroll on their own if they
+  don't.
 - **Kit:** `/__kit` (development only) shows every piece in either theme over the app's field;
   `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
 - **Screen shell:** `ScreenHeader` (breadcrumbs, the `h2`, description, actions) and `Panel`
@@ -391,10 +405,15 @@ Borders are 1px hairlines.
   and still with reduced motion; once a question is sent it's gone and the chat's field moves;
   a saved chat opened from an empty one has no drift and no running animation.
 - `frontend/e2e/home-center.spec.ts`: the empty chat's composer is near the middle at 1280
-  and 390, with the fine print under it; recent chats are listed and one opens; sending moves
-  the composer down in one move of 250ms at most (none with reduced motion) and the questions
-  pin to the top; a mouse over the art reads the lines near it, a click decodes a line and
-  keeps the composer's focus; with reduced motion neither changes a pixel.
+  and 390, with the fine print at the foot of the page on its left edge; the key hint only
+  while it's focused and empty, its row keeping its height; the art's canvas is the whole
+  column with lines from top to bottom, and the composer has a backdrop blur (`none` with
+  "Reduce effects"); recent chats are in one glass card on the composer's width and edge,
+  with no Spaces, Folders or starters, and one opens; sending moves the composer down in one
+  move of 250ms at most (none with reduced motion) and the questions pin to the top; a mouse
+  over the art reads the lines near it, above the heading and beside the recent chats, a
+  click decodes a line and keeps the composer's focus; with reduced motion neither changes a
+  pixel.
 - `frontend/e2e/ux-a11y.spec.ts`: axe on every main screen at 1280 and 390; at 390 the page fits
   and no scrolling box inside it is pushed sideways (`overflowingScrollers`; a box meant to scroll
   sideways carries an `overflow-x-auto` or `overflow-auto` class).

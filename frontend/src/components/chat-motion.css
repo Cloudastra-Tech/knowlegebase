@@ -57,7 +57,15 @@
   :root:not([data-effects="reduced"]) .kb-frost {
     --glass-bg: var(--glass-bg-solid);
     --glass-blur: 0px;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
+}
+/* Solid is solid: no backdrop filter at all (a zero blur with the saturate still
+   costs a backdrop pass and makes the surface a backdrop root). */
+:root[data-effects="reduced"] .kb-frost {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* A step line arriving (step_start): up 4px and in. Lines that start together are
