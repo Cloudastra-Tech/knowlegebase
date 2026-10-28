@@ -483,12 +483,32 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
   const uploadLimits = data?.upload_limits ?? null
   const { status: indexStatus, refresh: refreshIndex } = useIndexStatus()
   const indexing = indexStatus?.status === "indexing"
-  // ?draft=<id>: one of the assistant's drafts (from Knowledge or Insights).
+  // ?draft=<id>: one of the assistant's drafts (from Knowledge or Insights); ?tab=drafts
+  // the drafts with none open. In the address, so the breadcrumbs (Documents › Drafts ›
+  // its title) and a link can say where it is. The other filters are the list's own.
   const [params, setParams] = useSearchParams()
   const pickedDraft = params.get("draft")
-  const [filter, setFilter] = useState<"all" | Access | "drafts">(() =>
-    pickedDraft ? "drafts" : "all",
-  )
+  const showDrafts = !!pickedDraft || params.get("tab") === "drafts"
+  const [listFilter, setListFilter] = useState<"all" | Access>("all")
+  const filter = showDrafts ? "drafts" : listFilter
+  // The address's other parts (?jobs=1) stay as they are.
+  const setView = (view: { tab?: string; draft?: string }) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        next.delete("tab")
+        next.delete("draft")
+        if (view.draft) next.set("draft", view.draft)
+        else if (view.tab) next.set("tab", view.tab)
+        return next
+      },
+      { replace: true },
+    )
+  const setFilter = (next: "all" | Access | "drafts") => {
+    if (next === "drafts") return setView({ tab: "drafts" })
+    setListFilter(next)
+    if (showDrafts) setView({})
+  }
   // The picked document as the latest list has it: null until it's there, and
   // once it's gone.
   const [picked, setPicked] = useState<{ access: Access; name: string } | null>(null)
@@ -500,8 +520,7 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
       q.state.data?.drafts.some((d) => d.status === "generating") ? 3000 : false,
   })
   const draftRows = draftList?.drafts ?? []
-  const pickDraft = (id: string | null) =>
-    setParams(id ? { draft: id } : {}, { replace: true })
+  const pickDraft = (id: string | null) => setView(id ? { draft: id } : { tab: "drafts" })
   // ?jobs=1: the background jobs, opened (the header's "See the background jobs").
   const jobsOpen = admin && params.get("jobs") === "1"
   const setJobsOpen = (open: boolean) =>
@@ -534,12 +553,12 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
   }
 
   const visible = docs.filter((d) => filter === "all" || d.access === filter)
-  const showDrafts = filter === "drafts"
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 md:h-full">
       <ScreenHeader
         title="Documents"
+        crumbs={{ name: draftRows.find((d) => d.id === pickedDraft)?.title }}
         description="Add, edit or remove what the assistant answers from. Changes are indexed automatically."
         actions={
           <>
@@ -633,7 +652,6 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
               key={pickedDraft}
               id={pickedDraft}
               onPublished={(key) => {
-                pickDraft(null)
                 const [access, ...rest] = key.split("/")
                 setFilter("all")
                 refresh({ access: access as Access, name: rest.join("/") })

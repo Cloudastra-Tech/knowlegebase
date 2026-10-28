@@ -26,6 +26,7 @@ import {
   type Message,
 } from "@/components/chat-answer"
 import { composerSignal } from "@/components/ascii/composer-signal"
+import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
 import { LoggingNotice } from "@/components/logging-notice"
@@ -86,6 +87,7 @@ import {
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
+import { chatCrumbs } from "@/lib/breadcrumbs"
 import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
 import { CHOOSE_SPACE, FOCUS_COMPOSER, setThinking } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
@@ -738,6 +740,7 @@ export function ChatView({ role }: { role: Role }) {
         <ChatHeader
           conversation={conversation}
           title={title}
+          space={space && { id: space.id, label: spaceLabel(space) }}
           busy={loading}
           onRenamed={(t) =>
             setSession({
@@ -1127,13 +1130,15 @@ function UserMessage({
   )
 }
 
-// Above the chat: its title and its menu (Share / Download / Print / Rename / Delete);
+// Above the chat: the space it's asked in and its title, as breadcrumbs (the space
+// only from sm up), and its menu (Share / Download / Print / Rename / Delete);
 // New chat is in the app's sidebar, rail or not. On a phone, the top bar: the menu
 // (the sidebar's sheet) and New chat too. Printed, only the title is left (index.css,
 // data-print).
 function ChatHeader({
   conversation,
   title,
+  space,
   busy,
   onRenamed,
   onShare,
@@ -1142,6 +1147,7 @@ function ChatHeader({
 }: {
   conversation: Conversation | ConversationSummary | null
   title: string
+  space: { id: string; label: string } | null
   busy: boolean
   onRenamed: (title: string) => void
   onShare: () => void
@@ -1191,7 +1197,12 @@ function ChatHeader({
   return (
     <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:glass max-md:z-20 max-md:h-12 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:pt-[env(safe-area-inset-top)]">
       <PhoneMenuButton data-print="hide" />
-      <p className="mx-auto min-w-0 max-w-3xl flex-1 truncate px-2 text-sm font-medium">{title}</p>
+      <div className="mx-auto flex min-w-0 max-w-3xl flex-1 px-2">
+        <Breadcrumbs
+          trail={{ crumbs: chatCrumbs(space, title), back: null }}
+          className="[&_[data-slot=breadcrumb-page]]:font-medium max-sm:[&_li:not(:last-child)]:hidden print:[&_li:not(:last-child)]:hidden"
+        />
+      </div>
       {/* On a phone only: the sidebar's New chat is a tap away anywhere else. */}
       <Button
         variant="ghost"

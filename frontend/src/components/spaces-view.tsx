@@ -1,8 +1,7 @@
 import { useRef, useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link, useNavigate } from "react-router"
+import { Link, useNavigate, useSearchParams } from "react-router"
 import {
-  ArrowLeft,
   ChevronRight,
   FileText,
   Folder,
@@ -217,27 +216,45 @@ function NewSpaceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   )
 }
 
+// A space's tabs, each with its address (?tab=), so the breadcrumbs say which is open
+// and a link can open one.
+const SPACE_TABS = {
+  files: "Files",
+  sources: "Sources",
+  instructions: "Instructions",
+  members: "Members",
+} as const
+type SpaceTab = keyof typeof SPACE_TABS
+
+function tabsOf(space: SpaceDetail): SpaceTab[] {
+  return space.kind === "personal"
+    ? ["files", "sources", "instructions"]
+    : ["sources", "instructions", "members"]
+}
+
 function SpaceScreen({ spaceId }: { spaceId: string }) {
   const space = useQuery({ ...queries.space(spaceId), retry: false })
   const askIn = useAskIn()
+  const [params, setParams] = useSearchParams()
   const data = space.data
   const owner = data?.my_role === "owner"
+  const tabs = data ? tabsOf(data) : []
+  const asked = params.get("tab") as SpaceTab | null
+  const tab = asked && tabs.includes(asked) ? asked : tabs[0]
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 text-muted-foreground">
-        <Link to="/spaces">
-          <ArrowLeft data-icon="inline-start" /> Spaces
-        </Link>
-      </Button>
       {space.isError ? (
-        <AsciiEmptyState art="search" title="That space doesn't exist, or you're not in it." />
+        <>
+          <ScreenHeader title="Space not found" />
+          <AsciiEmptyState art="search" title="That space doesn't exist, or you're not in it." className="mt-6" />
+        </>
       ) : !data ? (
         <Skeleton className="h-48 rounded-2xl" />
       ) : (
         <>
           <ScreenHeader
-            eyebrow={`~/spaces/${spaceLabel(data).toLowerCase().replace(/\s+/g, "-")}`}
+            crumbs={{ name: spaceLabel(data), tab: SPACE_TABS[tab] }}
             title={
               <>
                 <SpaceIcon space={data} className="size-5 shrink-0 text-muted-foreground" />
@@ -255,12 +272,17 @@ function SpaceScreen({ spaceId }: { spaceId: string }) {
               </Button>
             }
           />
-          <Tabs defaultValue={data.kind === "personal" ? "files" : "sources"} className="mt-6">
+          <Tabs
+            value={tab}
+            onValueChange={(v) => setParams({ tab: v }, { replace: true })}
+            className="mt-6"
+          >
             <TabsList>
-              {data.kind === "personal" && <TabsTrigger value="files">Files</TabsTrigger>}
-              <TabsTrigger value="sources">Sources</TabsTrigger>
-              <TabsTrigger value="instructions">Instructions</TabsTrigger>
-              {data.kind === "team" && <TabsTrigger value="members">Members</TabsTrigger>}
+              {tabs.map((t) => (
+                <TabsTrigger key={t} value={t}>
+                  {SPACE_TABS[t]}
+                </TabsTrigger>
+              ))}
             </TabsList>
             {data.kind === "personal" && (
               <TabsContent value="files" className="mt-4">

@@ -182,7 +182,7 @@ a landing, sign-in or auth heading.
 | Role | Spec |
 |---|---|
 | Screen title | Sans 600, 24px, tracking −0.025em, `text-balance`; one per screen, an `h2` (the e2e specs wait for it) |
-| Eyebrow / path | Mono 12px, lowercase, muted: `~/admin/access`, mirroring the URL |
+| Breadcrumbs | Sans 14px, muted, the page itself in the foreground; lucide `ChevronRight` separators (see "Breadcrumbs") |
 | Section label | Mono 12px with a rule: `── providers ─────────` |
 | Body / UI | Sans 400, 14px / 1.43 |
 | Reading (answers, passages, shared chats) | Sans 400, 15px / 1.7 (`text-reading`), at most 68ch, `text-pretty`. Never mono, never over moving ASCII |
@@ -341,9 +341,22 @@ Borders are 1px hairlines.
   content; the strips (trial, support, deletion) sit above the screen.
 - **Kit:** `/__kit` (development only) shows every piece in either theme over the app's field;
   `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
-- **Screen shell:** `ScreenHeader` (path eyebrow, the `h2`, description, actions) and `Panel`
+- **Screen shell:** `ScreenHeader` (breadcrumbs, the `h2`, description, actions) and `Panel`
   (`subtle` by default; `glass` straight on the field; `solid` for reading and tables).
   `GlassPanel` is a bare surface of one tier.
+- **Breadcrumbs** (`components/breadcrumbs.tsx` on shadcn's `Breadcrumb`; the model is
+  `lib/breadcrumbs.ts`, one for every screen, from the URL plus what the screen passes:
+  a space's name, its open tab, a draft's title). Over every screen's title: the sidebar's
+  screen first (`Spaces › Marketing team › Sources`, `Access › Webhooks`, `Insights › Not
+  found`, `Documents › Drafts › Q3 handbook`), the personal screens under `Account`, a menu
+  of the account menu's screens. `<nav aria-label="Breadcrumb">` with an `<ol>`; every
+  ancestor a router link (instant, `markInstantNav`; the chat stays as it was), the page
+  plain text with `aria-current="page"`. Hover underlines; no background, no edge. Middle
+  crumbs truncate at 12rem; past three crumbs the middle fold into a `…` menu. A tab with
+  its own URL (Access, Insights, a space's `?tab=`) is the last crumb, and the tab bar
+  stays. On a phone a detail view (a space, a draft, a shared chat) shows `← Spaces`, its
+  logical parent (never history), in their place. The chat's header is `All company ›
+  title` or the space's name, the space from `sm` up.
 - **ASCII pieces** (`components/ascii/*`): `AsciiField`, `AppBackdrop`, `AsciiSpinner` (for
   `Loader2`), `AsciiThinking`, `ScrambleText`, `AsciiEmptyState`, `AsciiDivider`,
   `AsciiProgress`, `AsciiLoader`, `RedactedDrift` (the empty chat; the composer's focus and
