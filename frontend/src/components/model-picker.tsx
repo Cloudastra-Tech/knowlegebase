@@ -1,5 +1,6 @@
 import { Check, ChevronDown } from "lucide-react"
 
+import { ProviderMark } from "@/components/provider-mark"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -54,6 +55,7 @@ export function ModelPicker({
           aria-label={`Model: ${current.label}. Change model`}
           className="h-7 max-w-44 gap-1 rounded-full px-2.5 text-xs font-normal text-muted-foreground"
         >
+          <ProviderMark provider={current.provider} className="size-3" />
           <span className="truncate">{current.label}</span>
           <ChevronDown className="size-3 opacity-60" />
         </Button>
@@ -72,6 +74,7 @@ export function ModelPicker({
                 key={`${m.provider}:${m.model}`}
                 onSelect={() => onChange({ provider: m.provider, model: m.model })}
               >
+                <ProviderMark provider={m.provider} className="text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate">{m.label}</span>
                 <span className="text-xs text-muted-foreground">{TIER_LABEL[m.tier]}</span>
                 <Check className={sameModel(m, current) ? "" : "invisible"} />
