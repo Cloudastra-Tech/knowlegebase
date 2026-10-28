@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
@@ -377,15 +377,20 @@ describe("inline citations", () => {
       "GET /api/passages/c1": {
         ...HANDBOOK,
         text: HANDBOOK.snippet,
-        before: "Refund policy:\n",
-        after: "\nAfter 30 days, refunds are account credit.",
+        before: "### Refund policy\n\n",
+        after: "\n\n* After 30 days, refunds are **account credit**.",
       },
     })
     show({ state: "answered", text: ANSWER, sources: [HANDBOOK, DRIVE] })
     await userEvent.setup().click(screen.getAllByRole("button", { name: /^Source 1:/ })[0])
     const dialog = await screen.findByRole("dialog")
     await waitFor(() => expect(dialog).toHaveTextContent("refunds are account credit"))
-    expect(dialog.querySelector("mark")).toHaveTextContent(HANDBOOK.snippet)
+    expect(within(dialog).getByRole("region", { name: "Cited passage" })).toHaveTextContent(HANDBOOK.snippet)
+    // The document's markdown is rendered, not shown as its syntax.
+    expect(within(dialog).getByRole("heading", { name: "Refund policy" })).toBeInTheDocument()
+    expect(within(dialog).getByText("account credit", { selector: "strong" })).toBeInTheDocument()
+    expect(dialog).not.toHaveTextContent("**")
+    expect(dialog).not.toHaveTextContent("###")
     expect(screen.queryByRole("link", { name: "Open original" })).not.toBeInTheDocument()
   })
 
@@ -395,7 +400,7 @@ describe("inline citations", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /^Open source 2/ }))
     const dialog = await screen.findByRole("dialog")
     await waitFor(() => expect(dialog).toHaveTextContent("This is the passage as it was cited"))
-    expect(dialog.querySelector("mark")).toHaveTextContent(DRIVE.snippet)
+    expect(within(dialog).getByRole("region", { name: "Cited passage" })).toHaveTextContent(DRIVE.snippet)
     expect(dialog).toHaveTextContent("Restricted")
     expect(screen.getByRole("link", { name: "Open original" })).toHaveAttribute("href", DRIVE.url)
   })
