@@ -115,20 +115,31 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
-    /* glass: frosted white */
-    --glass-bg: color-mix(in oklch, white 72%, transparent);
-    --glass-bg-strong: color-mix(in oklch, white 88%, transparent);
+    /* glass: frosted white. The pane (the sidebar) is a touch grey so it reads as a
+       sheet over the white ground; floating glass is whiter and lifts what's behind it
+       (--glass-lift). Muted text on light glass is a step darker (after glass-pane). */
+    --glass-bg: color-mix(in oklch, white 64%, transparent);
+    --glass-bg-pane: color-mix(in oklch, oklch(0.975 0.002 165) 62%, transparent);
+    --glass-bg-strong: color-mix(in oklch, white 62%, transparent);
     --glass-bg-subtle: color-mix(in oklch, var(--card) 72%, transparent);
     --glass-bg-solid: var(--card);
     --glass-border: oklch(0 0 0 / 8%);
-    --glass-highlight: oklch(1 0 0 / 70%);
-    --glass-shadow: 0 12px 40px -18px oklch(0 0 0 / 18%);
+    --glass-edge: oklch(0 0 0 / 9%);
+    --glass-highlight: oklch(1 0 0 / 80%);
+    --glass-shadow: 0 12px 40px -18px oklch(0 0 0 / 22%);
     --glass-blur: 16px;
-    --glass-blur-md: 12px;
-    --glass-saturate: 140%;
+    --glass-blur-md: 12px; /* small enough that what is behind reads as soft shapes */
+    --glass-blur-pane: 8px; /* 12px cost a fifth more GPU over the moving field, and looked the same */
+    --glass-saturate: 160%;
+    --glass-lift: brightness(1.12);
     --noise-opacity: 0.035;
     /* ascii */
     --ascii-ambient: oklch(0.145 0 0 / 5%);
+    /* The app field at full ink, under the sidebar only: its glyphs are dots and dashes, so
+       at the ambient ink a blur averages them to nothing. Beside the sidebar the mask
+       takes it back to the ambient ink (--ascii-beside; ascii.css). */
+    --ascii-backdrop: oklch(0.145 0 0);
+    --ascii-beside: 5%;
     --ascii-field: oklch(0.145 0 0 / 12%);
     --ascii-ink: oklch(0.145 0 0 / 80%);
     --ascii-signal: var(--signal);
@@ -191,7 +202,7 @@
     --chart-3: oklch(0.6 0.02 165);
     --chart-4: oklch(0.84 0.13 85);
     --chart-5: oklch(0.5 0.01 165);
-    /* Opaque until the sidebar itself turns glass, with its blur. */
+    /* The sidebar itself is the pane glass (index.css glass-pane); these are its rows. */
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-primary: var(--signal);
@@ -200,16 +211,22 @@
     --sidebar-accent-foreground: var(--foreground);
     --sidebar-border: var(--border);
     --sidebar-ring: var(--signal);
-    /* glass */
-    --glass-bg: color-mix(in oklch, var(--card) 66%, transparent);
-    --glass-bg-strong: color-mix(in oklch, var(--popover) 86%, transparent);
+    /* glass: smoked, lighter than the ground so it reads as a sheet, with a white
+       hairline (--glass-edge) on the pane's inner edge and along the top of floating glass */
+    --glass-bg: color-mix(in oklch, var(--card) 58%, transparent);
+    --glass-bg-pane: color-mix(in oklch, var(--card) 30%, transparent);
+    --glass-bg-strong: color-mix(in oklch, var(--popover) 60%, transparent);
     --glass-bg-subtle: color-mix(in oklch, var(--card) 72%, transparent);
     --glass-bg-solid: var(--card);
-    --glass-border: oklch(1 0 0 / 8%);
-    --glass-highlight: oklch(1 0 0 / 6%);
-    --glass-shadow: 0 12px 40px -16px oklch(0 0 0 / 55%);
+    --glass-border: oklch(1 0 0 / 9%);
+    --glass-edge: oklch(1 0 0 / 10%);
+    --glass-highlight: oklch(1 0 0 / 9%);
+    --glass-shadow: 0 16px 48px -16px oklch(0 0 0 / 60%);
+    --glass-lift: brightness(0.85);
     /* ascii */
     --ascii-ambient: oklch(0.93 0 0 / 9%); /* the app's background field (the chat's is about the same) */
+    --ascii-backdrop: oklch(0.93 0 0);
+    --ascii-beside: 9%;
     --ascii-field: oklch(0.93 0 0 / 16%); /* the landing's field */
     --ascii-ink: oklch(0.93 0 0 / 85%);
     --ascii-signal: var(--signal);
@@ -222,6 +239,7 @@
     :root,
     .dark {
         --glass-bg: var(--glass-bg-solid);
+        --glass-bg-pane: var(--glass-bg-solid);
         --glass-bg-strong: var(--popover);
         --glass-bg-subtle: var(--card);
     }
@@ -230,21 +248,38 @@
     :root,
     .dark {
         --glass-bg: var(--glass-bg-solid);
+        --glass-bg-pane: var(--glass-bg-solid);
         --glass-bg-strong: var(--popover);
         --glass-bg-subtle: var(--card);
         --glass-blur: 0px;
         --glass-blur-md: 0px;
+        --glass-blur-pane: 0px;
         --noise-opacity: 0;
     }
 }
 :root[data-effects="reduced"],
 :root[data-effects="reduced"] .dark {
     --glass-bg: var(--glass-bg-solid);
+    --glass-bg-pane: var(--glass-bg-solid);
     --glass-bg-strong: var(--popover);
     --glass-bg-subtle: var(--card);
     --glass-blur: 0px;
     --glass-blur-md: 0px;
+    --glass-blur-pane: 0px;
     --noise-opacity: 0;
+}
+/* Solid glass draws no backdrop at all: a blur(0) is still a pass over what's behind. */
+@media (prefers-reduced-transparency: reduce) {
+    .glass,
+    .glass-strong,
+    .glass-pane {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+}
+:root[data-effects="reduced"] :is(.glass, .glass-strong, .glass-pane) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
 }
 /* Blur costs more on phones and tablets. */
 @media (pointer: coarse) {
@@ -253,8 +288,9 @@
     }
 }
 
-/* The three glass tiers (DESIGN.md, "Glass"): at most three blurred surfaces at once,
-   never one inside another. Chrome: the header, the chat sidebar, the composer. */
+/* The glass tiers (DESIGN.md, "Glass"): never one inside another. Chrome: the sticky
+   strip at the top of a screen, the phone top bar, the composer, the landing header
+   and cards. */
 @utility glass {
     position: relative;
     isolation: isolate;
@@ -264,15 +300,32 @@
     border: 1px solid var(--glass-border);
     box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
 }
-/* Floating: popovers, menus, tooltips, dialogs, sheets, toasts. */
+/* Floating: popovers, menus, tooltips, dialogs, sheets, the palette, toasts. What's
+   behind is lifted (light) or dimmed (dark) a little as well as blurred, which keeps
+   muted text on it at AA over any content. */
 @utility glass-strong {
     position: relative;
     isolation: isolate;
     background-color: var(--glass-bg-strong);
-    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
-    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate)) var(--glass-lift);
+    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate)) var(--glass-lift);
     border: 1px solid var(--glass-border);
     box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
+}
+/* Pane: the app sidebar, docked to the window's edge. The fill and blur only: the
+   sidebar draws its one hairline (--glass-edge) on the edge that faces the content.
+   The app's field runs under it at full ink (ascii.css), so there's something to frost. */
+@utility glass-pane {
+    background-color: var(--glass-bg-pane);
+    -webkit-backdrop-filter: blur(var(--glass-blur-pane)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-pane)) saturate(var(--glass-saturate));
+}
+/* Muted text on light glass is a step darker: muted-foreground is 4.7:1 on white, so
+   anything frosted behind it (the field, a line of text) would take it under 4.5:1.
+   0.5 keeps 4.9:1 or more over blurred body text (DESIGN.md, "Glass"). Dark glass
+   needs nothing: its muted text is 6:1 and up there. */
+:root:not(.dark) :is(.glass, .glass-strong, .glass-pane) {
+    --muted-foreground: oklch(0.5 0 0);
 }
 /* Subtle: panels and cards inside a screen. No blur: the field is masked under content. */
 @utility glass-subtle {
@@ -384,10 +437,12 @@
     --success: oklch(0.45 0.1 158);
     --warning: oklch(0.5 0.12 70);
     --glass-bg: transparent;
+    --glass-bg-pane: transparent;
     --glass-bg-strong: transparent;
     --glass-bg-subtle: transparent;
     --glass-blur: 0px;
     --glass-blur-md: 0px;
+    --glass-blur-pane: 0px;
     --glass-shadow: none;
     --noise-opacity: 0;
   }

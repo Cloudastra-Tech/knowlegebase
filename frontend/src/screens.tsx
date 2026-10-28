@@ -14,6 +14,7 @@ import { toast } from "sonner"
 import { AsciiThinking } from "@/components/ascii/ascii-thinking"
 import type { InsightsTab } from "@/components/insights-view"
 import { LazyPage } from "@/components/lazy-page"
+import { ScreenStrip } from "@/components/screen-strip"
 import type { AccessTab } from "@/components/sign-in-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, drafts, type User } from "@/lib/api"
@@ -273,11 +274,14 @@ export function HrOnly({ admin = false }: { admin?: boolean }) {
 // mouse, its content rises 6px and fades in (200ms, index.css "Screens arriving"),
 // once its code has loaded; there's no exit. From the keyboard (the command palette,
 // a shortcut: lib/instant-nav.ts) it's simply there. Decided as the screen mounts,
-// so it holds even when the code arrives later.
+// so it holds even when the code arrives later. Once its title scrolls away, a frosted
+// strip at the top keeps it in view (ScreenStrip).
 export function Screen({ children }: { children: ReactNode }) {
   const [enter] = useState(() => !isInstant())
+  const scroller = useRef<HTMLDivElement>(null)
   return (
-    <div className="h-full overflow-y-auto" data-print="flow">
+    <div ref={scroller} className="h-full overflow-y-auto" data-print="flow">
+      <ScreenStrip scroller={scroller} />
       <LazyPage>
         <div data-screen data-enter={enter || undefined} className="h-full" data-print="flow">
           {children}

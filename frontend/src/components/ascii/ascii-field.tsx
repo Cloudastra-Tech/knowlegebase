@@ -25,7 +25,7 @@ export type AsciiFieldProps = {
   mode?: "hero" | "ambient" | "still"
   renderer?: "pre" | "canvas" // ambient defaults to canvas, the others to pre
   palette?: string // the ramp, from empty to dense
-  tone?: "ambient" | "field" | "ink" // the --ascii-* ink; none: the current text colour
+  tone?: "ambient" | "backdrop" | "field" | "ink" // the --ascii-* ink; none: the current text colour
   mask?: "none" | "reading-column" | "radial" | "bottom-fade"
   reactive?: boolean // a ripple follows the pointer (the landing; never in the app)
   pulseEvent?: string // a window event that sends one ripple out (canvas only)
@@ -38,6 +38,7 @@ const PULSE_S = 1.2
 
 const TONES = {
   ambient: "text-(--ascii-ambient)",
+  backdrop: "text-(--ascii-backdrop)", // the app field, at twice the ink, masked back (ascii.css)
   field: "text-(--ascii-field)",
   ink: "text-(--ascii-ink)",
 }

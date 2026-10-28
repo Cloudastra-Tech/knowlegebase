@@ -64,8 +64,10 @@ spacing:
   section: "80px"
   section-lg: "112px"
 glass:
-  chrome: { blur: "16px", saturate: "140%", fill: "card at 66%" }
-  floating: { blur: "12px", saturate: "140%", fill: "popover at 86%" }
+  # dark fill; light ("Paper") in comments
+  pane: { blur: "8px", saturate: "160%", fill: "card at 30%" } # light: oklch(0.975) at 62%
+  chrome: { blur: "16px", saturate: "160%", fill: "card at 58%" } # light: white at 64%
+  floating: { blur: "12px", saturate: "160%", backdrop: "brightness(0.85)", fill: "popover at 60%" } # light: white at 62%, brightness(1.12)
   subtle: { blur: "none", fill: "card at 72%" }
 motion:
   ease-out-strong: "cubic-bezier(0.23, 1, 0.32, 1)"
@@ -150,30 +152,57 @@ glyph at its highest alpha, not on the flat token.
 
 ## Glass
 
-Three tiers, as utilities in `index.css`. No more than three blurred surfaces visible at once
-(plus one overlay), and never glass inside glass.
+Four tiers, as utilities in `index.css`. Never glass inside glass. The look is real blur over
+real content with one hairline: no glow, no coloured edge, no gradient.
 
-| Tier | Utility | Blur | Fill | For |
+| Tier | Utility | Blur | Fill: dark / Paper | For |
 |---|---|---|---|---|
-| Chrome | `glass` | 16px, saturate 140% | card at 66% | the phone top bar, the composer and the new chat's Recent chats card (both `kb-frost`), the landing header, landing cards |
-| Floating | `glass-strong` | 12px | popover at 86% | popovers, menus, selects, tooltips, dialogs, sheets, the command palette, toasts |
-| Subtle | `glass-subtle` | none | card at 72% | the app sidebar, panels and cards inside a screen |
+| Pane | `glass-pane` | 8px, saturate 160% | card at 30% / oklch(0.975) at 62% | the app sidebar, open and as the rail; one `--glass-edge` hairline on its inner edge |
+| Chrome | `glass` | 16px, saturate 160% | card at 58% / white at 64% | the sticky screen strip (`ScreenStrip`), the phone top bar, the composer and the new chat's Recent chats card, the landing header and cards |
+| Floating | `glass-strong` | 12px, saturate 160%, what's behind dimmed to 0.85 (lifted to 1.12 on Paper) | popover at 60% / white at 62% | popovers, menus, selects, hover cards, tooltips, ⌘K, dialogs, sheets (the phone's sidebar too), toasts (no dim or lift: Sonner's own classes) |
+| Subtle | `glass-subtle` | none | card at 72% | panels and cards inside a screen |
 
-`glass-noise` adds static grain to a large glass surface; it never animates.
+`glass-noise` adds static grain to a large glass surface; it never animates. The dialog, sheet
+and palette overlays are a plain 40% dim, so the floating glass above them frosts the screen.
 
-**Frost you can see** (`kb-frost`, `chat-motion.css`): the composer and the new chat's
-Recent chats card are the chrome tier with a thinner fill (card at 52%), a 10px blur and a
-brighter hairline (10% border, 9% top highlight on dark), so the empty chat's art reads as
-motion through them. It changes only the tier's own variables, on those two surfaces, and only
-where glass is see-through: without `backdrop-filter`, with reduced transparency or "Reduce
-effects" they are solid with no `backdrop-filter` at all.
-
+- **Something to frost.** The app's field (and the chat's) runs full-bleed, under the sidebar.
+  Its glyphs are dots and dashes, which a blur averages to nothing at the ambient ink, so it's
+  drawn at full ink and masked back to the ambient ink beside the sidebar (`ascii.css`): only
+  the pane sees the strong field, as a slow soft frost. The empty new chat's drift does
+  the same in its own way: it runs under the sidebar too, and its lines are drawn at full ink
+  under the pane, the composer and the Recent chats card, so all three frost a strong line
+  (`redacted-drift.tsx`, `data-drift`).
+- **Contrast** (on the worst realistic composite: blurred body text at 25% of its ink, or the
+  field at full ink): muted text is 6.0:1 or more on dark glass, foreground 12:1. On Paper the
+  muted text on glass is a step darker (`oklch(0.5)`; plain 0.556 is only 4.7:1 on white, and
+  any frost takes it under 4.5:1), which keeps it at 4.9:1 or more. A large solid patch
+  (a primary button) right under a menu's muted text can still take it under 4.5:1; "Reduce
+  effects" makes every tier solid for anyone who needs that.
 - **Fallbacks:** without `backdrop-filter`, under `prefers-reduced-transparency: reduce`, or with
   the app's "Reduce effects" (`:root[data-effects="reduced"]`, set by `setEffects()` in
-  `lib/ascii-loop.ts`), every tier goes solid and the blur goes. Touch screens get 12px.
-- **Cost is blurred area times frame rate.** No full-viewport blur: dialog and sheet overlays are
-  a plain dim. The app field runs at 12 fps and rests while scrolling, which is what keeps the
-  glass above it cheap.
+  `lib/ascii-loop.ts`), every tier goes solid and `backdrop-filter` is `none` (not a 0px blur,
+  which is still a pass). Touch screens get 12px chrome. Print is solid.
+- **Budget, measured** (headless Chrome on the real GPU, an Intel UHD 620, 1280×800, dark; 5s of
+  wheel scrolling, 10s idle, 10s idle with the account menu open; the median of 3 runs). The
+  first pass had a 12px pane, rejected for the activity scroll:
+
+  | Screen, phase | Before (no blur on the sidebar) | Now | First pass, 12px pane |
+  |---|---|---|---|
+  | /chat, scrolling | 58 fps, p95 16.8ms, GPU 436ms/s | 59 fps, 16.7ms, 425 | 59 fps, 16.8ms, 533 |
+  | /chat, idle | 60 fps, 16.8ms, GPU 106 | 60 fps, 16.7ms, 49 | 60 fps, 16.7ms, 84 |
+  | /knowledge, idle | 60 fps, 16.8ms, GPU 153 | 60 fps, 16.7ms, 50 | 59 fps, 16.8ms, 62 |
+  | /admin/activity, scrolling (under the strip) | 60 fps, 16.7ms, GPU 813 | 60 fps, 16.8ms, 619 | **48 fps, 33.4ms**, 976 |
+  | any, a menu open 10s | 60 fps, GPU < 1 | 60 fps, GPU < 1 | 60 fps, GPU < 1 |
+  | "Reduce effects", idle | | 60 fps, GPU 0 to 0.3 | |
+
+  GPU busy time moves by half between runs on a laptop; the frame rate and p95 are the
+  steady signal.
+
+  So the cap is no longer a count of blurred surfaces: it's **one pane (the sidebar) at 8px,
+  plus the chrome pieces (16px) and one floating stack (12px)**. A pane blur over 8px over the
+  moving field, or a second large pane, is what to measure before adding. No full-viewport blur.
+  The app field runs at 12 fps and rests while scrolling and while a menu or dialog holds the
+  page, which is what keeps the glass above it cheap: with a menu open nothing re-blurs.
 - **The backdrop-root trap.** An ancestor with `opacity < 1`, `filter`, `mask`, `clip-path` or
   `will-change` on those becomes the backdrop root, and the blur inside it stops seeing the page.
   Never animate `opacity` on a wrapper that contains glass; animate the content inside it.
@@ -207,11 +236,11 @@ text colour; import `cn` from there, never from the `cn` package itself (the sha
 
 | Place | What | Motion |
 |---|---|---|
-| App background | one fixed field at `--ascii-ambient`, at full strength out to 36rem from the centre (the widest screen's edge, so the sides read as ASCII at 1280), fading to 15% by 26rem in, under the content; 15% everywhere on a phone. The chat draws its own (`chat-backdrop.tsx`, 22% under the reading column, a mint glow while thinking) | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
+| App background | one fixed field, full-bleed: under the sidebar at full ink (`--ascii-backdrop`) for its glass to frost, and beside it at `--ascii-ambient` (the mask's `--ascii-beside`), at that strength out to 36rem from the content's centre (the widest screen's edge, so the sides read as ASCII at 1280), fading to 15% by 26rem in, under the content; 15% everywhere on a phone. The chat draws its own the same way (`chat-backdrop.tsx`, 22% under the reading column, a mint glow while thinking) | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
 | Thinking | a braille spinner plus a status line that decodes on change | 80ms frames; decode ≤ 240ms |
 | Inline loading | an ASCII spinner in place of `Loader2` | 80ms `steps()`; a static `•••` with reduced motion |
 | Empty states | 6–14 rows of hand-drawn art with real text beside it | one scan or blink, no faster than every 2s |
-| The empty new chat | "Redacted drift" (`redacted-drift.tsx`), in the chat field's place, over the whole chat column, top to bottom: lines of made-up records 42–60px apart (7.5% of the height), one through the composer's middle, at three depths (8–12% of the text colour), redacted (`▪▪▪ · ░░`, word lengths kept) except in a zone round the composer, where the blocks are lighter and about every 8s one line decodes (faint mint on dark, grey on Paper), going round the lines. What sits over the art says so with `data-drift`: under words (the heading, the starters, the key hint, the fine print: `content`, `quiet`) the lines are drawn at 30%, so the words always read; under glass (`composer`, `glass`: the composer, the Recent chats card) at 180%, which the frost softens to a drift you see moving. Nothing reads under either: no decode, no lens. With a mouse, a soft reading lens (about 100px round the pointer, 84px under 640px) resolves the cells inside into the line's own record through a 170ms scramble, at most 42% of the text colour (48% on Paper) with a soft rim, and closes them again (150ms) as it moves on. A click on blank space on or near a line (within 30px; a tap takes the nearest) decodes the whole line outwards from it, readable for 8s, with one faint ring that only fades (380ms). The page says one heading and the composer; who you search as and the logging notice are the one line at its foot | 30 fps on the ambient budget, 10–20 px/s; focus or typing slows it to 30% and draws near lines 4–8px in; the lens follows the pointer with a 60ms lerp, fine pointers that hover only; the pointer is read on the chat column (the canvas takes no events) into the scene, never React state, and a press on blank space keeps the focus where it is; fades out in 400ms when the first question is sent; a still frame with one line readable with reduced motion or "Reduce effects", where the lens and clicks do nothing. Only ever the made-up records. Never on a saved chat or a shared one |
+| The empty new chat | "Redacted drift" (`redacted-drift.tsx`), in the chat field's place, fixed to the window (under the sidebar too, as the chat's field is), top to bottom: lines of made-up records 42–60px apart (7.5% of the height), one through the composer's middle, at three depths (8–12% of the text colour), redacted (`▪▪▪ · ░░`, word lengths kept) except in a zone round the composer, where the blocks are lighter and about every 8s one line decodes (faint mint on dark, grey on Paper), going round the lines. What sits over the art says so with `data-drift`: under words (the heading, the starters, the key hint, the fine print: `content`, `quiet`) the lines are drawn at 30%, so the words always read; under glass (`composer`, `glass`: the composer, the Recent chats card) and under the sidebar's pane at full ink (64–96% of the text colour), since a blur averages faint dashes to a flat tone: the glass, not a faded line, keeps the words on it readable. Nothing reads under either: no decode, no lens. With a mouse, a soft reading lens (about 100px round the pointer, 84px under 640px) resolves the cells inside into the line's own record through a 170ms scramble, at most 42% of the text colour (48% on Paper) with a soft rim, and closes them again (150ms) as it moves on. A click on blank space on or near a line (within 30px; a tap takes the nearest) decodes the whole line outwards from it, readable for 8s, with one faint ring that only fades (380ms). The page says one heading and the composer; who you search as and the logging notice are the one line at its foot | 30 fps on the ambient budget, 10–20 px/s; focus or typing slows it to 30% and draws near lines 4–8px in; the lens follows the pointer with a 60ms lerp, fine pointers that hover only; the pointer is read on the chat column (the canvas takes no events) into the scene, never React state, and a press on blank space keeps the focus where it is; fades out in 400ms when the first question is sent; a still frame with one line readable with reduced motion or "Reduce effects", where the lens and clicks do nothing. Only ever the made-up records. Never on a saved chat or a shared one |
 | Section headers, timelines, progress | box-drawing rules, `├─` rows, `[██████░░░░] 62%` | static |
 | Streaming cursor | `▌` in signal | 1s blink; steady with reduced motion |
 | Landing and sign-in | the brain, the field, the ticker | 30 fps |
@@ -344,12 +373,14 @@ Borders are 1px hairlines.
   of icons with tooltips that never goes away (kept in `localStorage` `kb.sidebar`; ⌘B at
   once, the button slides the panel 200ms `ease-drawer` while the reserved width snaps). On a
   phone, a sheet from the left behind a 48px top bar (menu, the screen's name, New chat).
+  The sidebar is the pane glass (`glass-pane`) over the field, open and as the rail, with one
+  hairline (`--glass-edge`) on its inner edge; the phone's sheet is the floating tier.
   Hover is a soft background; the open screen a soft background and its icon in the signal.
   Never an edge bar or stripe. The index progress is a 2px signal line along the top of the
   content; the strips (trial, support, deletion) sit above the screen.
 - **New chat home** (`chat-home.tsx`, under the composer on the empty new chat, as on
   Claude.ai): one column, the composer's width and left edge, on an 8px rhythm. Someone with
-  chats sees Recent chats, the last five (four on a phone), in one `kb-frost` glass card: a
+  chats sees Recent chats, the last five (four on a phone), in one glass card (the chrome tier, as the composer): a
   small muted label with View all (Search chats) as a quiet ghost button in its row, then
   rows of a Lucide chat icon, the title and how long ago (muted, tabular, on the right), a
   soft background on hover. Someone without chats sees the starter questions instead, as
@@ -367,7 +398,10 @@ Borders are 1px hairlines.
   `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
 - **Screen shell:** `ScreenHeader` (breadcrumbs, the `h2`, description, actions) and `Panel`
   (`subtle` by default; `glass` straight on the field; `solid` for reading and tables).
-  `GlassPanel` is a bare surface of one tier.
+  `GlassPanel` is a bare surface of one tier. `ScreenStrip` (in `Screen`, from 768px): once
+  the `h2` has scrolled under the top, a 44px chrome-glass strip with the title fades in
+  (150ms) over the content scrolling beneath it, lined up with the title; `aria-hidden`,
+  since the `h2` is the title.
 - **Breadcrumbs** (`components/breadcrumbs.tsx` on shadcn's `Breadcrumb`; the model is
   `lib/breadcrumbs.ts`, one for every screen, from the URL plus what the screen passes:
   a space's name, its open tab, a draft's title). Over every screen's title: the sidebar's
