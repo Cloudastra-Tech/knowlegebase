@@ -40,15 +40,9 @@ describe("CommandPalette", () => {
     expect(item("Knowledge")).toHaveAttribute("aria-selected", "true")
   })
 
-  it("opens on a folder's chats from the new chat's home", async () => {
+  it("opens on chats alone from the sidebar's Search chats", async () => {
     mockApi({
-      "GET /api/conversations": {
-        conversations: [
-          { id: "c1", title: "Leave policy", updated_at: 2, folder_id: "f1" },
-          { id: "c2", title: "Laptop setup", updated_at: 1, folder_id: null },
-        ],
-        folders: [{ id: "f1", name: "Policies", sort: 0, created_at: 1 }],
-      },
+      "GET /api/conversations": { conversations: [{ id: "c1", title: "Leave policy", updated_at: 1 }] },
       "GET /api/prompts": { prompts: [] },
     })
     render(
@@ -58,9 +52,55 @@ describe("CommandPalette", () => {
         </MemoryRouter>,
       ),
     )
-    window.dispatchEvent(new CustomEvent(OPEN_SEARCH, { detail: { folderId: "f1" } }))
+    window.dispatchEvent(new CustomEvent(OPEN_SEARCH))
     await waitFor(() => expect(item("Leave policy")).not.toBeNull())
-    expect(screen.getByText("Policies")).toBeInTheDocument() // the group's heading
-    expect(item("Laptop setup")).toBeNull()
+    expect(item("New chat")).toBeNull()
+    expect(item("Knowledge")).toBeNull()
+  })
+
+  // Go to: the sidebar's screens, gated the same way (lib/app-screens.ts).
+  const goTo = async (user: User, role: "hr" | "public") => {
+    mockApi({
+      "GET /api/conversations": { conversations: [] },
+      "GET /api/prompts": { prompts: [] },
+    })
+    render(
+      withProviders(
+        <MemoryRouter>
+          <CommandPalette user={user} role={role} />
+        </MemoryRouter>,
+      ),
+    )
+    await userEvent.setup().keyboard("{Control>}k{/Control}")
+    const group = (await screen.findByText("Go to")).closest("[cmdk-group]")!
+    return [...group.querySelectorAll("[cmdk-item]")].map((el) => el.textContent)
+  }
+
+  it("goes to every screen an admin's sidebar has, Verified and Assistant too", async () => {
+    expect(await goTo(ADMIN, "hr")).toEqual([
+      "Chat",
+      "Knowledge",
+      "Documents",
+      "Integrations",
+      "Spaces",
+      "My prompts",
+      "Insights",
+      "Verified",
+      "Assistant",
+      "Access",
+    ])
+  })
+
+  it("keeps Assistant and Access from HR", async () => {
+    const hr = { username: "hr@acme.example", role: "hr" } as User
+    const hrScreens = await goTo(hr, "hr")
+    expect(hrScreens).toContain("Verified")
+    expect(hrScreens).not.toContain("Assistant")
+    expect(hrScreens).not.toContain("Access")
+  })
+
+  it("shows a member no admin screens", async () => {
+    const member = { username: "pat@acme.example", role: "public" } as User
+    expect(await goTo(member, "public")).toEqual(["Chat", "Knowledge", "Spaces", "My prompts"])
   })
 })

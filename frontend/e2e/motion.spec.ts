@@ -21,6 +21,7 @@ async function fieldPixels(page: Page) {
 
 async function pickTheme(page: Page, name: "Dark" | "Light" | "System") {
   await page.getByRole("button", { name: /^Account, / }).click()
+  await page.getByRole("menuitem", { name: "Appearance" }).click()
   await page.getByRole("menuitemradio", { name }).click()
   await page.keyboard.press("Escape")
 }

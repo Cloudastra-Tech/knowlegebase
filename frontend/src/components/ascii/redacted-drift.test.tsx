@@ -328,4 +328,36 @@ describe("RedactedDrift and the pointer", () => {
     expect(clears).toBe(drawn)
     expect(rings).toBe(0)
   })
+
+  it("on a phone decodes nothing by itself, only a line that's tapped", () => {
+    // A 390px column, the composer at its foot.
+    RECTS.composer = [16, 680, 358, 84]
+    RECTS.content = [16, 80, 358, 200]
+    RECTS[""] = [0, 0, 390, 800]
+    try {
+      const { container } = render(<Column />)
+      const root = container.firstElementChild!
+      const art = container.querySelector('[data-mode="drift"]')
+      // A minute of drifting: no line reads.
+      let read = 0
+      for (let i = 0; i < 60 * 60; i++) {
+        glyphs = []
+        step()
+        read += readable(glyphs).length
+      }
+      expect(read).toBe(0)
+      expect(art).not.toHaveAttribute("data-decoding")
+
+      const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+      point(root, "pointerdown", 200, y, "touch")
+      point(root, "click", 200, y)
+      step(40)
+      expect(art).toHaveAttribute("data-decoding")
+      expect(readable(frame()).length).toBeGreaterThan(0)
+    } finally {
+      RECTS.composer = [150, 680, 700, 84]
+      RECTS.content = [150, 80, 700, 200]
+      delete RECTS[""]
+    }
+  })
 })

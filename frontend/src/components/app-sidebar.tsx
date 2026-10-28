@@ -1,5 +1,5 @@
-import { useEffect, type ComponentProps } from "react"
-import { ChevronsUpDown, Menu, Search, SquarePen } from "lucide-react"
+import { useEffect, useState, useSyncExternalStore, type ComponentProps } from "react"
+import { ChevronRight, ChevronsUpDown, Menu, Search, SquarePen } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router"
 
 import { AccountMenu } from "@/components/account-menu"
@@ -7,6 +7,7 @@ import { ChatHistory } from "@/components/chat-sidebar"
 import { IndexStatusText } from "@/components/index-progress"
 import { SpaceIcon, SpaceSwitcher } from "@/components/space-switcher"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   Sidebar,
   SidebarContent,
@@ -44,6 +45,38 @@ function useNewChat() {
     }
     if (isMobile) setOpenMobile(false)
   }
+}
+
+// The Admin group, folded under its label or not: as last chosen on this device, or,
+// never chosen, folded on a short window (760px tall or less, a 13" laptop), where its
+// rows would leave the chats a sliver, and open on a taller one.
+const ADMIN_KEY = "kb.sidebar.admin"
+const SHORT = "(max-height: 760px)"
+function storedAdminOpen(): boolean | null {
+  try {
+    const kept = localStorage.getItem(ADMIN_KEY)
+    return kept === "open" ? true : kept === "closed" ? false : null
+  } catch {
+    return null
+  }
+}
+function onShortChange(onChange: () => void) {
+  const mql = window.matchMedia(SHORT)
+  mql.addEventListener("change", onChange)
+  return () => mql.removeEventListener("change", onChange)
+}
+function useAdminOpen() {
+  const short = useSyncExternalStore(onShortChange, () => window.matchMedia(SHORT).matches, () => false)
+  const [chosen, setChosen] = useState(storedAdminOpen)
+  const choose = (open: boolean) => {
+    setChosen(open)
+    try {
+      localStorage.setItem(ADMIN_KEY, open ? "open" : "closed")
+    } catch {
+      /* private mode: just not remembered */
+    }
+  }
+  return [chosen ?? !short, choose] as const
 }
 
 // The palette's "Show or hide the sidebar" (the sidebar's own ⌘B works too).
@@ -144,6 +177,7 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
   const newChat = useNewChat()
   const { isMobile, setOpenMobile, state } = useSidebar()
   const rail = !isMobile && state === "collapsed"
+  const [adminOpen, setAdminOpen] = useAdminOpen()
   const { main, admin } = screensFor(user, role, chatAt)
   const current = currentSection(location.pathname, [...main, ...admin])
   const onChat = isUnder(location.pathname, "/chat")
@@ -207,17 +241,31 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        {/* Its label folds it (at once: often from the keyboard). The rail has no
+            label, so there it's always open. */}
         {admin.length > 0 && (
-          <SidebarGroup className="py-1 group-data-[collapsible=icon]:px-3">
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {admin.map((item) => (
-                  <NavLink key={item.section} item={item} open={item.section === current} />
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <Collapsible open={rail || adminOpen} onOpenChange={setAdminOpen} className="group/admin">
+            <SidebarGroup className="py-1 group-data-[collapsible=icon]:px-3">
+              <SidebarGroupLabel
+                asChild
+                className="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground pointer-coarse:h-10"
+              >
+                <CollapsibleTrigger disabled={rail}>
+                  Admin
+                  <ChevronRight className="ml-auto group-data-[state=open]/admin:rotate-90" />
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+              <CollapsibleContent>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {admin.map((item) => (
+                      <NavLink key={item.section} item={item} open={item.section === current} />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </CollapsibleContent>
+            </SidebarGroup>
+          </Collapsible>
         )}
       </nav>
 
@@ -252,7 +300,8 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
 }
 
 // On a phone, above a screen (the chat has its own, in its header): the menu, the
-// screen's name and New chat.
+// screen's name and New chat. A quiet solid bar with a hairline, not glass: nothing
+// scrolls under it, so there'd be nothing to frost.
 export function PhoneBar({ chatAt }: { chatAt: string }) {
   const user = useUser()
   const role = useActiveRole()
@@ -262,7 +311,7 @@ export function PhoneBar({ chatAt }: { chatAt: string }) {
   return (
     <div
       data-print="hide"
-      className="glass z-20 flex h-12 shrink-0 items-center gap-1 rounded-none border-x-0 border-t-0 px-2 pt-[env(safe-area-inset-top)] md:hidden"
+      className="z-20 flex h-12 shrink-0 items-center gap-1 border-b bg-background px-2 pt-[env(safe-area-inset-top)] md:hidden"
     >
       <PhoneMenuButton />
       <p className="min-w-0 flex-1 truncate px-1 text-sm font-medium">

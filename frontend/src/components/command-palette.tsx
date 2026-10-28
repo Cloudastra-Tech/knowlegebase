@@ -1,19 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import {
-  BarChart3,
-  BookOpen,
-  FileText,
-  Keyboard,
-  Layers,
-  MessageSquare,
-  MessageSquareText,
-  PanelLeft,
-  Plug,
-  ShieldCheck,
-  SquarePen,
-} from "lucide-react"
+import { Keyboard, Layers, MessageSquareText, PanelLeft, SquarePen } from "lucide-react"
 
 import {
   Command,
@@ -28,13 +16,13 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import type { Role, User } from "@/lib/api"
+import { screensFor } from "@/lib/app-screens"
 import {
   FOCUS_COMPOSER,
   INSERT_PROMPT,
   MOD_KEY as MOD,
   OPEN_SEARCH,
   tellChat as tell,
-  type SearchDetail,
   TOGGLE_SIDEBAR,
 } from "@/lib/chat-events"
 import { useChatPort } from "@/lib/chat-bridge"
@@ -59,14 +47,12 @@ const isMod = (e: KeyboardEvent) => e.metaKey || e.ctrlKey
 // role can't read now is never found), start a new one, or jump to a screen (C27).
 // Also the app-wide shortcuts: ⌘⇧O new chat, ⌘/ the shortcuts list.
 // chatAt: the conversation the chat was last at ("Go to Chat" goes back to it).
-// The sidebar's Search chats opens it with chats alone (OPEN_SEARCH); a folder on the
-// new chat's home opens it on that folder's chats, until something is typed.
+// The sidebar's Search chats opens it with chats alone (OPEN_SEARCH).
 export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; role: Role; chatAt?: string }) {
   const navigate = useNavigate()
   const chatPort = useChatPort()
   const [open, setOpen] = useState(false)
   const [chatsOnly, setChatsOnly] = useState(false)
-  const [folderId, setFolderId] = useState<string | null>(null)
   const [help, setHelp] = useState(false)
   const [query, setQuery] = useState("")
   const [q, setQ] = useState("")
@@ -106,9 +92,8 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
         setHelp((h) => !h)
       }
     }
-    const onSearch = (e: Event) => {
+    const onSearch = () => {
       setChatsOnly(true)
-      setFolderId((e as CustomEvent<SearchDetail | undefined>).detail?.folderId ?? null)
       setOpen(true)
     }
     window.addEventListener("keydown", onKey)
@@ -128,21 +113,14 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
     fn()
   }
 
+  // The sidebar's screens, as this account sees them (lib/app-screens.ts, so the two
+  // never disagree on who sees what), with the personal ones before the admin group.
+  const { main, admin } = screensFor(user, role, chatAt)
   const screens = [
-    { to: chatAt, label: "Chat", icon: MessageSquare },
-    { to: "/knowledge", label: "Knowledge", icon: BookOpen },
+    ...main,
     { to: "/spaces", label: "Spaces", icon: Layers },
     { to: "/prompts", label: "My prompts", icon: MessageSquareText },
-    ...(role === "hr"
-      ? [
-          { to: "/documents", label: "Documents", icon: FileText },
-          { to: "/integrations", label: "Integrations", icon: Plug },
-          { to: "/admin/insights", label: "Insights", icon: BarChart3 },
-        ]
-      : []),
-    ...(role === "hr" && user.role === "admin"
-      ? [{ to: "/admin/sign-in", label: "Access", icon: ShieldCheck }]
-      : []),
+    ...admin,
   ]
   const words = q.toLowerCase()
   const matches = (label: string) => !words || label.toLowerCase().includes(words)
@@ -151,11 +129,9 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
   const savedPrompts = chatsOnly
     ? []
     : (prompts.data?.prompts ?? []).filter((p) => matches(p.title)).slice(0, 5)
-  const folder = folderId ? recent.data?.folders?.find((f) => f.id === folderId) : undefined
   const chats = q
     ? (found.data ?? []).map((r) => ({ id: r.conversation_id, title: r.title, snippet: r.snippet }))
     : (recent.data?.conversations ?? [])
-        .filter((c) => !folder || c.folder_id === folder.id)
         .slice(0, chatsOnly ? 20 : 6)
         .map((c) => ({ id: c.id, title: c.title, snippet: "" }))
   const shownScreens = chatsOnly ? [] : screens.filter((s) => matches(s.label))
@@ -180,7 +156,6 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
           if (!o) {
             setQuery("")
             setChatsOnly(false)
-            setFolderId(null)
           }
         }}
         title={chatsOnly ? "Search chats" : "Search and go"}
@@ -231,7 +206,7 @@ export function CommandPalette({ user, role, chatAt = "/chat" }: { user: User; r
             </CommandGroup>
           )}
           {chats.length > 0 && (
-            <CommandGroup heading={q ? "Chats" : folder ? folder.name : "Recent chats"}>
+            <CommandGroup heading={q ? "Chats" : "Recent chats"}>
               {chats.map((c) => (
                 <CommandItem
                   key={c.id}

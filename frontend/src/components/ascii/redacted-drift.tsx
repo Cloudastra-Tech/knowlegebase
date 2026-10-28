@@ -34,6 +34,8 @@ import { cn } from "@/lib/utils"
 // which: data-drift). Round the composer is a readable zone: about every 8s one line
 // passing through it decodes into a neutral record, faintly mint on dark,
 // and scrambles back as it leaves or after about 5s. Decodes go round the lines.
+// On a phone (a column under 640px) nothing decodes by itself, which on so small a
+// screen was too busy: a tap decodes a line, as below.
 // Focus or typing in the composer (composer-signal.ts, no React state) slows the
 // drift to about 30% and draws the nearest lines a few px towards it.
 //
@@ -88,7 +90,8 @@ const SCRAMBLE_ALPHA = 0.24
 // cell scrambles coming into it and going out (ms), and how strongly it reads (below
 // a decode, which is the signal's).
 const LENS_R = 104
-const LENS_R_SMALL = 84 // under 640px
+const LENS_R_SMALL = 84 // under PHONE
+const PHONE = 640 // a column narrower than this (px): a phone's sizes, and no zone decodes
 const LENS_FOLLOW = 0.06
 const LENS_IN = 170
 const LENS_OUT = 150
@@ -301,7 +304,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     W = r.width
     H = r.height
     origin = { x: r.left, y: r.top }
-    lens.r = W < 640 ? LENS_R_SMALL : LENS_R
+    lens.r = W < PHONE ? LENS_R_SMALL : LENS_R
     cv.width = Math.max(1, Math.round(W * dpr))
     cv.height = Math.max(1, Math.round(H * dpr))
     cv.style.width = `${W}px`
@@ -343,7 +346,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     if (!ink.fg) restyle()
     for (const d of depths) {
       // A step smaller on a phone, so a whole record fits the narrower zone.
-      d.px = d.size * (W < 640 ? 0.85 : 1)
+      d.px = d.size * (W < PHONE ? 0.85 : 1)
       d.font = `${d.px}px ${s.fontFamily}`
       if (ctx) {
         ctx.font = d.font
@@ -705,9 +708,9 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         ctx.globalAlpha = 1
       }
     }
-    if (!still && !decode) {
+    if (!still && !decode && W >= PHONE) {
       nextDecodeAt ??= now + FIRST_DECODE
-      // Nothing fits the zone just now (often, on a phone): look again shortly.
+      // Nothing fits the zone just now (often, on a narrow window): look again shortly.
       if (now >= nextDecodeAt) {
         dueAt ??= now
         if (startDecode(now, false)) dueAt = null

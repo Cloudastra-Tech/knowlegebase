@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   ChevronsUpDown,
   CreditCard,
+  Eye,
   History,
   KeyRound,
   Layers,
@@ -11,6 +12,7 @@ import {
   MessageSquareText,
   MonitorSmartphone,
   Plug,
+  SunMoon,
 } from "lucide-react"
 import { Link } from "react-router"
 import { toast } from "sonner"
@@ -37,6 +39,9 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
@@ -53,10 +58,45 @@ const initialsOf = (name: string) =>
     .slice(0, 2)
     .toUpperCase()
 
+// A submenu, on a desktop. A phone has no room beside the menu for one (it would run
+// off the screen's edge) but has the height, so there its items are in the menu, under
+// `heading` when they have none of their own.
+function MenuGroup({
+  inline,
+  trigger,
+  heading,
+  className,
+  children,
+}: {
+  inline: boolean
+  trigger: ReactNode
+  heading?: string
+  className?: string
+  children: ReactNode
+}) {
+  if (inline) {
+    return (
+      <>
+        {heading && (
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{heading}</DropdownMenuLabel>
+        )}
+        {children}
+      </>
+    )
+  }
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>{trigger}</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className={className}>{children}</DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
+
 // The foot of the app's sidebar: who's signed in (the avatar, the name, the workspace
 // and the role the app is viewed as), opening the account menu: View as (HR and admin
-// accounts), the personal screens, how long chats are kept, the theme and Reduce
-// effects, and signing out. Only the avatar in the collapsed rail.
+// accounts), the personal screens, how long chats are kept, Appearance (the theme and
+// Reduce effects), and signing out. View as and Appearance are submenus (MenuGroup),
+// so the menu fits a 13" laptop's height. Only the avatar in the collapsed rail.
 export function AccountMenu() {
   const user = useUser()
   const { role, setRole, signedOut } = useAuth()
@@ -135,13 +175,25 @@ export function AccountMenu() {
             {canAdmin && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                  View as
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={role} onValueChange={(v) => setRole(v as Role)}>
-                  <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                <MenuGroup
+                  inline={isMobile}
+                  heading="View as"
+                  className="w-44"
+                  trigger={
+                    <>
+                      <Eye />
+                      <span className="flex-1">View as</span>
+                      <span className="text-xs text-muted-foreground">
+                        {activeRole === "hr" ? "HR / Admin" : "Public"}
+                      </span>
+                    </>
+                  }
+                >
+                  <DropdownMenuRadioGroup value={role} onValueChange={(v) => setRole(v as Role)}>
+                    <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </MenuGroup>
               </>
             )}
             <DropdownMenuSeparator />
@@ -194,7 +246,17 @@ export function AccountMenu() {
               </>
             )}
             <DropdownMenuSeparator />
-            <ThemeMenu />
+            <MenuGroup
+              inline={isMobile}
+              className="w-52"
+              trigger={
+                <>
+                  <SunMoon /> Appearance
+                </>
+              }
+            >
+              <ThemeMenu />
+            </MenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut}>
               <LogOut /> Sign out
