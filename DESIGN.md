@@ -399,6 +399,15 @@ Borders are 1px hairlines.
   the space above the heading, so the composer sits a little above the middle; at 1366 × 728
   everything fits without scrolling, and the recent chats scroll on their own if they
   don't.
+- **Landing** (`landing-page.tsx`, `landing-visuals.tsx`): the hero (the brain, the ticker),
+  then four sections that each show one thing only this product does: an answer with
+  its sources (`ChatDemo`), an access rule at work (`AccessDemo`), where the model runs and
+  what the question log keeps (`QuestionLog`: an email scrambles into `[REDACTED_EMAIL]`,
+  the mask `pii.py` really writes), and the connector list from `connectors/registry.py`
+  with its marks, grouped. Then one closing band. No eyebrows, no icon-tile grids, no
+  marquees; the serif phrase is in the hero only. The demos cycle only on screen, stop
+  cycling once someone picks a tab, and show their end state with reduced motion or
+  "Reduce effects".
 - **Settings** (`components/settings/*`, `lib/settings-sections.ts`): everything
   personal, one URL per section, `/settings/<section>`: General (profile, appearance),
   Chats (retention and sharing; an admin viewing as HR changes them), Connections,

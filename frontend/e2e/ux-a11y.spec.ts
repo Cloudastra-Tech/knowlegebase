@@ -50,6 +50,20 @@ async function settle(page: Page) {
   await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0, { timeout: 10_000 })
 }
 
+test("the landing page has no serious accessibility problems", async ({ page }) => {
+  for (const size of [DESKTOP, PHONE]) {
+    await page.setViewportSize(size)
+    await page.goto("/")
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
+    // Down the page once, so each demo has drawn its first frame.
+    for (const id of ["answer", "access", "privacy", "sources", "start"]) {
+      await page.locator(`#${id}`).scrollIntoViewIfNeeded()
+    }
+    expect(await serious(page)).toEqual([])
+    expect(await fitsWidth(page)).toBe(true)
+  }
+})
+
 test("the sign-in page has no serious accessibility problems", async ({ page }) => {
   for (const size of [DESKTOP, PHONE]) {
     await page.setViewportSize(size)
