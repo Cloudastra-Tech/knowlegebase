@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react-router"
@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { PhoneMenuButton } from "@/components/app-sidebar"
 import { AttachButton, AttachmentChips } from "@/components/attachment-chips"
 import {
   AssistantMessage,
@@ -27,7 +28,6 @@ import {
 import { composerSignal } from "@/components/ascii/composer-signal"
 import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
-import { ChatSidebar } from "@/components/chat-sidebar"
 import { LoggingNotice } from "@/components/logging-notice"
 import { SampleDocsToggle } from "@/components/onboarding-checklist"
 import { usePromptPicker } from "@/components/prompt-menu"
@@ -70,7 +70,6 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
-import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
@@ -87,7 +86,8 @@ import {
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
-import { CHOOSE_SPACE, FOCUS_COMPOSER, setThinking, TOGGLE_SIDEBAR } from "@/lib/chat-events"
+import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
+import { CHOOSE_SPACE, FOCUS_COMPOSER, setThinking } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
 import { dur, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
@@ -199,20 +199,10 @@ const typing = (el: Element | null) =>
   el instanceof HTMLElement &&
   (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))
 
-// The palette's "Toggle sidebar" (the sidebar's own ⌘B works too).
-function SidebarEvents() {
-  const { toggleSidebar } = useSidebar()
-  useEffect(() => {
-    window.addEventListener(TOGGLE_SIDEBAR, toggleSidebar)
-    return () => window.removeEventListener(TOGGLE_SIDEBAR, toggleSidebar)
-  }, [toggleSidebar])
-  return null
-}
-
 // The chat. /chat is a new conversation; /chat/:conversationId a saved one, loaded
 // from the server (so a reload shows it again). The first question of a new one
-// saves it and moves the address to its id. The history sidebar is on its left
-// (a Sheet on phones).
+// saves it and moves the address to its id. Its history is in the app's sidebar
+// (app-sidebar.tsx), which reaches it through lib/chat-bridge.tsx.
 export function ChatView({ role }: { role: Role }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -395,6 +385,32 @@ export function ChatView({ role }: { role: Role }) {
     window.addEventListener(CHOOSE_SPACE, onChoose)
     return () => window.removeEventListener(CHOOSE_SPACE, onChoose)
   }, [])
+
+  // The app's sidebar: what it shows of the chat, and what it asks of it
+  // (lib/chat-bridge.ts).
+  const port = useChatPort()
+  const forSidebar: ChatActions = {
+    open: (id) => open(`/chat/${id}`),
+    newChat,
+    chooseSpace,
+    // The chat here was deleted from the sidebar: a new chat instead, without leaving
+    // the screen that's open.
+    deleted: (id) => {
+      if (id !== urlId) return
+      if (onChat) open("/chat")
+      else {
+        abort.current?.abort()
+        setSession(null)
+        setKeptId(null)
+      }
+    },
+  }
+  useLayoutEffect(() => {
+    port?.setActions(forSidebar)
+  })
+  useEffect(() => {
+    port?.setState({ conversationId: urlId, spaceId, busy: loading })
+  }, [port, urlId, spaceId, loading])
 
   // A new chat is saved (in the chosen space) before its first question or file.
   async function saveNewChat() {
@@ -716,17 +732,7 @@ export function ChatView({ role }: { role: Role }) {
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
 
   return (
-    <SidebarProvider className="relative h-full min-h-0" data-print="flow">
-      <SidebarEvents />
-      <ChatSidebar
-        activeId={urlId}
-        spaceId={spaceId}
-        onSpace={chooseSpace}
-        busy={loading}
-        onOpen={(id) => open(`/chat/${id}`)}
-        onNewChat={newChat}
-        onDeleted={(id) => id === urlId && open("/chat")}
-      />
+    <div className="relative flex h-full min-h-0 w-full" data-print="flow">
       <div className="relative isolate flex min-w-0 flex-1 flex-col" data-print="flow">
         <ChatBackdrop empty={empty} leaving={artLeaving} />
         <ChatHeader
@@ -1001,7 +1007,7 @@ export function ChatView({ role }: { role: Role }) {
           messageId={sharing.messageId}
         />
       )}
-    </SidebarProvider>
+    </div>
   )
 }
 
@@ -1121,8 +1127,10 @@ function UserMessage({
   )
 }
 
-// Above the chat: the history button, its title, New chat, and Share / Download / Print /
-// Rename / Delete. Printed, only the title is left (index.css, data-print).
+// Above the chat: its title and its menu (Share / Download / Print / Rename / Delete);
+// New chat is in the app's sidebar, rail or not. On a phone, the top bar: the menu
+// (the sidebar's sheet) and New chat too. Printed, only the title is left (index.css,
+// data-print).
 function ChatHeader({
   conversation,
   title,
@@ -1181,28 +1189,19 @@ function ChatHeader({
   }
 
   return (
-    <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarTrigger
-            aria-label="Chat history"
-            data-print="hide"
-            className="text-muted-foreground pointer-coarse:size-10"
-          />
-        </TooltipTrigger>
-        <TooltipContent>Chat history</TooltipContent>
-      </Tooltip>
+    <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:glass max-md:z-20 max-md:h-12 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:pt-[env(safe-area-inset-top)]">
+      <PhoneMenuButton data-print="hide" />
       <p className="mx-auto min-w-0 max-w-3xl flex-1 truncate px-2 text-sm font-medium">{title}</p>
+      {/* On a phone only: the sidebar's New chat is a tap away anywhere else. */}
       <Button
         variant="ghost"
-        size="sm"
-        className="text-muted-foreground pointer-coarse:h-10"
+        size="icon"
+        className="size-10 text-muted-foreground md:hidden"
         aria-label="New chat"
         data-print="hide"
         onClick={onNewChat}
       >
         <SquarePen />
-        <span className="hidden sm:inline">New chat</span>
       </Button>
       {conversation && (
         <DropdownMenu>

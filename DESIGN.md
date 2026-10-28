@@ -134,7 +134,7 @@ reading as colour.
 | `signal` / `signal-foreground` | live, cited, focused, done |
 | `success`, `warning`, `destructive` | status; always with a glyph as well as the colour |
 | `chart-1` … `chart-5` | charts: signal first, then teal, grey-green, amber, grey |
-| `sidebar-*` | the chat sidebar; `sidebar-primary` is the signal |
+| `sidebar-*` | the app sidebar; `sidebar-primary` is the signal |
 | `ascii-ambient`, `ascii-field`, `ascii-ink`, `ascii-signal` | the app's background field (9% on dark, 5% on Paper), the landing field (16%), the brain (85%), its sparks |
 
 ### Named rules
@@ -155,9 +155,9 @@ Three tiers, as utilities in `index.css`. No more than three blurred surfaces vi
 
 | Tier | Utility | Blur | Fill | For |
 |---|---|---|---|---|
-| Chrome | `glass` | 16px, saturate 140% | card at 66% | the header, the chat sidebar, the composer, landing cards |
+| Chrome | `glass` | 16px, saturate 140% | card at 66% | the phone top bar, the composer, the landing header, landing cards |
 | Floating | `glass-strong` | 12px | popover at 86% | popovers, menus, selects, tooltips, dialogs, sheets, the command palette, toasts |
-| Subtle | `glass-subtle` | none | card at 72% | panels and cards inside a screen |
+| Subtle | `glass-subtle` | none | card at 72% | the app sidebar, panels and cards inside a screen |
 
 `glass-noise` adds static grain to a large glass surface; it never animates.
 
@@ -280,9 +280,10 @@ loading, an animation that blocks a click.
 ## Layout
 
 - **Base unit:** 4px. Page gutter 16px at every width. No sideways scrolling at 390px.
-- **Containers:** 1152px (`max-w-6xl`) for the header and landing; 1024px (`max-w-5xl`) for
+- **Containers:** 1152px (`max-w-6xl`) for the landing; 1024px (`max-w-5xl`) for
   settings screens; 768px (`max-w-3xl`) for the chat column; 68ch for reading text.
-- **Header:** sticky, 48px in the app, 56px on the landing.
+- **Shell:** no top bar in the app (see "App sidebar"); a 48px top bar on a phone; the
+  landing's header is sticky, 56px.
 - **Rhythm:** screens pad 24px top and bottom; panels pad 20px; fields stack at 20px. Landing
   sections breathe at 80px, 112px from `sm`.
 
@@ -326,6 +327,18 @@ Borders are 1px hairlines.
 - **Route pass** (sign-in): as a work email is typed, a strip under the field resolves the
   workspace, the sign-in method and where roles come from; `aria-live="polite"`, debounced 350ms;
   values rise in 300ms, motion-safe only.
+- **App sidebar** (`app-sidebar.tsx`, on the shadcn `Sidebar` with `collapsible="icon"`): one
+  left sidebar on every signed-in screen, no top nav. 260px open: the wordmark and the
+  collapse button, New chat and Search chats (the palette with chats alone), the space, the
+  screens, the Admin group, the chats (scrolling on their own), the index status and the
+  account (avatar, name, workspace, role badge; the account menu holds View as, the personal
+  screens, chat retention, the theme, Reduce effects and signing out). Collapsed, a 56px rail
+  of icons with tooltips that never goes away (kept in `localStorage` `kb.sidebar`; ⌘B at
+  once, the button slides the panel 200ms `ease-drawer` while the reserved width snaps). On a
+  phone, a sheet from the left behind a 48px top bar (menu, the screen's name, New chat).
+  Hover is a soft background; the open screen a soft background and its icon in the signal.
+  Never an edge bar or stripe. The index progress is a 2px signal line along the top of the
+  content; the strips (trial, support, deletion) sit above the screen.
 - **Kit:** `/__kit` (development only) shows every piece in either theme over the app's field;
   `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
 - **Screen shell:** `ScreenHeader` (path eyebrow, the `h2`, description, actions) and `Panel`
