@@ -40,10 +40,11 @@ import {
   type Surface,
   type SurfaceStat,
 } from "@/lib/api"
+import { INSIGHTS_TABS, type InsightsTab } from "@/lib/app-screens"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
-export type InsightsTab = "overview" | "not-found" | "feedback"
+export type { InsightsTab }
 
 const iso = (d: Date) => format(d, "yyyy-MM-dd")
 
@@ -621,9 +622,11 @@ export function InsightsView({
         actions={
           <Tabs panels={false} value={tab} onValueChange={(v) => onTabChange(v as InsightsTab)}>
             <TabsList variant="glass">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="not-found">Not found</TabsTrigger>
-              <TabsTrigger value="feedback">Feedback</TabsTrigger>
+              {INSIGHTS_TABS.map(([value, label]) => (
+                <TabsTrigger key={value} value={value}>
+                  {label}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </Tabs>
         }

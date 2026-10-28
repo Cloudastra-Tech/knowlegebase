@@ -85,6 +85,7 @@ import {
   type SignInSettings,
   type SsoTestResult,
 } from "@/lib/api"
+import { ACCESS_TABS, type AccessTab } from "@/lib/app-screens"
 import { isInstant, markInstantNav } from "@/lib/instant-nav"
 import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
@@ -1194,24 +1195,7 @@ function Provisioning({
 }
 
 // ---- The screen ----------------------------------------------------------------------
-export type AccessTab =
-  | "sign-in"
-  | "members"
-  | "groups"
-  | "activity"
-  | "api"
-  | "webhooks"
-  | "data"
-
-const ACCESS_TABS: [AccessTab, string][] = [
-  ["sign-in", "Sign-in"],
-  ["members", "Members"],
-  ["groups", "Groups"],
-  ["activity", "Activity"],
-  ["api", "API & MCP"],
-  ["webhooks", "Webhooks"],
-  ["data", "Data"],
-]
+export type { AccessTab }
 
 // The Activity tab's "Sign-ins": the same events as the sign-in settings show.
 function SignInActivity() {
