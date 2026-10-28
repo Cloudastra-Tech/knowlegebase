@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react-router"
@@ -26,6 +26,7 @@ import {
   type Message,
 } from "@/components/chat-answer"
 import { composerSignal } from "@/components/ascii/composer-signal"
+import { ChatBreadcrumbs } from "@/components/breadcrumbs"
 import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
 import { ChatHome } from "@/components/chat-home"
@@ -87,6 +88,7 @@ import {
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
+import { chatCrumbs } from "@/lib/breadcrumbs"
 import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
 import { getEffects } from "@/lib/ascii-loop"
 import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking, type SearchDetail } from "@/lib/chat-events"
@@ -768,6 +770,7 @@ export function ChatView({ role }: { role: Role }) {
         <ChatHeader
           conversation={conversation}
           title={title}
+          space={space && { id: space.id, label: spaceLabel(space) }}
           busy={loading}
           onRenamed={(t) =>
             setSession({
@@ -1168,13 +1171,15 @@ function UserMessage({
   )
 }
 
-// Above the chat: its title and its menu (Share / Download / Print / Rename / Delete);
+// Above the chat: the space it's asked in and its title, as breadcrumbs (the space
+// only from sm up), and its menu (Share / Download / Print / Rename / Delete);
 // New chat is in the app's sidebar, rail or not. On a phone, the top bar: the menu
 // (the sidebar's sheet) and New chat too. Printed, only the title is left (index.css,
 // data-print).
 function ChatHeader({
   conversation,
   title,
+  space,
   busy,
   onRenamed,
   onShare,
@@ -1183,6 +1188,7 @@ function ChatHeader({
 }: {
   conversation: Conversation | ConversationSummary | null
   title: string
+  space: { id: string; label: string } | null
   busy: boolean
   onRenamed: (title: string) => void
   onShare: () => void
@@ -1192,6 +1198,12 @@ function ChatHeader({
   const queryClient = useQueryClient()
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState("")
+  const spaceId = space?.id
+  const spaceName = space?.label
+  const crumbs = useMemo(
+    () => chatCrumbs(spaceId && spaceName ? { id: spaceId, label: spaceName } : null, title),
+    [spaceId, spaceName, title],
+  )
   const [deleting, setDeleting] = useState(false)
 
   async function rename() {
@@ -1232,7 +1244,9 @@ function ChatHeader({
   return (
     <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:glass max-md:z-20 max-md:h-12 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:pt-[env(safe-area-inset-top)]">
       <PhoneMenuButton data-print="hide" />
-      <p className="mx-auto min-w-0 max-w-3xl flex-1 truncate px-2 text-sm font-medium">{title}</p>
+      <div className="mx-auto flex min-w-0 max-w-3xl flex-1 px-2">
+        <ChatBreadcrumbs crumbs={crumbs} />
+      </div>
       {/* On a phone only: the sidebar's New chat is a tap away anywhere else. */}
       <Button
         variant="ghost"
