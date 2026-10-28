@@ -217,3 +217,149 @@ export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.mi
 // Frame-rate independent ease towards a target.
 export const approach = (cur: number, target: number, dt: number, tau: number) =>
   cur + (target - cur) * (1 - Math.exp(-dt / tau))
+
+// Frosting in the canvas. The glass over the art (the composer, the recent chats'
+// card, the sidebar's pane) blurs what's under it, and a CSS backdrop-filter does that
+// blur again for every frame the art moves: most of what the art cost. So the art
+// draws the lines under glass already blurred, from tiles blurred once per layout
+// (blurTile), at the strength the glass's blur would leave them (frostSlices), and the
+// glass keeps its tint and edge without a backdrop-filter while the art is behind it.
+
+// A gaussian's weights for std-dev `sigma` (in samples), out to 3 sigma, summing to 1.
+export function gaussian(sigma: number) {
+  const r = Math.max(0, Math.ceil(3 * sigma))
+  const k = new Float32Array(2 * r + 1)
+  if (sigma <= 0) {
+    k[r] = 1
+    return k
+  }
+  let sum = 0
+  for (let i = -r; i <= r; i++) sum += k[i + r] = Math.exp((-i * i) / (2 * sigma * sigma))
+  for (let i = 0; i < k.length; i++) k[i] /= sum
+  return k
+}
+
+// `src` convolved with kernel `k`; past the ends: "wrap" (round again: a tile that
+// repeats), "mirror" (reflected: how a backdrop-filter's blur reads its edges) or
+// "zero" (nothing there).
+export function convolve(src: Float32Array, k: Float32Array, edge: "wrap" | "mirror" | "zero") {
+  const n = src.length
+  const r = (k.length - 1) / 2
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    let v = 0
+    for (let j = -r; j <= r; j++) {
+      let at = i + j
+      if (at < 0 || at >= n) {
+        if (edge === "zero") continue
+        if (edge === "wrap") at = ((at % n) + n) % n
+        else {
+          at = at < 0 ? -at - 1 : 2 * n - at - 1
+          if (at < 0 || at >= n) continue // a kernel wider than the row: the rest reads as nothing
+        }
+      }
+      v += src[at] * k[j + r]
+    }
+    out[i] = v
+  }
+  return out
+}
+
+// Adds `v` times the share of each sample [i, i + 1) that [a, b) covers (in samples),
+// round again past the ends if `wrap`.
+function cover(row: Float32Array, a: number, b: number, v: number, wrap: boolean) {
+  const n = row.length
+  for (let i = Math.floor(a); i < b; i++) {
+    const share = Math.min(b, i + 1) - Math.max(a, i)
+    if (share <= 0) continue
+    const at = wrap ? ((i % n) + n) % n : i
+    if (at >= 0 && at < n) row[at] += v * share
+  }
+}
+
+// What a redacted line is made of: marks (a block or a dot) along it, each in a band
+// (its top and height in the line's sprite), at an alpha. All in px.
+export type Mark = { x: number; w: number; a: number; band: number }
+export type Band = { top: number; h: number }
+
+// A line's tile (tileW px long, tileH px tall), blurred as glass of std-dev `sigma` px
+// would, on a coarse grid (`scale` samples a px: the blur leaves nothing finer). Round
+// again across, so the tile repeats seamlessly; `pad` px of the blur's reach above and
+// below. The alpha is scaled so its peak is 1, and `gain` is that peak. Each band's
+// marks blur on their own, across and then down (a blur is separable): a few thousand
+// sums, not a pass over pixels.
+export function blurTile(
+  tileW: number,
+  tileH: number,
+  marks: readonly Mark[],
+  bands: readonly Band[],
+  sigma: number,
+  scale: number,
+) {
+  const w = Math.max(1, Math.round(tileW * scale))
+  const sx = w / tileW // exactly w samples a tile, so tiles meet without a seam
+  const padN = Math.ceil(3 * sigma * scale)
+  const h = Math.ceil(tileH * scale) + 2 * padN
+  const kx = gaussian(sigma * sx)
+  const ky = gaussian(sigma * scale)
+  const data = new Float32Array(w * h)
+  bands.forEach((band, bi) => {
+    const row = new Float32Array(w)
+    let any = false
+    for (const m of marks) {
+      if (m.band !== bi) continue
+      cover(row, m.x * sx, (m.x + m.w) * sx, m.a, true)
+      any = true
+    }
+    if (!any) return
+    const across = convolve(row, kx, "wrap")
+    const col = new Float32Array(h)
+    cover(col, padN + band.top * scale, padN + (band.top + band.h) * scale, 1, false)
+    const down = convolve(col, ky, "zero")
+    for (let y = 0; y < h; y++) {
+      const dy = down[y]
+      if (dy < 1e-5) continue
+      for (let x = 0; x < w; x++) data[y * w + x] += dy * across[x]
+    }
+  })
+  let gain = 0
+  for (let i = 0; i < data.length; i++) if (data[i] > gain) gain = data[i]
+  if (gain > 0) for (let i = 0; i < data.length; i++) data[i] /= gain
+  return { w, h, pad: padN / scale, data, gain }
+}
+
+// Across glass from x0 to x1: the strength a line under it is drawn at (its spans, as
+// lineSpans gives them) once the glass has blurred it, std-dev `sigma` px, the edges
+// mirrored as a backdrop-filter's are. In stretches [x0, x1, k] of about one strength
+// (within `tol` of the strongest), sampled every `step` px.
+export function frostSlices(
+  spans: readonly (readonly [number, number, number])[],
+  x0: number,
+  x1: number,
+  sigma: number,
+  step = 4,
+  tol = 0.05,
+) {
+  const n = Math.max(1, Math.ceil((x1 - x0) / step))
+  const at = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = x0 + (i + 0.5) * step
+    at[i] = spans.find(([a, b]) => x >= a && x < b)?.[2] ?? 0
+  }
+  const k = convolve(at, gaussian(sigma / step), "mirror")
+  let top = 0
+  for (const v of k) top = Math.max(top, v)
+  const out: [number, number, number][] = []
+  let from = 0
+  let sum = 0
+  for (let i = 0; i <= n; i++) {
+    if (i < n && (i === from || Math.abs(k[i] - k[from]) <= tol * top)) {
+      sum += k[i]
+      continue
+    }
+    out.push([x0 + from * step, Math.min(x1, x0 + i * step), sum / (i - from)])
+    from = i
+    sum = i < n ? k[i] : 0
+  }
+  return out
+}

@@ -83,7 +83,7 @@ test("the art covers the whole page, and the composer is frosted glass over it",
   const art = drift(page)
   await expect(art).toHaveAttribute("data-lines", /\d/)
   const column = (await page.locator('[data-slot="chat-backdrop"]').boundingBox()) as Box
-  const canvas = (await art.locator("canvas").boundingBox()) as Box
+  const canvas = (await art.locator("canvas:not([data-frost])").boundingBox()) as Box
   // The canvas is the whole window: the chat column top to bottom, and the sidebar's
   // pane beside it, which frosts it.
   expect(canvas.y).toBeLessThanOrEqual(column.y + 1)
@@ -97,9 +97,22 @@ test("the art covers the whole page, and the composer is frosted glass over it",
   const composer = await composerBox(page)
   expect(ys.some((y) => y > composer.y + composer.height + 60)).toBe(true)
 
-  // Glass you can see through: a blur behind the composer (and the recent chats' card).
+  // Glass you can see through: the composer blurs what's behind it. Over the art, the
+  // art does that blur itself (redacted-drift.tsx): the glass is marked and has no
+  // backdrop-filter, and a frost layer sits under it, its exact box.
   const blur = `getComputedStyle(document.querySelector('[data-drift="composer"]')).backdropFilter`
-  expect(await page.evaluate(blur)).toMatch(/blur\((?!0px)/)
+  const glass = page.locator('[data-drift="composer"]')
+  await expect(glass).toHaveAttribute("data-drift-frost", "")
+  expect(await page.evaluate(blur)).toBe("none")
+  expect(await page.evaluate(`getComputedStyle(document.querySelector('[data-drift="composer"]')).getPropertyValue("--glass-blur")`)).toMatch(/^[1-9]/)
+  const box = (await glass.boundingBox()) as Box
+  const layers = await art.locator("canvas[data-frost]").evaluateAll((cs) =>
+    cs.map((c) => {
+      const r = c.getBoundingClientRect()
+      return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)].join(",")
+    }),
+  )
+  expect(layers).toContain([box.x, box.y, box.width, box.height].map(Math.round).join(","))
 
   // "Reduce effects": solid, no blur.
   await page.evaluate(`localStorage.setItem("effects", "reduced")`)
@@ -107,6 +120,8 @@ test("the art covers the whole page, and the composer is frosted glass over it",
   await expect(page.getByRole("textbox", { name: "Your question" })).toBeVisible()
   expect(await page.evaluate(`document.documentElement.dataset.effects`)).toBe("reduced")
   expect(await page.evaluate(blur)).toBe("none")
+  await expect(glass).not.toHaveAttribute("data-drift-frost")
+  await expect(art.locator("canvas[data-frost]")).toHaveCount(0)
   await page.evaluate(`localStorage.removeItem("effects")`)
 })
 

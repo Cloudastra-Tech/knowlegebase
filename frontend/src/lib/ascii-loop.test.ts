@@ -376,4 +376,55 @@ describe("the shared ASCII loop", () => {
     loop.stop()
     expect(frames.size).toBe(0)
   })
+
+  it("rests a piece that asks to once nobody has used the page for a while, and moves on at the next input", async () => {
+    const { subscribe } = await load()
+    const idle = vi.fn()
+    const busy = vi.fn()
+    const a = box()
+    const b = box()
+    subscribe(a, idle, { still: 0, fps: 30, priority: "ambient", idle: 20_000 })
+    const h = subscribe(b, busy, { still: 0, fps: 30 })
+    show(a)
+    show(b)
+
+    step(60 * 19) // 19s: still moving
+    expect(idle).toHaveBeenCalled()
+    step(60 * 2) // past 20s
+    const held = idle.mock.calls.length
+    const at = idle.mock.calls[held - 1][0] as number
+    step(60 * 5)
+    expect(idle).toHaveBeenCalledTimes(held) // holding its frame
+    expect(busy.mock.calls.length).toBeGreaterThan(held) // the other piece doesn't
+
+    // Alone, it lets the loop stop altogether.
+    h.stop()
+    step(2)
+    expect(frames.size).toBe(0)
+
+    // A key, a move, a focus: it drifts on from where it was, its clock not jumping.
+    window.dispatchEvent(new Event("keydown"))
+    expect(frames.size).toBe(1)
+    step(2)
+    expect(idle.mock.calls.length).toBeGreaterThan(held)
+    expect(idle.mock.calls[idle.mock.calls.length - 1][0]).toBeLessThan(at + 0.2)
+  })
+
+  it("holds an idle piece only at a moment it says it's settled", async () => {
+    const { subscribe } = await load()
+    const draw = vi.fn()
+    let settled = false
+    const el = box()
+    subscribe(el, draw, { still: 0, fps: 30, priority: "ambient", idle: 20_000, settled: () => settled })
+    show(el)
+    step(60 * 25)
+    const n = draw.mock.calls.length
+    step(30)
+    expect(draw.mock.calls.length).toBeGreaterThan(n) // mid-decode, say: on it goes
+    settled = true
+    step(2)
+    const held = draw.mock.calls.length
+    step(60)
+    expect(draw).toHaveBeenCalledTimes(held)
+  })
 })

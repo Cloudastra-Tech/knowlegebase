@@ -4,7 +4,9 @@
 // "Reduce effects") each draws one still frame, and that follows the setting live.
 // The app's background field ("ambient") also rests while the page scrolls and while
 // a dialog is open. Drawing has a budget per frame: past it the loop steps frame
-// rates down, and back up once frames are cheap again ("The budget", below).
+// rates down, and back up once frames are cheap again ("The budget", below). A piece
+// can also rest while nobody is using the page (`idle`): it keeps its last frame, and
+// moves again on the next pointer, key, wheel, touch or focus.
 
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react"
 
@@ -45,8 +47,17 @@ export async function whenFontsReady(el: HTMLElement) {
 // hero: the landing's brain and ticker; ambient: the app's background field, which
 // rests while scrolling and under dialogs; ui: spinners and the thinking line.
 export type LoopPriority = "hero" | "ambient" | "ui"
-export type LoopOptions = { fps?: number; still: number; priority?: LoopPriority }
-export type LoopHandle = { redraw(): void; stop(): void }
+// idle: ms without input after which it rests, holding its frame, once `settled()`
+// says it's at a good moment to hold (default: any moment).
+export type LoopOptions = {
+  fps?: number
+  still: number
+  priority?: LoopPriority
+  idle?: number
+  settled?: () => boolean
+}
+// setFps: a new frame rate from the next frame (the budget still caps it).
+export type LoopHandle = { redraw(): void; stop(): void; setFps(fps: number): void }
 
 type Sub = {
   el: HTMLElement
@@ -54,6 +65,8 @@ type Sub = {
   still: number
   fps: number
   priority: LoopPriority
+  idle: number // 0: never rests for want of input
+  settled?: () => boolean
   visible: boolean
   last: number // when it last drew (rAF time), -1 while resting
   elapsed: number // its own clock, in seconds: runs only while it draws
@@ -74,6 +87,8 @@ let pausedUntil = 0
 let pauseTimer: ReturnType<typeof setTimeout> | undefined
 let modalOpen = false
 let warned = false
+let lastInput = 0 // performance.now() of the last pointer, key, wheel, touch or focus
+let idling = false // a piece rests for want of input: the next input wakes the loop
 
 // The budget. A governor watches the 95th percentile of the cost of 30 drawn frames:
 // over `over` ms it steps its pieces down a level, under `under` it steps back up (the
@@ -133,7 +148,13 @@ function fpsOf(sub: Sub) {
 
 function resting(sub: Sub, now: number) {
   if (!sub.visible || document.hidden || isStill() || fpsOf(sub) <= 0) return true
-  return sub.priority === "ambient" && (modalOpen || now < pausedUntil)
+  if (sub.priority === "ambient" && (modalOpen || now < pausedUntil)) return true
+  // Nobody's here: hold the frame (at a moment the piece says it can), once there is one.
+  if (sub.idle && sub.draws > 0 && now - lastInput > sub.idle && (sub.settled?.() ?? true)) {
+    idling = true
+    return true
+  }
+  return false
 }
 
 function frame(now: number) {
@@ -231,6 +252,20 @@ function onScroll() {
   }
 }
 
+// Someone is using the page: what rested for want of input moves again.
+const INPUT = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart", "focusin"] as const
+function onInput() {
+  lastInput = performance.now()
+  if (!idling) return
+  idling = false
+  wake()
+}
+// Back to the tab counts as input, so the art isn't found resting.
+function onVisibility() {
+  if (!document.hidden) lastInput = performance.now()
+  wake()
+}
+
 // Radix marks <body> while a modal (dialog, sheet, menu) holds the page.
 function onBodyChange() {
   const open = document.body.hasAttribute("data-scroll-locked")
@@ -250,8 +285,10 @@ function start() {
   reduced = mql.matches
   if (mql.addEventListener) mql.addEventListener("change", onReducedChange)
   else mql.addListener(onReducedChange)
-  document.addEventListener("visibilitychange", wake)
+  document.addEventListener("visibilitychange", onVisibility)
   document.addEventListener("scroll", onScroll, { capture: true, passive: true })
+  lastInput = performance.now()
+  for (const type of INPUT) window.addEventListener(type, onInput, { capture: true, passive: true })
   bodyObserver = new MutationObserver(onBodyChange)
   bodyObserver.observe(document.body, { attributes: true, attributeFilter: ["data-scroll-locked"] })
   modalOpen = document.body.hasAttribute("data-scroll-locked")
@@ -265,8 +302,10 @@ function end() {
   if (mql?.removeEventListener) mql.removeEventListener("change", onReducedChange)
   else mql?.removeListener(onReducedChange)
   mql = null
-  document.removeEventListener("visibilitychange", wake)
+  document.removeEventListener("visibilitychange", onVisibility)
   document.removeEventListener("scroll", onScroll, { capture: true })
+  for (const type of INPUT) window.removeEventListener(type, onInput, { capture: true })
+  idling = false
   bodyObserver?.disconnect()
   bodyObserver = null
   clearTimeout(pauseTimer)
@@ -286,6 +325,8 @@ export function subscribe(el: HTMLElement, draw: (t: number) => void, opts: Loop
     still: opts.still,
     fps: opts.fps ?? 30,
     priority: opts.priority ?? "hero",
+    idle: opts.idle ?? 0,
+    settled: opts.settled,
     visible: false,
     last: -1,
     elapsed: 0,
@@ -296,6 +337,9 @@ export function subscribe(el: HTMLElement, draw: (t: number) => void, opts: Loop
   if (isStill()) draw(opts.still)
   return {
     redraw: () => draw(isStill() ? sub.still : sub.elapsed),
+    setFps: (fps: number) => {
+      sub.fps = fps
+    },
     stop: () => {
       if (!subs.delete(sub)) return
       if (![...subs].some((s) => s.el === el)) io?.unobserve(el)
@@ -350,16 +394,16 @@ export function useAsciiLoop(
     latest.current = draw
   })
   const handle = useRef<LoopHandle | null>(null)
-  const { fps, still, priority } = opts
+  const { fps, still, priority, idle } = opts
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const h = subscribe(el, (t) => latest.current(t), { fps, still, priority })
+    const h = subscribe(el, (t) => latest.current(t), { fps, still, priority, idle })
     handle.current = h
     return () => {
       h.stop()
       handle.current = null
     }
-  }, [ref, fps, still, priority])
+  }, [ref, fps, still, priority, idle])
   return handle
 }

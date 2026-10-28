@@ -13,6 +13,7 @@ let reduce = false
 type Glyph = { ch: string; x: number; y: number; alpha: number }
 let glyphs: Glyph[] = []
 let clears = 0
+let drawn = 0
 let rings = 0
 let fine = true
 
@@ -32,12 +33,17 @@ function fakeContext() {
     fillStyle: "",
     textBaseline: "",
     setTransform() {},
-    clearRect: () => {
+    clearRect: (_x: number, _y: number, w: number) => {
       clears++
+      if (w >= 1000) drawn++ // the whole art: a frame
     },
     measureText: () => ({ width: 7 }),
     fillRect() {},
     drawImage() {},
+    createImageData: (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+    putImageData() {},
+    globalCompositeOperation: "source-over",
+    roundRect() {},
     save() {},
     restore() {},
     beginPath() {},
@@ -92,6 +98,7 @@ beforeEach(() => {
   reduce = false
   glyphs = []
   clears = 0
+  drawn = 0
   rings = 0
   fine = true
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb))
@@ -151,15 +158,17 @@ describe("RedactedDrift", () => {
   it("decodes about every 8s, going round the lines, and never shows a record twice running", () => {
     render(<Column />)
     expect(frames).toHaveLength(1)
-    // 60s of drifting, at the loop's 30 fps: a decode's line and record each time one
+    // 60s of drifting, at the loop's 20 fps: a decode's line and record each time one
     // starts.
     const decodes: { y: number; text: string }[] = []
     let decoding = false
     for (let i = 0; i < 60 * 60; i++) {
+      // Someone at the page (it rests after 20s without input).
+      if (i % 600 === 0) window.dispatchEvent(new Event("pointermove"))
       glyphs = []
       const before = clears
       step()
-      if (clears === before) continue // a 60 Hz frame the 30 fps loop skipped
+      if (clears === before) continue // a 60 Hz frame the 20 fps loop skipped
       const shown = readable(glyphs)
       if (shown.length && !decoding) {
         const y = shown[0].y
@@ -173,6 +182,7 @@ describe("RedactedDrift", () => {
       }
       decoding = shown.length > 0
     }
+    if (decoding) decodes.pop() // one still reading when the minute ran out
     expect(decodes.length).toBeGreaterThanOrEqual(5)
     expect(decodes.length).toBeLessThanOrEqual(8)
     for (let i = 1; i < decodes.length; i++) {
@@ -193,7 +203,8 @@ function point(target: Element, type: string, x: number, y: number, pointerType 
 }
 const linesOf = (container: HTMLElement) =>
   (container.querySelector<HTMLElement>('[data-mode="drift"]')!.dataset.lines ?? "").split(",").map(Number)
-// One drawn frame's glyphs (the loop is 30 fps: some 60 Hz steps draw nothing).
+// One drawn frame's glyphs (the art is 20 fps, 30 with a mouse over it: some 60 Hz
+// steps draw nothing).
 function frame() {
   for (let i = 0; i < 4; i++) {
     glyphs = []
@@ -232,6 +243,23 @@ describe("RedactedDrift and the pointer", () => {
     expect(lensGlyphs(frame())).toHaveLength(0)
   })
 
+  it("drifts at 20 frames a second, and at 30 while a mouse is over it for the lens", () => {
+    const { container } = render(<Column />)
+    const root = container.firstElementChild!
+    step(10)
+    let before = drawn
+    step(60)
+    expect(drawn - before).toBe(20)
+    point(root, "pointermove", 500, 400)
+    before = drawn
+    step(60)
+    expect(drawn - before).toBe(30)
+    point(root, "pointerleave", 500, 400)
+    before = drawn
+    step(60)
+    expect(drawn - before).toBe(20)
+  })
+
   it("draws no lens for a touch", () => {
     const { container } = render(<Column />)
     const root = container.firstElementChild!
@@ -260,7 +288,7 @@ describe("RedactedDrift and the pointer", () => {
     const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
     point(root, "pointerdown", 300, y + 10)
     point(root, "click", 300, y + 10)
-    step(2)
+    step(4) // the next frame, at 20 fps
     expect(rings).toBeGreaterThan(0)
     step(40) // past the reveal
     const read = readable(frame()).filter((g) => Math.abs(g.y - 0.5 - y) < 1)
@@ -359,5 +387,81 @@ describe("RedactedDrift and the pointer", () => {
       RECTS.content = [150, 80, 700, 200]
       delete RECTS[""]
     }
+  })
+})
+
+describe("RedactedDrift under glass", () => {
+  // The composer as glass with a 16px blur (index.css, --glass-blur).
+  function Glass({ leaving = false }: { leaving?: boolean }) {
+    return (
+      <div>
+        <div data-slot="sidebar-gap" />
+        <div data-slot="chat-backdrop">
+          <RedactedDrift leaving={leaving} />
+        </div>
+        <div data-drift="content" />
+        <div data-drift="composer" style={{ ["--glass-blur" as string]: "16px" }} />
+      </div>
+    )
+  }
+  const layer = (c: HTMLElement) => c.querySelector<HTMLCanvasElement>("canvas[data-frost]")
+  const composer = (c: HTMLElement) => c.querySelector('[data-drift="composer"]')!
+
+  it("frosts the glass over it itself, and hands the blur back to the glass as it leaves", () => {
+    const { container, rerender, unmount } = render(<Glass />)
+    step(4)
+    // Marked: the glass's backdrop-filter is off (ascii.css) while the art blurs for it.
+    expect(composer(container)).toHaveAttribute("data-drift-frost")
+    rerender(<Glass leaving />)
+    step(4)
+    expect(composer(container)).not.toHaveAttribute("data-drift-frost")
+    rerender(<Glass />)
+    step(4)
+    expect(composer(container)).toHaveAttribute("data-drift-frost")
+    const el = composer(container)
+    unmount()
+    expect(el).not.toHaveAttribute("data-drift-frost")
+  })
+
+  it("draws the frost on a canvas of its own over the glass, and follows the glass when the sidebar folds", () => {
+    const { container } = render(<Glass />)
+    step(4)
+    expect(layer(container)).not.toBeNull()
+    expect(layer(container)!.style.left).toBe("150px")
+    expect(layer(container)!.style.width).toBe("700px")
+    // The sidebar folds: the composer moves sideways, the same size.
+    RECTS.composer = [300, 680, 700, 84]
+    try {
+      container.querySelector('[data-slot="sidebar-gap"]')!.dispatchEvent(new Event("transitionend", { bubbles: true }))
+      step(4)
+      expect(layer(container)!.style.left).toBe("300px")
+    } finally {
+      RECTS.composer = [150, 680, 700, 84]
+    }
+  })
+
+  it("leaves glass without a blur to CSS", () => {
+    const { container } = render(<Column />)
+    step(4)
+    expect(composer(container)).not.toHaveAttribute("data-drift-frost")
+    expect(container.querySelector("canvas[data-frost]")).toBeNull()
+  })
+})
+
+describe("RedactedDrift with nobody at the page", () => {
+  it("holds a frame after 20s without input, never mid-decode, and drifts on at the next", () => {
+    const { container } = render(<Column />)
+    const art = container.querySelector('[data-mode="drift"]')!
+    // 20s without input, then up to a decode's length more to reach a quiet moment.
+    step(60 * 30)
+    expect(art).not.toHaveAttribute("data-decoding")
+    const held = clears
+    step(60 * 10)
+    expect(clears).toBe(held)
+    expect(frames).toHaveLength(0) // nothing scheduled: the loop has stopped
+
+    window.dispatchEvent(new Event("pointermove"))
+    step(4)
+    expect(clears).toBeGreaterThan(held)
   })
 })

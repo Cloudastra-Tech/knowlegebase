@@ -4,8 +4,10 @@ import "@/components/ascii/ascii.css"
 import { composerSignal } from "@/components/ascii/composer-signal"
 import {
   approach,
+  blurTile,
   clamp,
   covered,
+  frostSlices,
   hash01,
   inZone,
   lensFalloff,
@@ -20,8 +22,10 @@ import {
   union,
   zoneHalfWidth,
   zoneOf,
+  type Band,
   type Box,
   type Cover,
+  type Mark,
   type Zone,
 } from "@/components/ascii/drift"
 import { subscribe, whenFontsReady } from "@/lib/ascii-loop"
@@ -48,15 +52,34 @@ import { cn } from "@/lib/utils"
 // ever) and only written into the scene, never into React state. The lens and the
 // decodes only ever show the made-up records (drift.ts), never anything of yours.
 //
-// On the shared ASCII loop: 30 fps, the app's budget, resting while the page scrolls,
-// under a dialog, offscreen (off /chat the chat is hidden) and in a hidden tab. With
+// On the shared ASCII loop: 20 fps (30 while a mouse is over it, for the lens), the
+// app's budget, resting while the page scrolls, under a dialog, offscreen (off /chat
+// the chat is hidden), in a hidden tab, and after 20s with nobody at the page (no
+// pointer, key, wheel, touch or focus), at a moment no line is decoding: it holds that
+// frame, and drifts on from it at the next input. With
 // reduced motion or "Reduce effects" it's one still frame with one line readable, and
 // neither the lens nor a click changes it.
 // Canvas, DPR-aware, aria-hidden. The chat mounts it on the empty state only
 // (chat-backdrop.tsx), and fades it out over 400ms when the first question is sent.
+//
+// The glass over it (the composer, the recent chats' card, the sidebar's pane) frosts
+// it, and a backdrop-filter would blur all of that glass again every frame. So the art
+// frosts itself: under each glass, on a small canvas of its own the compositor
+// stretches to the glass's size, it draws its lines from tiles blurred once (drift.ts,
+// blurTile), as strong as the glass's own blur would leave them, and marks that glass
+// `data-drift-frost` (ascii.css), which keeps its tint and edge but drops its
+// backdrop-filter while the art is on screen behind it. Leaving, off screen, or glass
+// without a blur (Reduce effects, reduced transparency): unmarked, the CSS blur as ever.
 
-const FPS = 30
+// The drift is slow and sideways: 20 frames a second shows it as smoothly as 30, at
+// two thirds of the work. The lens follows a pointer, so with one over the art it's 30.
+const FPS = 20
+const FPS_LENS = 30
 const STILL = -1 // the still frame's "time"
+const IDLE_MS = 20_000
+const FROST_SAMPLES = 4 // samples per sigma in a blurred tile: finer would add nothing
+const FROST_EVERY = 2 // the frost under glass is drawn every 2nd frame
+const CORNER_PAD = 8 // px rounder than the glass, at its corners only
 
 // Parallax depths: 0 nearest (bigger, a little stronger, faster). Alpha of the text colour.
 const DEPTHS = [
@@ -106,6 +129,8 @@ const RIPPLE_MS = 380
 const RIPPLE_R = 14
 // Where a press is the art's: the column's blank space (the empty transcript, the
 // space round the home's sections), never a control, the composer or any words.
+// What moves when the sidebar folds (components/ui/sidebar.tsx).
+const FOLD = '[data-slot="sidebar-container"], [data-slot="sidebar-gap"]'
 const BLANK =
   '[data-drift-blank], [data-slot="message-scroller"], [data-slot="message-scroller-viewport"], [data-slot="message-scroller-content"]'
 
@@ -113,17 +138,32 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
   const box = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const aura = useRef<HTMLDivElement>(null)
+  const live = useRef<{ scene: ReturnType<typeof driftScene>; redraw: () => void } | null>(null)
 
   useEffect(() => {
     const el = box.current
     const cv = canvas.current
     if (!el || !cv) return
     const scene = driftScene(el, cv, aura.current)
-    const loop = subscribe(el, scene.draw, { fps: FPS, still: STILL, priority: "ambient" })
+    const loop = subscribe(el, scene.draw, {
+      fps: FPS,
+      still: STILL,
+      priority: "ambient",
+      idle: IDLE_MS,
+      settled: scene.settled,
+    })
+    scene.onPointer((over) => loop.setFps(over ? FPS_LENS : FPS))
     const relayout = () => {
       scene.dirty()
       loop.redraw()
     }
+    live.current = { scene, redraw: loop.redraw }
+    // Frosted here only while it's on screen (off /chat the glass frosts what's there).
+    const io = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1]
+      if (entry && scene.frost({ shown: entry.isIntersecting })) loop.redraw()
+    })
+    io.observe(el)
     // The column, the composer (it grows with its text) and what sits over the art
     // (the starters and recent chats arrive later) set how lines are drawn.
     const ro = new ResizeObserver(relayout)
@@ -162,21 +202,39 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
     const unlisten = scene.listen()
     window.addEventListener("resize", scene.dirty)
-    let live = true
-    whenFontsReady(el).then(() => live && relayout())
+    // The sidebar folded or opened: the composer and the recent chats move sideways
+    // with no change of size, which no ResizeObserver hears. Measured again once the
+    // sidebar has settled, so the glass the art frosts is where it now is.
+    const onFold = (e: TransitionEvent) => {
+      if (e.target instanceof Element && e.target.matches(FOLD)) relayout()
+    }
+    document.addEventListener("transitionend", onFold, true)
+    let mounted = true
+    whenFontsReady(el).then(() => mounted && relayout())
     return () => {
-      live = false
+      mounted = false
+      live.current = null
       loop.stop()
+      io.disconnect()
+      scene.unmark()
       ro.disconnect()
       mo.disconnect()
       swapped.disconnect()
       cancelAnimationFrame(pending)
       unlisten()
       window.removeEventListener("resize", scene.dirty)
+      document.removeEventListener("transitionend", onFold, true)
       clearTimeout(settle)
       root.removeEventListener("scroll", onScroll, { capture: true })
     }
   }, [])
+
+  // Leaving (the first question sent): the glass blurs for itself again, as the chat's
+  // own field arrives under it.
+  useEffect(() => {
+    const at = live.current
+    if (at?.scene.frost({ leaving })) at.redraw()
+  }, [leaving])
 
   return (
     <div
@@ -201,6 +259,24 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
 }
 
 type Depth = (typeof DEPTHS)[number] & { px: number; font: string; cw: number }
+// Glass the art frosts itself: its box (in the art's coordinates), corner radius, the
+// std-dev of its blur (px), and the element, marked while it's frosted here.
+type Frost = { box: Box; round: number; sigma: number; el: Element }
+// Where it's drawn: a small canvas just under the glass, at the blurred tiles' own
+// coarse scale (px to samples), which the compositor stretches to the glass's size.
+type FrostLayer = { canvas: HTMLCanvasElement; g: CanvasRenderingContext2D | null; sx: number; sy: number }
+// A blurred tile of a line, for glass of one blur: `pad` px of blur above and below
+// the sprite's own band, its alpha scaled by `gain` (blurTile).
+type Frosted = { canvas: HTMLCanvasElement; pad: number; gain: number; h: number }
+// Where a line shows through one glass: the stretches across it at their strengths,
+// and the copies to draw: the line itself, its reflection in the glass's top or bottom
+// edge (a backdrop-filter mirrors its edges), or, for a line only partly under it, the
+// part inside, reflected, as a line on the edge (`w`, how much of the line that is).
+type FrostRun = {
+  g: number
+  slices: [number, number, number][]
+  copies: { at: "self" | "up" | "down" | "top" | "bottom"; w: number }[]
+}
 type LensCell = { t: number; out: number; seen: boolean }
 type Line = {
   baseY: number
@@ -209,10 +285,15 @@ type Line = {
   text: string
   snips: { start: number; len: number }[]
   tileW: number
+  dpr: number // the sprites' scale
   sprite: HTMLCanvasElement
   offset: number
-  // The stretches it's drawn in, and how strongly (lineSpans), for this layout.
+  // The stretches it's drawn in, and how strongly (lineSpans), for this layout; those
+  // drawn sharp (not under glass the art frosts itself); and how it shows under that glass.
   spans: [number, number, number][]
+  sharp: [number, number, number][]
+  frost: FrostRun[]
+  blurred: Map<number, Frosted> // by the glass's blur
   // Cells in (or just out of) the reading lens, by their index along the line: when
   // each came in, and when it went out (-1 while in).
   lens: Map<number, LensCell>
@@ -261,6 +342,19 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
   let click: { x: number; y: number; line: number } | null = null
   let ripple: { x: number; y: number; t0: number } | null = null
   let lensShown = false
+  let pointerHook: ((over: boolean) => void) | null = null
+  // Frosting here: the glass it covers (measure), whether the art is on screen and not
+  // leaving, and the elements marked for it.
+  let frosts: Frost[] = []
+  let frostSkip = 0
+  let frostDue = true // a new layout: drawn on the next frame, whatever its turn
+  const layers: FrostLayer[] = []
+  let shown = false
+  let leaving = false
+  const marked = new Set<Element>()
+  // Frosting needs pixels written (a canvas that can't, as in tests, leaves it to CSS).
+  const canFrost = typeof ctx?.createImageData === "function"
+  let blurGlass = false // glass with a blur over the art, at the last layout
 
   const composerEl = () => root.querySelector('[data-drift="composer"]')
   const contentEl = () => root.querySelector('[data-drift="content"]')
@@ -285,35 +379,96 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     }
     ink = { fg: s.color, read, dark }
     for (const d of depths) d.font = `${d.px}px ${s.fontFamily}`
-    for (const ln of lines) ln.sprite = sprite(redact(ln.text), ln.d)
+    for (const ln of lines) {
+      ln.sprite = sprite(redact(ln.text), ln.d)
+      ln.blurred.clear()
+    }
+  }
+
+  // A line's redacted text as marks on its sprite, in device px: a block for a letter
+  // (solid) or a digit (light), a dot for anything else.
+  function marksOf(text: string, d: Depth) {
+    const cw = d.cw * dpr
+    const height = Math.ceil(d.px * 1.6 * dpr)
+    const bw = Math.max(2, Math.round(cw * 0.7))
+    const bh = Math.max(2, Math.round(d.px * 0.5 * dpr))
+    const mid = Math.round(height / 2)
+    const dot = Math.max(2, Math.round(1.6 * dpr))
+    const bands: Band[] = [
+      { top: mid - (bh >> 1), h: bh },
+      { top: mid - (dot >> 1), h: dot },
+    ]
+    const marks: Mark[] = []
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]
+      if (ch === " ") continue
+      if (ch === "▪" || ch === "░") marks.push({ x: Math.round(i * cw + (cw - bw) / 2), w: bw, a: ch === "▪" ? 1 : 0.42, band: 0 })
+      else marks.push({ x: Math.round(i * cw + (cw - dot) / 2), w: dot, a: 0.8, band: 1 })
+    }
+    return { width: Math.ceil(text.length * cw) + 2, height, marks, bands }
   }
 
   // A line's redacted text, drawn once: a frame is then a few drawImage calls.
   function sprite(text: string, d: Depth) {
     const c = document.createElement("canvas")
-    const cw = d.cw * dpr
-    c.width = Math.ceil(text.length * cw) + 2
-    c.height = Math.ceil(d.px * 1.6 * dpr)
+    const m = marksOf(text, d)
+    c.width = m.width
+    c.height = m.height
     const g = c.getContext("2d")
     if (!g) return c
     g.fillStyle = ink.fg
-    const bw = Math.max(2, Math.round(cw * 0.7))
-    const bh = Math.max(2, Math.round(d.px * 0.5 * dpr))
-    const mid = Math.round(c.height / 2)
-    const top = mid - (bh >> 1)
-    const dot = Math.max(2, Math.round(1.6 * dpr))
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i]
-      if (ch === " ") continue
-      if (ch === "▪" || ch === "░") {
-        g.globalAlpha = ch === "▪" ? 1 : 0.42
-        g.fillRect(Math.round(i * cw + (cw - bw) / 2), top, bw, bh)
-      } else {
-        g.globalAlpha = 0.8
-        g.fillRect(Math.round(i * cw + (cw - dot) / 2), mid - (dot >> 1), dot, dot)
-      }
+    for (const k of m.marks) {
+      const band = m.bands[k.band]
+      g.globalAlpha = k.a
+      g.fillRect(k.x, band.top, k.w, band.h)
     }
     return c
+  }
+
+  // The line's tile as glass of blur `sigma` shows it, made the first time it's needed.
+  function blurredOf(ln: Line, sigma: number) {
+    const have = ln.blurred.get(sigma)
+    if (have) return have
+    const m = marksOf(redact(ln.text), ln.d)
+    const scale = FROST_SAMPLES / sigma
+    const t = blurTile(
+      ln.tileW,
+      m.height / dpr,
+      m.marks.map((k) => ({ ...k, x: k.x / dpr, w: k.w / dpr })),
+      m.bands.map((b) => ({ top: b.top / dpr, h: b.h / dpr })),
+      sigma,
+      scale,
+    )
+    const c = document.createElement("canvas")
+    c.width = t.w
+    c.height = t.h
+    const g = c.getContext("2d")
+    if (g) {
+      const img = g.createImageData(t.w, t.h)
+      for (let i = 0; i < t.data.length; i++) img.data[i * 4 + 3] = Math.round(t.data[i] * 255)
+      g.putImageData(img, 0, 0)
+      g.globalCompositeOperation = "source-in"
+      g.fillStyle = ink.fg
+      g.fillRect(0, 0, t.w, t.h)
+    }
+    const out = { canvas: c, pad: t.pad, gain: t.gain, h: t.h / scale }
+    ln.blurred.set(sigma, out)
+    return out
+  }
+
+  // Frosted here or not: the glass marked to match (its backdrop-filter off, ascii.css).
+  function mark(els: Element[]) {
+    for (const n of marked) {
+      if (!els.includes(n)) {
+        n.removeAttribute("data-drift-frost")
+        marked.delete(n)
+      }
+    }
+    for (const n of els) {
+      if (marked.has(n)) continue
+      n.setAttribute("data-drift-frost", "")
+      marked.add(n)
+    }
   }
 
   function measure() {
@@ -337,18 +492,27 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     comp = rel(composerEl()) ?? { x: W * 0.1, y: H - 96, w: W * 0.8, h: 72 }
     content = rel(contentEl())
     covers = []
+    frosts = []
+    blurGlass = false
     const pane = paneEl()
+    const frosting = canFrost && shown && !leaving
     for (const n of pane ? [...coverEls(), pane] : coverEls()) {
       const b = rel(n)
       if (!b || !b.w || !b.h) continue
       const kind = n === pane ? "glass" : n.getAttribute("data-drift")
-      // Words get a little room round them; glass is its own edge.
-      covers.push(
-        kind === "composer" || kind === "glass"
-          ? { box: b, k: UNDER_GLASS, round: n === pane ? 0 : parseFloat(getComputedStyle(n).borderTopLeftRadius) || 0 }
-          : { box: { x: b.x - 10, y: b.y - 4, w: b.w + 20, h: b.h + 8 }, k: QUIET },
-      )
+      if (kind === "composer" || kind === "glass") {
+        // Glass is its own edge.
+        const st = getComputedStyle(n)
+        const round = n === pane ? 0 : parseFloat(st.borderTopLeftRadius) || 0
+        covers.push({ box: b, k: UNDER_GLASS, round })
+        const sigma = parseFloat(st.getPropertyValue(n === pane ? "--glass-blur-pane" : "--glass-blur")) || 0
+        if (sigma > 0) blurGlass = true
+        if (frosting && sigma > 0) frosts.push({ box: b, round, sigma, el: n })
+      } else covers.push({ box: { x: b.x - 10, y: b.y - 4, w: b.w + 20, h: b.h + 8 }, k: QUIET }) // words: a little room round them
     }
+    mark(frosts.map((f) => f.el))
+    layout(frosts)
+    frostDue = true
     const viewport = rel(root.querySelector('[data-slot="message-scroller-viewport"]'))
     // The heading just over the composer (the centred new chat): the zone is round both.
     const near = content !== null && comp.y - (content.y + content.h) < 80
@@ -378,7 +542,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     const rand = mulberry32(7)
     const top = viewport ? viewport.y : 44
     lines = pageRows({ top, bottom: H, anchor: comp.y + comp.h / 2 }, H).map(
-      (y, rank) => {
+      (y, rank): Line => {
         const d = depths[DEPTH_BY_RANK[rank] ?? DEPTH_FAR[rank % DEPTH_FAR.length]]
         let text = ""
         const snips: Line["snips"] = []
@@ -387,6 +551,18 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
           text += sn + GAP
         }
         const tileW = text.length * d.cw
+        // The same line drawn the same size: its sprites carry over (a pane sliding
+        // open lays the art out again every frame).
+        const was = prev[rank]
+        const same = was && was.text === text && was.tileW === tileW && was.d.px === d.px && was.dpr === dpr
+        const spans = lineSpans(
+          W,
+          y,
+          d.px * 0.5 + 8, // and the 8px a line may lean towards the composer
+          Math.abs(y - zone.cy) < zone.b ? { cx: zone.cx, hx: zoneHalfWidth(zone, y) } : null,
+          LENS,
+          covers,
+        )
         return {
           baseY: y,
           y,
@@ -394,23 +570,137 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
           text,
           snips,
           tileW,
-          sprite: sprite(redact(text), d),
+          dpr,
+          sprite: same ? was.sprite : sprite(redact(text), d),
           offset: prev[rank]?.offset ?? rand() * tileW,
-          spans: lineSpans(
-            W,
-            y,
-            d.px * 0.5 + 8, // and the 8px a line may lean towards the composer
-            Math.abs(y - zone.cy) < zone.b ? { cx: zone.cx, hx: zoneHalfWidth(zone, y) } : null,
-            LENS,
-            covers,
-          ),
+          spans,
+          ...frostRuns(y, d, spans),
           lens: new Map(),
+          blurred: same ? was.blurred : new Map(),
         }
       },
     )
     decode = null
     // For the e2e specs: where the lines run.
     el.dataset.lines = lines.map((ln) => Math.round(ln.y)).join(",")
+  }
+
+  // How a line at height y shows under the glass the art frosts: which of its spans
+  // are left to draw sharp, and its runs under each glass (FrostRun).
+  function frostRuns(y: number, d: Depth, spans: [number, number, number][]) {
+    let sharp = spans
+    const frost: FrostRun[] = []
+    const half = d.px * 0.25 // the ink's half height (its blocks are half the size tall)
+    frosts.forEach((f, g) => {
+      const top = f.box.y
+      const bottom = f.box.y + f.box.h
+      const inside = Math.min(bottom, y + half) - Math.max(top, y - half)
+      if (inside <= 0) return
+      // Under this glass it's the frost layer's: nothing sharp there.
+      sharp = cut(sharp, f.box.x, f.box.x + f.box.w)
+      const copies: FrostRun["copies"] = []
+      const reach = 3 * f.sigma
+      if (y >= top && y <= bottom) {
+        copies.push({ at: "self", w: 1 })
+        if (y - top < reach) copies.push({ at: "up", w: 1 })
+        if (bottom - y < reach) copies.push({ at: "down", w: 1 })
+      } else copies.push({ at: y < top ? "top" : "bottom", w: Math.min(1, inside / half) })
+      frost.push({ g, slices: frostSlices(spans, f.box.x, f.box.x + f.box.w, f.sigma), copies })
+    })
+    return { sharp, frost }
+  }
+
+  // A canvas under each glass the art frosts, placed over it and shaped as it is.
+  function layout(fs: Frost[]) {
+    while (layers.length > fs.length) layers.pop()!.canvas.remove()
+    fs.forEach((f, i) => {
+      let layer = layers[i]
+      if (!layer) {
+        const c = document.createElement("canvas")
+        c.dataset.frost = ""
+        c.className = "absolute"
+        el.appendChild(c)
+        layer = layers[i] = { canvas: c, g: c.getContext("2d"), sx: 1, sy: 1 }
+      }
+      const scale = FROST_SAMPLES / f.sigma
+      const c = layer.canvas
+      c.width = Math.max(1, Math.ceil(f.box.w * scale))
+      c.height = Math.max(1, Math.ceil(f.box.h * scale))
+      // Exactly the glass's box: never a sample past its edge.
+      layer.sx = c.width / f.box.w
+      layer.sy = c.height / f.box.h
+      Object.assign(c.style, {
+        left: `${f.box.x}px`,
+        top: `${f.box.y}px`,
+        width: `${f.box.w}px`,
+        height: `${f.box.h}px`,
+      })
+    })
+  }
+
+  // The glass the art frosts: the lines under each, blurred, on its own small canvas.
+  function drawFrost() {
+    frosts.forEach((f, g) => {
+      const layer = layers[g]
+      const c = layer?.g
+      if (!c) return
+      const { x, y, w, h } = f.box
+      c.setTransform(1, 0, 0, 1, 0, 0)
+      c.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      // Drawn in the art's coordinates, at the layer's scale.
+      c.setTransform(layer.sx, 0, 0, layer.sy, -x * layer.sx, -y * layer.sy)
+      // The glass's rounded corners, in the drawing (a border-radius on the canvas would
+      // be a mask for the compositor to apply every frame). A little rounder than the
+      // glass: a coarse sample's soft edge then stays inside its corner.
+      c.save()
+      if (f.round > 0 && c.roundRect) {
+        c.beginPath()
+        c.roundRect(x, y, w, h, f.round + CORNER_PAD)
+        c.clip()
+      }
+      for (const ln of lines) {
+        for (const run of ln.frost) {
+          if (run.g !== g) continue
+          const b = blurredOf(ln, f.sigma)
+          const sh = ln.sprite.height / dpr
+          const { x0 } = place(ln)
+          for (const cp of run.copies) {
+            const cy =
+              cp.at === "self" ? ln.y
+              : cp.at === "up" ? 2 * y - ln.y
+              : cp.at === "down" ? 2 * (y + h) - ln.y
+              : cp.at === "top" ? y
+              : y + h
+            const top = cy - sh / 2 - b.pad
+            for (const [a, z, k] of run.slices) {
+              c.globalAlpha = Math.min(1, ln.d.alpha * k) * b.gain * cp.w
+              tiles(c, b.canvas, ln.tileW, x0, a, z, top, b.h)
+            }
+          }
+        }
+      }
+      c.restore()
+      c.globalAlpha = 1
+    })
+  }
+
+  // A line's tile drawn across [a, b) (repeating from x0), from `img`, the tile scaled.
+  function tiles(
+    c: CanvasRenderingContext2D,
+    img: HTMLCanvasElement,
+    tileW: number,
+    x0: number,
+    a: number,
+    b: number,
+    top: number,
+    h: number,
+  ) {
+    const per = img.width / tileW
+    for (let x = x0 + Math.floor((a - x0) / tileW) * tileW; x < b; x += tileW) {
+      const from = Math.max(a, x)
+      const to = Math.min(b, x + tileW)
+      if (to > from) c.drawImage(img, (from - x) * per, 0, (to - from) * per, img.height, from, top, to - from, h)
+    }
   }
 
   // A line can decode inside the zone, but not behind the composer, glass or words.
@@ -614,7 +904,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     const cells = dc ? decodeCells(dc, ln, now, x0 + dc.absX - baseAbs) : null
     // Stretch by stretch (lineSpans): full in open space, lighter in the zone, faint
     // under words, stronger under glass. Only the tiles that reach a stretch are drawn.
-    for (const [a, b, k] of ln.spans) {
+    for (const [a, b, k] of ln.sharp) {
       const whole = a <= 0 && b >= W
       if (!whole) {
         c.save()
@@ -727,6 +1017,13 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         ctx.globalAlpha = 1
       }
     }
+    // Frost at half the frame rate: blurred that much, a line moving half a px more
+    // shows nothing, and a canvas left alone isn't sent to the compositor again.
+    if (frosts.length && (still || frostDue || ++frostSkip >= FROST_EVERY)) {
+      frostSkip = 0
+      frostDue = false
+      drawFrost()
+    }
     if (!still && !decode && W >= PHONE) {
       nextDecodeAt ??= now + FIRST_DECODE
       // Nothing fits the zone just now (often, on a narrow window): look again shortly.
@@ -756,11 +1053,14 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     const ours = (target: EventTarget | null) =>
       target === root || (target instanceof Element && target.matches(BLANK))
     const onMove = (e: PointerEvent) => {
+      const was = pointer.in
       pointer.in = e.pointerType !== "touch" && hover.matches
+      if (pointer.in !== was) pointerHook?.(pointer.in)
       pointer.x = e.clientX - origin.x
       pointer.y = e.clientY - origin.y
     }
     const onLeave = () => {
+      if (pointer.in) pointerHook?.(false)
       pointer.in = false
     }
     const onDown = (e: PointerEvent) => {
@@ -807,6 +1107,26 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     dirty: () => {
       dirty = true
     },
+    // A moment to hold still for the idle rest: no line decoding, no ring fading.
+    settled: () => (!decode || decode.still) && !ripple,
+    // On screen (the chat shown) and not leaving: frosting here. A change lays it out again.
+    frost(on: { shown?: boolean; leaving?: boolean }) {
+      const was = shown && !leaving
+      shown = on.shown ?? shown
+      leaving = on.leaving ?? leaving
+      if (!canFrost || was === (shown && !leaving)) return false
+      dirty = true
+      return blurGlass // only glass with a blur over it looks any different
+
+    },
+    // Told when a mouse comes over the art (the lens follows it) and leaves.
+    onPointer(fn: (over: boolean) => void) {
+      pointerHook = fn
+    },
+    unmark: () => {
+      mark([])
+      layout([])
+    },
     root: () => root,
     listen,
     watched: () => [composerEl(), belowEl(), paneEl(), ...coverEls()].filter((n): n is Element => n !== null),
@@ -814,3 +1134,16 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
 }
 
 const mod = (a: number, n: number) => ((a % n) + n) % n
+
+// Spans less the stretch [a, b).
+function cut(spans: [number, number, number][], a: number, b: number) {
+  const out: [number, number, number][] = []
+  for (const [x0, x1, k] of spans) {
+    if (x1 <= a || x0 >= b) out.push([x0, x1, k])
+    else {
+      if (x0 < a) out.push([x0, a, k])
+      if (x1 > b) out.push([b, x1, k])
+    }
+  }
+  return out
+}
