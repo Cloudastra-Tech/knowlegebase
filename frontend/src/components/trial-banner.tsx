@@ -4,9 +4,9 @@ import { Link } from "react-router"
 import type { User } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-// A thin note under the header (the trial, support signed in, a workspace being
-// deleted): a hairline strip of subtle glass with a mono glyph in front. No blur: the
-// header above it is the chrome that blurs. The glyph is aria-hidden; the words say it.
+// A thin note above the screen (the trial, support signed in, a workspace being
+// deleted): a hairline strip of subtle glass with a mono glyph in front. No blur.
+// The glyph is aria-hidden; the words say it.
 export function ShellStrip({
   glyph,
   tone = "muted",

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ChevronRight,
@@ -9,16 +9,12 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Search,
   Share2,
-  SquarePen,
   Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { ChatSettingsDialog } from "@/components/chat-settings-dialog"
 import { ShareDialog } from "@/components/share-dialog"
-import { SpaceSwitcher } from "@/components/space-switcher"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,17 +39,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInput,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -63,19 +53,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { api, type ChatFolder, type ConversationSummary } from "@/lib/api"
-import { useAuth } from "@/lib/auth-context"
-import { MOD_KEY } from "@/lib/chat-events"
-import { groupChats, keptFor, splitSnippet } from "@/lib/chat-history"
+import { groupChats } from "@/lib/chat-history"
 import { queries } from "@/lib/queries"
-
-function useDebounced<T>(value: T, ms: number) {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms)
-    return () => clearTimeout(t)
-  }, [value, ms])
-  return debounced
-}
 
 // A name to give: renaming a chat or a folder, or a new folder.
 function NameDialog({
@@ -268,35 +247,25 @@ function Group({ label, action, children }: { label: string; action?: ReactNode;
   )
 }
 
-// The chat history (C9): New chat, search, Pinned, Folders, then the rest by when
-// they were last used. A Sheet on phones (the shadcn Sidebar's mobile mode).
-export function ChatSidebar({
-  activeId,
-  spaceId,
-  onSpace,
+// The chat history (C9) in the app's sidebar (app-sidebar.tsx): Pinned, Folders, then
+// the rest by when they were last used. Not in the collapsed rail.
+export function ChatHistory({
+  currentId,
+  onChat,
   busy,
   onOpen,
-  onNewChat,
   onDeleted,
 }: {
-  activeId: string | null
-  spaceId: string | null // the space the open chat is asked in (chat.md C31)
-  onSpace: (spaceId: string | null) => void
-  busy: boolean // an answer is being written in the open chat
+  currentId: string | null // the conversation the chat is at (also from another screen)
+  onChat: boolean // the chat is the open screen: its conversation is marked
+  busy: boolean // an answer is being written in that conversation
   onOpen: (id: string) => void
-  onNewChat: () => void
   onDeleted: (id: string) => void
 }) {
   const queryClient = useQueryClient()
-  const { user, role } = useAuth()
   const { isMobile, setOpenMobile } = useSidebar()
   const list = useQuery(queries.conversations())
-  const settings = useQuery(queries.chatSettings())
-  const [query, setQuery] = useState("")
-  const q = useDebounced(query.trim(), 250)
-  const results = useQuery(queries.conversationSearch(q))
   const [action, setAction] = useState<ChatAction | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   // The folder a new folder is made for: this chat moves into it.
   const [moveAfterCreate, setMoveAfterCreate] = useState<ConversationSummary | null>(null)
 
@@ -345,9 +314,9 @@ export function ChatSidebar({
     <ChatRow
       key={chat.id}
       chat={chat}
-      active={chat.id === activeId}
+      active={onChat && chat.id === currentId}
       folders={folders}
-      busy={busy}
+      busy={busy && chat.id === currentId}
       onOpen={() => open(chat.id)}
       onAction={(a) => {
         if (a.kind === "new-folder") setMoveAfterCreate(chat)
@@ -356,192 +325,102 @@ export function ChatSidebar({
       onOrganize={(edit) => organize(chat, edit)}
     />
   )
-  const canChangeSettings = user?.role === "admin" && role === "hr"
 
   return (
-    <Sidebar className="absolute h-full" aria-label="Chat history">
-      <SidebarHeader className="gap-2">
-        <SpaceSwitcher
-          value={spaceId}
-          onChange={(id) => {
-            onSpace(id)
-            if (isMobile) setOpenMobile(false)
-          }}
-        />
-        <Button
-          variant="outline"
-          className="w-full justify-start pointer-coarse:h-10"
-          onClick={() => {
-            onNewChat()
-            if (isMobile) setOpenMobile(false)
-          }}
-        >
-          <SquarePen data-icon="inline-start" />
-          New chat
-          <KbdGroup className="ml-auto hidden md:inline-flex">
-            {/* Darker than Kbd's own grey: that fails contrast on the sidebar. */}
-            <Kbd className="text-foreground/70">{MOD_KEY}</Kbd>
-            <Kbd className="text-foreground/70">⇧</Kbd>
-            <Kbd className="text-foreground/70">O</Kbd>
-          </KbdGroup>
-        </Button>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <SidebarInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setQuery("")
-            }}
-            placeholder="Search chats"
-            aria-label="Search chats"
-            className="pl-8 max-md:h-10 max-md:text-base"
-            maxLength={200}
-          />
-        </div>
-      </SidebarHeader>
-
-      <SidebarContent>
-        {q ? (
-          <Group label={results.isFetching ? "Searching…" : "Results"}>
-            {results.data?.length === 0 && (
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">No chats match “{q}”.</p>
+    <>
+      {list.isPending ? (
+        <Group label="Chats">
+          {Array.from({ length: 5 }, (_, i) => (
+            <SidebarMenuItem key={i}>
+              <SidebarMenuSkeleton />
+            </SidebarMenuItem>
+          ))}
+        </Group>
+      ) : (
+        <>
+          {grouped.pinned.length > 0 && <Group label="Pinned">{grouped.pinned.map(row)}</Group>}
+          <Group
+            label="Folders"
+            action={
+              <SidebarGroupAction
+                title="New folder"
+                aria-label="New folder"
+                onClick={() => {
+                  setMoveAfterCreate(null)
+                  setAction({ kind: "new-folder" })
+                }}
+              >
+                <FolderPlus />
+              </SidebarGroupAction>
+            }
+          >
+            {folders.length === 0 && (
+              <SidebarMenuItem>
+                <p className="px-2 text-xs text-muted-foreground">Group chats in folders from their menu.</p>
+              </SidebarMenuItem>
             )}
-            {results.data?.map((r) => (
-              <SidebarMenuItem key={r.conversation_id}>
-                <SidebarMenuButton
-                  onClick={() => open(r.conversation_id)}
-                  isActive={r.conversation_id === activeId}
-                  className="h-auto flex-col items-start gap-0.5 py-1.5"
-                >
-                  <span className="w-full truncate font-medium">{r.title}</span>
-                  <span className="line-clamp-2 w-full text-xs text-muted-foreground">
-                    {splitSnippet(r.snippet).map((part, i) =>
-                      part.match ? (
-                        <mark key={i} className="bg-transparent font-medium text-foreground">
-                          {part.text}
-                        </mark>
-                      ) : (
-                        <span key={i}>{part.text}</span>
-                      ),
-                    )}
-                  </span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
+            {folders.map((folder) => {
+              const inside = grouped.byFolder.get(folder.id) ?? []
+              return (
+                <Collapsible key={folder.id} defaultOpen className="group/collapsible">
+                  <SidebarMenuItem>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton className="pr-8 pointer-coarse:h-10">
+                        <ChevronRight className="transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                        <Folder />
+                        <span className="truncate">{folder.name}</span>
+                        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                          {inside.length}
+                        </span>
+                      </SidebarMenuButton>
+                    </CollapsibleTrigger>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <SidebarMenuAction
+                          showOnHover
+                          aria-label={`Options for folder ${folder.name}`}
+                          className="pointer-coarse:opacity-100"
+                        >
+                          <MoreHorizontal />
+                        </SidebarMenuAction>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent side="right" align="start">
+                        <DropdownMenuItem onSelect={() => setAction({ kind: "rename-folder", folder })}>
+                          <Pencil /> Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => setAction({ kind: "delete-folder", folder })}
+                        >
+                          <Trash2 /> Delete folder
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <CollapsibleContent>
+                      <SidebarMenuSub className="mr-0 pr-0">
+                        {inside.length === 0 ? (
+                          <p className="px-2 py-1 text-xs text-muted-foreground">Empty</p>
+                        ) : (
+                          inside.map(row)
+                        )}
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </SidebarMenuItem>
+                </Collapsible>
+              )
+            })}
           </Group>
-        ) : list.isPending ? (
-          <Group label="Chats">
-            {Array.from({ length: 5 }, (_, i) => (
-              <SidebarMenuItem key={i}>
-                <SidebarMenuSkeleton />
-              </SidebarMenuItem>
-            ))}
-          </Group>
-        ) : (
-          <>
-            {grouped.pinned.length > 0 && <Group label="Pinned">{grouped.pinned.map(row)}</Group>}
-            <Group
-              label="Folders"
-              action={
-                <SidebarGroupAction
-                  title="New folder"
-                  aria-label="New folder"
-                  onClick={() => {
-                    setMoveAfterCreate(null)
-                    setAction({ kind: "new-folder" })
-                  }}
-                >
-                  <FolderPlus />
-                </SidebarGroupAction>
-              }
-            >
-              {folders.length === 0 && (
-                <SidebarMenuItem>
-                  <p className="px-2 text-xs text-muted-foreground">Group chats in folders from their menu.</p>
-                </SidebarMenuItem>
-              )}
-              {folders.map((folder) => {
-                const inside = grouped.byFolder.get(folder.id) ?? []
-                return (
-                  <Collapsible key={folder.id} defaultOpen className="group/collapsible">
-                    <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton className="pr-8 pointer-coarse:h-10">
-                          <ChevronRight className="transition-transform group-data-[state=open]/collapsible:rotate-90" />
-                          <Folder />
-                          <span className="truncate">{folder.name}</span>
-                          <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                            {inside.length}
-                          </span>
-                        </SidebarMenuButton>
-                      </CollapsibleTrigger>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <SidebarMenuAction
-                            showOnHover
-                            aria-label={`Options for folder ${folder.name}`}
-                            className="pointer-coarse:opacity-100"
-                          >
-                            <MoreHorizontal />
-                          </SidebarMenuAction>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent side="right" align="start">
-                          <DropdownMenuItem onSelect={() => setAction({ kind: "rename-folder", folder })}>
-                            <Pencil /> Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() => setAction({ kind: "delete-folder", folder })}
-                          >
-                            <Trash2 /> Delete folder
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <CollapsibleContent>
-                        <SidebarMenuSub className="mr-0 pr-0">
-                          {inside.length === 0 ? (
-                            <p className="px-2 py-1 text-xs text-muted-foreground">Empty</p>
-                          ) : (
-                            inside.map(row)
-                          )}
-                        </SidebarMenuSub>
-                      </CollapsibleContent>
-                    </SidebarMenuItem>
-                  </Collapsible>
-                )
-              })}
+          {grouped.dated.map((g) => (
+            <Group key={g.label} label={g.label}>
+              {g.items.map(row)}
             </Group>
-            {grouped.dated.map((g) => (
-              <Group key={g.label} label={g.label}>
-                {g.items.map(row)}
-              </Group>
-            ))}
-            {chats?.length === 0 && (
-              <p className="px-4 py-2 text-sm text-muted-foreground">Your chats show up here.</p>
-            )}
-          </>
-        )}
-      </SidebarContent>
-
-      {settings.data && (
-        <SidebarFooter className="border-t text-xs text-muted-foreground">
-          <p>
-            Chats are kept {keptFor(settings.data.retention_days)}
-            {settings.data.retention_days !== null && " after they were last used"} (set by your
-            admin).{" "}
-            {canChangeSettings && (
-              <Button variant="link" size="xs" className="h-auto p-0 text-xs" onClick={() => setSettingsOpen(true)}>
-                Change
-              </Button>
-            )}
-          </p>
-        </SidebarFooter>
+          ))}
+          {chats?.length === 0 && (
+            <p className="px-4 py-2 text-sm text-muted-foreground">Your chats show up here.</p>
+          )}
+        </>
       )}
 
-      {settings.data && canChangeSettings && (
-        <ChatSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings.data} />
-      )}
       <NameDialog
         open={action?.kind === "rename"}
         onOpenChange={(o) => !o && setAction(null)}
@@ -616,6 +495,6 @@ export function ChatSidebar({
           conversationId={action.chat.id}
         />
       )}
-    </Sidebar>
+    </>
   )
 }
