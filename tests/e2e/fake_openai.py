@@ -144,7 +144,9 @@ def _chunk(model, delta, finish=None):
 
 
 DETAIL = "in full detail"     # the question that makes a long, slow answer
-DETAIL_PARAGRAPHS = 10
+# Long enough (about 13s) to still be streaming when the scroll test stops it, on a
+# busy machine too.
+DETAIL_PARAGRAPHS = 16
 DETAIL_WORD_DELAY = 0.02      # seconds a word
 
 
