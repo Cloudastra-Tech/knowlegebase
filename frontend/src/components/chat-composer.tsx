@@ -13,8 +13,7 @@ import { ArrowUp, Square } from "lucide-react"
 
 import "@/components/chat-motion.css"
 
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
 import { cn } from "@/lib/utils"
 
 // The server's limit on a question (safety.py MAX_QUESTION_CHARS). The counter shows
@@ -107,63 +106,72 @@ export function Composer({
       className="pointer-events-auto relative mx-auto max-w-3xl px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
     >
       {above}
-      {/* Chrome-tier glass with grain, 22px, the chat's one lifted thing: the field (or
-          the empty chat's art) blurred behind it. Focus is the signal: its border and a
-          soft ring (chat-motion.css, kb-composer), at once, as focus is often from the
-          keyboard. data-drift: the empty chat's art reads where it is, and draws its
-          lines at full ink under it for the glass to frost. */}
-      <div
+      {/* shadcn's InputGroup. Chrome-tier glass with grain, 22px, the chat's one lifted
+          thing: the field (or the empty chat's art) blurred behind it. Focus is the
+          signal: its border and a soft ring (chat-motion.css, kb-composer, which also
+          keeps the glass's own border and shadow over the group's), at once, as focus
+          is often from the keyboard. It wraps: the chips take the first row, then the
+          paperclip, the text and Send. A disabled Send (or paperclip) doesn't dim the
+          box, as it would an input group's. data-drift: the empty chat's art reads
+          where it is, and draws its lines at full ink under it for the glass to frost. */}
+      <InputGroup
         onClick={() => inputRef.current?.focus()}
         onDragOver={(e) => onFiles && e.preventDefault()}
         onDrop={onDrop}
         data-drift="composer"
         data-over={over || undefined}
         className={cn(
-          "kb-composer glass glass-noise cursor-text rounded-3xl py-2 pr-2",
+          "kb-composer glass glass-noise h-auto cursor-text flex-wrap items-end gap-x-2 rounded-3xl py-2 pr-2 transition-none",
+          "dark:bg-glass has-disabled:bg-glass has-disabled:opacity-100 dark:has-disabled:bg-glass",
           leading ? "pl-2" : "pl-5",
         )}
       >
-        {top && <div className="mb-1 flex flex-wrap items-center gap-1.5 pl-1">{top}</div>}
-        <div className="flex items-end gap-2">
-          {leading}
-          <Textarea
-            ref={inputRef}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            placeholder="Ask anything…"
-            aria-label="Your question"
-            aria-invalid={over || undefined}
-            aria-describedby={value.length >= COUNT_FROM ? counterId : undefined}
-            rows={1}
-            className="max-h-48 min-h-9 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 leading-6 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 aria-invalid:ring-0 dark:bg-transparent"
-          />
+        {top && <div className="order-first mb-1 flex basis-full flex-wrap items-center gap-1.5 pl-1">{top}</div>}
+        {leading && (
+          <InputGroupAddon align="inline-start" className="p-0 has-[>button]:ml-0">
+            {leading}
+          </InputGroupAddon>
+        )}
+        <InputGroupTextarea
+          ref={inputRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder="Ask anything…"
+          aria-label="Your question"
+          aria-invalid={over || undefined}
+          aria-describedby={value.length >= COUNT_FROM ? counterId : undefined}
+          rows={1}
+          className="max-h-48 min-h-9 min-w-0 px-0 py-1.5 leading-6 placeholder:text-muted-foreground/70"
+        />
+        <InputGroupAddon align="inline-end" className="p-0 has-[>button]:mr-0">
           {busy ? (
-            <Button
-              type="button"
-              size="icon-lg"
+            <InputGroupButton
+              variant="default"
+              size="icon-sm"
               onClick={onStop}
               aria-label="Stop answering"
-              className="rounded-full"
+              className="size-9 rounded-full"
             >
               <Square className="size-3.5 fill-current" />
-            </Button>
+            </InputGroupButton>
           ) : (
-            <Button
+            <InputGroupButton
               type="submit"
-              size="icon-lg"
+              variant="default"
+              size="icon-sm"
               disabled={!canSend}
               aria-label="Send"
-              className="rounded-full"
+              className="size-9 rounded-full"
             >
               <ArrowUp className="size-4" strokeWidth={2.5} />
-            </Button>
+            </InputGroupButton>
           )}
-        </div>
-      </div>
+        </InputGroupAddon>
+      </InputGroup>
       <div data-drift="quiet" className="mt-2 flex h-4 items-center justify-between gap-3 px-5 text-xs text-muted-foreground">
         <span data-slot="composer-hint" className="hidden truncate sm:inline">
           {busy

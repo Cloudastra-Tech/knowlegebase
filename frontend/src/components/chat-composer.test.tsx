@@ -31,13 +31,22 @@ function Harness({
 }
 
 describe("the composer", () => {
-  it("is the shadcn Textarea, at 16px on phones so iOS doesn't zoom", () => {
+  it("is shadcn's InputGroup, its text at 16px on phones so iOS doesn't zoom", () => {
     render(<Harness />)
     const box = screen.getByRole("textbox", { name: "Your question" })
-    expect(box).toHaveAttribute("data-slot", "textarea")
+    expect(box).toHaveAttribute("data-slot", "input-group-control")
+    expect(box.closest('[data-slot="input-group"]')).toHaveAttribute("data-drift", "composer")
     expect(box.className).toMatch(/\btext-base\b/)
     expect(box.className).toMatch(/\bmd:text-sm\b/)
     expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("data-slot", "button")
+  })
+
+  it("isn't dimmed by its disabled Send, as an input group would be", () => {
+    render(<Harness />)
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled()
+    const group = document.querySelector('[data-slot="input-group"]')!
+    expect(group.className).toMatch(/\bhas-disabled:opacity-100\b/)
+    expect(group.className).not.toMatch(/\bhas-disabled:opacity-50\b/)
   })
 
   it("says the keys only while focused and empty, in a line that keeps its height", async () => {
