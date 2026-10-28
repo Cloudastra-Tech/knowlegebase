@@ -443,11 +443,12 @@ def _merge(workspace, current, change):
     if chat == "default" and listed:
         raise Invalid("Choose a provider of your own for answers to let people pick a "
                       "model: the server's has one.")
-    listed = enabled(current) if listed is None else listed
+    # Kept as stored (a null model stays its provider's default, as .env says);
+    # the default is always among them when read (enabled()).
+    listed = _stored_models(current) if listed is None else listed
     removed = {p for p, k in api_change.items() if not k}
     listed = [] if chat == "default" else [(p, m) for p, m in listed if p not in removed]
     merged["chat_models"] = _dump_models(listed)
-    merged["chat_models"] = _dump_models(enabled(merged))      # with the default, first
     api_keys = {**_api_keys(workspace, current), **api_change}
     # Only the providers in use keep a key: one left behind is a secret for nothing.
     used = _providers_of(merged)

@@ -1883,6 +1883,20 @@ region of the company's choosing and never reach OpenAI (`models.py`). Two ways:
   here) or an IAM user's **access keys** (sealed under the workspace's key, never
   shown again). Every change and every Test connection is in the audit log.
 
+**Several answer models, picked per chat.** A workspace can hold credentials for
+several chat providers at once (an OpenAI key, an Anthropic key, its AWS). On
+Assistant → Models the admin ticks the answer models people may pick (each provider's
+curated list in `models.CATALOGUE`, or a custom model id) and marks one as the
+default. The chat's composer then shows a model menu (hidden with one model); each
+chat keeps its pick (`conversations.model_provider` / `model_id`, migration 0026),
+and every question is checked against the enabled list: a model turned off is refused
+with a 400, never swapped silently. Only the answer follows the pick: the FAST model
+(the guards' classifiers, titles, HyDE) stays the default provider's, and search stays
+the workspace's one embeddings provider. The answer cache and the question log name
+the answer model. **Test connection is free**: each provider lists its models (OpenAI
+and Anthropic `models.list`, Bedrock `ListFoundationModels`); nothing is answered or
+embedded.
+
 How it calls Bedrock: chat through the **Converse API** (`ConverseStream` while an
 answer streams; langchain-aws `ChatBedrockConverse`, with tool calls), embeddings
 through **InvokeModel**. A workspace on Bedrock **fails closed**: if its models can't
@@ -2027,8 +2041,9 @@ shows); they are refreshed shortly before they expire, not assumed per question
    }
    ```
 
-3. The admin pastes the role ARN, presses **Test connection** (one tiny Converse call
-   to the chat model and one embedding, with what's typed, saved or not), then Save.
+3. The admin pastes the role ARN, presses **Test connection** (one free
+   `ListFoundationModels` call, with what's typed, saved or not: nothing is answered or
+   embedded), then Save. The policy includes `bedrock:ListFoundationModels` for it.
 
 Access keys instead: an IAM user with the IAM policy above, its keys pasted on the
 screen. They're sealed under the workspace's data key (`secret_box`), like other
@@ -2062,12 +2077,14 @@ test). With a real account, once:
    workspace's ExternalId). In IAM's policy simulator, `bedrock:InvokeModel` and
    `bedrock:InvokeModelWithResponseStream` on the model ARNs are *allowed*.
 3. **Test connection.** On Assistant → Models choose AWS Bedrock, the region, *A role
-   it assumes*, paste the role ARN, press Test connection: "Connected", the chat model
-   replied "OK", a 1024-number embedding. A wrong ExternalId in the trust policy gives
-   `AccessDenied` on AssumeRole; a model without access gives
-   `AccessDeniedException`; a base id where a profile is needed gives a
-   `ValidationException` naming inference profiles. CloudTrail shows `AssumeRole`
-   with the session name `knowledge-<workspace>` and the two Bedrock calls.
+   it assumes*, paste the role ARN, press Test connection: "AWS Bedrock: connected",
+   and how many models the account lists, naming any enabled model it doesn't. A wrong
+   ExternalId in the trust policy gives `AccessDenied` on AssumeRole; a policy without
+   `bedrock:ListFoundationModels` gives `AccessDeniedException`. Test connection
+   makes no model call, so model access itself shows on the first question (a base id
+   where a profile is needed gives a `ValidationException` naming inference
+   profiles). CloudTrail shows `AssumeRole` with the session name
+   `knowledge-<workspace>` and the `ListFoundationModels` call.
 4. **Save** (confirm the index rebuild): the top bar shows the rebuild; when it's
    done, the audit log has `model_provider.update` with `reindex: true`.
 5. **Ask a question** in the chat: it streams; the steps show the search; the answer

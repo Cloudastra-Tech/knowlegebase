@@ -135,6 +135,21 @@ def test_a_row_without_a_list_offers_its_one_model(fake_aws):
     assert store.enabled(store.get(w)) == [("bedrock", "amazon.nova-micro-v1:0")]
 
 
+def test_a_migrated_default_follows_the_servers_model_after_a_save(monkeypatch):
+    """A row 0026 gave {model: null} keeps meaning "the provider's default (.env)":
+    a later save doesn't freeze it, so changing ANSWER_MODEL can't leave two models."""
+    w = new_workspace()
+    store.save(w, {"chat_provider": "openai", "api_keys": {"openai": OPENAI_KEY}}, "admin")
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE model_providers SET chat_models = ? WHERE workspace = ?",
+                     (json.dumps([{"provider": "openai", "model": None}]), w))
+    conn.close()
+    store.save(w, {"api_keys": {"openai": OPENAI_KEY}}, "admin")
+    monkeypatch.setenv("ANSWER_MODEL", "gpt-5")
+    assert store.enabled(store.get(w)) == [("openai", "gpt-5")]
+
+
 # ---- A chat's pick -------------------------------------------------------------------------------
 def _stream(client, h, **body):
     r = client.post("/api/chat/stream", headers=h, json={"question": "How long do refunds take?",
@@ -242,6 +257,7 @@ def test_the_answer_cache_and_release_key_on_the_answer_model(fake_aws):
 
 
 # ---- Migration 0026 --------------------------------------------------------------------------------
+@pytest.mark.sqlite_only("the SQLite file's own migrations (Postgres: test_postgres_migrations)")
 def test_0026_turns_single_provider_rows_into_one_enabled_model_and_downgrades(
         tmp_path, monkeypatch):
     from alembic import command
