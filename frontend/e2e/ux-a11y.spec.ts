@@ -1,12 +1,13 @@
 import AxeBuilder from "@axe-core/playwright"
 import { expect, test, type Page } from "@playwright/test"
 
-import { ADMIN, ask, DESKTOP, fitsWidth, MEMBER, PHONE, shot, signIn } from "./helpers.ts"
+import { ADMIN, ask, DESKTOP, fitsWidth, MEMBER, overflowingScrollers, PHONE, shot, signIn } from "./helpers.ts"
 
 // Accessibility (axe-core) on the main screens, at a desktop and a phone width: a
 // serious or critical violation fails the run. And at 390px nothing is wider than the
-// screen: the page itself never scrolls sideways (the header's screens go in a menu,
-// the Access tabs in a picker). Runs last (file order): it asks one question.
+// screen: the page itself never scrolls sideways (the sidebar is a sheet,
+// the Access tabs in a picker), and no box that scrolls inside it is pushed sideways
+// (overflowingScrollers). Runs last (file order): it asks one question.
 
 const SCREENS = [
   ["chat", "/chat"],
@@ -63,14 +64,19 @@ for (const [name, size] of [
     await page.setViewportSize(size)
     await signIn(page, ADMIN)
     const found: string[] = []
+    const wide: string[] = []
     for (const [screen, url] of SCREENS) {
       await page.goto(url)
       await settle(page)
       await shot(page, `a11y-${name}-${screen}`)
       found.push(...(await serious(page)).map((v) => `${url}: ${v}`))
-      if (size === PHONE) expect(await fitsWidth(page), `${url} is wider than the phone`).toBe(true)
+      if (size === PHONE) {
+        expect(await fitsWidth(page), `${url} is wider than the phone`).toBe(true)
+        wide.push(...(await overflowingScrollers(page)).map((s) => `${url}: ${s}`))
+      }
     }
     expect(found).toEqual([])
+    expect(wide, "scrolling boxes pushed sideways at 390px").toEqual([])
   })
 }
 
@@ -80,14 +86,20 @@ test("an answer, and the phone menus, have no serious accessibility problems", a
   await ask(page, "How many days of annual leave do I get?")
   expect(await serious(page)).toEqual([])
   expect(await fitsWidth(page)).toBe(true)
+  expect(await overflowingScrollers(page)).toEqual([])
 
   await page.context().clearCookies()
   await page.evaluate("localStorage.clear()")
   await signIn(page, ADMIN)
-  // The header's screens are one menu on a phone, named after the open screen.
-  await page.getByRole("button", { name: "Chat, switch screen" }).click()
-  await page.getByRole("menuitem", { name: "Access" }).click()
+  // On a phone the sidebar is a sheet from the left, opened from the top bar; a screen
+  // picked in it closes it.
+  await page.getByRole("button", { name: "Open menu" }).click()
+  const sheet = page.getByRole("dialog", { name: "Menu" })
+  await expect(sheet.getByRole("navigation", { name: "Screens" })).toBeVisible()
+  expect(await serious(page)).toEqual([])
+  await sheet.getByRole("link", { name: "Access" }).click()
   await expect(page).toHaveURL(/\/admin\/sign-in/)
+  await expect(sheet).toHaveCount(0)
   // The Access tabs are a picker.
   await page.getByRole("combobox", { name: "Access section" }).click()
   await page.getByRole("option", { name: "Members" }).click()

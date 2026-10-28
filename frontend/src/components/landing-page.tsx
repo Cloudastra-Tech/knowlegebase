@@ -1,346 +1,221 @@
 import {
   ArrowRight,
-  BookOpen,
   Building2,
-  Check,
   Cloud,
   Database,
   Eye,
   EyeOff,
-  FileText,
   Globe,
   KeyRound,
-  Server,
-  Trash2,
-  X,
   Layers,
-  Lock,
   MessagesSquare,
   Plug,
   Quote,
   RefreshCw,
   Search,
+  Server,
   ShieldCheck,
-  Sparkles,
+  Trash2,
+  Upload,
   Workflow,
 } from "lucide-react"
 import {
+  siAuth0,
   siBox,
   siConfluence,
   siDropbox,
   siGithub,
+  siGoogle,
   siGoogledocs,
   siGoogledrive,
   siGooglesheets,
   siIntercom,
   siJira,
+  siKeycloak,
   siLinear,
   siNotion,
+  siOkta,
   siOutline,
   siZendesk,
-  type SimpleIcon,
 } from "simple-icons"
 
-import { Badge } from "@/components/ui/badge"
+import { AsciiBrain, AsciiField, AsciiTicker } from "@/components/ascii-art"
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { BrandIcon, ChatDemo, KnowledgeHub, Marquee, PermissionGate, type DemoScene } from "@/components/landing-visuals"
 import { Button } from "@/components/ui/button"
+import { useForcedDark } from "@/lib/forced-theme"
 import { cn } from "@/lib/utils"
 
-type Integration = {
-  name: string
-  kind: string
-  icon?: SimpleIcon
-  letter?: string
-  live?: boolean
-}
+// The page tells one story: see one brain answer from everything the company
+// knows, see why it's safe, see that it fits, then start. Every claim is about
+// what the product does today; demo content is labelled as an example. Always
+// dark (lib/forced-theme.ts), whatever theme the person picked for the app.
 
-// Live = connected today. Everything else is on the roadmap — keep this honest.
-const INTEGRATIONS: Integration[] = [
-  { name: "Outline", kind: "Wiki", icon: siOutline, live: true },
-  { name: "PDF & text files", kind: "Uploads", live: true },
-  { name: "Google Drive", kind: "Files", icon: siGoogledrive },
-  { name: "Google Docs", kind: "Documents", icon: siGoogledocs },
-  { name: "Google Sheets", kind: "Spreadsheets", icon: siGooglesheets },
-  { name: "Notion", kind: "Wiki", icon: siNotion },
-  { name: "Confluence", kind: "Wiki", icon: siConfluence },
-  { name: "SharePoint", kind: "Files", letter: "S" },
-  { name: "Slack", kind: "Chat", letter: "#" },
-  { name: "Microsoft Teams", kind: "Chat", letter: "T" },
-  { name: "Jira", kind: "Tickets", icon: siJira },
-  { name: "Linear", kind: "Tickets", icon: siLinear },
-  { name: "GitHub", kind: "Code & docs", icon: siGithub },
-  { name: "Dropbox", kind: "Files", icon: siDropbox },
-  { name: "Box", kind: "Files", icon: siBox },
-  { name: "Zendesk", kind: "Help center", icon: siZendesk },
-  { name: "Intercom", kind: "Help center", icon: siIntercom },
+const TICKER = [
+  { question: "who approves expenses over $500?", answer: "Your manager, then Finance, within 5 working days.", source: "expenses.pdf" },
+  { question: "how do I get prod db access?", answer: "Ask in #infra-access; on-call approves 8 hours.", source: "outline/runbooks" },
+  { question: "what discount can I offer?", answer: "Up to 15% on annual plans; more needs deal desk.", source: "pricing-2026" },
+]
+
+const DEMO: DemoScene[] = [
+  {
+    id: "hr",
+    label: "HR",
+    question: "Who approves expenses over $500?",
+    answer: "Your manager approves first, then Finance, within 5 working days. Anything under $500 only needs a receipt.",
+    docs: [
+      { kind: "upload", title: "expenses.pdf", text: "Claims over $500 need your manager and then Finance to approve them.", cited: "your manager and then Finance" },
+      { kind: "outline", title: "HR / Expenses", text: "Expenses under $500 only need a receipt, with no sign-off at all.", cited: "only need a receipt" },
+      { kind: "drive", title: "Finance handbook", text: "Finance approves within 5 working days of a claim being submitted.", cited: "within 5 working days" },
+    ],
+  },
+  {
+    id: "eng",
+    label: "Engineering",
+    question: "How do I get production database access?",
+    answer: "Ask in #infra-access. The on-call lead approves 8 hours of access, through the bastion host only.",
+    docs: [
+      { kind: "outline", title: "Runbooks / Access", text: "Request it in the #infra-access channel; the on-call lead approves it.", cited: "#infra-access channel" },
+      { kind: "notion", title: "Engineering onboarding", text: "Access lasts 8 hours, then it is revoked. All use is logged.", cited: "Access lasts 8 hours" },
+      { kind: "upload", title: "security-policy.pdf", text: "Production data never leaves the VPN; use the bastion host to connect.", cited: "use the bastion host" },
+    ],
+  },
+  {
+    id: "sales",
+    label: "Sales",
+    question: "What discount can I offer?",
+    answer: "Up to 15% on annual plans and none on monthly. Anything above 15% needs deal desk sign-off before you quote.",
+    docs: [
+      { kind: "drive", title: "Pricing 2026", text: "Annual plans: up to 15% off list. Monthly plans: no discounts.", cited: "up to 15% off list" },
+      { kind: "notion", title: "Deal desk", text: "Over 15% needs deal desk sign-off before you quote; we answer in a day.", cited: "deal desk sign-off before you quote" },
+      { kind: "outline", title: "Sales handbook", text: "Never promise a discount by email before it is approved." },
+    ],
+  },
+]
+
+const HOW = [
+  { icon: Plug, title: "Connect", body: "Link your wiki, drives and docs, or upload files." },
+  { icon: RefreshCw, title: "It keeps up", body: "Every add, edit or delete is re-indexed by itself." },
+  { icon: MessagesSquare, title: "Ask", body: "Plain language in, a cited answer out." },
+]
+
+const QUALITIES = [
+  { icon: Quote, title: "Cited from what it read", body: "Every answer lists its sources, with links back to the original page." },
+  { icon: Layers, title: "Many sources, one answer", body: "Your drive, wiki and uploads in a single reply." },
+  { icon: Search, title: "Meaning and exact words", body: "Hybrid search finds what you meant and the exact phrase, then reranks." },
+  { icon: Workflow, title: "Multi-step questions", body: "An agent chains search, read, calculate and convert for harder ones." },
+]
+
+const SAFETY = [
+  { icon: Server, title: "Runs on your server", body: "One container on your server or private cloud. Documents and their index stay there." },
+  { icon: EyeOff, title: "Never used for training", body: "Only the question and a few snippets go to the model, under an API that doesn't train on them." },
+  { icon: ShieldCheck, title: "Guardrails on every answer", body: "Prompt-injection checks, sensitive-data filters, and masking of emails, phones and cards." },
+  { icon: Eye, title: "Read-only connections", body: "Your tools are only ever read. Your source of truth stays untouched." },
+  { icon: Trash2, title: "Delete means gone", body: "Remove a document and it leaves the index, so it can't appear in answers." },
+  { icon: Database, title: "No outside vector store", body: "The search index lives with your documents, not in a third-party database." },
+]
+
+const letter = (ch: string) => <span className="text-xs font-semibold">{ch}</span>
+const MICROSOFT = (
+  <svg viewBox="0 0 24 24" aria-hidden className="size-5 fill-current">
+    <path d="M1 1h10v10H1zM13 1h10v10H13zM1 13h10v10H1zM13 13h10v10H13z" />
+  </svg>
+)
+
+// Live = connected today (Docs and Sheets come in through Google Drive). Keep this honest.
+const SOURCES = [
+  { name: "Outline", glyph: <BrandIcon icon={siOutline} />, live: true, tag: "live" },
+  { name: "Google Drive", glyph: <BrandIcon icon={siGoogledrive} />, live: true, tag: "live" },
+  { name: "Google Docs", glyph: <BrandIcon icon={siGoogledocs} />, live: true, tag: "via Drive" },
+  { name: "Google Sheets", glyph: <BrandIcon icon={siGooglesheets} />, live: true, tag: "via Drive" },
+  { name: "Notion", glyph: <BrandIcon icon={siNotion} />, live: true, tag: "live" },
+  { name: "PDF & text uploads", glyph: <Upload className="size-5" />, live: true, tag: "live" },
+  { name: "Confluence", glyph: <BrandIcon icon={siConfluence} />, tag: "soon" },
+  { name: "SharePoint", glyph: letter("S"), tag: "soon" },
+  { name: "Slack", glyph: letter("#"), tag: "soon" },
+  { name: "Microsoft Teams", glyph: letter("T"), tag: "soon" },
+  { name: "Jira", glyph: <BrandIcon icon={siJira} />, tag: "soon" },
+  { name: "Linear", glyph: <BrandIcon icon={siLinear} />, tag: "soon" },
+  { name: "GitHub", glyph: <BrandIcon icon={siGithub} />, tag: "soon" },
+  { name: "Dropbox", glyph: <BrandIcon icon={siDropbox} />, tag: "soon" },
+  { name: "Box", glyph: <BrandIcon icon={siBox} />, tag: "soon" },
+  { name: "Zendesk", glyph: <BrandIcon icon={siZendesk} />, tag: "soon" },
+  { name: "Intercom", glyph: <BrandIcon icon={siIntercom} />, tag: "soon" },
+]
+
+const SIGN_IN = [
+  { name: "Google Workspace", glyph: <BrandIcon icon={siGoogle} />, live: true },
+  { name: "Microsoft Entra ID", glyph: MICROSOFT, live: true },
+  { name: "Okta", glyph: <BrandIcon icon={siOkta} />, live: true },
+  { name: "Keycloak", glyph: <BrandIcon icon={siKeycloak} />, live: true },
+  { name: "Auth0", glyph: <BrandIcon icon={siAuth0} />, live: true },
+  { name: "Any SAML provider", glyph: <KeyRound className="size-5" />, live: true },
+  { name: "Any OpenID Connect provider", glyph: <KeyRound className="size-5" />, live: true },
+]
+
+const RUNS_ON = [
+  { icon: Server, title: "Your server", body: "One Docker container on any Linux VPS or on-prem machine." },
+  { icon: Cloud, title: "Private cloud", body: "Your own AWS, Azure or GCP account and network." },
+  { icon: Globe, title: "In-region model", body: "Optional: Azure OpenAI in your region, or a self-hosted model." },
 ]
 
 const STEPS = [
-  {
-    icon: Plug,
-    title: "Connect your tools",
-    body: "Link the wiki, drives and docs your team already uses, or upload files directly.",
-  },
-  {
-    icon: RefreshCw,
-    title: "It indexes itself",
-    body: "Every add, edit or delete is re-indexed automatically in the background.",
-  },
-  {
-    icon: MessagesSquare,
-    title: "Ask in plain language",
-    body: "Get a direct answer with the exact documents it came from, cited underneath.",
-  },
+  { icon: Building2, title: "Create a workspace", body: "Sign up with your company Google Workspace account; your domain is verified straight away." },
+  { icon: Plug, title: "Connect sources and sign-in", body: "Add your wiki, drives or uploads, and your identity provider if you use one." },
+  { icon: MessagesSquare, title: "Ask", body: "Your team signs in with their work account and asks in plain language." },
 ]
 
-const FEATURES = [
-  {
-    icon: Quote,
-    title: "Every answer is cited",
-    body: "Sources are built from what was actually read, with links back to the original page.",
-  },
-  {
-    icon: Lock,
-    title: "Respects who can see what",
-    body: "Restricted documents never reach the model for people who aren't allowed to see them.",
-  },
-  {
-    icon: Search,
-    title: "Finds meaning and keywords",
-    body: "Hybrid search combines semantic vectors and exact-word matching, then reranks.",
-  },
-  {
-    icon: Workflow,
-    title: "Handles multi-step questions",
-    body: "An agent chains tools (search, read, calculate, convert) to answer harder questions.",
-  },
-  {
-    icon: Layers,
-    title: "One answer, many sources",
-    body: "Combine your uploaded files and your wiki in a single reply.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Guardrails built in",
-    body: "Prompt-injection checks, sensitive-data filters and PII masking on every answer.",
-  },
+const NAV = [
+  ["#how", "one brain"],
+  ["#ask", "ask anything"],
+  ["#safe", "safe by design"],
+  ["#stack", "fits your stack"],
 ]
 
-const TRUST = [
-  {
-    icon: Server,
-    title: "Self-hosted",
-    body: "Runs on your own server or private cloud in a single container. No shared, multi-tenant SaaS.",
-  },
-  {
-    icon: Database,
-    title: "Your index stays with you",
-    body: "Documents and their search index (vectors) are stored on your server, not in a third-party database.",
-  },
-  {
-    icon: EyeOff,
-    title: "Never used for training",
-    body: "Answers use the OpenAI API, whose policy is that API data isn't used to train models by default.",
-  },
-  {
-    icon: Lock,
-    title: "Permission-aware by design",
-    body: "Restricted documents are filtered out before search, so the AI never receives what a user can't see.",
-  },
-  {
-    icon: Eye,
-    title: "Read-only connections",
-    body: "Connected tools are only read, never edited. Your source of truth stays untouched.",
-  },
-  {
-    icon: Trash2,
-    title: "Delete means gone",
-    body: "Remove a document and it is dropped from the search index automatically, so it can no longer appear in answers.",
-  },
-  {
-    icon: KeyRound,
-    title: "Secure sign-in",
-    body: "Salted, hashed passwords, lockout after failed attempts, and HTTPS on the public site.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Guardrails on every answer",
-    body: "Prompt-injection detection, sensitive-data filters and automatic masking of emails, phones and cards.",
-  },
-  {
-    icon: Building2,
-    title: "Single sign-on (SSO)",
-    body: "Sign in with Google Workspace or Microsoft Entra ID over SAML / OIDC, so access follows your company directory. Offboard someone once and they lose access here too.",
-    tag: "Soon",
-    wide: true,
-  },
-] as { icon: typeof Server; title: string; body: string; tag?: string; wide?: boolean }[]
+const accent = (text: string) => <span className="font-serif font-light italic">{text}</span>
 
-const ALWAYS = [
-  "Keep your documents and search index on infrastructure you control",
-  "Send the AI only the snippets needed to answer the current question",
-  "Show the exact sources behind every answer, so it can be checked",
-  "Filter restricted content by permission before the AI sees it",
-]
-
-const NEVER = [
-  "Train AI models on your documents or questions",
-  "Sell, share or reuse your data for anything else",
-  "Write to or change your connected tools",
-  "Store your documents in an outside vector-database service",
-]
-
-const DEPLOY = [
-  { icon: Server, title: "Your server", tag: "", body: "One Docker container on any Linux VPS or on-prem machine." },
-  { icon: Cloud, title: "Private cloud", tag: "", body: "Deploy in your own AWS, Azure or GCP account and network." },
-  {
-    icon: Globe,
-    title: "In-region AI model",
-    tag: "Option",
-    body: "Swap to Azure OpenAI in your region, or a self-hosted model, when data must not leave.",
-  },
-]
-
-// Where data goes: documents and index stay inside; only snippets reach the model.
-function DataFlow() {
-  return (
-    <div className="mt-8 rounded-2xl border border-border/70 p-5">
-      <div className="rounded-xl border border-dashed border-foreground/25 p-4">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Inside your infrastructure
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-          {["Your documents", "Search index", "Assistant"].map((label, i) => (
-            <div key={label} className="flex items-center gap-2">
-              {i > 0 && <ArrowRight className="size-3.5 text-muted-foreground" />}
-              <span className="rounded-lg bg-muted px-3 py-1.5 font-medium">{label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="mt-3 flex items-start gap-3 text-sm">
-        <ArrowRight className="mt-0.5 size-3.5 shrink-0 rotate-90 text-muted-foreground" />
-        <p className="text-muted-foreground">
-          Only the question and the few relevant snippets go to the AI model to write the answer.
-          Nothing is kept for training.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function IntegrationTile({ item }: { item: Integration }) {
-  return (
-    <div className="group flex items-center gap-3 rounded-xl border border-border/70 bg-background p-3.5 transition-colors hover:border-foreground/20">
-      <div
-        className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground/80 transition-colors"
-        style={item.icon ? ({ "--brand": `#${item.icon.hex}` } as React.CSSProperties) : undefined}
-      >
-        {item.icon ? (
-          <svg
-            viewBox="0 0 24 24"
-            className="size-5 fill-current transition-colors group-hover:text-[var(--brand)]"
-            aria-hidden
-          >
-            <path d={item.icon.path} />
-          </svg>
-        ) : item.letter ? (
-          <span className="text-sm font-semibold">{item.letter}</span>
-        ) : (
-          <FileText className="size-5" />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{item.name}</p>
-        <p className="text-xs text-muted-foreground">{item.kind}</p>
-      </div>
-      {item.live ? (
-        <Badge className="shrink-0 gap-1 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400">
-          <span className="size-1.5 rounded-full bg-emerald-500" /> Live
-        </Badge>
-      ) : (
-        <Badge variant="outline" className="shrink-0 font-normal text-muted-foreground">
-          Soon
-        </Badge>
-      )}
-    </div>
-  )
-}
-
-// A static, styled preview of the chat — what an answer with citations looks like.
-function ProductPreview() {
-  return (
-    <div className="relative mx-auto w-full max-w-xl">
-      <div className="absolute -inset-6 -z-10 rounded-[2rem] bg-gradient-to-b from-muted to-transparent blur-2xl" />
-      <div className="rounded-2xl border border-border/70 bg-background p-5 shadow-[0_20px_60px_-24px_rgba(0,0,0,0.25)]">
-        <div className="flex justify-end">
-          <div className="max-w-[80%] rounded-2xl bg-foreground px-4 py-2.5 text-sm text-background">
-            What's our refund policy, and what tech stack does DevIQ use?
-          </div>
-        </div>
-        <div className="mt-5 flex gap-3">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
-            <Sparkles className="size-3.5" />
-          </div>
-          <div className="min-w-0 flex-1 space-y-3 text-sm leading-relaxed">
-            <p>
-              Customers can get a <b>full refund within 30 days</b>; after that it's account
-              credit only. DevIQ runs a <b>Python data plane</b> (dlt + dbt) on{" "}
-              <b>Postgres with RLS</b>, and a <b>TypeScript</b> app, API and agents on top.
-            </p>
-            <div className="space-y-1.5">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Sources
-              </p>
-              {[
-                { n: 1, title: "handbook.txt", src: "Company documents", Icon: FileText },
-                { n: 2, title: "AI Delivery Intelligence Platform", src: "Outline wiki", Icon: BookOpen },
-              ].map(({ n, title, src, Icon }) => (
-                <div
-                  key={n}
-                  className="flex items-center gap-2.5 rounded-lg border border-border/70 px-3 py-2 text-xs"
-                >
-                  <span className="flex size-5 items-center justify-center rounded bg-muted text-[10px] font-medium">
-                    {n}
-                  </span>
-                  <Icon className="size-3.5 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-                  <span className="hidden text-muted-foreground sm:inline">{src}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Section({
-  id,
+// A section's heading, under a mono eyebrow on a rule that matches the header's link
+// to it ("── one brain ──────").
+function Heading({
   eyebrow,
   title,
   body,
-  children,
+  center,
+  className,
 }: {
-  id: string
-  eyebrow: string
-  title: string
+  eyebrow?: string
+  title: React.ReactNode
   body?: string
-  children: React.ReactNode
+  center?: boolean
+  className?: string
 }) {
   return (
-    <section id={id} className="scroll-mt-20 py-20 sm:py-28">
-      <div className="mx-auto max-w-6xl px-4">
-        <div className="mx-auto max-w-2xl text-center">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            {eyebrow}
-          </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h2>
-          {body && <p className="mt-4 text-muted-foreground">{body}</p>}
-        </div>
-        <div className="mt-12">{children}</div>
-      </div>
-    </section>
+    <div className={cn("max-w-2xl", center && "mx-auto text-center", className)}>
+      {eyebrow && (
+        <AsciiDivider
+          label={eyebrow}
+          align={center ? "center" : "start"}
+          className={cn("mb-6 text-signal/80 [&>span[aria-hidden]]:text-muted-foreground/40", center && "mx-auto max-w-md")}
+        />
+      )}
+      <h2 className="text-3xl font-medium tracking-tight text-balance sm:text-5xl">{title}</h2>
+      {body && <p className="mt-4 text-pretty text-muted-foreground">{body}</p>}
+    </div>
+  )
+}
+
+// An icon in a soft signal tile; it lifts 2px while its card is hovered (only with a
+// mouse: Tailwind's hover variants are gated on (hover: hover)).
+function IconTile({ icon: Icon, className }: { icon: typeof Server; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "flex size-10 shrink-0 items-center justify-center rounded-xl border border-signal/25 bg-signal/10 text-signal transition-transform duration-180 ease-out-strong group-hover:-translate-y-0.5",
+        className,
+      )}
+    >
+      <Icon className="size-5" strokeWidth={1.6} />
+    </span>
   )
 }
 
@@ -351,248 +226,188 @@ export function LandingPage({
   onSignIn: () => void
   onGetStarted?: () => void // the sign-in page's Create a workspace tab
 }) {
-  const live = INTEGRATIONS.filter((i) => i.live).length
+  useForcedDark()
   return (
-    <div className="min-h-svh bg-background text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-md">
+    <div className="min-h-svh bg-background text-foreground antialiased selection:bg-signal/30">
+      {/* The chrome glass tier, as a bar: blurred over the brain, a hairline below. */}
+      <header className="sticky top-0 z-20 border-b border-(--glass-border) bg-(--glass-bg) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturate)">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-8 px-4">
-          <span className="select-none text-sm font-semibold tracking-tight">
+          <span className="text-sm font-semibold tracking-tight select-none">
             Knowledge<span className="font-normal text-muted-foreground"> assistant</span>
           </span>
-          <nav className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
-            <a href="#integrations" className="transition-colors hover:text-foreground">
-              Integrations
-            </a>
-            <a href="#how" className="transition-colors hover:text-foreground">
-              How it works
-            </a>
-            <a href="#features" className="transition-colors hover:text-foreground">
-              Features
-            </a>
-            <a href="#security" className="transition-colors hover:text-foreground">
-              Security
-            </a>
+          <nav className="hidden items-center gap-6 font-mono text-xs text-muted-foreground md:flex">
+            {NAV.map(([href, label]) => (
+              <a key={href} href={href} className="transition-colors duration-(--dur-hover) ease-hover hover:text-foreground">
+                {label}
+              </a>
+            ))}
           </nav>
-          <Button size="sm" className="ml-auto rounded-full px-4" onClick={onSignIn}>
+          <Button size="sm" variant="outline" className="ml-auto rounded-full px-4" onClick={onSignIn}>
             Sign in
           </Button>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="relative overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,var(--color-muted),transparent)]" />
-        <div className="mx-auto grid max-w-6xl items-center gap-14 px-4 pb-20 pt-16 sm:pt-24 lg:grid-cols-2">
-          <div>
-            <Badge variant="outline" className="rounded-full px-3 py-1 font-normal text-muted-foreground">
-              <span className="mr-1.5 size-1.5 rounded-full bg-emerald-500" />
-              Answers with citations, from your own docs
-            </Badge>
-            <h1 className="mt-6 text-4xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
-              Your company's knowledge,
-              <span className="text-muted-foreground"> one question away.</span>
+      {/* Hero: the brain, the pitch, a question being answered. */}
+      <section className="relative h-[100svh] max-h-[920px] min-h-[680px] overflow-hidden">
+        <AsciiBrain className="absolute inset-0" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-linear-to-t from-background via-background/90 to-transparent lg:hidden" />
+        <div className="relative mx-auto flex h-full max-w-6xl items-end px-4 pb-12 lg:items-center lg:pb-0">
+          <div className="max-w-xl">
+            <h1 className="text-5xl leading-[1.02] font-medium tracking-tight text-balance sm:text-6xl lg:text-7xl">
+              Your company's knowledge, {accent("one question away.")}
             </h1>
-            <p className="mt-6 max-w-lg text-lg text-muted-foreground">
-              Connect your wiki, drives and documents. Ask anything in plain language and get a
-              straight answer, with the exact sources it came from.
+            <p className="mt-6 max-w-md text-lg text-pretty text-muted-foreground">
+              Ask in plain language. Get a straight answer from your own documents, with the
+              exact sources it came from.
             </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button size="lg" className="rounded-full px-6" onClick={onGetStarted}>
-                Get started <ArrowRight />
+            <AsciiTicker items={TICKER} className="glass mt-7 max-w-lg rounded-xl px-4 py-3" />
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Button size="lg" className="h-11 rounded-full px-6" onClick={onGetStarted}>
+                Get started <ArrowRight data-icon="inline-end" />
               </Button>
-              <Button size="lg" variant="outline" className="rounded-full px-6" asChild>
-                <a href="#integrations">See integrations</a>
+              <Button size="lg" variant="outline" className="h-11 rounded-full px-6" asChild>
+                <a href="#how">See how it works</a>
               </Button>
-            </div>
-            <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
-              {["Self-hosted", "Never used for training", "Permission-aware", "Cited answers"].map(
-                (t) => (
-                  <span key={t} className="flex items-center gap-1.5">
-                    <Check className="size-3.5 text-emerald-600" /> {t}
-                  </span>
-                ),
-              )}
             </div>
           </div>
-          <ProductPreview />
         </div>
       </section>
 
-      {/* Integrations */}
-      <div className="border-y border-border/60 bg-muted/30">
-        <Section
-          id="integrations"
-          eyebrow="Integrations"
-          title="Works with the tools your team already uses"
-          body={`${live} sources are live today, with more on the way. Answers can combine several sources at once.`}
-        >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {INTEGRATIONS.map((item) => (
-              <IntegrationTile key={item.name} item={item} />
+      {/* One brain: every source feeds it, every question goes through it. */}
+      <section id="how" className="relative scroll-mt-16 overflow-hidden py-24 sm:py-32">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(50%_40%_at_50%_45%,color-mix(in_oklch,var(--signal)_10%,transparent),transparent)]" />
+        <div className="relative mx-auto max-w-6xl px-4">
+          <Heading
+            eyebrow="one brain"
+            center
+            title={<>One brain for {accent("everything your company knows.")}</>}
+            body="Your wiki, drives and documents feed one assistant. Ask it anything; it reads the right sources and tells you which ones it used."
+          />
+          <KnowledgeHub className="mt-10" />
+          <ol className="mx-auto mt-10 grid max-w-4xl gap-6 sm:grid-cols-3">
+            {HOW.map(({ icon, title, body }, i) => (
+              <li key={title} className="group flex gap-4">
+                <IconTile icon={icon} />
+                <div>
+                  <p className="font-medium">
+                    <span className="mr-2 font-mono text-xs text-signal">0{i + 1}</span>
+                    {title}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">{body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      {/* Ask anything: a real-looking conversation, with what it read. */}
+      <section id="ask" className="scroll-mt-16 border-t border-border/60 py-24 sm:py-32">
+        <div className="mx-auto max-w-6xl px-4">
+          <Heading
+            eyebrow="ask anything"
+            title={<>Ask anything. Get the answer, {accent("and where it came from.")}</>}
+            body="It reads your documents first, then answers only from them. Pick a team to see a question it gets every week."
+          />
+          <ChatDemo scenes={DEMO} className="mt-10" />
+          <p className="mt-3 font-mono text-xs text-muted-foreground">Example documents.</p>
+          <div className="mt-14 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+            {QUALITIES.map(({ icon, title, body }) => (
+              <div key={title} className="group flex flex-col gap-3">
+                <IconTile icon={icon} />
+                <p className="font-medium">{title}</p>
+                <p className="text-sm text-muted-foreground">{body}</p>
+              </div>
             ))}
           </div>
-          <p className="mt-8 text-center text-sm text-muted-foreground">
-            Using something else? Most tools with an API can be connected.
-          </p>
-        </Section>
-      </div>
+        </div>
+      </section>
 
-      {/* How it works */}
-      <Section id="how" eyebrow="How it works" title="From scattered docs to answers in three steps">
-        <div className="grid gap-6 md:grid-cols-3">
-          {STEPS.map((step, i) => (
-            <div key={step.title} className="rounded-2xl border border-border/70 p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-foreground text-background">
-                  <step.icon className="size-5" />
-                </div>
-                <span className="text-sm tabular-nums text-muted-foreground">0{i + 1}</span>
+      {/* Safe by design: the permission gate, then the rest of the promise. */}
+      <section id="safe" className="scroll-mt-16 border-t border-border/60 py-24 sm:py-32">
+        <div className="mx-auto max-w-6xl px-4">
+          <Heading
+            eyebrow="safe by design"
+            title={<>Everyone sees only {accent("what they're allowed to.")}</>}
+            body="Restricted documents are removed before the search, so the AI never receives what someone can't see. Same question, two people, two answers."
+          />
+          <PermissionGate className="mt-10" />
+          <div className="mt-14 grid gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-2 lg:grid-cols-3">
+            {SAFETY.map(({ icon, title, body }) => (
+              <div key={title} className="group flex flex-col gap-3 bg-background p-6 transition-colors duration-(--dur-hover) ease-hover hover:bg-muted/30">
+                <IconTile icon={icon} />
+                <p className="font-medium">{title}</p>
+                <p className="text-sm text-muted-foreground">{body}</p>
               </div>
-              <h3 className="mt-5 font-semibold">{step.title}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{step.body}</p>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Fits your stack: sources and sign-in scroll by; where it runs. */}
+      <section id="stack" className="scroll-mt-16 border-t border-border/60 py-24 sm:py-32">
+        <div className="mx-auto max-w-6xl px-4">
+          <Heading
+            eyebrow="fits your stack"
+            center
+            title={<>Fits the stack {accent("you already have.")}</>}
+            body="Answers from the tools your team already uses. Sign-in through the identity provider you already run."
+          />
+        </div>
+        <div className="mt-12 flex flex-col gap-4">
+          <p className="mx-auto font-mono text-xs text-muted-foreground">sources</p>
+          <Marquee items={SOURCES} />
+          <p className="mx-auto mt-6 font-mono text-xs text-muted-foreground">sign-in</p>
+          <Marquee items={SIGN_IN} reverse />
+        </div>
+        <div className="mx-auto mt-16 grid max-w-6xl gap-4 px-4 sm:grid-cols-3">
+          {RUNS_ON.map(({ icon, title, body }) => (
+            <div key={title} className="group glass-subtle flex gap-4 rounded-2xl p-5 transition-colors duration-(--dur-hover) ease-hover hover:border-signal/40">
+              <IconTile icon={icon} />
+              <div>
+                <p className="font-medium">{title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{body}</p>
+              </div>
             </div>
           ))}
         </div>
-      </Section>
-
-      {/* Features */}
-      <div className="border-y border-border/60 bg-muted/30">
-        <Section
-          id="features"
-          eyebrow="Features"
-          title="Built for answers you can trust"
-          body="Not a chatbot guessing from memory: it reads your documents first, then answers only from them."
-        >
-          <div className="grid gap-px overflow-hidden rounded-2xl border border-border/70 bg-border/70 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="bg-background p-6">
-                <f.icon className="size-5 text-foreground/80" />
-                <h3 className="mt-4 font-semibold">{f.title}</h3>
-                <p className="mt-2 text-sm text-muted-foreground">{f.body}</p>
-              </div>
-            ))}
-          </div>
-        </Section>
-      </div>
-
-      {/* Security & data control — the trust USP */}
-      <section id="security" className="scroll-mt-20 py-20 sm:py-28">
-        <div className="mx-auto max-w-6xl px-4">
-          <div className="grid items-start gap-12 lg:grid-cols-[1fr_1.1fr]">
-            <div className="lg:sticky lg:top-24">
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                Security &amp; data control
-              </p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-5xl">
-                Your data.
-                <br />
-                <span className="text-muted-foreground">Your server. Your rules.</span>
-              </h2>
-              <p className="mt-5 max-w-md text-muted-foreground">
-                The assistant runs inside your own infrastructure. Your documents and their search
-                index never leave it, nothing is used to train AI models, and you decide who can see
-                what.
-              </p>
-              <DataFlow />
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {TRUST.map((t) => (
-                <div
-                  key={t.title}
-                  className={cn(
-                    "rounded-2xl border border-border/70 bg-background p-5 transition-colors hover:border-foreground/20",
-                    t.wide && "sm:col-span-2",
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex size-9 items-center justify-center rounded-lg bg-foreground text-background">
-                      <t.icon className="size-4" />
-                    </div>
-                    {t.tag && (
-                      <Badge variant="outline" className="font-normal text-muted-foreground">
-                        {t.tag}
-                      </Badge>
-                    )}
-                  </div>
-                  <h3 className="mt-4 text-sm font-semibold">{t.title}</h3>
-                  <p className="mt-1.5 text-sm text-muted-foreground">{t.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-16 grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-border/70 p-6">
-              <p className="text-sm font-semibold">What we always do</p>
-              <ul className="mt-4 space-y-3">
-                {ALWAYS.map((x) => (
-                  <li key={x} className="flex gap-3 text-sm">
-                    <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-                    <span>{x}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="rounded-2xl border border-border/70 p-6">
-              <p className="text-sm font-semibold">What we never do</p>
-              <ul className="mt-4 space-y-3">
-                {NEVER.map((x) => (
-                  <li key={x} className="flex gap-3 text-sm">
-                    <X className="mt-0.5 size-4 shrink-0 text-destructive" />
-                    <span>{x}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-border/70 bg-muted/30 p-6">
-            <p className="text-sm font-semibold">Choose where it runs</p>
-            <div className="mt-4 grid gap-5 sm:grid-cols-3">
-              {DEPLOY.map((d) => (
-                <div key={d.title}>
-                  <div className="flex items-center gap-2">
-                    <d.icon className="size-4 text-foreground/80" />
-                    <p className="text-sm font-medium">{d.title}</p>
-                    {d.tag && (
-                      <Badge variant="outline" className="font-normal text-muted-foreground">
-                        {d.tag}
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="mt-1.5 text-sm text-muted-foreground">{d.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
       </section>
 
-      {/* CTA */}
-      <section className="px-4 pb-24">
-        <div className="mx-auto max-w-6xl rounded-3xl bg-foreground px-6 py-16 text-center text-background sm:py-20">
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Stop searching. Start asking.
-          </h2>
-          <p className="mx-auto mt-4 max-w-md text-background/70">
-            Sign in and ask your first question. It takes seconds.
-          </p>
-          <Button
-            size="lg"
-            variant="secondary"
-            className="mt-8 rounded-full px-6"
-            onClick={onSignIn}
-          >
-            Sign in <ArrowRight />
-          </Button>
+      {/* Start: three steps and the way in, over the field. */}
+      <section id="start" className="scroll-mt-16 px-4 pb-24">
+        <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl border px-6 py-20 sm:px-12 sm:py-24">
+          <AsciiField className="absolute inset-0 text-foreground/[0.12]" />
+          <div className="relative">
+            <h2 className="text-center text-4xl font-medium tracking-tight text-balance sm:text-6xl">
+              Stop searching. {accent("Start asking.")}
+            </h2>
+            <ol className="relative mx-auto mt-14 grid max-w-4xl gap-10 sm:grid-cols-3">
+              <span aria-hidden className="absolute top-5 right-[16%] left-[16%] hidden border-t border-dashed border-signal/40 sm:block" />
+              {STEPS.map(({ icon, title, body }) => (
+                <li key={title} className="group relative flex flex-col items-center gap-3 text-center">
+                  <IconTile icon={icon} className="bg-background" />
+                  <span className="font-medium">{title}</span>
+                  <span className="text-sm text-muted-foreground">{body}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="mt-14 flex flex-wrap justify-center gap-3">
+              <Button size="lg" className="h-11 rounded-full px-6" onClick={onGetStarted}>
+                Create a workspace <ArrowRight data-icon="inline-end" />
+              </Button>
+              <Button size="lg" variant="outline" className="h-11 rounded-full px-6" onClick={onSignIn}>
+                Sign in
+              </Button>
+            </div>
+          </div>
         </div>
       </section>
 
       <footer className="border-t border-border/60">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row">
-          <span>Knowledge assistant · Cloudastra</span>
-          <span>Answers from your documents, with sources.</span>
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 py-6 font-mono text-xs text-muted-foreground sm:flex-row">
+          <span>knowledge assistant · cloudastra</span>
+          <span>answers from your documents, with sources.</span>
         </div>
       </footer>
     </div>

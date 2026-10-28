@@ -1,19 +1,23 @@
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
+import { Dialog as DialogPrimitive } from "radix-ui"
+
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
-  DialogContent,
+  DialogClose,
   DialogDescription,
   DialogHeader,
+  DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
   InputGroup,
   InputGroupAddon,
 } from "@/components/ui/input-group"
-import { SearchIcon, CheckIcon } from "lucide-react"
+import { CheckIcon, XIcon } from "lucide-react"
 
 function Command({
   className,
@@ -23,7 +27,7 @@ function Command({
     <CommandPrimitive
       data-slot="command"
       className={cn(
-        "flex size-full flex-col overflow-hidden rounded-xl! bg-popover p-1 text-popover-foreground",
+        "flex size-full flex-col overflow-hidden rounded-xl! bg-transparent p-1 text-popover-foreground",
         className
       )}
       {...props}
@@ -31,6 +35,8 @@ function Command({
   )
 }
 
+// The ⌘K palette opens dozens of times a day, so it never animates, open or closed:
+// its own content and overlay, without the dialog's zoom and fade.
 function CommandDialog({
   title = "Command Palette",
   description = "Search for a command to run...",
@@ -46,20 +52,38 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
-      <DialogContent
-        className={cn(
-          "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
-          className
-        )}
-        showCloseButton={showCloseButton}
-      >
-        {/* Inside the content, so it names the dialog and isn't on the page while closed. */}
-        <DialogHeader className="sr-only">
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        {children}
-      </DialogContent>
+      <DialogPortal>
+        <DialogPrimitive.Overlay
+          data-slot="dialog-overlay"
+          className="fixed inset-0 isolate z-50 bg-background/40"
+        />
+        <DialogPrimitive.Content
+          data-slot="dialog-content"
+          className={cn(
+            "fixed top-1/3 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 gap-4 overflow-hidden rounded-xl glass-strong glass-noise p-0 text-sm text-popover-foreground outline-none sm:max-w-sm",
+            className
+          )}
+        >
+          {/* Inside the content, so it names the dialog and isn't on the page while closed. */}
+          <DialogHeader className="sr-only">
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+          </DialogHeader>
+          {children}
+          {showCloseButton && (
+            <DialogClose asChild>
+              <Button
+                variant="ghost"
+                className="absolute top-2 right-2"
+                size="icon-sm"
+              >
+                <XIcon />
+                <span className="sr-only">Close</span>
+              </Button>
+            </DialogClose>
+          )}
+        </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   )
 }
@@ -80,7 +104,9 @@ function CommandInput({
           {...props}
         />
         <InputGroupAddon>
-          <SearchIcon className="size-4 shrink-0 opacity-50" />
+          <span aria-hidden className="font-mono text-sm text-muted-foreground">
+            &gt;
+          </span>
         </InputGroupAddon>
       </InputGroup>
     </div>
@@ -154,7 +180,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "group/command-item relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none in-data-[slot=dialog-content]:rounded-lg! data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-muted data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
+        "group/command-item relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none in-data-[slot=dialog-content]:rounded-lg! data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-foreground/6 data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
         className
       )}
       {...props}

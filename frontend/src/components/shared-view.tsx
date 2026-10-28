@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Link2Off, Loader2, Lock, MessageSquarePlus } from "lucide-react"
+import { Link2Off, Lock, MessageSquarePlus } from "lucide-react"
 import { toast } from "sonner"
 
+import { Breadcrumbs } from "@/components/breadcrumbs"
 import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, ApiError, type SharedChat } from "@/lib/api"
+import { breadcrumbs } from "@/lib/breadcrumbs"
 import { queries } from "@/lib/queries"
 
 function messagesOf(shared: SharedChat): Message[] {
@@ -89,6 +91,9 @@ export function SharedView({ token }: { token: string }) {
     )
   }
   const data = shared.data
+  const trail = breadcrumbs(`/s/${token}`, "", {
+    name: data.kind === "answer" ? "A shared answer" : "A shared chat",
+  })
   // Something to carry on from: a finished answer the viewer can see.
   const continuable = data.messages.some(
     (m) => m.author === "assistant" && !m.withheld && m.state !== "pending" && m.state !== "error",
@@ -96,9 +101,7 @@ export function SharedView({ token }: { token: string }) {
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
       <header className="space-y-1 border-b pb-4">
-        <p className="text-xs text-muted-foreground">
-          {data.kind === "answer" ? "A shared answer" : "A shared chat"}
-        </p>
+        <Breadcrumbs trail={trail} />
         <h1 className="text-xl font-semibold tracking-tight text-balance">{data.title}</h1>
         <p className="text-sm text-muted-foreground">
           Shared by {data.shared_by} · {day(data.created_at)}
@@ -106,12 +109,8 @@ export function SharedView({ token }: { token: string }) {
         </p>
         {continuable && (
           <div className="pt-2" data-print="hide">
-            <Button variant="outline" size="sm" disabled={fork.isPending} onClick={() => fork.mutate()}>
-              {fork.isPending ? (
-                <Loader2 className="animate-spin" data-icon="inline-start" />
-              ) : (
-                <MessageSquarePlus data-icon="inline-start" />
-              )}
+            <Button variant="outline" size="sm" loading={fork.isPending} onClick={() => fork.mutate()}>
+              {!fork.isPending && <MessageSquarePlus data-icon="inline-start" />}
               Continue in my chats
             </Button>
           </div>

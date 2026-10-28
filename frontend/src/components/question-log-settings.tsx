@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { Panel } from "@/components/glass/panel"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import {
@@ -60,15 +60,19 @@ export function QuestionLogSettings({
   const note = MODES.find((m) => m.value === mode)?.note
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <h3 className="font-medium">Question logging</h3>
-      <p className="text-sm text-muted-foreground">
-        Every question is counted for these insights. This decides how much of its text is kept.
-        Who asked is never shown here, and people see “Questions are logged for your admins for{" "}
-        {settings.days} days” in the chat unless only metadata is kept.
-      </p>
+    <Panel
+      title="Question logging"
+      description={
+        <>
+          Every question is counted for these insights. This decides how much of its text is kept.
+          Who asked is never shown here, and people see “Questions are logged for your admins for{" "}
+          {settings.days} days” in the chat unless only metadata is kept.
+        </>
+      }
+      className="min-w-0"
+    >
       <form
-        className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end"
+        className="flex flex-col gap-4 sm:flex-row sm:items-end"
         onSubmit={(e) => {
           e.preventDefault()
           save.mutate()
@@ -105,8 +109,7 @@ export function QuestionLogSettings({
           </Select>
         </Field>
         {canEdit && changed && (
-          <Button type="submit" variant="outline" disabled={save.isPending}>
-            {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button type="submit" variant="outline" loading={save.isPending}>
             Save
           </Button>
         )}
@@ -115,6 +118,6 @@ export function QuestionLogSettings({
         {note}
         {canEdit ? "" : " Only admins can change this."}
       </FieldDescription>
-    </section>
+    </Panel>
   )
 }

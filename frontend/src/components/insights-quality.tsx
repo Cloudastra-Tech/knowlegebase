@@ -10,11 +10,11 @@ import {
 import type { QualityTrend } from "@/lib/api"
 
 // The quality trend on Insights (pipeline.md P2-3): the share of questions answered
-// and of thumbs up, per day, with the totals beside them. Achromatic, so the two
-// lines differ by ink and dash (as the questions chart does).
+// and of thumbs up, per day, with the totals beside them. On the token palette, and
+// the two lines differ by dash as well (as the questions chart does).
 
 const config = {
-  answer_rate: { label: "Answered", color: "var(--foreground)" },
+  answer_rate: { label: "Answered", color: "var(--chart-1)" },
   thumbs_up_share: { label: "Thumbs up", color: "var(--chart-2)" },
 } satisfies ChartConfig
 const DASH: Record<keyof typeof config, string | undefined> = {
@@ -28,7 +28,7 @@ function Stat({ label, value, note }: { label: string; value: string; note: stri
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-lg font-semibold tracking-tight tabular-nums">{value}</p>
+      <p className="font-mono text-lg font-medium tracking-tight tabular-nums">{value}</p>
       <p className="text-xs text-muted-foreground">{note}</p>
     </div>
   )
@@ -73,7 +73,12 @@ export function QualityTrendView({ trend }: { trend: QualityTrend }) {
               strokeWidth={2}
               strokeDasharray={DASH[key]}
               connectNulls
-              dot={false}
+              // One day of data is a point with no line to draw: it shows as a dot.
+              dot={
+                data.filter((d) => d[key] !== null).length === 1
+                  ? { r: 3.5, fill: `var(--color-${key})`, strokeWidth: 0 }
+                  : false
+              }
               activeDot={{ r: 4 }}
               isAnimationActive={false}
             />

@@ -31,13 +31,45 @@ function Harness({
 }
 
 describe("the composer", () => {
-  it("is the shadcn Textarea, at 16px on phones so iOS doesn't zoom", () => {
+  it("is shadcn's InputGroup, its text at 16px on phones so iOS doesn't zoom", () => {
     render(<Harness />)
     const box = screen.getByRole("textbox", { name: "Your question" })
-    expect(box).toHaveAttribute("data-slot", "textarea")
+    expect(box).toHaveAttribute("data-slot", "input-group-control")
+    expect(box.closest('[data-slot="input-group"]')).toHaveAttribute("data-drift", "composer")
     expect(box.className).toMatch(/\btext-base\b/)
     expect(box.className).toMatch(/\bmd:text-sm\b/)
     expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("data-slot", "button")
+  })
+
+  it("isn't dimmed by its disabled Send, as an input group would be", () => {
+    render(<Harness />)
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled()
+    const group = document.querySelector('[data-slot="input-group"]')!
+    expect(group.className).toMatch(/\bhas-disabled:opacity-100\b/)
+    expect(group.className).not.toMatch(/\bhas-disabled:opacity-50\b/)
+  })
+
+  it("says the keys only while focused and empty, in a line that keeps its height", async () => {
+    render(<Harness />)
+    const hint = () => document.querySelector('[data-slot="composer-hint"]')
+    expect(hint()).toHaveTextContent("")
+    const user = userEvent.setup()
+    const box = screen.getByRole("textbox", { name: "Your question" })
+    await user.click(box)
+    expect(hint()).toHaveTextContent("Enter to send · Shift + Enter for a new line · / for saved prompts")
+    await user.type(box, "Leave")
+    expect(hint()).toHaveTextContent("")
+    await user.clear(box)
+    expect(hint()).toHaveTextContent("Enter to send")
+    await user.tab()
+    expect(hint()).toHaveTextContent("")
+    // One fixed-height row either way: nothing under it moves.
+    expect(hint()?.parentElement).toHaveClass("h-4")
+  })
+
+  it("says Esc to stop while an answer is written", () => {
+    render(<Harness busy />)
+    expect(document.querySelector('[data-slot="composer-hint"]')).toHaveTextContent("Esc to stop")
   })
 
   it("sends on Enter and starts a new line on Shift+Enter", async () => {

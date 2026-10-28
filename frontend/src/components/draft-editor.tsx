@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ExternalLink, FilePen, Globe, Loader2, Lock, Save, Send, Trash2, TriangleAlert } from "lucide-react"
+import { ExternalLink, FilePen, Globe, Lock, Save, Send, Trash2, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,7 +34,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import { drafts, type Draft } from "@/lib/api"
+import { ApiError, drafts, type Draft } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -53,7 +55,7 @@ const STATUS: Record<Draft["status"], string> = {
 export function DraftStatusBadge({ draft }: { draft: Draft }) {
   return (
     <Badge variant={draft.status === "failed" ? "destructive" : "outline"} className="gap-1">
-      {draft.status === "generating" && <Loader2 className="size-3 animate-spin" />}
+      {draft.status === "generating" && <AsciiSpinner size="xs" label="" />}
       {STATUS[draft.status]}
     </Badge>
   )
@@ -80,7 +82,7 @@ export function DraftRow({
       <FilePen className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate font-medium">{draft.title}</span>
       {draft.status === "generating" ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        <AsciiSpinner size="xs" label="Writing" className="text-muted-foreground" />
       ) : draft.status === "failed" ? (
         <TriangleAlert className="size-3.5 shrink-0 text-destructive" />
       ) : draft.max_access === "restricted" ? (
@@ -169,8 +171,7 @@ function PublishDialog({ draft, onPublished }: { draft: Draft; onPublished: (key
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || !name.trim() || !acl.length}>
-              {saving && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={saving} disabled={!name.trim() || !acl.length}>
               Publish
             </Button>
           </DialogFooter>
@@ -187,13 +188,40 @@ export function DraftEditor({
 }: {
   id: string
   onPublished: (key: string) => void
-  onDeleted: () => void
+  onDeleted: () => void // also "close": the draft isn't there
 }) {
-  // While it's being written, look again every two seconds.
-  const { data: draft } = useQuery({
+  // While it's being written, look again every two seconds. A link to a draft that's
+  // gone (published, deleted, another workspace's) says so here rather than in a toast.
+  const { data: draft, error, refetch, isRefetching } = useQuery({
     ...queries.draft(id),
     refetchInterval: (q) => (q.state.data?.status === "generating" ? 2000 : false),
+    meta: { silent: true },
   })
+  if (error && !draft) {
+    const gone = error instanceof ApiError && error.status === 404
+    return (
+      <Card className="flex items-center justify-center p-6">
+        <AsciiEmptyState
+          art={gone ? "search" : "broken"}
+          title={gone ? "This draft isn't here." : "Couldn't load this draft."}
+          description={
+            gone ? "It may have been published or deleted. Pick another draft on the left." : error.message
+          }
+          action={
+            gone ? (
+              <Button size="sm" variant="outline" onClick={onDeleted}>
+                Back to the drafts
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" loading={isRefetching} onClick={() => void refetch()}>
+                Try again
+              </Button>
+            )
+          }
+        />
+      </Card>
+    )
+  }
   if (!draft) return <Skeleton className="h-96 rounded-2xl" />
   // A new status (written, failed) starts the editor again with the text as it is now;
   // after that, what's typed is kept while the draft is looked at again.
@@ -258,8 +286,8 @@ function LoadedDraft({
           </CardDescription>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={save} disabled={!dirty || saving}>
-            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+          <Button size="sm" variant="outline" onClick={save} loading={saving} disabled={!dirty}>
+            {!saving && <Save />}
             Save
           </Button>
           <PublishDialog
@@ -343,7 +371,7 @@ function LoadedDraft({
             <ol className="mt-1 flex flex-col gap-1 text-sm">
               {draft.sources.map((s, n) => (
                 <li key={s.doc_key} className="flex min-w-0 items-center gap-2">
-                  <span className="w-6 shrink-0 text-muted-foreground tabular-nums">[{n + 1}]</span>
+                  <span className="w-6 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">[{n + 1}]</span>
                   {s.url ? (
                     <a href={s.url} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1 hover:underline">
                       <span className="truncate">{s.title ?? s.doc_key}</span>

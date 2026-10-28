@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Loader2, MailPlus, MoreHorizontal } from "lucide-react"
+import { MailPlus, MoreHorizontal } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -124,10 +125,8 @@ export function InviteDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={sending || !email.trim()}>
-              {sending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : (
-                <MailPlus data-icon="inline-start" />
-              )}
+            <Button type="submit" loading={sending} disabled={!email.trim()}>
+              {!sending && <MailPlus data-icon="inline-start" />}
               Send invite
             </Button>
           </DialogFooter>
@@ -165,9 +164,7 @@ function InviteRow({ invite, onChange }: { invite: Invite; onChange: () => void 
       <div className="min-w-0 flex-1 basis-56">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{invite.email}</span>
-          <Badge variant={expired ? "destructive" : "secondary"} className="font-normal">
-            {expired ? "Expired" : "Invited"}
-          </Badge>
+          <Badge variant={expired ? "destructive" : "mono"}>{expired ? "Expired" : "Invited"}</Badge>
         </div>
         <p className="truncate text-sm text-muted-foreground">
           {ROLE_LABEL[invite.role]} · by {invite.invited_by} · sent {timeAgo(invite.sent_at)}
@@ -199,8 +196,8 @@ export function PendingInvites() {
   const reload = () => void queryClient.invalidateQueries({ queryKey: queries.invites().queryKey })
   return (
     <div className="mt-4">
-      <h4 className="text-sm font-medium text-muted-foreground">Invited</h4>
-      <div className="mt-2 divide-y rounded-xl border">
+      <AsciiDivider as="h4" label="Invited" />
+      <div className="mt-2 divide-y rounded-xl border bg-card">
         {invites.map((i) => (
           <InviteRow key={i.id} invite={i} onChange={reload} />
         ))}

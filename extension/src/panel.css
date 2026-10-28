@@ -3,6 +3,8 @@
 @import "../../frontend/src/index.css";
 @source "./";
 @source "../../frontend/src/components/ui";
+/* Button's `loading` draws the ASCII spinner: its classes live here. */
+@source "../../frontend/src/components/ascii/ascii-spinner.tsx";
 
 .kb-answer p + p,
 .kb-answer ul,

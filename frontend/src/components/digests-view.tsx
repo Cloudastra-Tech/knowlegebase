@@ -1,8 +1,11 @@
 import { useMemo, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { BellRing, Loader2, Mail, Plus, Send, Trash2 } from "lucide-react"
+import { BellRing, Mail, Newspaper, Plus, Send, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -289,8 +292,7 @@ function NewDigestDialog({ settings }: { settings: DigestSettings }) {
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={add.isPending}>
-              {add.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={add.isPending}>
               Subscribe
             </Button>
           </DialogFooter>
@@ -329,13 +331,17 @@ function DigestCard({ sub, settings }: { sub: DigestSubscription; settings: Dige
   const folderCount = sub.folders.length
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
+    <Panel className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="flex items-center gap-2 font-medium">
-            {sub.channel === "slack" ? <BellRing className="size-4" /> : <Mail className="size-4" />}
+          <h3 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+            {sub.channel === "slack" ? (
+              <BellRing className="size-4 text-muted-foreground" />
+            ) : (
+              <Mail className="size-4 text-muted-foreground" />
+            )}
             {FREQUENCY[sub.frequency]} by {CHANNEL[sub.channel].toLowerCase()}
-            {!sub.enabled && <Badge variant="outline">Paused</Badge>}
+            {!sub.enabled && <Badge variant="mono">paused</Badge>}
           </h3>
           <p className="text-sm text-muted-foreground">
             {labels.length ? labels.join(", ") : "Every source you can read"}
@@ -393,8 +399,8 @@ function DigestCard({ sub, settings }: { sub: DigestSubscription; settings: Dige
         />
       </div>
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => send.mutate()} disabled={send.isPending}>
-          {send.isPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Send data-icon="inline-start" />}
+        <Button variant="outline" size="sm" onClick={() => send.mutate()} loading={send.isPending}>
+          {!send.isPending && <Send data-icon="inline-start" />}
           Send now
         </Button>
         <AlertDialog>
@@ -417,7 +423,7 @@ function DigestCard({ sub, settings }: { sub: DigestSubscription; settings: Dige
           </AlertDialogContent>
         </AlertDialog>
       </div>
-    </section>
+    </Panel>
   )
 }
 
@@ -425,23 +431,23 @@ export function DigestsView() {
   const { data: settings } = useQuery(queries.digests())
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Digests</h2>
-          <p className="text-sm text-muted-foreground">
-            What changed in the documents, by email or Slack. Each one only lists documents you
-            can read when it's sent.
-          </p>
-        </div>
-        {settings && <NewDigestDialog settings={settings} />}
-      </div>
+      <ScreenHeader
+        icon={Newspaper}
+        title="Digests"
+        description="What changed in the documents, by email or Slack. Each one only lists documents you can read when it's sent."
+        actions={settings && <NewDigestDialog settings={settings} />}
+      />
       <div className="mt-6 flex flex-col gap-4">
         {!settings ? (
           <Skeleton className="h-48 rounded-2xl" />
         ) : settings.subscriptions.length === 0 ? (
-          <p className="rounded-2xl border border-dashed p-10 text-center text-sm text-muted-foreground">
-            No digests yet. Subscribe to get a weekly summary of what changed.
-          </p>
+          <Panel>
+            <AsciiEmptyState
+              art="inbox"
+              title="No digests yet."
+              description="Subscribe to get a weekly summary of what changed."
+            />
+          </Panel>
         ) : (
           settings.subscriptions.map((s) => <DigestCard key={s.id} sub={s} settings={settings} />)
         )}

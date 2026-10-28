@@ -61,6 +61,7 @@ export function citedNumber(href?: string) {
 export interface Citations {
   byNumber: Map<number, Source>
   open: (source: Source) => void
+  live?: boolean // the answer is streaming in: a chip pops as its source arrives
 }
 export const CitationsContext = createContext<Citations | null>(null)
 
@@ -75,13 +76,34 @@ export function placeOf(source: Pick<Source, "heading_path" | "page" | "title">)
   return parts.join(" · ")
 }
 
-// A passage as one paragraph of plain text, for a short preview (no Markdown
-// heading marks, no blank lines).
-export function previewOf(snippet: string) {
-  return snippet
+// A passage as one paragraph of plain text, for a short preview: no Markdown
+// (headings, tables, emphasis, code, links, list marks), no blank lines, and not
+// the title and headings every chunk starts with (ingest's chunk header).
+export function previewOf(snippet: string, source?: Pick<Source, "title" | "heading_path">) {
+  let text = snippet
+    .replace(/^[ \t]*\|?[ \t:|-]*-{3,}[ \t:|-]*\|?[ \t]*$/gm, "") // table rule rows
+    .replace(/^[ \t]*\|(.*)\|[ \t]*$/gm, (_, row: string) =>
+      row.split("|").map((c) => c.trim()).filter(Boolean).join(" · "),
+    )
     .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(^|[^*\w])[*_]([^*_\n]+)[*_](?=[^*\w]|$)/g, "$1$2")
+    .replace(/`([^`]*)`/g, "$1")
     .replace(/\s+/g, " ")
     .trim()
+  for (const part of [source?.title, ...(source?.heading_path ?? "").split(" › ")]) {
+    const full = part?.trim() ?? ""
+    // A numbered heading ("2. Who it's for") lost its number with the list marks.
+    for (const p of [full, full.replace(/^\d+[.)]\s+/, "")]) {
+      if (p && text.toLowerCase().startsWith(p.toLowerCase())) {
+        text = text.slice(p.length).replace(/^[\s:·—-]+/, "")
+        break
+      }
+    }
+  }
+  return text
 }
 
 // "Updated 12 Sep 2026", from an ISO time ("" without one).

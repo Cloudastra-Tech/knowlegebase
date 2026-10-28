@@ -17,7 +17,7 @@ test("a member gets a cited answer, reads its passage, follows up, and finds it 
   await chip.click()
   const sheet = page.getByRole("dialog")
   await expect(sheet).toBeVisible()
-  await expect(sheet.getByLabel("Passage")).toContainText("18 days of paid annual leave")
+  await expect(sheet.getByLabel("Passage", { exact: true })).toContainText("18 days of paid annual leave")
   await page.keyboard.press("Escape")
   await expect(sheet).toBeHidden()
 

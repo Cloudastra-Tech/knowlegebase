@@ -79,9 +79,9 @@ def fakes(monkeypatch, tmp_path):
     import models
     monkeypatch.setattr(indexing, "schedule_index", lambda ws, **kwargs: None)
     # Test connection reaches no AWS (tests/test_bedrock.py stubs it).
-    monkeypatch.setattr(models, "test_connection", lambda spec: {
-        "chat_model": spec.chat_model, "reply": "OK", "tokens": 3,
-        "embed_model": spec.embed_model, "dimensions": 1024})
+    monkeypatch.setattr(models, "test_connection", lambda spec, wanted=(): {
+        "ok": True, "providers": [{"provider": spec.provider, "label": spec.provider,
+                                   "ok": True, "models": 1, "missing": []}]})
     monkeypatch.setattr(verified, "embed", lambda texts: [[1.0, 0.0] for _ in texts])
     monkeypatch.setattr(indexing, "schedule_retag", lambda ws, provider: None)
     monkeypatch.setattr(sync, "start_sync", lambda ws, provider, **options: None)

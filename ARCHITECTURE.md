@@ -556,7 +556,7 @@ make the site installable on phones and desktops. The service worker (registered
 in production builds only) keeps the app shell: the page, the hashed `/assets/`
 and the icons, network-first for pages. It never handles `/api/`, `/mcp` or
 `/scim/`, so no answer or document is ever cached. `viewport-fit=cover` plus
-safe-area padding keeps the header, the composer and the sides clear of notches.
+safe-area padding keeps the phone top bar, the composer and the sides clear of notches.
 
 ---
 

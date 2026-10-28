@@ -1,5 +1,5 @@
 import * as React from "react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
@@ -9,7 +9,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("w-full caption-bottom bg-card text-sm tabular-nums", className)}
         {...props}
       />
     </div>
@@ -20,7 +20,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      className={cn("bg-card [&_tr]:border-b", className)}
       {...props}
     />
   )
@@ -54,7 +54,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b transition-colors duration-(--dur-hover) ease-hover hover:bg-muted/40 has-aria-expanded:bg-muted/40 data-[state=selected]:bg-muted",
         className
       )}
       {...props}
@@ -75,12 +75,18 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   )
 }
 
-function TableCell({ className, ...props }: React.ComponentProps<"td">) {
+// mono: IDs, keys and timestamps, in the mono face.
+function TableCell({
+  className,
+  mono = false,
+  ...props
+}: React.ComponentProps<"td"> & { mono?: boolean }) {
   return (
     <td
       data-slot="table-cell"
+      data-mono={mono || undefined}
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+        "p-2 align-middle whitespace-nowrap data-mono:font-mono data-mono:text-xs [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

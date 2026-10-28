@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router"
 import { describe, expect, it } from "vitest"
 
 import { InsightsView } from "@/components/insights-view"
@@ -87,7 +88,13 @@ const REPORT = {
 describe("InsightsView", () => {
   it("shows the totals, gaps and sources, and lets only admins change the logging", async () => {
     mockApi({ "GET /api/admin/insights": REPORT })
-    render(withProviders(<InsightsView tab="overview" canEdit={false} onTabChange={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <InsightsView tab="overview" canEdit={false} onTabChange={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
 
     expect(await screen.findByText("Parental leave in Germany")).toBeInTheDocument()
     expect(screen.getByText("75%")).toBeInTheDocument()
@@ -106,6 +113,26 @@ describe("InsightsView", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
   })
 
+  it("says 1 question, not 1 questions", async () => {
+    mockApi({
+      "GET /api/admin/insights": {
+        ...REPORT,
+        totals: { ...REPORT.totals, active_users: 1, not_found: 1 },
+        surfaces: [{ surface: "slack", questions: 1, answered: 1 }],
+      },
+    })
+    render(
+      withProviders(
+        <MemoryRouter>
+          <InsightsView tab="overview" canEdit={false} onTabChange={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
+    expect(await screen.findByText("1 question · 100% answered")).toBeInTheDocument()
+    expect(screen.getByText("1 person asked")).toBeInTheDocument()
+    expect(screen.queryByText(/\b1 questions\b/)).not.toBeInTheDocument()
+  })
+
   it("saves a new logging mode for admins", async () => {
     const saved: unknown[] = []
     mockApi({
@@ -115,7 +142,13 @@ describe("InsightsView", () => {
         return { mode: "metadata", days: 90, logged: false }
       },
     })
-    render(withProviders(<InsightsView tab="overview" canEdit onTabChange={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <InsightsView tab="overview" canEdit onTabChange={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     await userEvent.click(await screen.findByRole("combobox", { name: "Text kept" }))
     await userEvent.click(await screen.findByRole("option", { name: "Metadata only" }))
     await userEvent.click(screen.getByRole("button", { name: "Save" }))

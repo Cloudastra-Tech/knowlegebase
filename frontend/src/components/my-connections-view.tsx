@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { FolderCog, Loader2, Lock, RefreshCw, TriangleAlert, Unplug } from "lucide-react"
+import { FolderCog, Lock, RefreshCw, TriangleAlert, Unplug } from "lucide-react"
 
 import {
   AlertDialog,
@@ -15,11 +15,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
 import { Card, Stat } from "@/components/integrations-view"
+import { ScreenHeader } from "@/components/screen-header"
 import { api, type Integration } from "@/lib/api"
+import { type StaggerItem, useStaggerOnce } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
@@ -33,10 +36,12 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 function MyConnectionCard({
   item,
+  enter,
   onChange,
   autoOpenPicker,
 }: {
   item: Integration
+  enter: StaggerItem // the grid's first-draw stagger (useStaggerOnce)
   onChange: () => void
   autoOpenPicker?: boolean
 }) {
@@ -94,7 +99,7 @@ function MyConnectionCard({
   const reconnect = item.error?.code === "auth_expired" || item.error?.code === "missing_scope"
 
   return (
-    <Card item={item}>
+    <Card item={item} enter={enter}>
       {item.status === "not_configured" && (
         <p className="text-sm text-muted-foreground">
           Not turned on for this server yet. Ask your admin.
@@ -104,8 +109,7 @@ function MyConnectionCard({
       {item.status === "disconnected" && (
         <>
           <p className="text-sm text-muted-foreground">{item.note}</p>
-          <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
-            {busy === "connect" && <Loader2 className="animate-spin" />}
+          <Button className="mt-4 w-fit" onClick={connect} loading={busy === "connect"} disabled={busy !== null}>
             Connect your {item.name}
           </Button>
         </>
@@ -176,13 +180,10 @@ function MyConnectionCard({
               size="sm"
               variant="outline"
               onClick={sync}
-              disabled={busy !== null || item.status === "syncing" || picks.length === 0}
+              loading={busy === "sync" || item.status === "syncing"}
+              disabled={busy !== null || picks.length === 0}
             >
-              {busy === "sync" || item.status === "syncing" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <RefreshCw />
-              )}
+              {busy !== "sync" && item.status !== "syncing" && <RefreshCw />}
               Sync now
             </Button>
             {reconnect && (
@@ -231,29 +232,35 @@ export function MyConnectionsView({ openPickerFor }: { openPickerFor?: string | 
       query.state.data?.integrations.some((i) => i.status === "syncing") ? 3000 : false,
   })
   const items = data?.integrations ?? null
+  const enter = useStaggerOnce(items !== null)
   const load = () =>
     void queryClient.invalidateQueries({ queryKey: queries.myIntegrations().queryKey })
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">My connections</h2>
-        <p className="text-sm text-muted-foreground">
-          Ask about your own email and calendar. What you connect here is yours alone: nobody
-          else in the workspace can search it, see it listed or read it in an answer.
-        </p>
-      </div>
+      <ScreenHeader
+        title="My connections"
+        description="Ask about your own email and calendar. What you connect here is yours alone: nobody else in the workspace can search it, see it listed or read it in an answer."
+      />
       {!items ? (
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           <Skeleton className="h-44 rounded-2xl" />
           <Skeleton className="h-44 rounded-2xl" />
         </div>
+      ) : items.length === 0 ? (
+        <AsciiEmptyState
+          art="plug"
+          className="mt-6"
+          title="Nothing to connect yet."
+          description="Personal connections aren't turned on for this server. Ask your admin."
+        />
       ) : (
         <div className="mt-6 grid gap-4 md:grid-cols-2">
-          {items.map((item) => (
+          {items.map((item, i) => (
             <MyConnectionCard
               key={item.id}
               item={item}
+              enter={enter(i)}
               onChange={load}
               autoOpenPicker={openPickerFor === item.id}
             />

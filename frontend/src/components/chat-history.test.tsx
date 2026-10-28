@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
 
@@ -91,23 +91,60 @@ const BRANCHED = (second: boolean) => ({
 })
 
 describe("the history sidebar", () => {
-  it("lists pinned chats, folders and the rest by date, with the retention", async () => {
+  it("lists pinned chats, folders and the rest by date; the retention is in the account menu", async () => {
     session.setToken("tok")
     mockApi(BASE)
     renderApp("/chat")
-    const sidebar = await screen.findByLabelText("Chat history", { selector: "[data-slot=sidebar-container]" })
-    const s = within(sidebar)
+    const history = await screen.findByRole("region", { name: "Chat history" })
+    const s = within(history)
     expect(await s.findByText("Pinned")).toBeInTheDocument()
     expect(s.getByText("Pinned one")).toBeInTheDocument()
     expect(s.getByText("Policies")).toBeInTheDocument()
     expect(s.getByText("Filed one")).toBeInTheDocument()
     expect(s.getByText("Today")).toBeInTheDocument()
     expect(s.getByText("Older")).toBeInTheDocument()
-    expect(s.getByText(/Chats are kept for 1 year/)).toBeInTheDocument()
-    expect(s.queryByRole("button", { name: "Change" })).not.toBeInTheDocument() // not an admin
+    expect(screen.queryByText(/Chats are kept/)).not.toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Account,\s*Pat Public/ }))
+    expect(await screen.findByText(/Chats are kept for 1 year .*\(set by your admin\)/)).toBeInTheDocument()
+    expect(screen.queryByRole("menuitem", { name: "Chat settings" })).not.toBeInTheDocument() // not an admin
   })
 
-  it("searches chats and marks the matches", async () => {
+  it("has every screen the account sees in its nav, and the open one marked", async () => {
+    session.setToken("tok")
+    mockApi(BASE)
+    renderApp("/knowledge")
+    const nav = await screen.findByRole("navigation", { name: "Screens" })
+    // A member: Chat and Knowledge, no admin group.
+    expect(within(nav).getAllByRole("link").map((l) => l.textContent)).toEqual(["Chat", "Knowledge"])
+    expect(within(nav).getByRole("link", { name: "Knowledge" })).toHaveAttribute("aria-current", "page")
+    expect(within(nav).queryByText("Admin")).not.toBeInTheDocument()
+  })
+
+  it("folds the Admin group under its label, and remembers it", async () => {
+    const ada: User = { username: "ada", name: "Ada Admin", workspace: "acme", role: "admin" }
+    session.setToken("tok")
+    mockApi({ ...BASE, "GET /api/auth/me": ada })
+    renderApp("/knowledge")
+    const nav = await screen.findByRole("navigation", { name: "Screens" })
+    // A tall window (the tests' matchMedia matches nothing): open.
+    const label = within(nav).getByRole("button", { name: "Admin" })
+    expect(label).toHaveAttribute("aria-expanded", "true")
+    expect(within(nav).getByRole("link", { name: "Verified" })).toBeInTheDocument()
+    await userEvent.setup().click(label)
+    expect(label).toHaveAttribute("aria-expanded", "false")
+    expect(within(nav).queryByRole("link", { name: "Verified" })).not.toBeInTheDocument()
+    expect(localStorage.getItem("kb.sidebar.admin")).toBe("closed")
+
+    // Next time, folded as it was left.
+    cleanup()
+    renderApp("/knowledge")
+    const again = await screen.findByRole("navigation", { name: "Screens" })
+    expect(within(again).getByRole("button", { name: "Admin" })).toHaveAttribute("aria-expanded", "false")
+    expect(within(again).queryByRole("link", { name: "Insights" })).not.toBeInTheDocument()
+  })
+
+  it("searches chats from the sidebar, in the palette, and marks the matches", async () => {
     session.setToken("tok")
     const fetched = mockApi({
       ...BASE,
@@ -125,9 +162,13 @@ describe("the history sidebar", () => {
     })
     renderApp("/chat")
     const user = userEvent.setup()
-    await user.type(await screen.findByRole("textbox", { name: "Search chats" }), "thirty")
-    const match = await screen.findByText("thirty", { selector: "mark" })
-    expect(match.closest("button")).toHaveTextContent("Refund policy")
+    await user.click(await screen.findByRole("button", { name: /^Search chats/ }))
+    const dialog = await screen.findByRole("dialog", { name: "Search chats" })
+    // Chats alone: no actions, no screens.
+    expect(within(dialog).queryByText("New chat")).not.toBeInTheDocument()
+    await user.type(within(dialog).getByRole("combobox"), "thirty")
+    const match = await within(dialog).findByText("thirty", { selector: "mark" })
+    expect(match.closest("[cmdk-item]")).toHaveTextContent("Refund policy")
     const searches = fetched.mock.calls.map(([url]) => String(url)).filter((u) => u.includes("/search"))
     expect(searches.at(-1)).toBe("/api/conversations/search?q=thirty")
   })

@@ -1,7 +1,38 @@
+import type { ComponentProps } from "react"
+import { TriangleAlert, type LucideIcon } from "lucide-react"
 import { Link } from "react-router"
 
 import type { User } from "@/lib/api"
 import { cn } from "@/lib/utils"
+
+// A thin note above the screen (the trial, support signed in, a workspace being
+// deleted): a hairline strip of subtle glass with an icon in front. No blur.
+// The icon is aria-hidden; the words say it.
+export function ShellStrip({
+  icon: Icon,
+  tone = "muted",
+  className,
+  children,
+  ...props
+}: ComponentProps<"div"> & { icon: LucideIcon; tone?: "muted" | "warning" | "destructive" }) {
+  return (
+    <div
+      data-print="hide"
+      data-slot="shell-strip"
+      className={cn(
+        "flex items-baseline justify-center gap-2 border-b px-4 py-1.5 text-center text-xs",
+        tone === "destructive"
+          ? "border-destructive/30 bg-destructive/5 text-destructive"
+          : "border-(--glass-border) bg-(--glass-bg-subtle) text-muted-foreground",
+        className,
+      )}
+      {...props}
+    >
+      <Icon aria-hidden className={cn("size-3.5 shrink-0 self-center", tone === "warning" && "text-warning")} />
+      <span className="text-pretty">{children}</span>
+    </div>
+  )
+}
 
 // With BILLING=on (user.billing from /api/auth/me): the trial's countdown for the
 // people who can pick a plan, and, for everyone, why a read-only workspace takes no
@@ -31,19 +62,9 @@ export function TrialBanner({ user }: { user: User }) {
 
   const urgent = b.read_only || b.status === "past_due" || (b.trial_days_left ?? 99) <= 3
   return (
-    <div
-      role="status"
-      data-testid="trial-banner"
-      data-print="hide"
-      className={cn(
-        "border-b px-4 py-2 text-center text-xs",
-        urgent
-          ? "border-destructive/30 bg-destructive/5 text-destructive"
-          : "border-border/60 bg-muted text-muted-foreground",
-      )}
-    >
+    <ShellStrip role="status" data-testid="trial-banner" icon={TriangleAlert} tone={urgent ? "destructive" : "warning"}>
       {text} {link}
       {link && "."}
-    </div>
+    </ShellStrip>
   )
 }

@@ -4,6 +4,9 @@ import { Plus } from "lucide-react"
 import { toast } from "sonner"
 
 import { KeyCreatedDialog, KeyRow, McpSnippets, NewKeyDialog } from "@/components/api-keys-view"
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
 import { CopyField } from "@/components/sign-in-provider-dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -49,16 +52,9 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section className="min-w-0 rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        {action}
-      </div>
-      <div className="mt-4">{children}</div>
-    </section>
+    <Panel title={title} description={description} actions={action} className="min-w-0">
+      {children}
+    </Panel>
   )
 }
 
@@ -143,8 +139,8 @@ export function ApiAccessView() {
               onCheckedChange={(on) => save({ mcp_enabled: on })}
             />
           </Field>
-          <div className="grid gap-3">
-            <p className="text-sm font-medium">Tools agents get</p>
+          <div className="grid grid-cols-1 gap-3">
+            <AsciiDivider as="h4" label="Tools agents get" />
             {data.tools.map((tool) => (
               <Field key={tool} orientation="horizontal" data-disabled={!settings.mcp_enabled || undefined}>
                 <Checkbox
@@ -181,13 +177,13 @@ export function ApiAccessView() {
         }
       >
         {service.length ? (
-          <div className="divide-y rounded-xl border">
+          <div className="divide-y rounded-xl border bg-card">
             {service.map((k) => (
               <KeyRow key={k.id} apiKey={k} showOwner onRevoke={() => revoke(k)} />
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No service keys.</p>
+          <AsciiEmptyState art="key" size="sm" headingLevel={4} title="No service keys." />
         )}
       </Section>
 
@@ -196,15 +192,19 @@ export function ApiAccessView() {
         description="Personal keys act as their owner, with their role at each call. Revoke one if a laptop is lost or someone leaves."
       >
         {personal.length ? (
-          <div className="divide-y rounded-xl border">
+          <div className="divide-y rounded-xl border bg-card">
             {personal.map((k) => (
               <KeyRow key={k.id} apiKey={k} showOwner onRevoke={() => revoke(k)} />
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Nobody has made a key yet. Everyone can, under API keys in their account menu.
-          </p>
+          <AsciiEmptyState
+            art="key"
+            size="sm"
+            headingLevel={4}
+            title="Nobody has made a key yet."
+            description="Everyone can, under API keys in their account menu."
+          />
         )}
       </Section>
 

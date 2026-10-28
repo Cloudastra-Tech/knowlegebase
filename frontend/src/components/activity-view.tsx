@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import { Download, Loader2, Search, ShieldAlert, ShieldCheck } from "lucide-react"
+import { Download, Search, ShieldAlert, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { DateRangePicker, type DateRange } from "@/components/date-range-picker"
+import { Panel } from "@/components/glass/panel"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -101,6 +102,13 @@ const ACTION: Record<string, string> = {
   "insights.export": "Exported insights",
   "eval_case.create": "Added an answer to the test set",
   "eval_case.delete": "Removed an answer from the test set",
+  "webhook.create": "Added a webhook",
+  "webhook.update": "Changed a webhook",
+  "webhook.delete": "Deleted a webhook",
+  "webhook.test": "Sent a webhook a test event",
+  "webhook.rotate_secret": "Rotated a webhook's secret",
+  "webhook.redeliver": "Sent a webhook delivery again",
+  "webhook.auto_disabled": "Turned a failing webhook off",
 }
 
 // The action filter: every action under a prefix.
@@ -121,6 +129,7 @@ const KINDS: [string, string][] = [
   ["question_log.", "Question logging"],
   ["insights.", "Insights"],
   ["eval_case.", "Test set"],
+  ["webhook.", "Webhooks"],
 ]
 
 function details(e: AuditEvent) {
@@ -165,7 +174,7 @@ function ChainStatus() {
     >
       {ok ? <ShieldCheck className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
       {ok
-        ? `${count} ${count === 1 ? "change" : "changes"}, chain intact`
+        ? `${count.toLocaleString()} ${count === 1 ? "change" : "changes"}, chain intact`
         : `The log's hash chain is broken at entry ${verify.data.broken_at}: a row was changed or removed.`}
     </p>
   )
@@ -236,12 +245,8 @@ function AdminChanges() {
         <DateRangePicker value={range} onChange={setRange} className="min-w-0 basis-56 grow sm:w-64 sm:grow-0" />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="sm:ml-auto" disabled={exporting}>
-              {exporting ? (
-                <Loader2 className="animate-spin" data-icon="inline-start" />
-              ) : (
-                <Download data-icon="inline-start" />
-              )}
+            <Button variant="outline" className="sm:ml-auto" loading={exporting}>
+              {!exporting && <Download data-icon="inline-start" />}
               Export
             </Button>
           </DropdownMenuTrigger>
@@ -257,7 +262,8 @@ function AdminChanges() {
       {!events ? (
         <Skeleton className="h-48 rounded-2xl" />
       ) : !events.length ? (
-        <p className="rounded-xl border px-4 py-6 text-center text-sm text-muted-foreground">
+        // A log: no ASCII here, empty or not (DESIGN.md, "Where the ASCII never goes").
+        <p className="rounded-xl border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
           {filters.actor || filters.action || filters.from
             ? "No changes match."
             : "No changes yet. Changes to sign-in, members, documents and integrations show here."}
@@ -265,17 +271,17 @@ function AdminChanges() {
       ) : (
         <>
         {/* Phones: one entry per row, stacked. */}
-        <div className="divide-y rounded-xl border sm:hidden">
+        <div className="divide-y rounded-xl border bg-card sm:hidden">
           {events.map((e) => (
             <div key={e.id} className="flex flex-col gap-0.5 px-4 py-3 text-sm">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="font-medium">{ACTION[e.action] ?? e.action}</span>
-                <span className="shrink-0 text-xs text-muted-foreground" title={when(e.at)}>
+                <span className="shrink-0 font-mono text-xs text-muted-foreground" title={when(e.at)}>
                   {timeAgo(e.at)}
                 </span>
               </div>
               <span className="truncate text-muted-foreground">
-                {e.actor ?? "unknown"}
+                <span className="font-mono text-xs">{e.actor ?? "unknown"}</span>
                 {e.target_id && ` · ${target(e)}`}
               </span>
               {details(e) && (
@@ -286,7 +292,7 @@ function AdminChanges() {
             </div>
           ))}
         </div>
-        <div className="hidden rounded-xl border sm:block">
+        <div className="hidden overflow-hidden rounded-xl border sm:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -299,12 +305,12 @@ function AdminChanges() {
             <TableBody>
               {events.map((e) => (
                 <TableRow key={e.id}>
-                  <TableCell className="pl-4 align-top whitespace-nowrap" title={when(e.at)}>
+                  <TableCell mono className="pl-4 align-top whitespace-nowrap" title={when(e.at)}>
                     <span className="block">{timeAgo(e.at)}</span>
-                    <span className="block text-xs text-muted-foreground">{when(e.at)}</span>
+                    <span className="block text-muted-foreground">{when(e.at)}</span>
                   </TableCell>
                   <TableCell className="align-top">
-                    <span className="block max-w-56 truncate" title={e.actor ?? undefined}>
+                    <span className="block max-w-56 truncate font-mono text-xs" title={e.actor ?? undefined}>
                       {e.actor ?? "unknown"}
                     </span>
                     {e.actor_type !== "user" && (
@@ -325,7 +331,11 @@ function AdminChanges() {
                     <span className="line-clamp-2 max-w-80 min-w-48 text-xs whitespace-normal text-muted-foreground" title={details(e)}>
                       {details(e) || "—"}
                     </span>
-                    {e.ip && <span className="block text-xs text-muted-foreground">from {e.ip}</span>}
+                    {e.ip && (
+                      <span className="block text-xs text-muted-foreground">
+                        from <span className="font-mono">{e.ip}</span>
+                      </span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -338,10 +348,9 @@ function AdminChanges() {
         <Button
           variant="outline"
           className="self-center"
-          disabled={log.isFetchingNextPage}
+          loading={log.isFetchingNextPage}
           onClick={() => void log.fetchNextPage()}
         >
-          {log.isFetchingNextPage && <Loader2 className="animate-spin" data-icon="inline-start" />}
           Load more
         </Button>
       )}
@@ -353,25 +362,26 @@ function AdminChanges() {
 // Who changed what in the workspace (the audit log), and recent sign-ins (admin).
 export function ActivityView({ signIns }: { signIns: ReactNode }) {
   const [tab, setTab] = useState<"changes" | "sign-ins">("changes")
+  // The audit log is read closely: an opaque panel, no glass and no ASCII.
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">Activity</h3>
-          <p className="text-sm text-muted-foreground">
-            {tab === "changes"
-              ? "Every change an admin or HR made here, newest first. Kept for good, and chained so an edited entry shows."
-              : "Sign-ins through your providers and with passwords, and changes providers made by themselves."}
-          </p>
-        </div>
+    <Panel
+      tone="solid"
+      title="Activity"
+      description={
+        tab === "changes"
+          ? "Every change an admin or HR made here, newest first. Kept for good, and chained so an edited entry shows."
+          : "Sign-ins through your providers and with passwords, and changes providers made by themselves."
+      }
+      actions={
         <Tabs panels={false} value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList>
             <TabsTrigger value="changes">Admin changes</TabsTrigger>
             <TabsTrigger value="sign-ins">Sign-ins</TabsTrigger>
           </TabsList>
         </Tabs>
-      </div>
-      <div className="mt-4">{tab === "changes" ? <AdminChanges /> : signIns}</div>
-    </section>
+      }
+    >
+      <div>{tab === "changes" ? <AdminChanges /> : signIns}</div>
+    </Panel>
   )
 }

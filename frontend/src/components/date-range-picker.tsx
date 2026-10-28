@@ -44,7 +44,7 @@ export function DateRangePicker({
             )}
           >
             <CalendarDays data-icon="inline-start" />
-            <span className="truncate">{label(value)}</span>
+            <span className="truncate tabular-nums">{label(value)}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">

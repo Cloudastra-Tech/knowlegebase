@@ -7,7 +7,6 @@ import {
   FilePlus2,
   FileText,
   Globe,
-  Loader2,
   Lock,
   RefreshCw,
   Save,
@@ -18,6 +17,8 @@ import {
 } from "lucide-react"
 
 import { AccessPicker, EVERYONE, HR_GROUP, WhoCanSeeBadges } from "@/components/access-picker"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { ScreenHeader } from "@/components/screen-header"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -125,8 +126,7 @@ function AccessDialog({ doc, onSaved }: { doc: Doc; onSaved: () => void }) {
           <AccessPicker id="doc-access" value={acl} onChange={setAcl} />
         </div>
         <DialogFooter>
-          <Button onClick={save} disabled={saving || !acl.length}>
-            {saving && <Loader2 className="animate-spin" />}
+          <Button onClick={save} loading={saving} disabled={!acl.length}>
             Save
           </Button>
         </DialogFooter>
@@ -198,8 +198,7 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
             />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={saving}>
               Add document
             </Button>
           </DialogFooter>
@@ -300,12 +299,13 @@ function UploadDialog({
               ? files.map((f) => f.name).join(", ")
               : "Click to choose files, or drop them here"}
           </button>
-          <input
+          <Input
             ref={inputRef}
             type="file"
             accept=".txt,.pdf,.md,.html,.docx,.pptx,.xlsx"
             multiple
             hidden
+            className="hidden"
             onChange={(e) => pick(Array.from(e.target.files ?? []))}
           />
           {problem && (
@@ -319,8 +319,7 @@ function UploadDialog({
             <AccessPicker id="upload-access" value={acl} onChange={setAcl} />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={uploading || !files.length || !!problem}>
-              {uploading && <Loader2 className="animate-spin" />}
+            <Button type="submit" loading={uploading} disabled={!files.length || !!problem}>
               Upload
             </Button>
           </DialogFooter>
@@ -407,8 +406,8 @@ function DocEditor({
         <div className="flex shrink-0 flex-wrap justify-end gap-2">
           <AccessDialog doc={doc} onSaved={onSaved} />
           {isText ? (
-            <Button size="sm" onClick={save} disabled={!dirty || saving}>
-              {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            <Button size="sm" onClick={save} loading={saving} disabled={!dirty}>
+              {!saving && <Save />}
               Save
             </Button>
           ) : sealed ? null : (
@@ -484,12 +483,32 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
   const uploadLimits = data?.upload_limits ?? null
   const { status: indexStatus, refresh: refreshIndex } = useIndexStatus()
   const indexing = indexStatus?.status === "indexing"
-  // ?draft=<id>: one of the assistant's drafts (from Knowledge or Insights).
+  // ?draft=<id>: one of the assistant's drafts (from Knowledge or Insights); ?tab=drafts
+  // the drafts with none open. In the address, so the breadcrumbs (Documents › Drafts ›
+  // its title) and a link can say where it is. The other filters are the list's own.
   const [params, setParams] = useSearchParams()
   const pickedDraft = params.get("draft")
-  const [filter, setFilter] = useState<"all" | Access | "drafts">(() =>
-    pickedDraft ? "drafts" : "all",
-  )
+  const showDrafts = !!pickedDraft || params.get("tab") === "drafts"
+  const [listFilter, setListFilter] = useState<"all" | Access>("all")
+  const filter = showDrafts ? "drafts" : listFilter
+  // The address's other parts (?jobs=1) stay as they are.
+  const setView = (view: { tab?: string; draft?: string }) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        next.delete("tab")
+        next.delete("draft")
+        if (view.draft) next.set("draft", view.draft)
+        else if (view.tab) next.set("tab", view.tab)
+        return next
+      },
+      { replace: true },
+    )
+  const setFilter = (next: "all" | Access | "drafts") => {
+    if (next === "drafts") return setView({ tab: "drafts" })
+    setListFilter(next)
+    if (showDrafts) setView({})
+  }
   // The picked document as the latest list has it: null until it's there, and
   // once it's gone.
   const [picked, setPicked] = useState<{ access: Access; name: string } | null>(null)
@@ -501,8 +520,7 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
       q.state.data?.drafts.some((d) => d.status === "generating") ? 3000 : false,
   })
   const draftRows = draftList?.drafts ?? []
-  const pickDraft = (id: string | null) =>
-    setParams(id ? { draft: id } : {}, { replace: true })
+  const pickDraft = (id: string | null) => setView(id ? { draft: id } : { tab: "drafts" })
   // ?jobs=1: the background jobs, opened (the header's "See the background jobs").
   const jobsOpen = admin && params.get("jobs") === "1"
   const setJobsOpen = (open: boolean) =>
@@ -535,38 +553,34 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
   }
 
   const visible = docs.filter((d) => filter === "all" || d.access === filter)
-  const showDrafts = filter === "drafts"
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 md:h-full">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Documents</h2>
-          <p className="text-sm text-muted-foreground">
-            Add, edit or remove what the assistant answers from. Changes are indexed
-            automatically.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={reindex} disabled={indexing || !docs.length}>
-            {indexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {indexing ? "Indexing…" : "Re-index now"}
-          </Button>
-          {admin && (
-            <IndexAdminMenu
-              documents={docs.length}
-              indexing={indexing}
-              jobsOpen={jobsOpen}
-              onJobsOpenChange={setJobsOpen}
-              onStarted={refreshIndex}
-            />
-          )}
-        </div>
-      </div>
-
+      <ScreenHeader
+        title="Documents"
+        crumbs={{ name: draftRows.find((d) => d.id === pickedDraft)?.title }}
+        description="Add, edit or remove what the assistant answers from. Changes are indexed automatically."
+        actions={
+          <>
+            <Button variant="outline" onClick={reindex} loading={indexing} disabled={!docs.length}>
+              {!indexing && <RefreshCw />}
+              {indexing ? "Indexing…" : "Re-index now"}
+            </Button>
+            {admin && (
+              <IndexAdminMenu
+                documents={docs.length}
+                indexing={indexing}
+                jobsOpen={jobsOpen}
+                onJobsOpenChange={setJobsOpen}
+                onStarted={refreshIndex}
+              />
+            )}
+          </>
+        }
+      />
 
       <div className="grid gap-4 md:min-h-0 md:flex-1 md:grid-cols-[320px_1fr] md:grid-rows-[minmax(0,1fr)]">
-        <Card className="flex max-h-96 min-h-0 flex-col gap-3 py-4 md:max-h-none">
+        <Card variant="glass" className="flex max-h-96 min-h-0 flex-col gap-3 py-4 md:max-h-none">
           <div className="flex items-center justify-between gap-2 px-4">
             <Tabs panels={false} value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
               <TabsList>
@@ -586,10 +600,12 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
           <div className="min-h-0 flex-1 overflow-y-auto px-2">
             {showDrafts ? (
               draftRows.length === 0 ? (
-                <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                  No drafts. Summarise a source on the Knowledge screen, or draft a doc for a
-                  content gap in Insights.
-                </p>
+                <AsciiEmptyState
+                  art="inbox"
+                  size="sm"
+                  title="No drafts."
+                  description="Summarise a source on the Knowledge screen, or draft a doc for a content gap in Insights."
+                />
               ) : (
                 draftRows.map((d) => (
                   <DraftRow
@@ -606,9 +622,7 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
                 <Skeleton className="h-12 w-full" />
               </div>
             ) : visible.length === 0 ? (
-              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                No documents here yet.
-              </p>
+              <AsciiEmptyState art="folder" size="sm" title="No documents here yet." />
             ) : (
               visible.map((d) => (
                 <button
@@ -638,7 +652,6 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
               key={pickedDraft}
               id={pickedDraft}
               onPublished={(key) => {
-                pickDraft(null)
                 const [access, ...rest] = key.split("/")
                 setFilter("all")
                 refresh({ access: access as Access, name: rest.join("/") })
@@ -646,8 +659,8 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
               onDeleted={() => pickDraft(null)}
             />
           ) : (
-            <Card className="flex items-center justify-center p-10 text-center text-sm text-muted-foreground">
-              Pick a draft on the left to review it.
+            <Card className="flex items-center justify-center p-6">
+              <AsciiEmptyState art="inbox" title="No draft open" description="Pick a draft on the left to review it." />
             </Card>
           )
         ) : selected ? (
@@ -661,8 +674,12 @@ export function DocsView({ admin = false }: { admin?: boolean }) {
             }}
           />
         ) : (
-          <Card className="flex items-center justify-center p-10 text-center text-sm text-muted-foreground">
-            Pick a document on the left to view or edit it.
+          <Card className="flex items-center justify-center p-6">
+            <AsciiEmptyState
+              art="folder"
+              title="No document open"
+              description="Pick a document on the left to view or edit it."
+            />
           </Card>
         )}
       </div>

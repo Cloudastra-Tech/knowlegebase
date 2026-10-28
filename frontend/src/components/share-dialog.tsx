@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Copy, Link2, Loader2, Lock, X } from "lucide-react"
+import { Check, Copy, Link2, Lock, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -233,8 +233,8 @@ export function ShareDialog({
               Done
             </Button>
           ) : (
-            <Button onClick={create} disabled={busy || settings.isPending}>
-              {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Link2 data-icon="inline-start" />}
+            <Button onClick={create} loading={busy} disabled={settings.isPending}>
+              {!busy && <Link2 data-icon="inline-start" />}
               Create link
             </Button>
           )}

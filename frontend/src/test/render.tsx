@@ -10,8 +10,8 @@ import { createQueryClient } from "@/lib/query-client"
 import { routes } from "@/routes"
 
 // A fake backend: "METHOD /api/path" -> the JSON it answers (or a function of the
-// request's body making it, or a Response). Anything else is a 404.
-type Answer = unknown | ((body: unknown) => unknown)
+// request's body, and the request, making it; or a Response). Anything else is a 404.
+type Answer = unknown | ((body: unknown, init: RequestInit) => unknown)
 
 export function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -27,7 +27,7 @@ export function mockApi(answers: Record<string, Answer>) {
     if (!(key in answers)) return json({ detail: "Not Found" }, 404)
     const answer = answers[key]
     const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined
-    const out = typeof answer === "function" ? answer(body) : answer
+    const out = typeof answer === "function" ? answer(body, init) : answer
     return out instanceof Response ? out : json(out)
   })
 }
