@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { KeyRound, MoreHorizontal, Search } from "lucide-react"
+import { useCallback, useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { KeyRound, MailPlus, MoreHorizontal, Search } from "lucide-react"
 import { toast } from "sonner"
 
+import { InviteDialog, PendingInvites } from "@/components/invites"
+import { PendingRequests } from "@/components/join-requests"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -31,7 +35,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { signIn, type AccountRole, type Member } from "@/lib/api"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { saveFile, signIn, workspace, type AccountRole, type Member } from "@/lib/api"
+import { queries } from "@/lib/queries"
 import { ROLE_LABEL } from "@/lib/roles"
 import { cn, timeAgo } from "@/lib/utils"
 
@@ -49,8 +55,30 @@ function roleNote(m: Member) {
   return "default"
 }
 
+// SCIM: the identity provider manages them. It sets whether they may sign in, and
+// would add them back if removed here, so those two are changed there (the API
+// refuses them too). Turning their access off stays possible, for an emergency.
+const SCIM_NOTE =
+  "Managed by your identity provider (SCIM). Their access and membership are changed there; a role you pick here still wins over their groups."
+
+function ScimBadge() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className="cursor-default font-normal" tabIndex={0}>
+          SCIM
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">{SCIM_NOTE}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () => void }) {
   const [confirm, setConfirm] = useState(false)
+  const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const [confirmErase, setConfirmErase] = useState(false)
+  const [typed, setTyped] = useState("")
 
   async function save(body: { role?: AccountRole | null; disabled?: boolean }, done: string) {
     try {
@@ -72,6 +100,41 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
     }
   }
 
+  // A data request (DSAR): everything held about them, as a JSON file.
+  async function downloadData() {
+    try {
+      saveFile(await workspace.exportMember(m.username))
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  // Their questions, chats, keys, sessions and the member go; the audit log keeps what
+  // happened under a pseudonym.
+  async function erase() {
+    try {
+      const { pseudonym } = await workspace.eraseMember(m.username, typed.trim())
+      toast.success(`Erased ${m.username}'s data. The audit log shows them as ${pseudonym}.`)
+      setConfirmErase(false)
+      onChange()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function signOutEverywhere() {
+    try {
+      const { ended } = await signIn.signOutMember(m.username)
+      toast.success(
+        ended
+          ? `Signed ${m.username} out on every device.`
+          : `${m.username} wasn't signed in anywhere.`,
+      )
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
   const picked = m.override_role ?? FROM_GROUPS
   const fromGroupsLabel = `From groups (${ROLE_LABEL[m.group_role ?? "public"]})`
 
@@ -81,6 +144,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{m.name}</span>
           {me && <Badge variant="secondary" className="font-normal">You</Badge>}
+          {m.scim_managed && <ScimBadge />}
           {m.disabled && <Badge variant="destructive">Access off</Badge>}
           {m.has_password && (
             <KeyRound className="size-3.5 text-muted-foreground" aria-label="Has a password" />
@@ -151,20 +215,50 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem
+              disabled={m.scim_managed && m.disabled}
               onSelect={() =>
                 save(
                   { disabled: !m.disabled },
-                  m.disabled ? `${m.username} can sign in again.` : `${m.username}'s access is off.`,
+                  m.disabled
+                    ? `${m.username} can sign in again.`
+                    : `${m.username}'s access is off, and they're signed out everywhere.`,
                 )
               }
             >
               {m.disabled ? "Turn access back on" : "Turn access off"}
             </DropdownMenuItem>
+            {m.scim_managed && m.disabled && (
+              <p className="px-2 pb-1 text-xs text-muted-foreground">
+                Turn it back on in your identity provider.
+              </p>
+            )}
+            <DropdownMenuItem onSelect={() => setConfirmSignOut(true)}>
+              Sign out everywhere
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={downloadData}>Download their data</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive" onSelect={() => setConfirm(true)}>
+            <DropdownMenuItem
+              className="text-destructive"
+              disabled={m.scim_managed}
+              onSelect={() => setConfirm(true)}
+            >
               Remove
+            </DropdownMenuItem>
+            {m.scim_managed && (
+              <p className="px-2 pb-1 text-xs text-muted-foreground">
+                Remove them in your identity provider.
+              </p>
+            )}
+            <DropdownMenuItem
+              className="text-destructive"
+              onSelect={() => {
+                setTyped("")
+                setConfirmErase(true)
+              }}
+            >
+              Erase their data…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -174,7 +268,7 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {m.username}?</AlertDialogTitle>
             <AlertDialogDescription>
-              They're signed out on their next click
+              They're signed out on every device now
               {m.has_password ? ", and their password is deleted" : ""}. If they can still
               sign in with your provider, they come back as a new member: to keep someone out,
               turn their access off instead.
@@ -186,23 +280,74 @@ function MemberRow({ m, me, onChange }: { m: Member; me: boolean; onChange: () =
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog open={confirmErase} onOpenChange={setConfirmErase}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Erase {m.username}'s data?</AlertDialogTitle>
+            <AlertDialogDescription>
+              For a data request. Their questions, chats, feedback, API keys, invites and
+              sessions are deleted, and they're removed from the workspace. The audit log keeps
+              what happened, showing a pseudonym instead of them. This can't be undone: download
+              their data first if they asked for a copy.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Field>
+            <FieldLabel htmlFor={`erase-${m.username}`}>
+              Type <span className="font-semibold">{m.username}</span> to confirm
+            </FieldLabel>
+            <Input
+              id={`erase-${m.username}`}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+            />
+          </Field>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={typed.trim().toLowerCase() !== m.username}
+              onClick={(e) => {
+                e.preventDefault()
+                void erase()
+              }}
+            >
+              Erase
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmSignOut} onOpenChange={setConfirmSignOut}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign {m.username} out everywhere?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Every session they have ends now, on every device.{" "}
+              {m.disabled
+                ? "Their access is off, so they can't sign in again until it's back on."
+                : "They can sign in again: to keep them out, turn their access off instead."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={signOutEverywhere}>Sign out everywhere</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
 
 // Everyone in the workspace, with their role and where it comes from (admin).
 export function MembersView({ me }: { me: string }) {
-  const [members, setMembers] = useState<Member[] | null>(null)
+  const queryClient = useQueryClient()
+  const members = useQuery(queries.members()).data?.members ?? null
   const [query, setQuery] = useState("")
+  const [inviting, setInviting] = useState(false)
 
   const load = useCallback(() => {
-    signIn
-      .members()
-      .then(({ members }) => setMembers(members))
-      .catch((err) => toast.error(errorText(err)))
-  }, [])
-
-  useEffect(load, [load])
+    void queryClient.invalidateQueries({ queryKey: queries.members().queryKey })
+  }, [queryClient])
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -223,17 +368,25 @@ export function MembersView({ me }: { me: string }) {
             their groups.
           </p>
         </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Search members"
-            placeholder="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-56 pl-8"
-          />
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:flex-none">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              aria-label="Search members"
+              placeholder="Search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full pl-8 sm:w-56"
+            />
+          </div>
+          <Button onClick={() => setInviting(true)}>
+            <MailPlus data-icon="inline-start" /> Invite
+          </Button>
         </div>
       </div>
+      <PendingRequests />
+      <PendingInvites />
+      <InviteDialog open={inviting} onOpenChange={setInviting} />
       <div className="mt-4 divide-y rounded-xl border">
         {shown.map((m) => (
           <MemberRow key={m.username} m={m} me={m.username === me} onChange={load} />

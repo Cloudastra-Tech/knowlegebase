@@ -130,9 +130,23 @@ ERRORS = {
     "not_workspace": (
         "They used a personal or guest account, not a work one",
         "They should sign in with their work account.", False),
+    "workspace_closed": (
+        "The workspace is suspended, or being deleted (only admins may sign in)",
+        "Cancel the deletion under Access > Data, or ask support about a suspension.", False),
     "disabled": (
         "Their access has been turned off (Members)",
         "Turn their access back on under Members.", False),
+    # The joining policy (join_store.py, Access > Sign-in)
+    "invite_only": (
+        "New people join by invite only, and they had no invite",
+        "Invite them under Members, provision them with SCIM, or change the joining policy.",
+        False),
+    "join_requested": (
+        "Asked to join: their request waits for an admin",
+        "Approve or deny it under Members > Pending requests.", False),
+    "join_denied": (
+        "An admin denied their request to join recently, so they can't ask again yet",
+        "Invite them under Members if they should be let in after all.", False),
     "sso_required": (
         "Single sign-on is required, so their password can't be used",
         "They should sign in with single sign-on.", False),
@@ -142,6 +156,35 @@ ERRORS = {
         "they're the only admin, so they keep it",
         "Make someone else admin (Members), or have them sign in through the role source.",
         False),
+    # ---- What your identity provider did through SCIM (kb/routers/scim.py) ----
+    "scim_user_created": ("Provisioned", None, False),
+    "scim_user_updated": ("Profile updated", None, False),
+    "scim_user_deactivated": ("Deactivated, and signed out everywhere", None, False),
+    "scim_user_reactivated": ("Reactivated", None, False),
+    "scim_user_deleted": (
+        "Deleted: access off now, details anonymised after the retention window", None, False),
+    "scim_user_anonymised": ("Anonymised after the retention window", None, False),
+    "scim_group_created": ("Group pushed", None, False),
+    "scim_group_updated": ("Group or its members changed", None, False),
+    "scim_group_deleted": ("Group removed", None, False),
+    "scim_domain": (
+        "Refused: the email isn't on a verified domain, and wasn't invited",
+        "Verify the domain under Email domains, or invite the address first.", False),
+    "scim_taken": (
+        "Refused: the email, userName or group name belongs to someone or something else",
+        "Check for a duplicate at your identity provider, or an account in another workspace.",
+        False),
+    "scim_exists": (
+        "Refused: already provisioned",
+        "Your identity provider should match the existing user (by userName) instead of "
+        "creating it again.", False),
+    "scim_no_email": (
+        "Refused: the user has no email address",
+        "Map an email to the user's emails (or userName) at your identity provider.", False),
+    "scim_invalid": ("Refused: the request was missing something", None, False),
+    "scim_last_admin": (
+        "Refused: it would leave the workspace with no admin",
+        "Make someone else admin (Members, or an admin group) first.", False),
     # ---- Anything else ----
     "sso_failed": (
         "Something went wrong on this server",

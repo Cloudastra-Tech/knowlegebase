@@ -1,0 +1,42 @@
+{
+  "_about": "Slack Web API answers as the method pages on docs.slack.dev show them (trimmed to the fields the app reads; ids made up). tests/slack_fixtures.py answers each call from here, filling in {channel}, {ts} and {user} from the request.",
+  "oauth.v2.access": {
+    "ok": true,
+    "access_token": "xoxb-fake-bot-token",
+    "token_type": "bot",
+    "scope": "app_mentions:read,chat:write,commands,im:history,im:write,users:read,users:read.email",
+    "bot_user_id": "UBOT",
+    "app_id": "A0KNOWLEDGE",
+    "team": {"name": "Acme Slack", "id": "T0ACME"},
+    "enterprise": null,
+    "is_enterprise_install": false,
+    "authed_user": {"id": "UADMIN", "scope": "", "access_token": null, "token_type": null}
+  },
+  "auth.revoke": {"ok": true, "revoked": true},
+  "chat.postMessage": {
+    "ok": true,
+    "channel": "{channel}",
+    "ts": "{ts}",
+    "message": {"type": "message", "subtype": "bot_message", "text": "", "ts": "{ts}",
+                "bot_id": "B0KNOWLEDGE"}
+  },
+  "chat.update": {"ok": true, "channel": "{channel}", "ts": "{ts}", "text": ""},
+  "chat.postEphemeral": {"ok": true, "message_ts": "{ts}"},
+  "conversations.open": {"ok": true, "channel": {"id": "D{user}"}},
+  "conversations.replies": {"ok": false, "error": "missing_scope", "needed": "channels:history",
+                            "provided": "app_mentions:read,chat:write,commands,im:history,im:write,users:read,users:read.email"},
+  "users.info": {
+    "ok": true,
+    "user": {
+      "id": "{user}",
+      "team_id": "T0ACME",
+      "name": "someone",
+      "deleted": false,
+      "real_name": "Someone",
+      "is_bot": false,
+      "is_restricted": false,
+      "is_ultra_restricted": false,
+      "profile": {"real_name": "Someone", "display_name": "someone", "email": null}
+    }
+  }
+}

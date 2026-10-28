@@ -1,0 +1,16 @@
+# Production add-on: passes the Guardrails Hub token to the image build as a
+# BuildKit secret, so the Dockerfile installs the toxicity validator.
+# Kept out of docker-compose.yml because Compose refuses to build when a secret's
+# file is missing, and CI and fresh clones have no token. Turn it on for every
+# compose command by adding this line to .env (deploy.md, step 4):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml
+services:
+  knowledgebase:
+    build:
+      context: .
+      secrets:
+        - gr_token             # used only during the build
+
+secrets:
+  gr_token:
+    file: ./guardrails_token.secret   # gitignored; one line, the token from hub.guardrailsai.com/keys

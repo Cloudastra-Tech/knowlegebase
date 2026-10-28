@@ -1,0 +1,365 @@
+"""Re-indexing, as background jobs (kb/jobs.py) in one lane per workspace: a
+workspace never has two runs at once, and workspaces don't wait for each other.
+
+    schedule_index(ws, docs)     documents changed: queue a run. Changes that
+                                 arrive while one runs are folded into ONE more
+                                 run after it (the job queue's dedupe_key).
+    schedule_retag(ws, provider) a connection's permission policy or permissions changed
+    index_status(ws)             what GET /api/index/status shows
+    current(ws)                  the collection questions are answered from
+
+A run is INCREMENTAL (ingest.update): only new, edited and deleted documents
+touch the index, and questions are answered throughout. It is a FULL REBUILD
+instead when asked for (POST /api/reindex?full=true), when the index was built
+with other chunking or embedding settings (ingest.FINGERPRINT), or when the
+workspace has no row in `search_indexes` yet (an index from before stable chunk
+ids). A full rebuild goes into a NEW collection while questions keep using the
+current one; then the workspace's row is pointed at the new one, and the old
+one is dropped DROP_AFTER seconds later, once questions that started on it are
+done. A rebuild that fails drops what it built and leaves the old one serving.
+
+Agents notice a change by the row's `version` (services/agents.py), so this
+works the same when the jobs run in another process (kb/worker.py).
+"""
+
+import json
+import logging
+import os
+import time
+
+import db
+import embedding_cache
+import ingest
+import integrations_store
+import models
+import sync_store
+import workspaces
+from kb import jobs
+from kb.services import assistant, permissions, pii_scan, webhooks
+
+log = logging.getLogger("uvicorn.error")
+
+KINDS = ("index", "retag")         # what the index status follows
+DROP_AFTER = 10 * 60               # seconds an old collection stays after a rebuild
+SUMMARY = ("documents", "chunks", "restricted", "embedded", "added", "changed", "retagged",
+           "removed", "failed", "blocked")   # counts only: the status is shown to every member
+
+
+def new_index_state():
+    return {"status": "idle", "step": 0, "total": 4, "message": "", "pending": False,
+            "summary": None, "error": None, "reason": None, "finished_at": None}
+
+
+# Why a run failed, as a code the UI words for everyone (the raw `error` is for
+# admins only: kb/routers/index.py). Matched on the job's error text, so rows
+# written before this existed get a code too. First match wins.
+REASONS = (
+    ("no_ai_key", ("missing credentials", "api_key client option", "openai_api_key",
+                   "unable to locate credentials", "no aws region", "none are saved",
+                   "no role arn")),
+    ("ai_key_rejected", ("authenticationerror", "incorrect api key", "invalid api key",
+                         "error code: 401", "permissiondeniederror", "accessdenied",
+                         "unrecognizedclient", "invalidsignature", "couldn't assume the aws role")),
+    ("ai_quota", ("ratelimiterror", "insufficient_quota", "error code: 429", "throttling")),
+    ("ai_unreachable", ("apiconnectionerror", "apitimeouterror", "connection error",
+                        "connectionerror", "timed out", "endpointconnectionerror")),
+)
+
+
+def reason_of(error):
+    """The REASONS code for a job's error text: unknown when none matches, None
+    without an error."""
+    if not error:
+        return None
+    text = error.lower()
+    return next((code for code, marks in REASONS if any(m in text for m in marks)), "unknown")
+
+
+def lane(ws):
+    return f"index:{ws}"
+
+
+# ---- Which collection answers a workspace's questions -----------------------------
+def _row(ws):
+    conn = db.connect()
+    try:
+        row = conn.execute("SELECT * FROM search_indexes WHERE workspace = ?", (ws,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def fingerprint(ws, on=None):
+    """The FINGERPRINT the workspace's index must have: ingest.FINGERPRINT with the
+    server's OpenAI models, else one with its embedding and FAST models in it, so
+    switching them rebuilds the index (a shadow rebuild: questions keep the old
+    one meanwhile). Another chat provider with the same embeddings comes out the
+    same unless chunk contexts are written by the FAST model (RAG_CHUNK_SUMMARY)."""
+    on = on or models.for_workspace(ws)
+    if on.embed_name == ingest.EMBED_MODEL and on.fast_name == models.fast_model():
+        return ingest.FINGERPRINT
+    return ingest.fingerprint(on)
+
+
+def embeddings_of(ws):
+    """What the workspace's current index was built with (models.Models.embed_name),
+    or None when it has none yet. Indexes from before providers are OpenAI's."""
+    row = _row(ws)
+    if not row:
+        return None
+    return row.get("embeddings") or models.OPENAI_EMBED_MODEL
+
+
+def current(ws):
+    """(collection, version): where the workspace's questions are answered from,
+    and a number that changes whenever what's in it does."""
+    row = _row(ws)
+    return (row["collection"], row["version"]) if row else (workspaces.collection(ws), 0)
+
+
+def _point(ws, collection, generation, on=None):
+    """Answer the workspace's questions from `collection` from now on (built with
+    `on`, the workspace's models)."""
+    on = on or models.for_workspace(ws)
+    conn = db.connect()
+    try:
+        with conn:
+            conn.execute("""INSERT INTO search_indexes
+                    (workspace, collection, fingerprint, generation, version, updated_at,
+                     embeddings)
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(workspace) DO UPDATE SET collection = excluded.collection,
+                    fingerprint = excluded.fingerprint, generation = excluded.generation,
+                    version = version + 1, updated_at = excluded.updated_at,
+                    embeddings = excluded.embeddings""",
+                         (ws, collection, fingerprint(ws, on), generation, time.time(),
+                          on.embed_name))
+    finally:
+        conn.close()
+
+
+def _changed(ws):
+    """What's in the workspace's collection changed: agents load it again."""
+    conn = db.connect()
+    try:
+        with conn:
+            conn.execute("UPDATE search_indexes SET version = version + 1, updated_at = ? "
+                         "WHERE workspace = ?", (time.time(), ws))
+    finally:
+        conn.close()
+
+
+def mark_changed(ws):
+    """Chunks were changed outside an index run (the sample documents removed,
+    kb/services/onboarding.py): agents load the collection again."""
+    _changed(ws)
+
+
+# ---- Queueing ---------------------------------------------------------------------
+def _merge(queued, new):
+    """Two index runs folded into one: full if either was; every document either
+    named (None = all of them)."""
+    docs = (None if queued.get("docs") is None or new.get("docs") is None
+            else sorted(set(queued["docs"]) | set(new["docs"])))
+    return {"full": bool(queued.get("full") or new.get("full")), "docs": docs}
+
+
+def schedule_index(ws, docs=None, full=False):
+    """Queue a re-index of the workspace. docs: the keys of the documents that
+    changed (ingest.doc_files), if the caller knows them; None checks them all.
+    full: rebuild everything into a new collection."""
+    jobs.enqueue("index", ws, {"full": full, "docs": docs}, lane=lane(ws),
+                 dedupe_key=f"index:{ws}")
+
+
+def schedule_stale():
+    """Queue a run for every workspace whose index was built with other chunking or
+    embedding settings (ingest.FINGERPRINT): index() rebuilds it into a new
+    collection while the old one keeps answering, then switches. Called at start,
+    so a release that changes how documents are chunked re-indexes on its own.
+    REINDEX_ON_SETTINGS_CHANGE=off leaves them until their next change. Returns
+    the workspaces queued."""
+    if (os.getenv("REINDEX_ON_SETTINGS_CHANGE") or "on").strip().lower() in ("0", "off",
+                                                                            "false", "no"):
+        return []
+    conn = db.connect()
+    try:
+        rows = conn.execute("SELECT workspace, fingerprint FROM search_indexes").fetchall()
+    finally:
+        conn.close()
+    stale = []
+    for r in rows:
+        try:
+            if r["fingerprint"] != fingerprint(r["workspace"]):
+                stale.append(r["workspace"])
+        except Exception:         # a workspace whose provider can't be read: next time
+            log.exception("Index: couldn't check workspace %s's index settings", r["workspace"])
+    for ws in stale:
+        schedule_index(ws)
+    if stale:
+        log.info("Index: %d workspace(s) were indexed with other settings; rebuilding them",
+                 len(stale))
+    return stale
+
+
+def schedule_retag(ws, provider):
+    """A connection's policy, or who may see its files, changed: re-tag its
+    chunks (no embedding)."""
+    jobs.enqueue("retag", ws, {"provider": provider}, lane=lane(ws),
+                 dedupe_key=f"retag:{ws}:{provider}")
+
+
+# ---- The jobs ---------------------------------------------------------------------
+@jobs.handler("index", max_attempts=3, merge=_merge)
+def run_index(job):
+    try:
+        result = index(job.workspace, full=job.payload.get("full"),
+                       docs=job.payload.get("docs"), progress=job.progress)
+    except Exception as e:        # kept as the job's error: the UI shows it
+        log.exception("Index: re-indexing workspace %s failed", job.workspace)
+        raise jobs.Retry(f"{type(e).__name__}: {e}")
+    _tell_webhooks(job.workspace, job.payload.get("docs"), result)
+    return result
+
+
+def _tell_webhooks(ws, docs, result):
+    """document.indexed (kb/services/webhooks.py): which documents, and counts only."""
+    counts = {k: result[k] for k in ("added", "changed", "removed", "embedded", "chunks")
+              if isinstance(result.get(k), int)}
+    if docs is not None:
+        # A member's own mail and events (personal connections, "connectors/<p>~<h>/")
+        # never go to the workspace's webhooks.
+        docs = [d for d in docs if not ingest._connector_of(d) or
+                "~" not in ingest._connector_of(d)]
+        if not docs:
+            return
+    webhooks.emit(ws, "document.indexed", {"mode": result.get("mode"),
+                                           "documents": None if docs is None else docs[:200],
+                                           "counts": counts})
+
+
+def index(ws, full=False, docs=None, progress=None):
+    """Bring the workspace's index up to date: incrementally, or by a full
+    rebuild (see the top of this file), with the workspace's own models
+    (models.scope: its chunks are embedded by its provider). Returns the run's
+    summary."""
+    on = models.for_workspace(ws)
+    with models.scope(on):
+        return _index(ws, on, full, docs, progress)
+
+
+def _index(ws, on, full, docs, progress):
+    row = _row(ws)
+    access = integrations_store.chunk_access_levels(ws)
+    info = sync_store.doc_info(ws)        # synced files' titles and links
+    acls = permissions.doc_acls(ws)       # who may see each document that has its own
+    if full or not row or row["fingerprint"] != fingerprint(ws, on):
+        result = _rebuild(ws, row, access, progress, info, acls, on)
+        pii_scan.scan(ws, result["collection"])  # personal data, for the Knowledge screen
+        return result
+    result = ingest.update(progress, docs_folder=workspaces.docs_root(ws),
+                           collection=row["collection"], connector_access=access,
+                           workspace=ws, only=docs, doc_info=info,
+                           skip=assistant.blocker(ws), doc_acls=acls)
+    if any(result[k] for k in ("embedded", "deleted_chunks", "retagged", "changed")):
+        _changed(ws)
+    pii_scan.scan(ws, row["collection"])     # what changed, for the Knowledge screen
+    return {**result, "mode": "incremental"}
+
+
+def _rebuild(ws, row, access, progress, info, acls=None, on=None):
+    generation = (row["generation"] if row else 0) + 1
+    new = f"{workspaces.collection(ws)}__g{generation}"
+    old = row["collection"] if row else workspaces.collection(ws)
+    try:
+        result = ingest.main(progress, docs_folder=workspaces.docs_root(ws), collection=new,
+                             connector_access=access, workspace=ws, doc_info=info,
+                             skip=assistant.blocker(ws), doc_acls=acls)
+        stored = ingest.summary(new)["chunks"]
+        if stored != result["chunks"]:
+            raise RuntimeError(f"the new index holds {stored} chunks, not {result['chunks']}")
+    except BaseException:
+        try:
+            ingest.drop(new)          # the old one keeps answering
+        except Exception:
+            log.exception("Index: couldn't drop the unfinished collection %s", new)
+        raise
+    _point(ws, new, generation, on)
+    if old != new:
+        jobs.enqueue("drop_collection", ws, {"collection": old}, lane=lane(ws),
+                     delay=DROP_AFTER)
+    return {**result, "mode": "full", "collection": new}
+
+
+def rebuild_now(ws, progress=None):
+    """A full rebuild, run here rather than as a job (`python ingest.py`)."""
+    return index(ws, full=True, progress=progress)
+
+
+@jobs.handler("retag", max_attempts=3)
+def run_retag(job):
+    ws, provider = job.workspace, job.payload["provider"]
+    row = _row(ws)
+    if not row or row["fingerprint"] != fingerprint(ws):
+        return run_index(job)         # no index to re-tag: build one (with the new level)
+    # The policy as it is NOW: two quick changes need one run, and the last one
+    # wins. A source-policy connection's files get their own ACLs, worked out
+    # from the source's permissions and this workspace's members and groups now.
+    level = integrations_store.chunk_access_levels(ws).get(provider, "restricted")
+    job.progress(2, 4, "Updating who can see synced files")
+    try:
+        n = ingest.retag(row["collection"], provider, level,
+                         permissions.connector_acls(ws, provider))
+    except Exception as e:
+        log.exception("Index: re-tagging %s in workspace %s failed", provider, ws)
+        raise jobs.Retry(f"{type(e).__name__}: {e}")
+    if n:
+        _changed(ws)
+    return {**ingest.summary(row["collection"]), "retagged_chunks": n, "mode": "retag"}
+
+
+@jobs.handler("drop_collection", max_attempts=3)
+def drop_collection(job):
+    """Drop a workspace's collection that questions no longer use."""
+    name = job.payload["collection"]
+    base = workspaces.collection(job.workspace)
+    if name == current(job.workspace)[0] or not (name == base or name.startswith(base + "__g")):
+        return {"dropped": False}
+    ingest.drop(name)
+    return {"dropped": True}
+
+
+@jobs.periodic("embedding_cache_prune", lambda: 24 * 60 * 60)
+def prune_embedding_cache(job=None, now=None):
+    """Every workspace's cached vectors that no index run used for a while
+    (embedding_cache.py, EMBEDDING_CACHE_DAYS)."""
+    return {"deleted": embedding_cache.prune(now=now)}
+
+
+# ---- Status -----------------------------------------------------------------------
+def index_status(ws):
+    """The shape the UI polls (frontend/src/lib/api.ts, IndexStatus), from the jobs table."""
+    status = new_index_state()
+    rows = jobs.lane_jobs(lane(ws), KINDS)
+    running = [r for r in rows if r["status"] == "running"]
+    queued = [r for r in rows if r["status"] == "queued"]
+    finished = [r for r in rows if r["status"] in ("done", "failed")]
+    if running:
+        p = json.loads(running[0]["progress"] or "null") or {"step": 0, "total": 4,
+                                                            "message": "Starting"}
+        status.update(status="indexing", step=p["step"], total=p["total"],
+                      message=p["message"], pending=bool(queued))
+    elif queued:
+        retry = queued[-1]["error"]
+        status.update(status="indexing", message="Trying again soon" if retry else "Queued",
+                      error=retry, reason=reason_of(retry))
+    elif finished:
+        last = finished[0]
+        if last["status"] == "done":
+            result = json.loads(last["result"] or "null") or {}
+            status.update(message="Up to date", finished_at=last["finished_at"],
+                          summary={k: result[k] for k in SUMMARY if k in result} or None)
+        else:
+            status.update(status="error", error=last["error"], message="Indexing failed",
+                          reason=reason_of(last["error"]), finished_at=last["finished_at"])
+    return status

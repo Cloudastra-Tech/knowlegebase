@@ -5,23 +5,41 @@ langchain==1.4.5           # the "glue" framework that connects all the steps
 langgraph==1.2.15          # builds the agent loop as a state graph (Phase 6)
 langchain-openai==1.7.1    # lets LangChain talk to OpenAI (embeddings + chat model)
 openai==2.54.0             # the official OpenAI client (used under the hood)
+langchain-aws==1.9.1       # AWS Bedrock as the model provider (models.py): ChatBedrockConverse + Bedrock embeddings
+boto3==1.43.118            # ...the AWS SDK it calls Bedrock and STS (AssumeRole) through
+botocore==1.43.118         # ...and boto3's core, pinned with it
+langchain-anthropic==1.7.6 # Anthropic (Claude) as a chat provider (models.py): ChatAnthropic
+anthropic==1.17.0          # ...the Anthropic SDK it calls the Messages API through
+fastembed==0.9.1           # EMBED_PROVIDER=local: embeddings on the server's CPU (models.py), ONNX Runtime, no torch
 langchain-community==0.4.2 # extra loaders (e.g. reading PDFs / text files)
 langchain-chroma==1.1.0    # connects LangChain to the Chroma vector database
 chromadb==1.5.9            # the vector database itself (stores embeddings, runs search)
 rank-bm25==0.2.2           # keyword search (BM25) for hybrid retrieval — Stage 2
+regex==2026.9.29           # Unicode-aware word splitting for BM25 (rag.tokenize); already a tiktoken dependency
 requests==2.34.2           # call free web APIs (Frankfurter, Wikipedia) — agent tools
 guardrails-ai==0.11.0      # the open-source safety library (validates input/output)
-streamlit==1.65.0          # the chat UI you type into (runs in your browser)
 python-dotenv==1.2.4       # loads your secret API key from a .env file
-pypdf==6.20.1              # reads text out of PDF files
-tiktoken==0.14.0           # lets us SEE how text is split into tokens (Phase 1 concept)
+pypdf==6.21.2              # reads text out of PDF files
+defusedxml==0.7.1          # reads the XML inside Word, PowerPoint and Excel files safely (connectors/extract.py); pure Python
+onnxruntime==1.31.0        # RERANKER=local runs a small cross-encoder on the CPU (rerankers.py), no torch; already pulled in by chromadb
+tokenizers==0.23.3         # ...its tokenizer; already pulled in by chromadb
+huggingface_hub==1.33.0    # ...downloads that model once, at a pinned revision; already pulled in by tokenizers
+numpy==2.5.4               # ...its inputs and scores; already pulled in by chromadb
+tiktoken==0.14.0          # lets us SEE how text is split into tokens (inspect_tokens.py); langchain-openai needs it too
 fastapi==0.139.2           # JSON API for the React frontend (api.py); 0.140+ conflicts with chromadb's opentelemetry pin
 uvicorn[standard]==0.54.0  # runs the FastAPI app
 python-multipart==0.0.32   # file uploads in the API
 cryptography==50.0.2       # encrypts integration tokens (Google Drive OAuth) at rest
 chardet==7.6.0             # detects the encoding of non-UTF-8 text files when indexing
-Authlib==1.9.0             # single sign-on with Google / Microsoft (sso.py): the OpenID Connect flow
+Authlib==1.9.1             # single sign-on with Google / Microsoft (sso.py): the OpenID Connect flow
 httpx==0.28.1              # the HTTP client Authlib's Starlette integration uses
-dnspython==2.8.0           # checks the DNS TXT record that proves a workspace owns its email domain
+dnspython==2.9.0           # checks the DNS TXT record that proves a workspace owns its email domain
 pysaml2==7.5.5             # SAML sign-in (saml_sp.py); checks signatures with the xmlsec1 program
 itsdangerous==2.2.0        # signs the short-lived cookie that holds sign-in state (SessionMiddleware)
+sentry-sdk==2.72.0         # optional error tracking (observability.py), only with SENTRY_DSN; also GlitchTip
+alembic==1.20.1            # versioned migrations for config/app.db (db.py, migrations/)
+SQLAlchemy==2.1.6          # what Alembic runs migrations through (already pulled in by langchain-community; the stores use plain sqlite3)
+psycopg[binary]==3.3.6     # Postgres, when DATABASE_URL is set (db_pg.py, platform.md PL-04); unused on SQLite
+psycopg-pool==3.3.3        # ...its connection pool
+mcp==2.3.0                 # the MCP server at /mcp (kb/mcp_server.py): the official Python SDK, Streamable HTTP
+PyJWT==2.15.1              # checks the Bot Connector's tokens on Teams requests (kb/services/teams.py); already pulled in by mcp

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { ArrowRight, ChevronDown, KeyRound, Loader2 } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { MotionConfig, motion, type Variants } from "motion/react"
+import { useLocation, useNavigate, useSearchParams } from "react-router"
 import { siAuth0, siAuthentik, siGoogle, siKeycloak, siOkta } from "simple-icons"
 
 import { Button } from "@/components/ui/button"
@@ -19,20 +21,28 @@ import {
   api,
   session,
   signupStartUrl,
+  m365StartUrl,
   ssoStartUrl,
   type AuthOptions,
+  type SignupMethod,
   type SsoConnection,
   type SsoRoute,
   type User,
 } from "@/lib/api"
-import { cn, hashParams } from "@/lib/utils"
+import { queries } from "@/lib/queries"
+import { cn } from "@/lib/utils"
 
 // Why sign-in or sign-up sent someone back here: api.py redirects to
-// /#login?error=<code> (or /#signup?error=<code>).
+// /#login?error=<code> (or /#signup?error=<code>), which routes.tsx turns into
+// /login?error=<code> (/signup?error=<code>).
 const ERRORS: Record<string, string> = {
   not_allowed: "Your account isn't set up for this app. Ask your admin to add it.",
   not_workspace: "Use your company's Google Workspace account, not a personal or guest one.",
   disabled: "Your access has been turned off. Ask your admin.",
+  workspace_closed: "Your workspace is suspended or being deleted. Ask your admin.",
+  invite_only: "Your workspace only lets in people its admins invite. Ask an admin for an invite.",
+  join_denied:
+    "An admin declined your request to join this workspace recently. Ask an admin to invite you if you should have access.",
   unverified: "Your sign-in provider didn't confirm your email address.",
   cancelled: "Sign-in was cancelled.",
   sso_failed: "Single sign-on didn't finish. Please try again.",
@@ -54,8 +64,7 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i
 
 type Mode = "sign-in" | "create"
 
-function errorFromUrl() {
-  const params = hashParams()
+function errorFromUrl(params: URLSearchParams) {
   const code = params.get("error")
   if (!code) return null
   const ref = params.get("ref") ?? ""
@@ -130,7 +139,9 @@ function methodOf(route: SsoRoute) {
   const n = route.connections.length
   if (n === 1) return route.connections[0].name
   if (n > 1) return `${n} options`
+  if (route.workspace.google && route.workspace.microsoft365) return "2 options"
   if (route.workspace.google) return "Google Workspace"
+  if (route.workspace.microsoft365) return "Microsoft 365"
   if (route.workspace.password) return "Password"
   return "None yet"
 }
@@ -147,9 +158,11 @@ function MethodMark({ route }: { route: SsoRoute }) {
   const kind =
     route.connections.length === 1
       ? route.connections[0].kind
-      : !route.connections.length && route.workspace?.google
+      : !route.connections.length && route.workspace?.google && !route.workspace.microsoft365
         ? "google"
-        : null
+        : !route.connections.length && route.workspace?.microsoft365 && !route.workspace.google
+          ? "microsoft"
+          : null
   return kind && PROVIDER_PATHS[kind] ? <ProviderIcon id={kind} /> : null
 }
 
@@ -258,15 +271,17 @@ function SignIn({
   onLogin,
   onCreate,
   error,
+  initialEmail = "",
 }: {
   options: AuthOptions
   onLogin: (user: User) => void
   onCreate: (suggestedName: string) => void
   error: ReturnType<typeof errorFromUrl>
+  initialEmail?: string // e.g. from an accepted invite (location.state.email)
 }) {
   const providers = options.providers
   const emailFirst = options.email_sso || providers.length > 0
-  const [email, setEmail] = useState("")
+  const [email, setEmail] = useState(initialEmail)
   // What each domain looked up to (the pass is derived from it while typing).
   const [routes, setRoutes] = useState<Record<string, SsoRoute | "failed">>({})
   const [choices, setChoices] = useState<SsoConnection[] | null>(null)
@@ -325,8 +340,23 @@ function SignIn({
         window.location.assign(route.connections[0].url)
         return                                   // keep the spinner while the page leaves
       }
+      const google = route.workspace?.google && providers.some((p) => p.id === "google")
       if (route.connections.length > 1) setChoices(route.connections)
-      else if (route.workspace?.google && providers.some((p) => p.id === "google")) {
+      else if (google && route.workspace?.microsoft365) {
+        // Any company's Google Workspace or Microsoft 365: theirs is one of them.
+        setChoices([
+          { id: "google", name: "Google Workspace", url: ssoStartUrl("google"), kind: "google" },
+          {
+            id: "microsoft365",
+            name: "Microsoft 365",
+            url: m365StartUrl(email.trim()),
+            kind: "microsoft",
+          },
+        ])
+      } else if (route.workspace?.microsoft365) {
+        window.location.assign(m365StartUrl(email.trim()))
+        return
+      } else if (google) {
         window.location.assign(ssoStartUrl("google"))
         return
       } else if (route.workspace?.password && options.password) {
@@ -522,30 +552,70 @@ function CreateWorkspace({
   name,
   setName,
   needsCode,
+  methods,
   error,
   onSignIn,
 }: {
   name: string
   setName: (name: string) => void
   needsCode: boolean
+  methods: SignupMethod[]
   error: ReturnType<typeof errorFromUrl>
   onSignIn: () => void
 }) {
   const [code, setCode] = useState("")
-  const [going, setGoing] = useState(false)
+  const [email, setEmail] = useState("")
+  const [going, setGoing] = useState<SignupMethod | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [sent, setSent] = useState<string | null>(null)
 
   useEffect(() => {
-    const reset = (e: PageTransitionEvent) => e.persisted && setGoing(false)
+    const reset = (e: PageTransitionEvent) => e.persisted && setGoing(null)
     window.addEventListener("pageshow", reset)
     return () => window.removeEventListener("pageshow", reset)
   }, [])
 
-  function start(e: FormEvent) {
+  // Google Workspace and Microsoft 365 prove the domain at the provider; with only a
+  // work email, a link is emailed and the domain proved with a DNS record after.
+  async function start(e: FormEvent) {
     e.preventDefault()
-    setGoing(true)
-    window.location.assign(signupStartUrl(name.trim(), needsCode ? code.trim() : ""))
+    const method = ((e.nativeEvent as SubmitEvent).submitter?.dataset.method ??
+      methods[0]) as SignupMethod
+    setMessage(null)
+    if (method !== "email") {
+      setGoing(method)
+      window.location.assign(signupStartUrl(name.trim(), needsCode ? code.trim() : "", method))
+      return
+    }
+    if (!EMAIL.test(email.trim())) {
+      setMessage("Enter your work email address.")
+      return
+    }
+    setGoing("email")
+    try {
+      const out = await api.signupEmail(name.trim(), email.trim(), needsCode ? code.trim() : "")
+      setSent(out.email)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Couldn't start the sign-up.")
+    }
+    setGoing(null)
   }
 
+  if (sent)
+    return (
+      <motion.div variants={item} className="flex flex-col gap-4 text-center" role="status">
+        <p className="rounded-xl border bg-muted/40 px-4 py-3 text-sm">
+          We sent a link to <span className="font-medium">{sent}</span>. Open it to confirm your
+          address; it then shows the DNS record that proves your company owns its domain.
+        </p>
+        <Button type="button" variant="outline" className={pill} onClick={() => setSent(null)}>
+          Use another email
+        </Button>
+      </motion.div>
+    )
+
+  const ready = !!name.trim() && (!needsCode || !!code.trim())
+  const providers = methods.filter((m) => m !== "email")
   return (
     <motion.form variants={item} onSubmit={start} className="flex flex-col gap-5">
       <Field data-invalid={error?.code === "name" || undefined}>
@@ -583,25 +653,68 @@ function CreateWorkspace({
           Sign in instead
         </Button>
       )}
-      <Field className="gap-2">
-        <Button
-          type="submit"
-          className={pill}
-          disabled={going || !name.trim() || (needsCode && !code.trim())}
-        >
-          {going ? (
-            <Loader2 className="animate-spin" data-icon="inline-start" />
-          ) : (
-            <ProviderIcon id="google" />
-          )}
-          Continue with Google Workspace
-        </Button>
-        <FieldDescription className="text-xs">
-          Your company Google account proves you own its domain, so colleagues can sign in straight
-          away. You'll be the workspace's admin; add Okta, Entra ID or SAML after. Personal Gmail
-          can't create a workspace.
-        </FieldDescription>
-      </Field>
+      {providers.length > 0 && (
+        <Field className="gap-2">
+          {providers.map((m) => (
+            <Button
+              key={m}
+              type="submit"
+              data-method={m}
+              variant={m === providers[0] ? "default" : "outline"}
+              className={pill}
+              disabled={going !== null || !ready}
+            >
+              {going === m ? (
+                <Loader2 className="animate-spin" data-icon="inline-start" />
+              ) : (
+                <ProviderIcon id={m === "google" ? "google" : "microsoft"} />
+              )}
+              Continue with {m === "google" ? "Google Workspace" : "Microsoft 365"}
+            </Button>
+          ))}
+          <FieldDescription className="text-xs">
+            Your company account proves you own its domain, so colleagues can sign in straight
+            away. You'll be the workspace's admin; add Okta, Entra ID or SAML after.
+            {providers.includes("google") && " Personal Gmail can't create a workspace."}
+          </FieldDescription>
+        </Field>
+      )}
+      {methods.includes("email") && (
+        <>
+          {providers.length > 0 && <FieldSeparator>Or with your work email</FieldSeparator>}
+          <Field data-invalid={!!message || undefined} className="gap-2">
+            <FieldLabel htmlFor="signup-email">Work email</FieldLabel>
+            <Input
+              id="signup-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              className={control}
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                setMessage(null)
+              }}
+              aria-invalid={!!message || undefined}
+            />
+            <Button
+              type="submit"
+              data-method="email"
+              variant={providers.length ? "outline" : "default"}
+              className={pill}
+              disabled={going !== null || !ready || !email.trim()}
+            >
+              {going === "email" && <Loader2 className="animate-spin" data-icon="inline-start" />}
+              Email me a link
+            </Button>
+            {message && <FieldError>{message}</FieldError>}
+            <FieldDescription className="text-xs">
+              For any other email host. You'll prove the domain with a DNS TXT record; the
+              workspace is made once it checks out.
+            </FieldDescription>
+          </Field>
+        </>
+      )}
     </motion.form>
   )
 }
@@ -612,32 +725,20 @@ export function LoginForm({
   onLogin,
   ...props
 }: React.ComponentProps<"div"> & { onLogin: (user: User) => void }) {
-  const [options, setOptions] = useState<AuthOptions | null>(null)
-  const [optionsFailed, setOptionsFailed] = useState(false)
-  const [error] = useState(errorFromUrl)
-  const [mode, setMode] = useState<Mode>(() =>
-    window.location.hash.startsWith("#signup") ? "create" : "sign-in",
-  )
+  const optionsQuery = useQuery(queries.authOptions())
+  const options = optionsQuery.data ?? null
+  const optionsFailed = optionsQuery.isError
+  const [searchParams] = useSearchParams()
+  const [error] = useState(() => errorFromUrl(searchParams))
+  // Sign in at /login, create a workspace at /signup (routes.tsx).
+  const location = useLocation()
+  const navigate = useNavigate()
+  const mode: Mode = location.pathname === "/signup" ? "create" : "sign-in"
   const [workspaceName, setWorkspaceName] = useState("")
 
-  useEffect(() => {
-    api
-      .authOptions()
-      .then(setOptions)
-      .catch(() => setOptionsFailed(true))
-  }, [])
-
-  // The landing page's Sign in / Get started change the hash without reloading.
-  useEffect(() => {
-    const follow = () =>
-      setMode(window.location.hash.startsWith("#signup") ? "create" : "sign-in")
-    window.addEventListener("hashchange", follow)
-    return () => window.removeEventListener("hashchange", follow)
-  }, [])
-
   function changeMode(next: Mode) {
-    setMode(next)
-    history.replaceState(null, "", next === "create" ? "#signup" : "#login")
+    // Keeps where to go once signed in (location.state); drops a shown error.
+    navigate(next === "create" ? "/signup" : "/login", { replace: true, state: location.state })
   }
 
   const signup = options?.signup ?? false
@@ -682,6 +783,7 @@ export function LoginForm({
                 name={workspaceName}
                 setName={setWorkspaceName}
                 needsCode={options.signup_invite}
+                methods={options.signup_methods ?? ["google"]}
                 error={error}
                 onSignIn={() => changeMode("sign-in")}
               />
@@ -690,6 +792,7 @@ export function LoginForm({
                 options={options}
                 onLogin={onLogin}
                 error={error}
+                initialEmail={(location.state as { email?: string } | null)?.email}
                 onCreate={(suggested) => {
                   setWorkspaceName((n) => n || suggested)
                   changeMode("create")
@@ -705,6 +808,12 @@ export function LoginForm({
                   <Button variant="link" className="h-auto p-0" onClick={() => changeMode("sign-in")}>
                     Sign in
                   </Button>
+                  <span className="mt-1 block text-xs">
+                    It has no admin left?{" "}
+                    <Button variant="link" className="h-auto p-0 text-xs" onClick={() => navigate("/claim")}>
+                      Claim it with a code
+                    </Button>
+                  </span>
                 </>
               ) : signup ? (
                 <>

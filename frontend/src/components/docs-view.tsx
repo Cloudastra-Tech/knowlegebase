@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useSearchParams } from "react-router"
 import { toast } from "sonner"
 import {
   Download,
@@ -10,9 +12,12 @@ import {
   RefreshCw,
   Save,
   Trash2,
+  TriangleAlert,
   Upload,
+  Users,
 } from "lucide-react"
 
+import { AccessPicker, EVERYONE, HR_GROUP, WhoCanSeeBadges } from "@/components/access-picker"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +29,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -38,13 +44,15 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { DraftEditor, DraftRow } from "@/components/draft-editor"
+import { IndexAdminMenu } from "@/components/index-admin"
 import { cn } from "@/lib/utils"
-import { api, type Access, type Doc } from "@/lib/api"
+import { api, type Access, type Doc, type UploadLimits } from "@/lib/api"
 import { useIndexStatus } from "@/lib/index-status-context"
+import { queries } from "@/lib/queries"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const sameDoc = (a: Doc | null, b: Doc | null) =>
@@ -56,53 +64,81 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function AccessBadge({ access }: { access: Access }) {
-  return access === "restricted" ? (
+// Who can see a document: its ACL as the server labels it (an older list without
+// one: its folder's).
+function AccessBadge({ doc }: { doc: Doc }) {
+  if (doc.who?.length) return <WhoCanSeeBadges who={doc.who} />
+  return doc.access === "restricted" ? (
     <Badge variant="destructive" className="gap-1">
       <Lock className="size-3" /> HR only
     </Badge>
   ) : (
     <Badge variant="secondary" className="gap-1">
-      <Globe className="size-3" /> Public
+      <Globe className="size-3" /> Everyone
     </Badge>
   )
 }
 
-function AccessPicker({
-  value,
-  onChange,
-  idPrefix,
-}: {
-  value: Access
-  onChange: (v: Access) => void
-  idPrefix: string
-}) {
+// Change who may see a document: its chunks are re-tagged, nothing is embedded again.
+function AccessDialog({ doc, onSaved }: { doc: Doc; onSaved: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [acl, setAcl] = useState<string[]>(doc.acl ?? [doc.access === "public" ? EVERYONE : HR_GROUP])
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.setDocAcl(doc, acl)
+      toast.success(`Updated who can see ${doc.name} · updating the index`)
+      setOpen(false)
+      onSaved()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <RadioGroup
-      value={value}
-      onValueChange={(v) => onChange(v as Access)}
-      className="flex gap-6"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) setAcl(doc.acl ?? [doc.access === "public" ? EVERYONE : HR_GROUP])
+      }}
     >
-      <div className="flex items-center gap-2">
-        <RadioGroupItem value="public" id={`${idPrefix}-public`} />
-        <Label htmlFor={`${idPrefix}-public`} className="font-normal">
-          Public (everyone)
-        </Label>
-      </div>
-      <div className="flex items-center gap-2">
-        <RadioGroupItem value="restricted" id={`${idPrefix}-restricted`} />
-        <Label htmlFor={`${idPrefix}-restricted`} className="font-normal">
-          Restricted (HR only)
-        </Label>
-      </div>
-    </RadioGroup>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <Users /> Access
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Who can see {doc.name}?</DialogTitle>
+          <DialogDescription>
+            Only the people and groups picked here can ask about it, or see answers that quote
+            it. Groups gate content; roles only decide who manages it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <Label htmlFor="doc-access">Who can see it</Label>
+          <AccessPicker id="doc-access" value={acl} onChange={setAcl} />
+        </div>
+        <DialogFooter>
+          <Button onClick={save} disabled={saving || !acl.length}>
+            {saving && <Loader2 className="animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
-  const [access, setAccess] = useState<Access>("public")
+  const [acl, setAcl] = useState<string[]>([EVERYONE])
   const [content, setContent] = useState("")
   const [saving, setSaving] = useState(false)
 
@@ -110,13 +146,13 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
     e.preventDefault()
     setSaving(true)
     try {
-      const created = await api.createDoc(name, access, content)
+      const created = await api.createDoc(name, acl, content)
       toast.success(`Added ${created.name}`)
       onCreated({ ...created, size: content.length })
       setOpen(false)
       setName("")
       setContent("")
-      setAccess("public")
+      setAcl([EVERYONE])
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -148,8 +184,8 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
             />
           </div>
           <div className="grid gap-2">
-            <Label>Who can see it?</Label>
-            <AccessPicker value={access} onChange={setAccess} idPrefix="new" />
+            <Label htmlFor="new-access">Who can see it?</Label>
+            <AccessPicker id="new-access" value={acl} onChange={setAcl} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="new-content">Content</Label>
@@ -173,32 +209,67 @@ function NewDocDialog({ onCreated }: { onCreated: (d: Doc) => void }) {
   )
 }
 
-function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
+const MB = 1024 * 1024
+
+// Why these files can't go, before sending them (the server checks again).
+function tooBig(files: File[], limits: UploadLimits | null) {
+  if (!limits) return null
+  const big = files.filter((f) => f.size > limits.file_mb * MB)
+  if (big.length)
+    return `${big.map((f) => `${f.name} (${formatSize(f.size)})`).join(", ")} ${
+      big.length === 1 ? "is" : "are"
+    } over the ${limits.file_mb} MB limit for one file.`
+  const total = files.reduce((sum, f) => sum + f.size, 0)
+  if (total > limits.request_mb * MB)
+    return `These files come to ${formatSize(total)}, over the ${limits.request_mb} MB limit for one upload. Upload them in smaller batches.`
+  return null
+}
+
+function UploadDialog({
+  onUploaded,
+  limits,
+}: {
+  onUploaded: () => void
+  limits: UploadLimits | null
+}) {
   const [open, setOpen] = useState(false)
   const [files, setFiles] = useState<File[]>([])
-  const [access, setAccess] = useState<Access>("public")
+  const [acl, setAcl] = useState<string[]>([EVERYONE])
   const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const problem = error ?? tooBig(files, limits)
+
+  function pick(picked: File[]) {
+    setFiles(picked)
+    setError(null)
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!files.length) return
+    if (!files.length || problem) return
     setUploading(true)
     try {
-      const { saved } = await api.uploadDocs(files, access)
+      const { saved } = await api.uploadDocs(files, acl)
       toast.success(`Uploaded ${saved.join(", ")}`)
       onUploaded()
       setOpen(false)
       setFiles([])
     } catch (err) {
-      toast.error(errorText(err))
+      setError(errorText(err))         // e.g. too big (413), or not what its name says (415)
     } finally {
       setUploading(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        setError(null)
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <Upload /> Upload
@@ -209,7 +280,9 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
           <DialogHeader>
             <DialogTitle>Upload files</DialogTitle>
             <DialogDescription>
-              TXT or PDF. A file with the same name is replaced.
+              Text, PDF, Word, PowerPoint, Excel, Markdown or HTML
+              {limits ? `, up to ${limits.file_mb} MB each` : ""}. A file with the same name is
+              replaced.
             </DialogDescription>
           </DialogHeader>
           <button
@@ -218,7 +291,7 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault()
-              setFiles(Array.from(e.dataTransfer.files))
+              pick(Array.from(e.dataTransfer.files))
             }}
             className="flex flex-col items-center gap-2 rounded-lg border-2 border-dashed px-4 py-8 text-sm text-muted-foreground transition-colors hover:bg-muted/50"
           >
@@ -230,17 +303,23 @@ function UploadDialog({ onUploaded }: { onUploaded: () => void }) {
           <input
             ref={inputRef}
             type="file"
-            accept=".txt,.pdf"
+            accept=".txt,.pdf,.md,.html,.docx,.pptx,.xlsx"
             multiple
             hidden
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            onChange={(e) => pick(Array.from(e.target.files ?? []))}
           />
+          {problem && (
+            <Alert variant="destructive" className="border-destructive/30 bg-destructive/5">
+              <TriangleAlert />
+              <AlertDescription className="text-destructive/90">{problem}</AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-2">
-            <Label>Who can see them?</Label>
-            <AccessPicker value={access} onChange={setAccess} idPrefix="upload" />
+            <Label htmlFor="upload-access">Who can see them?</Label>
+            <AccessPicker id="upload-access" value={acl} onChange={setAcl} />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={uploading || !files.length}>
+            <Button type="submit" disabled={uploading || !files.length || !!problem}>
               {uploading && <Loader2 className="animate-spin" />}
               Upload
             </Button>
@@ -260,7 +339,9 @@ function DocEditor({
   onSaved: () => void
   onDeleted: () => void
 }) {
-  const isText = doc.name.toLowerCase().endsWith(".txt")
+  // Not shared with the asker: they manage it (access, delete) but can't open it.
+  const sealed = doc.readable === false
+  const isText = doc.name.toLowerCase().endsWith(".txt") && !sealed
   const [original, setOriginal] = useState("")
   const [content, setContent] = useState("")
   const [loading, setLoading] = useState(isText)
@@ -318,18 +399,19 @@ function DocEditor({
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div className="min-w-0 space-y-1.5">
           <CardTitle className="truncate text-base">{doc.name}</CardTitle>
-          <CardDescription className="flex items-center gap-2">
-            <AccessBadge access={doc.access} />
+          <CardDescription className="flex flex-wrap items-center gap-2">
+            <AccessBadge doc={doc} />
             <span>{formatSize(doc.size)}</span>
           </CardDescription>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <AccessDialog doc={doc} onSaved={onSaved} />
           {isText ? (
             <Button size="sm" onClick={save} disabled={!dirty || saving}>
               {saving ? <Loader2 className="animate-spin" /> : <Save />}
               Save
             </Button>
-          ) : (
+          ) : sealed ? null : (
             <Button
               size="sm"
               variant="outline"
@@ -361,11 +443,17 @@ function DocEditor({
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col">
-        {!isText ? (
+        {sealed ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            <Lock className="size-8" />
+            Only the people and groups it's shared with can open it. You can still change
+            who can see it, or delete it.
+          </div>
+        ) : !isText ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             <FileText className="size-8" />
-            PDFs can't be edited here. Download it, change it, then upload it again with the
-            same name to replace it.
+            Only text files can be edited here. Download it, change it, then upload it again
+            with the same name to replace it.
           </div>
         ) : loading ? (
           <div className="space-y-2">
@@ -386,34 +474,56 @@ function DocEditor({
   )
 }
 
-export function DocsView() {
-  const [docs, setDocs] = useState<Doc[]>([])
+const NO_DOCS: Doc[] = []
+
+// admin: also the index's admin tools (rebuild from scratch, background jobs).
+export function DocsView({ admin = false }: { admin?: boolean }) {
+  const queryClient = useQueryClient()
+  const { data, isPending: loading } = useQuery(queries.docs())
+  const docs = data?.docs ?? NO_DOCS
+  const uploadLimits = data?.upload_limits ?? null
   const { status: indexStatus, refresh: refreshIndex } = useIndexStatus()
   const indexing = indexStatus?.status === "indexing"
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<"all" | Access>("all")
-  const [selected, setSelected] = useState<Doc | null>(null)
+  // ?draft=<id>: one of the assistant's drafts (from Knowledge or Insights).
+  const [params, setParams] = useSearchParams()
+  const pickedDraft = params.get("draft")
+  const [filter, setFilter] = useState<"all" | Access | "drafts">(() =>
+    pickedDraft ? "drafts" : "all",
+  )
+  // The picked document as the latest list has it: null until it's there, and
+  // once it's gone.
+  const [picked, setPicked] = useState<{ access: Access; name: string } | null>(null)
+  const selected = docs.find((d) => sameDoc(d, picked as Doc)) ?? null
+  // The drafts (HR); looked at again every few seconds while one is being written.
+  const { data: draftList } = useQuery({
+    ...queries.drafts(),
+    refetchInterval: (q) =>
+      q.state.data?.drafts.some((d) => d.status === "generating") ? 3000 : false,
+  })
+  const draftRows = draftList?.drafts ?? []
+  const pickDraft = (id: string | null) =>
+    setParams(id ? { draft: id } : {}, { replace: true })
+  // ?jobs=1: the background jobs, opened (the header's "See the background jobs").
+  const jobsOpen = admin && params.get("jobs") === "1"
+  const setJobsOpen = (open: boolean) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        if (open) next.set("jobs", "1")
+        else next.delete("jobs")
+        return next
+      },
+      { replace: true },
+    )
 
   const refresh = useCallback(
-    (select?: { access: Access; name: string }) =>
-      api
-        .listDocs()
-        .then((data) => {
-          setDocs(data.docs)
-          refreshIndex()                    // a change just started a re-index
-          setSelected((current) => {
-            const wanted = select ?? current
-            return data.docs.find((d) => sameDoc(d, wanted as Doc)) ?? null
-          })
-        })
-        .catch((err) => toast.error(errorText(err)))
-        .finally(() => setLoading(false)),
-    [refreshIndex],
+    async (select?: { access: Access; name: string }) => {
+      if (select) setPicked(select)
+      await queryClient.invalidateQueries({ queryKey: queries.docs().queryKey })
+      refreshIndex()                        // a change just started a re-index
+    },
+    [queryClient, refreshIndex],
   )
-
-  useEffect(() => {
-    refresh()
-  }, [refresh])
 
   async function reindex() {
     try {
@@ -425,6 +535,7 @@ export function DocsView() {
   }
 
   const visible = docs.filter((d) => filter === "all" || d.access === filter)
+  const showDrafts = filter === "drafts"
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 md:h-full">
@@ -436,30 +547,60 @@ export function DocsView() {
             automatically.
           </p>
         </div>
-        <Button variant="outline" onClick={reindex} disabled={indexing || !docs.length}>
-          {indexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          {indexing ? "Indexing…" : "Re-index now"}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={reindex} disabled={indexing || !docs.length}>
+            {indexing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {indexing ? "Indexing…" : "Re-index now"}
+          </Button>
+          {admin && (
+            <IndexAdminMenu
+              documents={docs.length}
+              indexing={indexing}
+              jobsOpen={jobsOpen}
+              onJobsOpenChange={setJobsOpen}
+              onStarted={refreshIndex}
+            />
+          )}
+        </div>
       </div>
 
 
       <div className="grid gap-4 md:min-h-0 md:flex-1 md:grid-cols-[320px_1fr] md:grid-rows-[minmax(0,1fr)]">
         <Card className="flex max-h-96 min-h-0 flex-col gap-3 py-4 md:max-h-none">
           <div className="flex items-center justify-between gap-2 px-4">
-            <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
+            <Tabs panels={false} value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
               <TabsList>
                 <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="public">Public</TabsTrigger>
-                <TabsTrigger value="restricted">HR</TabsTrigger>
+                <TabsTrigger value="public">Everyone</TabsTrigger>
+                <TabsTrigger value="restricted">Limited</TabsTrigger>
+                <TabsTrigger value="drafts">
+                  Drafts{draftRows.length ? ` (${draftRows.length})` : ""}
+                </TabsTrigger>
               </TabsList>
             </Tabs>
           </div>
           <div className="flex gap-2 px-4">
             <NewDocDialog onCreated={(d) => refresh(d)} />
-            <UploadDialog onUploaded={() => refresh()} />
+            <UploadDialog onUploaded={() => refresh()} limits={uploadLimits} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2">
-            {loading ? (
+            {showDrafts ? (
+              draftRows.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                  No drafts. Summarise a source on the Knowledge screen, or draft a doc for a
+                  content gap in Insights.
+                </p>
+              ) : (
+                draftRows.map((d) => (
+                  <DraftRow
+                    key={d.id}
+                    draft={d}
+                    selected={d.id === pickedDraft}
+                    onPick={() => pickDraft(d.id)}
+                  />
+                ))
+              )
+            ) : loading ? (
               <div className="space-y-2 px-2">
                 <Skeleton className="h-12 w-full" />
                 <Skeleton className="h-12 w-full" />
@@ -472,7 +613,7 @@ export function DocsView() {
               visible.map((d) => (
                 <button
                   key={`${d.access}/${d.name}`}
-                  onClick={() => setSelected(d)}
+                  onClick={() => setPicked(d)}
                   className={cn(
                     "flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left text-sm transition-colors hover:bg-muted",
                     sameDoc(selected, d) && "bg-muted",
@@ -491,13 +632,31 @@ export function DocsView() {
           </div>
         </Card>
 
-        {selected ? (
+        {showDrafts ? (
+          pickedDraft ? (
+            <DraftEditor
+              key={pickedDraft}
+              id={pickedDraft}
+              onPublished={(key) => {
+                pickDraft(null)
+                const [access, ...rest] = key.split("/")
+                setFilter("all")
+                refresh({ access: access as Access, name: rest.join("/") })
+              }}
+              onDeleted={() => pickDraft(null)}
+            />
+          ) : (
+            <Card className="flex items-center justify-center p-10 text-center text-sm text-muted-foreground">
+              Pick a draft on the left to review it.
+            </Card>
+          )
+        ) : selected ? (
           <DocEditor
             key={`${selected.access}/${selected.name}`}
             doc={selected}
             onSaved={() => refresh()}
             onDeleted={() => {
-              setSelected(null)
+              setPicked(null)
               refresh()
             }}
           />

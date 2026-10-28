@@ -1,0 +1,26 @@
+{
+ "exchanges": [
+  {"request": {"method": "POST", "url": "https://api.notion.com/v1/search",
+               "json": {"sort": {"timestamp": "last_edited_time", "direction": "descending"}}},
+   "response": {"status": 200, "json": {"object": "list", "has_more": true, "next_cursor": "c2",
+    "results": [
+     {"object": "page", "id": "page-b", "last_edited_time": "2026-10-26T15:00:00.000Z",
+      "url": "https://www.notion.so/Leave-policy-pageb", "archived": false, "in_trash": false,
+      "parent": {"type": "page_id", "page_id": "page-a"},
+      "properties": {"title": {"type": "title", "title": [{"plain_text": "Leave policy"}]}}},
+     {"object": "page", "id": "page-a", "last_edited_time": "2026-10-20T10:00:00.000Z",
+      "url": "https://www.notion.so/Handbook-pagea", "archived": false, "in_trash": false,
+      "parent": {"type": "workspace", "workspace": true},
+      "properties": {"title": {"type": "title", "title": [{"plain_text": "Handbook"}]}}},
+     {"object": "page", "id": "row-1", "last_edited_time": "2026-10-19T09:00:00.000Z",
+      "url": "https://www.notion.so/Laptop-request-row1", "archived": false, "in_trash": false,
+      "parent": {"type": "data_source_id", "data_source_id": "ds-1", "database_id": "db-1"},
+      "properties": {"Name": {"type": "title", "title": [{"plain_text": "Laptop request"}]}}}
+    ]}}},
+  {"request": {"method": "GET", "url": "https://api.notion.com/v1/blocks/page-b/children"},
+   "response": {"status": 200, "json": {"object": "list", "has_more": false, "results": [
+    {"object": "block", "id": "b7", "type": "bulleted_list_item", "has_children": false,
+     "bulleted_list_item": {"rich_text": [{"plain_text": "25 days a year from 2027"}]}}
+   ]}}}
+ ]
+}

@@ -1,0 +1,49 @@
+{
+ "exchanges": [
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/changes/startPageToken",
+               "params": {"supportsAllDrives": "true"}},
+   "response": {"status": 200, "json": {"kind": "drive#startPageToken", "startPageToken": "100"}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files",
+               "params": {"q~": "'fold-root' in parents", "corpora": "allDrives",
+                          "includeItemsFromAllDrives": "true", "supportsAllDrives": "true"}},
+   "response": {"status": 200, "json": {"files": [
+    {"id": "doc1", "name": "Travel policy", "mimeType": "application/vnd.google-apps.document",
+     "modifiedTime": "2026-10-01T10:00:00.000Z",
+     "webViewLink": "https://docs.google.com/document/d/doc1/edit?usp=drivesdk",
+     "parents": ["fold-root"], "trashed": false,
+     "permissions": [{"type": "user", "role": "owner", "emailAddress": "Ann@acme.com"},
+                     {"type": "group", "role": "reader", "emailAddress": "eng@acme.com"},
+                     {"type": "domain", "role": "reader", "domain": "acme.com"}],
+     "owners": [{"emailAddress": "ann@acme.com"}]},
+    {"id": "fold-sub", "name": "Regions", "mimeType": "application/vnd.google-apps.folder",
+     "modifiedTime": "2026-09-01T10:00:00.000Z", "parents": ["fold-root"], "trashed": false},
+    {"id": "pdf1", "name": "Expenses.pdf", "mimeType": "application/pdf", "size": "1200",
+     "modifiedTime": "2026-09-20T08:30:00.000Z",
+     "webViewLink": "https://drive.google.com/file/d/pdf1/view?usp=drivesdk",
+     "parents": ["fold-root"], "trashed": false},
+    {"id": "big1", "name": "All-hands recording.pdf", "mimeType": "application/pdf",
+     "size": "31457280", "modifiedTime": "2026-09-19T08:30:00.000Z",
+     "webViewLink": "https://drive.google.com/file/d/big1/view?usp=drivesdk",
+     "parents": ["fold-root"], "trashed": false},
+    {"id": "docx1", "name": "Onboarding.docx",
+     "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+     "size": "900", "modifiedTime": "2026-09-18T08:30:00.000Z",
+     "webViewLink": "https://docs.google.com/document/d/docx1/edit?usp=drivesdk",
+     "parents": ["fold-root"], "trashed": false}
+   ]}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files",
+               "params": {"q~": "'fold-sub' in parents"}},
+   "response": {"status": 200, "json": {"files": [
+    {"id": "sheet1", "name": "Per diems", "mimeType": "application/vnd.google-apps.spreadsheet",
+     "modifiedTime": "2026-09-10T08:30:00.000Z",
+     "webViewLink": "https://docs.google.com/spreadsheets/d/sheet1/edit?usp=drivesdk",
+     "parents": ["fold-sub"], "trashed": false}
+   ]}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files/doc1/export",
+               "params": {"mimeType": "text/plain"}},
+   "response": {"status": 200, "text": "Trips need approval."}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files/sheet1/export",
+               "params": {"mimeType": "text/csv"}},
+   "response": {"status": 200, "text": "Region,Per diem\r\nEU,150\r\n"}}
+ ]
+}

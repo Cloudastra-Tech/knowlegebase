@@ -1,0 +1,216 @@
+{
+ "_source": [
+  "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_query.htm (totalSize, done, nextRecordsUrl, records)",
+  "https://developer.salesforce.com/docs/atlas.en-us.sfFieldRef.meta/sfFieldRef/salesforce_field_reference_Knowledge__kav.htm (Knowledge__kav: KnowledgeArticleId, ArticleNumber, Title, UrlName, Summary, Language, PublishStatus, IsVisibleInApp/Pkb/Csp/Prm, LastPublishedDate, SystemModstamp)",
+  "Describe: GET /services/data/vXX.X/sobjects/{object}/describe (fields[].name/type/extraTypeInfo, childRelationships[].relationshipName)"
+ ],
+ "exchanges": [
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/sobjects/Knowledge__kav/describe"
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "name": "Knowledge__kav",
+     "fields": [
+      {
+       "name": "Id",
+       "type": "id",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "KnowledgeArticleId",
+       "type": "reference",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "ArticleNumber",
+       "type": "string",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "Title",
+       "type": "string",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "UrlName",
+       "type": "string",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "Summary",
+       "type": "textarea",
+       "extraTypeInfo": "plaintextarea"
+      },
+      {
+       "name": "Language",
+       "type": "picklist",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "PublishStatus",
+       "type": "picklist",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "LastPublishedDate",
+       "type": "datetime",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "SystemModstamp",
+       "type": "datetime",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "IsVisibleInApp",
+       "type": "boolean",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "IsVisibleInPkb",
+       "type": "boolean",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "IsVisibleInCsp",
+       "type": "boolean",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "RecordTypeId",
+       "type": "reference",
+       "extraTypeInfo": null
+      },
+      {
+       "name": "Answer__c",
+       "type": "textarea",
+       "extraTypeInfo": "richtextarea"
+      },
+      {
+       "name": "Internal_Notes__c",
+       "type": "textarea",
+       "extraTypeInfo": "plaintextarea"
+      }
+     ],
+     "childRelationships": [
+      {
+       "relationshipName": "DataCategorySelections",
+       "childSObject": "Knowledge__DataCategorySelection"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/query",
+    "params": {
+     "q~": "PublishStatus = 'Online' AND SystemModstamp > 2026-10-03T08:58:00Z"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "totalSize": 2,
+     "done": true,
+     "records": [
+      {
+       "attributes": {
+        "type": "Knowledge__kav",
+        "url": "/services/data/v62.0/sobjects/Knowledge__kav/ka0V4"
+       },
+       "Id": "ka0V4",
+       "KnowledgeArticleId": "kA0000000000001AAA",
+       "ArticleNumber": "00001AAA",
+       "Title": "Reset your password",
+       "UrlName": "reset-your-password",
+       "Language": "en_US",
+       "PublishStatus": "Online",
+       "LastPublishedDate": "2026-10-10T09:00:00.000+0000",
+       "SystemModstamp": "2026-10-10T09:00:00.000+0000",
+       "IsVisibleInApp": true,
+       "IsVisibleInPkb": true,
+       "IsVisibleInCsp": false,
+       "RecordTypeId": "012000000000001AAA",
+       "Summary": "Summary of Reset your password.",
+       "Answer__c": "<p>Passwords now need 14 characters.</p>",
+       "Internal_Notes__c": "never synced",
+       "DataCategorySelections": null
+      },
+      {
+       "attributes": {
+        "type": "Knowledge__kav",
+        "url": "/services/data/v62.0/sobjects/Knowledge__kav/ka0V5"
+       },
+       "Id": "ka0V5",
+       "KnowledgeArticleId": "kA0000000000004AAA",
+       "ArticleNumber": "00004AAA",
+       "Title": "Travel policy",
+       "UrlName": "travel-policy",
+       "Language": "en_US",
+       "PublishStatus": "Online",
+       "LastPublishedDate": "2026-10-11T09:00:00.000+0000",
+       "SystemModstamp": "2026-10-11T09:00:00.000+0000",
+       "IsVisibleInApp": true,
+       "IsVisibleInPkb": false,
+       "IsVisibleInCsp": false,
+       "RecordTypeId": "012000000000001AAA",
+       "Summary": "Summary of Travel policy.",
+       "Answer__c": "<p>Book economy for flights under six hours.</p>",
+       "Internal_Notes__c": "never synced",
+       "DataCategorySelections": null
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/query",
+    "params": {
+     "q~": "PublishStatus = 'Archived' AND SystemModstamp > 2026-10-03T08:58:00Z"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "totalSize": 2,
+     "done": true,
+     "records": [
+      {
+       "KnowledgeArticleId": "kA0000000000001AAA",
+       "Language": "en_US"
+      },
+      {
+       "KnowledgeArticleId": "kA0000000000002AAA",
+       "Language": "en_US"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "request": {
+    "method": "GET",
+    "url": "https://acme.my.salesforce.com/services/data/v62.0/query",
+    "params": {
+     "q~": "KnowledgeArticleId IN ('kA0000000000002AAA')"
+    }
+   },
+   "response": {
+    "status": 200,
+    "json": {
+     "totalSize": 0,
+     "done": true,
+     "records": []
+    }
+   }
+  }
+ ]
+}

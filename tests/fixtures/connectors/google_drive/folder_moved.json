@@ -1,0 +1,24 @@
+{
+ "exchanges": [
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/changes",
+               "params": {"pageToken": "105"}},
+   "response": {"status": 200, "json": {"kind": "drive#changeList", "newStartPageToken": "106",
+    "changes": [
+     {"kind": "drive#change", "changeType": "file", "fileId": "fold-sub", "removed": false,
+      "file": {"id": "fold-sub", "name": "Regions", "mimeType": "application/vnd.google-apps.folder",
+               "modifiedTime": "2026-10-07T09:00:00.000Z", "parents": ["archive"],
+               "trashed": false}}
+    ]}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/changes/startPageToken"},
+   "response": {"status": 200, "json": {"startPageToken": "107"}}},
+  {"request": {"method": "GET", "url": "https://www.googleapis.com/drive/v3/files",
+               "params": {"q~": "'fold-root' in parents"}},
+   "response": {"status": 200, "json": {"files": [
+    {"id": "doc1", "name": "Travel policy (2026)",
+     "mimeType": "application/vnd.google-apps.document",
+     "modifiedTime": "2026-10-05T09:00:00.000Z",
+     "webViewLink": "https://docs.google.com/document/d/doc1/edit?usp=drivesdk",
+     "parents": ["fold-root"], "trashed": false}
+   ]}}}
+ ]
+}

@@ -1,0 +1,17 @@
+Cloudastra Academy — Vendor Contracts Register (RESTRICTED — finance and HR only)
+
+Brightlearn (LMS hosting):
+The Astra LMS is hosted by Brightlearn under a 3-year contract worth 18 lakh rupees, ending on
+30 June 2027. Renewal talks start in March 2027. The contract can be ended early with 90 days'
+notice and a penalty of 2 lakh rupees.
+
+Northwind Cloud (servers and storage):
+An annual commitment of 6 lakh rupees, renewed every October. We negotiated a 22% discount in
+exchange for a 2-year commitment.
+
+Sahyadri Facilities (campus cleaning and security):
+A monthly fee of 85000 rupees, cancellable with 30 days' notice.
+
+Open issues:
+Brightlearn missed its 99.9% uptime promise twice in 2026; we may claim service credits worth
+up to 1.5 lakh rupees. Legal is reviewing the claim.

@@ -21,3 +21,12 @@ docs/connectors/
 .impeccable/questions/
 .impeccable/mocks/
 .impeccable/config.local.json
+
+# Answer-evaluation runs (python evaluate.py) - local comparisons, not committed
+eval/results/
+
+# Guardrails Hub token, a Docker build secret (docker-compose.guardrails.yml)
+guardrails_token.secret
+
+# deploy.sh state: the running and previous version, history, database copies
+.deploy/

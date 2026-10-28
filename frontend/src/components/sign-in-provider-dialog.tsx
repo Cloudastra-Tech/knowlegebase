@@ -184,7 +184,7 @@ export function ProviderDialog({
           </DialogHeader>
 
           {adding && (
-            <Tabs value={protocol} onValueChange={(v) => setProtocol(v as Protocol)}>
+            <Tabs panels={false} value={protocol} onValueChange={(v) => setProtocol(v as Protocol)}>
               <TabsList className="w-full">
                 <TabsTrigger value="oidc">OpenID Connect</TabsTrigger>
                 <TabsTrigger value="saml">SAML</TabsTrigger>

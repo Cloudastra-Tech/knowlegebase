@@ -3,40 +3,44 @@ sessions_store.py  —  login sessions that survive restarts and deploys.
 
 Sessions used to live in the API's memory, so every restart signed everyone
 out. They now live in the same small SQLite file as the integrations
-(config/app.db). Only a SHA-256 hash of each token is stored, so a copy of the
-database can't be used to sign in.
+(config/app.db, see db.py). Only a SHA-256 hash of each token is stored, so a
+copy of the database can't be used to sign in.
+
+Each session also records whose it is (username, workspace), so all of one
+person's sessions can be ended at once: "sign out everywhere", or an admin
+turning their access off. Sessions from before those columns had them filled
+in from the stored user (migrations/legacy.py), so they keep working.
 """
 
 import hashlib
 import json
-import os
-import sqlite3
 import threading
 import time
 
-DB_PATH = os.getenv("APP_DB", os.path.join("config", "app.db"))
+import db
+
 _lock = threading.Lock()
 
 
 def _db():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""CREATE TABLE IF NOT EXISTS sessions (
-        token_hash TEXT PRIMARY KEY,
-        user       TEXT NOT NULL,     -- JSON: username, name, workspace
-        expires    REAL NOT NULL)""")
-    return conn
+    return db.connect()
 
 
 def _hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _username(user):
+    return (user.get("username") or "").strip().lower() or None
+
+
 def create(token, user, seconds):
     with _lock, _db() as conn:
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))  # tidy up
-        conn.execute("INSERT INTO sessions VALUES (?, ?, ?)",
-                     (_hash(token), json.dumps(user), time.time() + seconds))
+        conn.execute("INSERT INTO sessions (token_hash, user, expires, username, workspace) "
+                     "VALUES (?, ?, ?, ?, ?)",
+                     (_hash(token), json.dumps(user), time.time() + seconds, _username(user),
+                      user.get("workspace")))
 
 
 def get(token):
@@ -54,3 +58,13 @@ def get(token):
 def delete(token):
     with _lock, _db() as conn:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_hash(token),))
+
+
+def delete_user(username, workspace=None):
+    """End every session one person has (in `workspace`, if given; a session
+    with no workspace recorded is theirs too). Returns how many ended."""
+    sql, args = "DELETE FROM sessions WHERE username = ?", [(username or "").strip().lower()]
+    if workspace:
+        sql, args = sql + " AND (workspace = ? OR workspace IS NULL)", args + [workspace]
+    with _lock, _db() as conn:
+        return conn.execute(sql, args).rowcount

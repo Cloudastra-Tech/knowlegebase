@@ -9,7 +9,7 @@ documents, the Documents and Integrations screens) or "admin" (hr, plus who may
 sign in).
 People who sign in with Google / Microsoft / Okta get an account the first time
 (sso.py), on a domain their workspace has verified.
-PASSWORD_LOGIN=off (in .env) turns password sign-in off in both the API and Streamlit.
+PASSWORD_LOGIN=off (in .env) turns password sign-in off.
 
 Manage accounts and domains from a terminal:
     python auth.py add <username> [--workspace <slug>] [--role hr]   # asks for the password
@@ -21,6 +21,8 @@ Manage accounts and domains from a terminal:
     python auth.py domain add <domain> [--workspace <slug>]          # single sign-on for @domain
     python auth.py domain remove <domain>
     python auth.py domains
+    python auth.py joining <auto|request|invite_only> [--workspace <slug>]  # see join_store.py
+    python auth.py claim-code <domain> --workspace <slug>  # a one-time code to claim it
 `role` also works for someone who hasn't signed in yet: they're added to the
 workspace (default: "default") and get the role from their first sign-in.
 A role set here overrides the one their provider's groups give them; `groups`
@@ -33,16 +35,12 @@ import hmac
 import os
 import secrets
 import sys
-import time
 
-import streamlit as st
-
+import lifecycle_store
 import members_store
 import workspaces
 
 ITERATIONS = 200_000
-MAX_FAILED_ATTEMPTS = 5          # per browser session, then a cool-down
-LOCKOUT_SECONDS = 60
 
 
 # ---- Password hashing --------------------------------------------------------
@@ -79,7 +77,8 @@ def access_for(username):
     sign-in."""
     member = members_store.check_group_admin(members_store.get(username))
     if (not member or not member["password_hash"] or member["disabled"]
-            or not password_login_on() or sso_required(member)):
+            or not password_login_on() or sso_required(member)
+            or not lifecycle_store.signs_in(member["workspace"], member["role"])):
         return None
     return {"workspace": member["workspace"], "role": member["role"]}
 
@@ -103,61 +102,6 @@ def authenticate(username, password):
     return None
 
 
-# ---- Streamlit login screen --------------------------------------------------
-def require_login():
-    """Show the login form until someone signs in. Returns the signed-in user."""
-    if st.session_state.get("user"):
-        # Checked on every run, like the API does on every request: someone turned
-        # off, demoted, or now required to use single sign-on loses it straight away.
-        access = access_for(st.session_state.user["username"])
-        if access:
-            st.session_state.user.update(access)
-            return st.session_state.user
-        st.session_state.pop("user", None)
-
-    st.title("🔐 Sign in")
-    if not password_login_on():
-        st.error("Password sign-in is turned off (PASSWORD_LOGIN=off). "
-                 "Use the main site to sign in with Google or Microsoft.")
-        st.stop()
-    if not members_store.has_password_accounts():
-        st.error("No user accounts exist yet. An admin must create one first:\n\n"
-                 "`python auth.py add <username>`")
-        st.stop()
-
-    locked_until = st.session_state.get("locked_until", 0)
-    if time.time() < locked_until:
-        st.error(f"Too many failed attempts. Try again in "
-                 f"{int(locked_until - time.time())} seconds.")
-        st.stop()
-
-    with st.form("login"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Sign in", type="primary")
-
-    if submitted:
-        user = authenticate(username, password)
-        if user:
-            st.session_state.user = user
-            st.session_state.failed_logins = 0
-            st.rerun()
-        time.sleep(1)                     # slow down password guessing
-        failed = st.session_state.get("failed_logins", 0) + 1
-        st.session_state.failed_logins = failed
-        if failed >= MAX_FAILED_ATTEMPTS:
-            st.session_state.locked_until = time.time() + LOCKOUT_SECONDS
-            st.session_state.failed_logins = 0
-        st.error("Wrong username or password.")
-    st.stop()
-
-
-def logout():
-    for key in ("user", "messages"):
-        st.session_state.pop(key, None)
-    st.rerun()
-
-
 # ---- Command line: manage users ----------------------------------------------
 def _option(args, flag, default):
     """Pull "--flag value" out of args. Returns (value, remaining args)."""
@@ -165,6 +109,25 @@ def _option(args, flag, default):
         return default, args
     i = args.index(flag)
     return (args[i + 1:i + 2] or [""])[0].strip().lower(), args[:i] + args[i + 2:]
+
+
+def _their_workspace(member, workspace, workspace_given):
+    """The workspace a change to an existing account applies in: its own. A
+    --workspace naming another one is refused: an account is never moved, or
+    changed, from a workspace it isn't in."""
+    if not member:
+        return workspace
+    if workspace_given and workspace != member["workspace"]:
+        sys.exit(f"{member['username']} belongs to the workspace {member['workspace']}, "
+                 f"not {workspace}. Remove it there first to move it.")
+    return member["workspace"]
+
+
+def _audit(workspace, action, target, details=None, target_type="member"):
+    """Changes made here go in the workspace's audit log, as the operator's."""
+    import audit_store
+    audit_store.record(workspace, action, actor="cli", actor_type="operator",
+                       target_type=target_type, target_id=target, details=details)
 
 
 def _cli(args):
@@ -183,27 +146,35 @@ def _cli(args):
         if getpass.getpass("Repeat password: ") != password:
             sys.exit("Passwords don't match.")
         existed = members_store.get(username)
-        if existed and not workspace_given:
-            workspace = existed["workspace"]      # a password reset doesn't move anyone
+        workspace = _their_workspace(existed, workspace, workspace_given)
         members_store.set_password(username, args[1], hash_password(password), workspace, role)
+        _audit(workspace, "member.password_set" if existed else "member.add", username,
+               {"role": role} if role else None)
         print(f"{'Updated' if existed else 'Added'} {username} (workspace: {workspace}, "
               f"role: {members_store.get(username)['role']}).")
     elif len(args) == 3 and args[0] == "role":
         username, role = args[1].strip().lower(), args[2].strip().lower()
         if role not in (*members_store.ROLES, "groups"):
             sys.exit("Role must be public, hr, admin or groups.")
+        workspace = _their_workspace(members_store.get(username), workspace, workspace_given)
         members_store.set_role(username, None if role == "groups" else role, workspace)
+        _audit(workspace, "member.role", username, {"role": None if role == "groups" else role})
         member = members_store.get(username)
         print(f"{username} is now {member['role']}"
               f"{' (from their groups)' if role == 'groups' else ''} "
               f"(workspace: {member['workspace']}).")
     elif len(args) == 2 and args[0] in ("disable", "enable"):
-        if not members_store.set_disabled(args[1], args[0] == "disable"):
+        member = members_store.get(args[1])
+        if not member or not members_store.set_disabled(args[1], args[0] == "disable",
+                                                        member["workspace"]):
             sys.exit(f"No account named {args[1]}.")
+        _audit(member["workspace"], f"member.{args[0]}", member["username"])
         print(f"{args[1]} is {args[0]}d.")
     elif len(args) == 2 and args[0] == "remove":
-        if not members_store.remove(args[1]):
+        member = members_store.get(args[1])
+        if not member or not members_store.remove(args[1], member["workspace"]):
             sys.exit(f"No account named {args[1]}.")
+        _audit(member["workspace"], "member.remove", member["username"])
         print(f"Removed {args[1]}.")
     elif args == ["list"]:
         members = members_store.list_members()
@@ -220,12 +191,38 @@ def _cli(args):
             members_store.add_verified_domain(workspace, args[2])
         except ValueError as e:
             sys.exit(str(e))
+        _audit(workspace, "domain.verify", args[2].strip().lower(), target_type="domain")
         print(f"People with an @{args[2].strip().lower()} address can now sign in to "
               f"{workspace} with single sign-on.")
     elif len(args) == 3 and args[:2] == ["domain", "remove"]:
+        domain = args[2].strip().lower()
+        owners = {d["workspace"] for d in members_store.list_domains() if d["domain"] == domain}
         if not members_store.remove_domain(args[2]):
             sys.exit(f"No workspace has {args[2]}.")
+        for owner in sorted(owners):
+            _audit(owner, "domain.remove", domain, target_type="domain")
         print(f"Removed {args[2]}. People on it are signed out on their next request.")
+    elif len(args) == 2 and args[0] == "joining":
+        import join_store
+        if args[1] not in join_store.POLICIES:
+            sys.exit(f"Joining policy must be one of: {', '.join(join_store.POLICIES)}.")
+        join_store.set_workspace_policy(workspace, args[1])
+        _audit(workspace, "sign_in.joining", workspace, {"join_policy": args[1]},
+               target_type="workspace")
+        print(f"Joining policy of {workspace}: {args[1]}.")
+    elif len(args) == 2 and args[0] == "claim-code":
+        import join_store
+        domain = args[1].strip().lower()
+        try:
+            row, code = join_store.new_claim_code(workspace, domain, "cli")
+        except join_store.ClaimRefused as e:
+            sys.exit(f"{workspace} can't be claimed now ({e.reason}): it has a verified "
+                     "domain or an admin who can sign in, or it's suspended.")
+        _audit(workspace, "operator.claim_code", workspace,
+               {"domain": domain, "claim_code": row["id"]}, target_type="workspace")
+        print(f"Claim code for {workspace} (Google Workspace on {domain}), works once, "
+              f"for {join_store.CLAIM_CODE_HOURS} hours:\n{code}\n"
+              "They open /claim on the site, enter it and sign in with Google.")
     elif args == ["domains"]:
         domains = members_store.list_domains()
         for d in domains:

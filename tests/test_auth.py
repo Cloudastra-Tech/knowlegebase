@@ -184,19 +184,19 @@ def test_sso_access_changes_apply_to_live_sessions(env, provider):
     token = sso_token(env, provider, "google", GOOGLE_HR)
     assert env.get("/api/docs", headers=bearer(token)).status_code == 200
     try:
-        members_store.set_role(HR_EMAIL, "public")
+        members_store.set_role(HR_EMAIL, "public", "default")
         assert env.get("/api/docs", headers=bearer(token)).status_code == 403    # HR taken away
         members_store.remove_domain("cloudastra.in")
         assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # domain gone
     finally:
         members_store.add_verified_domain("default", "cloudastra.in")
-        members_store.set_role(HR_EMAIL, "hr")
+        members_store.set_role(HR_EMAIL, "hr", "default")
     token = sso_token(env, provider, "google", GOOGLE_HR)
-    members_store.remove(HR_EMAIL)
+    members_store.remove(HR_EMAIL, "default")
     try:
         assert env.get("/api/auth/me", headers=bearer(token)).status_code == 401  # member gone
     finally:
-        members_store.set_role(HR_EMAIL, "hr")
+        members_store.set_role(HR_EMAIL, "hr", "default")
 
 
 def test_sso_sign_in_adds_the_member_once(env, provider):
@@ -224,6 +224,38 @@ def test_an_account_in_another_workspace_cant_sign_in_here(env, provider):
     members_store.set_role("moved@cloudastra.in", "public", workspace="acme")
     claims = {"email": "moved@cloudastra.in", "email_verified": True, "hd": "cloudastra.in"}
     assert error_of(sso_callback(env, provider, "google", claims)) == "not_allowed"
+
+
+def test_a_password_sign_in_records_when_it_happened(env):
+    import time
+
+    import db
+    import members_store
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE members SET last_login_at = NULL WHERE username = 'boss'")
+    conn.close()
+    password_token(env, "boss")
+    assert members_store.get("boss")["last_login_at"] > time.time() - 60
+
+
+def test_settling_a_role_never_touches_another_workspaces_member(env):
+    """members_store._settle_role is scoped by workspace: called for the same
+    name in the wrong workspace, it changes nothing."""
+    import db
+    import members_store
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE members SET override_role = 'public' WHERE username = 'boss'")
+        members_store._settle_role(conn, "boss", "another-workspace")
+        assert members_store._member(conn.execute(
+            "SELECT * FROM members WHERE username = 'boss'").fetchone())["role"] == "admin"
+        members_store._settle_role(conn, "boss", "default")
+        assert members_store._member(conn.execute(
+            "SELECT * FROM members WHERE username = 'boss'").fetchone())["role"] == "public"
+        conn.execute("UPDATE members SET override_role = 'admin' WHERE username = 'boss'")
+        members_store._settle_role(conn, "boss", "default")
+    conn.close()
 
 
 def test_password_role_changes_apply_to_live_sessions(env):

@@ -200,7 +200,7 @@ The `.dark` token set in `frontend/src/index.css` is defined and components carr
 
 - **Base unit:** 4px (Tailwind spacing). Page gutter is 16px (`px-4`) at every width.
 - **Containers:** 1152px (`max-w-6xl`) for the sticky header and landing sections; 1024px (`max-w-5xl`) for settings screens (Integrations, Sign-in settings); 768px (`max-w-3xl`) for the chat column and composer; 400px for the sign-in card. Running prose inside a container is capped near `max-w-lg` to `max-w-2xl`.
-- **Header:** sticky, 48px in the app and 56px on the landing page, translucent white (`background/80`) with `backdrop-blur-md` and a 60% hairline underneath. On phones the app's nav scrolls sideways rather than wrapping.
+- **Header:** sticky, 48px in the app and 56px on the landing page, translucent white (`background/80`) with `backdrop-blur-md` and a 60% hairline underneath. The page never scrolls sideways: on phones the app's screens are one menu named after the open screen, between `sm` and `xl` the screens past Chat and Knowledge (past the first five from `lg`) go under More (`components/app-nav.tsx`), and a long row of in-content tabs (Access) becomes a Select below `sm`.
 - **Rhythm:** app screens pad 24px top and bottom (`py-6`); panels pad 20px; the sign-in card pads 24px; form fields stack at 20px (`FieldGroup`) and tighten to 12–16px inside a single form. Landing sections breathe at 80px, 112px from `sm`.
 - **Sign-in page:** a centred column on a Fog ground at 50%. Wordmark top-centre, the card at roughly 9vh below, the "By Cloudastra." sign-off pinned to the bottom.
 - **Breakpoints:** Tailwind defaults; `sm` (640px) is where most two-up and inline layouts switch on, `md` (768px) reveals the landing nav, `lg` (1024px) splits the hero into two columns.
