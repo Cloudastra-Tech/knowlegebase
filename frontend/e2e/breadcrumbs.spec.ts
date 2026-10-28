@@ -77,3 +77,32 @@ test("Access › Webhooks: the tab is the crumb, and Access goes to its first ta
   await expect(page).toHaveURL(/\/digests$/)
   await expect(here(page)).toHaveText("Digests")
 })
+
+// The crumb row is one height on every screen (the back button too, on a phone), so the
+// title doesn't move from one screen to the next.
+test("the title sits at the same height on every screen, crumbs or back button", async ({ page }) => {
+  test.setTimeout(90_000)
+  for (const size of [DESKTOP, PHONE]) {
+    await page.setViewportSize(size)
+    if (size === DESKTOP) await signIn(page, ADMIN)
+    await openMySpace(page)
+    const space = new URL(page.url()).pathname
+    const tops = new Map<string, number>()
+    for (const url of [
+      "/knowledge",
+      "/spaces",
+      space,
+      "/admin/webhooks",
+      "/admin/insights/not-found",
+      "/api-keys",
+      "/documents?tab=drafts",
+    ]) {
+      await page.goto(url)
+      const title = page.locator("[data-screen] h2").first()
+      await expect(title).toBeVisible()
+      await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0, { timeout: 10_000 })
+      tops.set(url, Math.round((await title.boundingBox())!.y))
+    }
+    expect(new Set(tops.values()).size, JSON.stringify([...tops])).toBe(1)
+  }
+})

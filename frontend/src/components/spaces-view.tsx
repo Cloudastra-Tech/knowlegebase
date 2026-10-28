@@ -250,7 +250,11 @@ function SpaceScreen({ spaceId }: { spaceId: string }) {
           <AsciiEmptyState art="search" title="That space doesn't exist, or you're not in it." className="mt-6" />
         </>
       ) : !data ? (
-        <Skeleton className="h-48 rounded-2xl" />
+        // The header's place held while it loads, so nothing jumps when it arrives.
+        <>
+          <ScreenHeader title={<Skeleton className="h-8 w-48" />} />
+          <Skeleton className="mt-6 h-48 rounded-2xl" />
+        </>
       ) : (
         <>
           <ScreenHeader

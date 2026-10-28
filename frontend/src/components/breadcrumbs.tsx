@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react"
+import { Fragment, memo, type ReactNode } from "react"
 import { ArrowLeft, Check, ChevronDown } from "lucide-react"
 import { Link } from "react-router"
 
@@ -114,14 +114,15 @@ function CrumbItem({ crumb, last, current, middle }: { crumb: Crumb; last: boole
 export function Breadcrumbs({ trail, className }: { trail: Trail; className?: string }) {
   const { crumbs, back } = trail
   const resolve = useResolve()
-  if (!crumbs.length) return null
+  // The row keeps its height with nothing in it, so a title never moves between screens.
+  if (!crumbs.length) return <div data-slot="breadcrumbs" aria-hidden className={cn("h-5", className)} />
   const current = crumbs[crumbs.length - 1].label
   // Deep: the first crumb, the rest folded into "…", then the last two.
   const folded = crumbs.length > 3 ? crumbs.slice(1, -2) : []
   const shown = folded.length ? [crumbs[0], ...crumbs.slice(-2)] : crumbs
 
   return (
-    <div data-slot="breadcrumbs" className={cn("flex min-h-5 min-w-0 items-center text-sm", className)}>
+    <div data-slot="breadcrumbs" className={cn("flex h-5 min-w-0 items-center text-sm leading-5", className)}>
       {back && (
         <Link
           to={resolve(back.to)}
@@ -163,3 +164,35 @@ export function Breadcrumbs({ trail, className }: { trail: Trail; className?: st
     </div>
   )
 }
+
+// The chat's header: where the chat is asked (a space, or All company) and its title,
+// the space from sm up and not in print. Drawn again on every streamed token with the
+// rest of the chat, so it's memoised and reads no chat state.
+export const ChatBreadcrumbs = memo(function ChatBreadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
+  if (!crumbs.length) return <div data-slot="breadcrumbs" aria-hidden className="h-5" />
+  return (
+    <Breadcrumb className="flex h-5 min-w-0 items-center">
+      <BreadcrumbList className="flex-nowrap gap-1 text-sm">
+        {crumbs.map((crumb, i) => {
+          const last = i === crumbs.length - 1
+          return (
+            <Fragment key={i}>
+              {i > 0 && <BreadcrumbSeparator className={cn(SEPARATOR, "max-sm:hidden print:hidden")} />}
+              <BreadcrumbItem className={cn(ITEM, !last && "shrink-0 max-sm:hidden print:hidden")}>
+                {last ? (
+                  <BreadcrumbPage className="truncate font-medium">{crumb.label}</BreadcrumbPage>
+                ) : (
+                  <BreadcrumbLink asChild className={MIDDLE}>
+                    <Link to={crumb.to ?? "/"} onClick={markInstantNav}>
+                      {crumb.label}
+                    </Link>
+                  </BreadcrumbLink>
+                )}
+              </BreadcrumbItem>
+            </Fragment>
+          )
+        })}
+      </BreadcrumbList>
+    </Breadcrumb>
+  )
+})

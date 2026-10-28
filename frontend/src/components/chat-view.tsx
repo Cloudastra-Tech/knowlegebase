@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react-router"
@@ -26,7 +26,7 @@ import {
   type Message,
 } from "@/components/chat-answer"
 import { composerSignal } from "@/components/ascii/composer-signal"
-import { Breadcrumbs } from "@/components/breadcrumbs"
+import { ChatBreadcrumbs } from "@/components/breadcrumbs"
 import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
 import { LoggingNotice } from "@/components/logging-notice"
@@ -1157,6 +1157,12 @@ function ChatHeader({
   const queryClient = useQueryClient()
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState("")
+  const spaceId = space?.id
+  const spaceName = space?.label
+  const crumbs = useMemo(
+    () => chatCrumbs(spaceId && spaceName ? { id: spaceId, label: spaceName } : null, title),
+    [spaceId, spaceName, title],
+  )
   const [deleting, setDeleting] = useState(false)
 
   async function rename() {
@@ -1198,10 +1204,7 @@ function ChatHeader({
     <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:glass max-md:z-20 max-md:h-12 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:pt-[env(safe-area-inset-top)]">
       <PhoneMenuButton data-print="hide" />
       <div className="mx-auto flex min-w-0 max-w-3xl flex-1 px-2">
-        <Breadcrumbs
-          trail={{ crumbs: chatCrumbs(space, title), back: null }}
-          className="[&_[data-slot=breadcrumb-page]]:font-medium max-sm:[&_li:not(:last-child)]:hidden print:[&_li:not(:last-child)]:hidden"
-        />
+        <ChatBreadcrumbs crumbs={crumbs} />
       </div>
       {/* On a phone only: the sidebar's New chat is a tap away anywhere else. */}
       <Button
