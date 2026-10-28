@@ -19,6 +19,7 @@ import {
 import "@/components/chat-motion.css"
 import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 import { AsciiThinking } from "@/components/ascii/ascii-thinking"
+import { BrandMark } from "@/components/brand-mark"
 import { CodeBlock, CodeBlockContent, CodeBlockHeader, CodeBlockTitle } from "@/components/ui/code-block"
 import {
   Trace,
@@ -30,7 +31,8 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/components/ui/trace"
-import type { AnswerState, Step } from "@/lib/api"
+import type { AnswerState, Source, Step } from "@/lib/api"
+import { BRANDS, brandsOf } from "@/lib/brands"
 import {
   detailOf,
   kindOf,
@@ -63,6 +65,29 @@ const ICONS: Record<ToolKind, LucideIcon> = {
   verified: BadgeCheck,
   cache: History,
   other: Wrench,
+}
+
+// The platform a tool works in: Outline's own tools are Outline's; the company-docs
+// search is wherever the documents it found came from (the answer's sources).
+function platformsOf(step: LiveStep, found: string[]): string[] {
+  const kind = kindOf(step.tool)
+  if (kind === "wiki" || kind === "wiki-page") return ["outline"]
+  if (kind === "docs") return found
+  return []
+}
+
+// Small one-colour marks of the platforms a step searched, named for screen readers.
+function PlatformMarks({ slugs, animate }: { slugs: string[]; animate: boolean }) {
+  if (!slugs.length) return null
+  const names = slugs.map((s) => BRANDS[s].title)
+  return (
+    <span className={cn("flex shrink-0 items-center gap-1 text-muted-foreground", animate && "kb-glyph-in")}>
+      {slugs.map((s) => (
+        <BrandMark key={s} slug={s} className="size-3" />
+      ))}
+      <span className="sr-only">in {names.join(", ")}</span>
+    </span>
+  )
 }
 
 // The status as an icon (and a word for screen readers): never colour alone.
@@ -108,24 +133,30 @@ function StepLineRow({
   status,
   animate,
   delay,
+  found,
 }: {
   step: LiveStep
   status: StepStatus
   animate: boolean
   delay: number
+  found: string[]
 }) {
   const Icon = ICONS[kindOf(step.tool)]
   const detail = detailOf(step, status)
+  const platforms = platformsOf(step, found)
+  // A tool of one platform wears its mark; a search across several lists them after.
+  const own = kindOf(step.tool) !== "docs" && platforms.length === 1 ? platforms[0] : null
   return (
     <div className={cn(animate && "kb-line-in")} style={animate ? ({ "--i": delay } as CSSProperties) : undefined}>
       <TraceLine status={TRACE_STATUS[status]} className="font-mono text-xs data-[status=pending]:opacity-70">
         <StatusGlyph status={status} animate={animate} />
         <TraceIcon className="[&_svg:not([class*='size-'])]:size-3.5">
-          <Icon />
+          {own ? <BrandMark slug={own} className="size-3.5" /> : <Icon />}
         </TraceIcon>
         <TraceTitle className={cn(status === "done" ? "text-foreground/80" : status === "running" && "text-foreground")}>
           {titleOf(step, status)}
         </TraceTitle>
+        {!own && status !== "running" && <PlatformMarks slugs={platforms} animate={animate} />}
         {detail && <TraceDescription className="min-w-0 shrink-[3] truncate">{detail}</TraceDescription>}
       </TraceLine>
     </div>
@@ -169,9 +200,10 @@ export interface StepsTraceProps {
   standalone?: string | null // a follow-up, as it was searched
   hideSteps?: boolean // members, when an admin turned the steps off
   live: boolean // written on this screen (not history): lines may animate
+  sources?: Source[] // what the answer cites: the platforms the docs search found in
 }
 
-export function StepsTrace({ steps, streaming, writing, state, status, trace, standalone, hideSteps, live }: StepsTraceProps) {
+export function StepsTrace({ steps, streaming, writing, state, status, trace, standalone, hideSteps, live, sources }: StepsTraceProps) {
   const thinking = streaming && !writing
   // Open while the assistant works; folded once the answer starts, for good (a later
   // step makes the folded line live instead). Someone's own toggle wins after that.
@@ -208,6 +240,8 @@ export function StepsTrace({ steps, streaming, writing, state, status, trace, st
   const delays = staggerOf(steps)
   const summary = summarize(steps, opts)
   const animate = live && streaming
+  const found = brandsOf((sources ?? []).filter((s) => s.kind !== "general_knowledge").map((s) => s.provider))
+  const platforms = brandsOf(steps.flatMap((st) => platformsOf(st, found)))
 
   return (
     <TraceCollapsible
@@ -225,13 +259,14 @@ export function StepsTrace({ steps, streaming, writing, state, status, trace, st
           <TraceLine status={TRACE_STATUS[summary.status]} className="data-[status=pending]:opacity-70">
             <StatusGlyph status={summary.status} animate={animate} />
             <TraceTitle className={summary.status === "running" ? "text-foreground" : undefined}>{summary.text}</TraceTitle>
+            {summary.status !== "running" && <PlatformMarks slugs={platforms} animate={animate} />}
           </TraceLine>
         </TraceCollapsibleTrigger>
       )}
       <TraceCollapsibleContent className="border-dashed">
         <Trace>
           {steps.map((st, i) => (
-            <StepLineRow key={st.id} step={st} status={statuses[i]} animate={animate} delay={delays[i]} />
+            <StepLineRow key={st.id} step={st} status={statuses[i]} animate={animate} delay={delays[i]} found={found} />
           ))}
           {!streaming && standalone && (
             <p className="font-mono text-xs text-muted-foreground">
