@@ -60,6 +60,11 @@ function count(n: number) {
   return n.toLocaleString()
 }
 
+// "1 question", "2 questions": a count of questions, pluralised.
+function questions(n: number) {
+  return `${count(n)} ${n === 1 ? "question" : "questions"}`
+}
+
 function day(epoch?: number | null) {
   return epoch ? format(new Date(epoch * 1000), "d MMM yyyy") : "—"
 }
@@ -303,7 +308,7 @@ function Surfaces({ rows }: { rows: SurfaceStat[] }) {
               {SURFACE_NAMES[r.surface] ?? r.surface}
             </span>
             <span className="text-xs text-muted-foreground tabular-nums">
-              {count(r.questions)} questions
+              {questions(r.questions)}
               {r.questions > 0 && ` · ${percent(r.answered / r.questions)} answered`}
             </span>
           </div>
@@ -360,13 +365,13 @@ function Overview({
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Tile label="Questions" value={count(t.questions)} note={`${count(t.active_users)} people asked`} />
+        <Tile label="Questions" value={count(t.questions)} note={`${count(t.active_users)} ${t.active_users === 1 ? "person" : "people"} asked`} />
         <Tile
           label="Answered"
           value={percent(t.rates.answered)}
           note={t.partial ? `${count(t.partial)} only partly` : `${count(t.answered)} answers`}
         />
-        <Tile label="Not found" value={percent(t.rates.not_found)} note={`${count(t.not_found)} questions`} />
+        <Tile label="Not found" value={percent(t.rates.not_found)} note={questions(t.not_found)} />
         <Tile
           label="General knowledge"
           value={percent(t.rates.general_knowledge)}
@@ -446,7 +451,7 @@ function Overview({
                     {g.hidden ? "Questions about documents your role can't see" : (g.label ?? "Unnamed topic")}
                   </span>
                   <span className="text-xs text-muted-foreground tabular-nums">
-                    {g.size} questions · {g.not_found} not found · {g.general_knowledge} general knowledge
+                    {questions(g.size)} · {count(g.not_found)} not found · {g.general_knowledge} general knowledge
                   </span>
                 </div>
                 {!g.hidden && (onAddVerified || onDraftDoc) && (
