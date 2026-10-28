@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useState,
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
@@ -34,12 +35,14 @@ interface ComposerProps {
   above?: ReactNode // over the box: the "/" menu of saved prompts
   intercept?: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean // true: handled (the "/" menu)
   onFiles?: (files: File[]) => void // dropped or pasted files, to attach
-  footnote?: ReactNode // a quiet line under the box (the empty chat: who you search as, logging)
 }
 
 // Where a question is typed. Enter sends, Shift+Enter starts a new line, Esc stops
 // an answer being written, ↑ in an empty box edits the last question. Grows with its text up to max-h-48. Text is 16px on
 // phones (smaller makes iOS zoom in on focus), 14px from md (the Textarea's own sizes).
+// The keys are said in a small line under the box only while they help: focused and
+// empty ("Enter to send…"), or while an answer is written ("Esc to stop"). The line
+// keeps its height either way, so nothing moves when it comes and goes.
 export function Composer({
   value,
   onChange,
@@ -53,9 +56,9 @@ export function Composer({
   above,
   intercept,
   onFiles,
-  footnote,
 }: ComposerProps) {
   const counterId = useId()
+  const [focused, setFocused] = useState(false)
   const over = value.length > QUESTION_LIMIT
   const canSend = !busy && !over && value.trim().length > 0
 
@@ -107,7 +110,8 @@ export function Composer({
       {/* Chrome-tier glass with grain, 22px, the chat's one lifted thing: the field (or
           the empty chat's art) blurred behind it. Focus is the signal: its border and a
           soft ring (chat-motion.css, kb-composer), at once, as focus is often from the
-          keyboard. data-drift: the empty chat's art reads where it is. */}
+          keyboard. kb-frost: a thinner fill and blur, so the art behind it reads as
+          motion through the frost. data-drift: the empty chat's art reads where it is. */}
       <div
         onClick={() => inputRef.current?.focus()}
         onDragOver={(e) => onFiles && e.preventDefault()}
@@ -115,7 +119,7 @@ export function Composer({
         data-drift="composer"
         data-over={over || undefined}
         className={cn(
-          "kb-composer glass glass-noise cursor-text rounded-3xl py-2 pr-2",
+          "kb-composer kb-frost glass glass-noise cursor-text rounded-3xl py-2 pr-2",
           leading ? "pl-2" : "pl-5",
         )}
       >
@@ -128,6 +132,8 @@ export function Composer({
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             placeholder="Ask anything…"
             aria-label="Your question"
             aria-invalid={over || undefined}
@@ -158,15 +164,19 @@ export function Composer({
           )}
         </div>
       </div>
-      <div className="mt-2 flex items-center justify-center gap-3 text-xs text-muted-foreground">
-        <span className="hidden sm:inline">
-          {busy ? "Esc to stop" : "Enter to send · Shift + Enter for a new line · / for saved prompts"}
+      <div data-drift="quiet" className="mt-2 flex h-4 items-center justify-between gap-3 px-5 text-xs text-muted-foreground">
+        <span data-slot="composer-hint" className="hidden truncate sm:inline">
+          {busy
+            ? "Esc to stop"
+            : focused && !value
+              ? "Enter to send · Shift + Enter for a new line · / for saved prompts"
+              : null}
         </span>
         {value.length >= COUNT_FROM && (
           <span
             id={counterId}
             aria-live="polite"
-            className={cn("tabular-nums", over && "font-medium text-destructive")}
+            className={cn("ml-auto shrink-0 tabular-nums", over && "font-medium text-destructive")}
           >
             {over
               ? `${value.length - QUESTION_LIMIT} over the ${QUESTION_LIMIT}-character limit`
@@ -174,7 +184,6 @@ export function Composer({
           </span>
         )}
       </div>
-      {footnote && <p className="mt-1 text-center text-xs text-pretty text-muted-foreground">{footnote}</p>}
     </form>
   )
 }

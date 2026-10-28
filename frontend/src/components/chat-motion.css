@@ -38,6 +38,28 @@
   border-color: color-mix(in oklab, var(--destructive) 60%, transparent);
 }
 
+/* Frost you can see (the composer, the new chat's recent chats card): the chrome tier
+   with a thinner fill and a lighter blur, so the art behind reads as motion through
+   it, and a brighter hairline on top. Only the tier's own variables change, on these
+   surfaces, and only where glass is see-through at all: without backdrop-filter,
+   with reduced transparency or "Reduce effects" the tier's solid fallback stands. */
+.dark .kb-frost {
+  --glass-border: oklch(1 0 0 / 10%);
+  --glass-highlight: oklch(1 0 0 / 9%);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root:not([data-effects="reduced"]) .kb-frost {
+    --glass-bg: color-mix(in oklch, var(--card) 52%, transparent);
+    --glass-blur: 10px;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root:not([data-effects="reduced"]) .kb-frost {
+    --glass-bg: var(--glass-bg-solid);
+    --glass-blur: 0px;
+  }
+}
+
 /* A step line arriving (step_start): up 4px and in. Lines that start together are
    40ms apart (--i, from lib/chat-steps.ts staggerOf). */
 @keyframes kb-line-in {
