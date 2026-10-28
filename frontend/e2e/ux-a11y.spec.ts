@@ -61,6 +61,19 @@ test("the landing page has no serious accessibility problems", async ({ page }) 
     }
     expect(await serious(page)).toEqual([])
     expect(await fitsWidth(page)).toBe(true)
+
+    // And mid-scene: the passages decoding, the other person's rows, another route,
+    // a connector lit with its sync line, the closing heading resolved.
+    await page.locator("#answer [role=tablist]").scrollIntoViewIfNeeded()
+    await page.waitForTimeout(1800)
+    await page.locator("#access").getByRole("tab", { name: /Hira/ }).click()
+    await page.locator("#privacy").getByRole("tab", { name: /This server/ }).click()
+    await page.locator("#sources [data-source]").first().focus()
+    await expect(page.locator("#sources").getByText("example", { exact: true })).toBeVisible()
+    await page.locator("#start h2").scrollIntoViewIfNeeded()
+    await page.waitForTimeout(1500)
+    expect(await serious(page)).toEqual([])
+    expect(await fitsWidth(page)).toBe(true)
   }
 })
 

@@ -105,18 +105,21 @@ const MODELS: ModelOption[] = [
   {
     id: "aws",
     title: "Your AWS account",
+    short: "Your AWS",
     marks: ["bedrock"],
     body: "Chat and search on Bedrock, in your account and region. The server assumes a role you create, so no AWS secret is stored, and nothing goes to OpenAI.",
   },
   {
     id: "key",
     title: "Your own key",
+    short: "Your key",
     marks: ["openai", "anthropic"],
     body: "OpenAI or Anthropic, billed to you. The key is sealed when you save it and is never shown again.",
   },
   {
     id: "local",
     title: "This server",
+    short: "This server",
     marks: [],
     icon: Server,
     body: "Search runs on the server's own CPU, so documents are indexed without leaving it. Only the question and the passages it quotes go to the model.",
@@ -204,7 +207,7 @@ function Hero({ onGetStarted }: { onGetStarted: () => void }) {
       <AsciiBrain className="absolute inset-0" overlay={stream} />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-linear-to-t from-background via-background/90 to-transparent lg:hidden" />
       <div className="relative mx-auto flex h-full max-w-6xl items-end px-4 pb-12 lg:items-center lg:pb-0">
-        <div className="max-w-xl">
+        <div className="w-full max-w-xl min-w-0">
           <h1 className="text-5xl leading-[1.04] font-medium tracking-tight text-balance sm:text-6xl">
             Cited answers {accent("from your own documents.")}
           </h1>

@@ -408,6 +408,22 @@ Borders are 1px hairlines.
   marquees; the serif phrase is in the hero only. The demos cycle only on screen, stop
   cycling once someone picks a tab, and show their end state with reduced motion or
   "Reduce effects".
+  Each section explains itself with one piece of ASCII motion, all on the shared loop
+  (scenes are functions of its clock; text and attributes are written only when they
+  change, never React state per frame; a finished scene `rest()`s): the hero's card types a
+  question while redacted fragments stream into the brain's own grid (`BrainOverlay`),
+  two passages decode and the answer assembles with `[1] [2]`, then rests 6.5s
+  (`landing-hero.tsx`); the chat demo's cursor reads a column of passages and the cited
+  ones lock in; the access demo decodes what each person may open character by
+  character and the answer re-forms through a scramble; the model's route is a box
+  diagram with packets (`▪` document text, `?` a question, `¶` quoted passages) whose
+  search box docks under the server when search runs there (`ascii/route.ts`); the
+  connectors are a real list joined to one index by lines that only flow inward, and
+  hovering or focusing one lights its line and an example sync line
+  (`ascii/network.ts`); the closing heading resolves out of redaction blocks once over a
+  still field. Diagrams draw through `ascii/glyph-grid.ts` (a cell-diffed canvas whose
+  atlas draws box-drawing characters as lines). Picked from the keyboard, a tab's new
+  state is instant.
 - **Settings** (`components/settings/*`, `lib/settings-sections.ts`): everything
   personal, one URL per section, `/settings/<section>`: General (profile, appearance),
   Chats (retention and sharing; an admin viewing as HR changes them), Connections,

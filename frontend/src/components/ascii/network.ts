@@ -26,22 +26,26 @@ type Path = [number, number][]
 
 // Each connector's route into the index, cell by cell, in the direction of flow.
 export function routes(l: NetLayout): Path[] {
+  // From a to b (b left out), a cell at a time, whichever way that is: a layout measured
+  // before the page has a size (all zeros) still ends.
+  const run = (a: number, b: number, cell: (x: number) => [number, number], path: Path) => {
+    const step = Math.sign(b - a)
+    for (let i = 0, x = a; i < Math.abs(b - a); i++, x += step) path.push(cell(x))
+  }
   return l.nodes.map((n) => {
     const bus = n.side === -1 ? l.bus.left : l.bus.right
     const path: Path = []
     // Along its row to the bus.
-    for (let c = n.col; c !== bus; c += n.side === -1 ? 1 : -1) path.push([c, n.row])
+    run(n.col, bus, (c) => [c, n.row], path)
     if (l.below) {
-      // Down the bus to the index's top.
-      const top = l.index.row - 2
-      for (let r = n.row; r <= top; r++) path.push([bus, r])
+      // Down the bus to the arrowhead over the index.
+      run(n.row, l.index.row - 1, (r) => [bus, r], path)
       return path
     }
     // Along the bus to the index's row, then into the box.
-    const step = l.index.row > n.row ? 1 : -1
-    for (let r = n.row; r !== l.index.row; r += step) path.push([bus, r])
+    run(n.row, l.index.row, (r) => [bus, r], path)
     const edge = n.side === -1 ? l.index.col - 1 : l.index.col + l.index.w
-    for (let c = bus; c !== edge; c += n.side === -1 ? 1 : -1) path.push([c, l.index.row])
+    run(bus, edge, (c) => [c, l.index.row], path)
     path.push([edge, l.index.row])
     return path
   })

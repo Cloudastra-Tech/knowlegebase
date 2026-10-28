@@ -151,7 +151,11 @@ export function HeroLoop({ items, stream, className }: { items: HeroItem[]; stre
       })
       item.answer.forEach((part, i) => {
         const p = span(t, b.parts[i], PART)
-        write(4 + i, parts.current[i], clearing > 0 || p <= 0 ? "" : reveal(part.text, p, tick, { seed: 9 + i }))
+        // Always the part's length (its redaction until it decodes), shown once it starts:
+        // the markers after it never move.
+        const shownPart = clearing === 0 && p > 0
+        write(4 + i, parts.current[i], reveal(part.text, shownPart ? p : 0, tick, { seed: 9 + i }))
+        setOn(parts.current[i], shownPart)
         if (part.cite) {
           const shownMark = p >= 1 && clearing === 0
           setOn(marks.current[i], shownMark)
@@ -230,7 +234,10 @@ export function HeroLoop({ items, stream, className }: { items: HeroItem[]; stre
               ref={(n) => {
                 parts.current[i] = n
               }}
-            />
+              className="invisible data-on:visible"
+            >
+              {redact(part.text)}
+            </span>
             {part.cite && (
               <span
                 ref={(n) => {

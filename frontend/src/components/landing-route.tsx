@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
 // It cycles through the choices while it's on screen, until one is picked (from the
 // keyboard: at once). With reduced motion or "Reduce effects": the diagram, still.
 
-export type ModelOption = { id: RouteMode; title: string; marks: string[]; icon?: LucideIcon; body: string }
+export type ModelOption = { id: RouteMode; title: string; short: string; marks: string[]; icon?: LucideIcon; body: string }
 
 const EVERY = 6.5 // seconds on each choice while it cycles
 const FPS = 15 // packets step a cell at a time
@@ -100,7 +100,7 @@ export function ModelRoute({ options, className }: { options: ModelOption[]; cla
     <div className={cn("flex flex-col gap-6 rounded-2xl border bg-card/40 p-5 sm:p-7", className)}>
       <Tabs panels={false} value={mode} onValueChange={pick}>
         <TabsList aria-label="Where the model runs" {...listeners}>
-          {options.map(({ id, title, marks, icon: Icon }) => (
+          {options.map(({ id, title, short, marks, icon: Icon }) => (
             <TabsTrigger key={id} value={id} className="gap-1.5 px-3">
               <span className="hidden items-center gap-1 sm:flex">
                 {marks.map((m) => (
@@ -108,7 +108,8 @@ export function ModelRoute({ options, className }: { options: ModelOption[]; cla
                 ))}
                 {Icon && <Icon aria-hidden className="size-3.5" />}
               </span>
-              {title}
+              <span className="sm:hidden">{short}</span>
+              <span className="hidden sm:inline">{title}</span>
             </TabsTrigger>
           ))}
         </TabsList>
