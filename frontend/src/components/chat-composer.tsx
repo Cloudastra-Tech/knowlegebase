@@ -110,8 +110,8 @@ export function Composer({
       {/* Chrome-tier glass with grain, 22px, the chat's one lifted thing: the field (or
           the empty chat's art) blurred behind it. Focus is the signal: its border and a
           soft ring (chat-motion.css, kb-composer), at once, as focus is often from the
-          keyboard. kb-frost: a thinner fill and blur, so the art behind it reads as
-          motion through the frost. data-drift: the empty chat's art reads where it is. */}
+          keyboard. data-drift: the empty chat's art reads where it is, and draws its
+          lines at full ink under it for the glass to frost. */}
       <div
         onClick={() => inputRef.current?.focus()}
         onDragOver={(e) => onFiles && e.preventDefault()}
@@ -119,7 +119,7 @@ export function Composer({
         data-drift="composer"
         data-over={over || undefined}
         className={cn(
-          "kb-composer kb-frost glass glass-noise cursor-text rounded-3xl py-2 pr-2",
+          "kb-composer glass glass-noise cursor-text rounded-3xl py-2 pr-2",
           leading ? "pl-2" : "pl-5",
         )}
       >

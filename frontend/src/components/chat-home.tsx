@@ -1,8 +1,6 @@
 import { useId, type ReactNode } from "react"
 import { MessageSquare } from "lucide-react"
 
-import "@/components/chat-motion.css"
-
 import { Button } from "@/components/ui/button"
 import type { ConversationSummary } from "@/lib/api"
 import { timeAgo } from "@/lib/utils"
@@ -13,7 +11,7 @@ export const RECENT = 5
 // What sits under the composer on the empty new chat (chat-view.tsx), quietly, as on
 // Claude.ai: one column, the composer's width, one left edge. Someone with chats sees
 // their last few in one glass card (the composer's tier, so the two read as one
-// surface over the art); someone without sees the starter questions as chips instead.
+// surface over the art, which runs at full ink under both); someone without sees the starter questions as chips instead.
 // Spaces and folders aren't here: the composer's space chip and the sidebar have them.
 // `data-drift`: the art's lines run on under all of it, faint under the words
 // ("quiet") and frosted under the card ("glass").
@@ -71,7 +69,7 @@ export function ChatHome({
         <section
           aria-labelledby={recentId}
           data-drift="glass"
-          className="kb-frost glass flex flex-col gap-0.5 rounded-2xl p-2"
+          className="glass flex flex-col gap-0.5 rounded-2xl p-2"
         >
           <div className="flex h-8 items-center justify-between pl-3">
             <h3 id={recentId} className="text-xs font-medium text-muted-foreground">

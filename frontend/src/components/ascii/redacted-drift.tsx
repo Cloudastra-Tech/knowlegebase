@@ -29,9 +29,10 @@ import { cn } from "@/lib/utils"
 
 // "Redacted drift": the empty new chat's art, in place of the chat's field (one field
 // on screen). Faint lines of made-up records drift sideways at three depths, redacted
-// (▪▪▪ · ░░, word lengths kept), down the whole page: fainter under words, stronger
-// under glass, whose frost softens them (what's over the art says which: data-drift). Round the composer is a readable zone: about every
-// 8s one line passing through it decodes into a neutral record, faintly mint on dark,
+// (▪▪▪ · ░░, word lengths kept), over the whole window, under the sidebar too: fainter
+// under words, at full ink under glass, which frosts them (what's over the art says
+// which: data-drift). Round the composer is a readable zone: about every 8s one line
+// passing through it decodes into a neutral record, faintly mint on dark,
 // and scrambles back as it leaves or after about 5s. Decodes go round the lines.
 // Focus or typing in the composer (composer-signal.ts, no React state) slows the
 // drift to about 30% and draws the nearest lines a few px towards it.
@@ -64,11 +65,12 @@ const DEPTHS = [
 const DEPTH_BY_RANK = [1, 0, 0, 2, 1, 2, 1, 2] // by distance from the composer
 const DEPTH_FAR = [2, 1, 2, 0, 2, 1] // and further out, round again
 // Under what sits over the art (`data-drift` on it): faint under words (the heading,
-// the starters, the fine print), so they always read; stronger under glass (the
-// composer, the recent chats' card), whose blur and fill soften the lines to a drift
-// you can see moving through the frost.
+// the starters, the fine print), so they always read; at full ink under glass (the
+// composer, the recent chats' card, the sidebar's pane), as a blur averages faint
+// dashes to a flat tone: the glass, not a faded line, keeps the words on it readable,
+// and the lines show through it as soft shapes moving.
 const QUIET = 0.3
-const UNDER_GLASS = 1.8
+const UNDER_GLASS = 8 // 0.64–0.96 of the text colour, by depth
 const GAP = "       "
 const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789"
 const DECODE_EVERY = 8000
@@ -162,7 +164,8 @@ export function RedactedDrift({ leaving = false, className }: { leaving?: boolea
       data-mode="drift"
       data-leaving={leaving || undefined}
       className={cn(
-        "pointer-events-none absolute inset-0 overflow-hidden font-mono text-foreground select-none",
+        // Fixed to the window, as the chat's field is: it runs under the sidebar too.
+        "pointer-events-none fixed inset-0 overflow-hidden font-mono text-foreground select-none",
         "transition-opacity duration-(--dur-drift-exit) ease-out-strong data-leaving:opacity-0",
         className,
       )}
@@ -243,6 +246,8 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
   // "below" is the home's sections' box, watched for its size: its parts say what they are.
   const belowEl = () => root.querySelector('[data-drift="below"]')
   const coverEls = () => [...root.querySelectorAll('[data-drift]:not([data-drift="below"])')]
+  // The sidebar's pane, beside the column (a sheet on a phone, so nothing there then).
+  const paneEl = () => document.querySelector('[data-slot="sidebar-inner"]')
 
   function restyle() {
     const s = getComputedStyle(el)
@@ -310,14 +315,15 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     comp = rel(composerEl()) ?? { x: W * 0.1, y: H - 96, w: W * 0.8, h: 72 }
     content = rel(contentEl())
     covers = []
-    for (const n of coverEls()) {
+    const pane = paneEl()
+    for (const n of pane ? [...coverEls(), pane] : coverEls()) {
       const b = rel(n)
       if (!b || !b.w || !b.h) continue
-      const kind = n.getAttribute("data-drift")
+      const kind = n === pane ? "glass" : n.getAttribute("data-drift")
       // Words get a little room round them; glass is its own edge.
       covers.push(
         kind === "composer" || kind === "glass"
-          ? { box: b, k: UNDER_GLASS }
+          ? { box: b, k: UNDER_GLASS, round: n === pane ? 0 : parseFloat(getComputedStyle(n).borderTopLeftRadius) || 0 }
           : { box: { x: b.x - 10, y: b.y - 4, w: b.w + 20, h: b.h + 8 }, k: QUIET },
       )
     }
@@ -371,7 +377,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
           spans: lineSpans(
             W,
             y,
-            d.px * 0.5,
+            d.px * 0.5 + 8, // and the 8px a line may lean towards the composer
             Math.abs(y - zone.cy) < zone.b ? { cx: zone.cx, hx: zoneHalfWidth(zone, y) } : null,
             LENS,
             covers,
@@ -781,7 +787,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     },
     root: () => root,
     listen,
-    watched: () => [composerEl(), belowEl(), ...coverEls()].filter((n): n is Element => n !== null),
+    watched: () => [composerEl(), belowEl(), paneEl(), ...coverEls()].filter((n): n is Element => n !== null),
   }
 }
 

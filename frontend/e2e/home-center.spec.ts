@@ -84,15 +84,18 @@ test("the art covers the whole page, and the composer is frosted glass over it",
   await expect(art).toHaveAttribute("data-lines", /\d/)
   const column = (await page.locator('[data-slot="chat-backdrop"]').boundingBox()) as Box
   const canvas = (await art.locator("canvas").boundingBox()) as Box
-  // The canvas is the whole chat column, top to bottom.
-  expect(Math.abs(canvas.y - column.y)).toBeLessThanOrEqual(1)
-  expect(Math.abs(canvas.height - column.height)).toBeLessThanOrEqual(1)
+  // The canvas is the whole window: the chat column top to bottom, and the sidebar's
+  // pane beside it, which frosts it.
+  expect(canvas.y).toBeLessThanOrEqual(column.y + 1)
+  expect(canvas.y + canvas.height).toBeGreaterThanOrEqual(column.y + column.height - 1)
+  expect(canvas.x).toBeLessThanOrEqual(1)
+  expect(canvas.x + canvas.width).toBeGreaterThanOrEqual(column.x + column.width - 1)
   // Its lines run from near the top to near the bottom, under the home's sections too.
-  const ys = ((await art.getAttribute("data-lines")) ?? "").split(",").map(Number)
-  expect(Math.min(...ys)).toBeLessThan(column.height * 0.15)
-  expect(Math.max(...ys)).toBeGreaterThan(column.height * 0.85)
+  const ys = ((await art.getAttribute("data-lines")) ?? "").split(",").map((y) => canvas.y + Number(y))
+  expect(Math.min(...ys)).toBeLessThan(column.y + column.height * 0.15)
+  expect(Math.max(...ys)).toBeGreaterThan(column.y + column.height * 0.85)
   const composer = await composerBox(page)
-  expect(ys.some((y) => y + column.y > composer.y + composer.height + 60)).toBe(true)
+  expect(ys.some((y) => y > composer.y + composer.height + 60)).toBe(true)
 
   // Glass you can see through: a blur behind the composer (and the recent chats' card).
   const blur = `getComputedStyle(document.querySelector('[data-drift="composer"]')).backdropFilter`
@@ -241,7 +244,8 @@ test("the lens and a click work in the bottom half too, beside the recent chats"
     .filter((y) => y > composer.y + composer.height + 60)
   expect(ys.length).toBeGreaterThan(0)
   // Open space: left of the column's card.
-  const x = rect.x + Math.max(60, (composer.x - rect.x) / 2)
+  const column = (await page.locator('[data-slot="chat-backdrop"]').boundingBox()) as Box
+  const x = (column.x + composer.x) / 2
   const y = ys[0]
   const away = await pixelsAround(page, x, y)
   await page.mouse.move(x - 40, y)

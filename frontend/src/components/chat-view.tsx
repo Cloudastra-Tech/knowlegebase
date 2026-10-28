@@ -1004,7 +1004,7 @@ export function ChatView({ role }: { role: Role }) {
           <div
             data-drift-blank
             data-print="hide"
-            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges] max-sm:[scrollbar-gutter:auto]"
           >
             <ChatHome
               starters={starters}

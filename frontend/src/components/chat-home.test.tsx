@@ -35,7 +35,7 @@ describe("ChatHome", () => {
     const recent = screen.getByRole("region", { name: "Recent chats" })
     // The card the art frosts under (redacted-drift.tsx), on the composer's tier.
     expect(recent).toHaveAttribute("data-drift", "glass")
-    expect(recent).toHaveClass("glass", "kb-frost")
+    expect(recent).toHaveClass("glass")
     const rows = recent.querySelectorAll("li")
     expect(rows).toHaveLength(RECENT)
     expect(rows[0]).toHaveTextContent("Question 0")

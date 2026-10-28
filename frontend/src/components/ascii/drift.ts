@@ -126,12 +126,20 @@ export function pageRows({ top, bottom, anchor }: { top: number; bottom: number;
 }
 
 // Something over the art: a box (in the art's coordinates) and how strongly the lines
-// under it are drawn, as a factor of their alpha (faint under words, full or more
-// under glass, whose blur and fill soften them).
-export type Cover = { box: Box; k: number }
+// under it are drawn, as a factor of their alpha (faint under words, full ink under
+// glass, whose blur and fill soften them). A stronger ink must never show past the
+// surface: `round` (its corner radius) keeps it off the rounded corners, and such a
+// cover only counts for a line wholly inside it, top to bottom.
+export type Cover = { box: Box; k: number; round?: number }
 
-// Whether the band of a line at height y (half its height `half`) meets a box.
-const meets = (b: Box, y: number, half: number) => y + half > b.y && y - half < b.y + b.h
+// Whether the band of a line at height y (half its height `half`) meets a box, or for
+// a stronger cover lies wholly inside it.
+const meets = (c: Cover, y: number, half: number) =>
+  c.k > 1
+    ? y - half >= c.box.y && y + half <= c.box.y + c.box.h
+    : y + half > c.box.y && y - half < c.box.y + c.box.h
+// Where along a line a cover's strength applies: its box, less the rounded corners.
+const reach = (c: Cover): [number, number] => [c.box.x + (c.round ?? 0), c.box.x + c.box.w - (c.round ?? 0)]
 
 // Along a line at height y, the stretches it's drawn in and at what strength: under a
 // cover, the cover's own; in the readable zone (its half-width at y, about its centre
@@ -145,22 +153,19 @@ export function lineSpans(
   zoneK: number,
   covers: readonly Cover[],
 ) {
-  const hits = covers.filter((c) => meets(c.box, y, half))
+  const hits = covers.filter((c) => meets(c, y, half))
   const cuts = new Set([0, width])
   const add = (x: number) => x > 0 && x < width && cuts.add(x)
   if (zone && zone.hx > 0) {
     add(zone.cx - zone.hx)
     add(zone.cx + zone.hx)
   }
-  for (const c of hits) {
-    add(c.box.x)
-    add(c.box.x + c.box.w)
-  }
+  for (const c of hits) for (const x of reach(c)) add(x)
   const xs = [...cuts].sort((a, b) => a - b)
   const out: [number, number, number][] = []
   for (let i = 0; i < xs.length - 1; i++) {
     const mid = (xs[i] + xs[i + 1]) / 2
-    const cover = hits.find((c) => mid > c.box.x && mid < c.box.x + c.box.w)
+    const cover = hits.find((c) => mid > reach(c)[0] && mid < reach(c)[1])
     const k = cover ? cover.k : zone && Math.abs(mid - zone.cx) < zone.hx ? zoneK : 1
     const last = out[out.length - 1]
     if (last && last[2] === k) last[1] = xs[i + 1]

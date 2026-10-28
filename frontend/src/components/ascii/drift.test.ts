@@ -129,9 +129,21 @@ describe("lineSpans", () => {
     ])
   })
 
-  it("counts a cover the line's band only touches", () => {
+  it("counts a cover of words the line's band only touches", () => {
     expect(lineSpans(1000, 96, 6, null, 0.45, [heading])).toHaveLength(3)
     expect(lineSpans(1000, 90, 6, null, 0.45, [heading])).toEqual([[0, 1000, 1]])
+  })
+
+  it("keeps full ink inside glass: not on a line half out of it, nor its rounded corners", () => {
+    const rounded = { ...card, round: 18 }
+    // half out at the bottom edge: drawn as in open space
+    expect(lineSpans(1000, 698, 6, null, 0.45, [rounded])).toEqual([[0, 1000, 1]])
+    // inside: full ink, but not out to the corners
+    expect(lineSpans(1000, 690, 6, null, 0.45, [rounded])).toEqual([
+      [0, 178, 1],
+      [178, 878, 1.8],
+      [878, 1000, 1],
+    ])
   })
 
   it("says where no cell reads: under any cover", () => {
