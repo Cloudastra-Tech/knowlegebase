@@ -1,5 +1,6 @@
 import { lazy, useCallback, useEffect, useState, type CSSProperties } from "react"
 import { Link, Navigate, Outlet, useLocation } from "react-router"
+import { Headset, TriangleAlert } from "lucide-react"
 
 import { AppBackdrop } from "@/components/ascii/app-backdrop"
 import { AppSidebar, PhoneBar, SidebarEvents } from "@/components/app-sidebar"
@@ -117,14 +118,14 @@ export default function App() {
         <IndexProgressBar />
         {!onChat && <PhoneBar chatAt={chatAt} />}
         {user.impersonator && (
-          <ShellStrip glyph="@">
+          <ShellStrip icon={Headset}>
             You're in this workspace as Cloudastra support ({user.impersonator}). Every request is
             in its audit log.
           </ShellStrip>
         )}
         <TrialBanner user={user} />
         {user.workspace_status === "deleting" && user.deleting_at && (
-          <ShellStrip glyph="!" tone="destructive">
+          <ShellStrip icon={TriangleAlert} tone="destructive">
             This workspace will be deleted on{" "}
             {new Date(user.deleting_at * 1000).toLocaleString(undefined, {
               dateStyle: "medium",

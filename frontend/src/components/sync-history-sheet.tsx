@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
+import { Check, TriangleAlert, X, type LucideIcon } from "lucide-react"
+
 import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
 import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
@@ -40,11 +42,11 @@ function counts(run: SyncRun, unit: string) {
   return parts.join(" · ") || `No ${unit} changed`
 }
 
-// A run's state as a mono glyph, coloured, with its word for assistive technology.
-const GLYPH: Record<Exclude<SyncRun["status"], "running">, { glyph: string; label: string; tone: string }> = {
-  failed: { glyph: "×", label: "Failed", tone: "text-destructive" },
-  held: { glyph: "!", label: "Held back", tone: "text-warning" },
-  done: { glyph: "✓", label: "Done", tone: "text-success" },
+// A run's state as an icon, coloured, with its word for assistive technology.
+const GLYPH: Record<Exclude<SyncRun["status"], "running">, { icon: LucideIcon; label: string; tone: string }> = {
+  failed: { icon: X, label: "Failed", tone: "text-destructive" },
+  held: { icon: TriangleAlert, label: "Held back", tone: "text-warning" },
+  done: { icon: Check, label: "Done", tone: "text-success" },
 }
 
 // One run on the timeline: "├─ ✓ 5 minutes ago  Changes only  3 s".
@@ -56,12 +58,10 @@ function RunRow({ run, unit, last }: { run: SyncRun; unit: string; last: boolean
       <span aria-hidden className="font-mono text-sm leading-5 text-muted-foreground select-none">
         {last ? "└─" : "├─"}
       </span>
-      <span className="w-4 shrink-0 text-center font-mono text-sm leading-5">
+      <span className="flex h-5 w-4 shrink-0 items-center justify-center font-mono text-sm leading-5">
         {mark ? (
           <>
-            <span aria-hidden className={mark.tone}>
-              {mark.glyph}
-            </span>
+            <mark.icon aria-hidden className={`size-3.5 ${mark.tone}`} />
             <span className="sr-only">{mark.label}</span>
           </>
         ) : (

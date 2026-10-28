@@ -1,20 +1,17 @@
 import { cn } from "@/lib/utils"
+import { CircleCheck, CircleX, Info, TriangleAlert, type LucideIcon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
 import { AsciiSpinner } from "@/components/ascii/ascii-spinner"
 
-// A status glyph in mono, coloured with the status tokens; the toast's text stays the
+// A status icon, coloured with the status tokens; the toast's text stays the
 // foreground. aria-hidden: the message says it in words.
-function Glyph({ char, className }: { char: string; className: string }) {
-  return (
-    <span aria-hidden className={cn("font-mono text-sm leading-none font-semibold", className)}>
-      {char}
-    </span>
-  )
+function StatusIcon({ icon: Icon, className }: { icon: LucideIcon; className: string }) {
+  return <Icon aria-hidden className={cn("size-4", className)} />
 }
 
-// Every status shares the one glass surface; the glyph carries the status colour. No
+// Every status shares the one glass surface; the icon carries the status colour. No
 // `richColors`: it would only swap in Sonner's own palette.
 const surface = {
   bg: "var(--glass-bg-strong)",
@@ -32,10 +29,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
       icons={{
-        success: <Glyph char="✓" className="text-success" />,
-        info: <Glyph char="i" className="text-muted-foreground" />,
-        warning: <Glyph char="!" className="text-warning" />,
-        error: <Glyph char="×" className="text-destructive" />,
+        success: <StatusIcon icon={CircleCheck} className="text-success" />,
+        info: <StatusIcon icon={Info} className="text-muted-foreground" />,
+        warning: <StatusIcon icon={TriangleAlert} className="text-warning" />,
+        error: <StatusIcon icon={CircleX} className="text-destructive" />,
         loading: (
           <AsciiSpinner label="" className="text-muted-foreground" />
         ),
