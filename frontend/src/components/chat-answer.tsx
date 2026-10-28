@@ -201,18 +201,15 @@ function LimitNotice({ text, plan = false }: { text: string; plan?: boolean }) {
 // them at all: a glyph, the icon and the words, in the state's colour.
 function AnswerNote({
   icon: Icon,
-  glyph,
   tone,
   children,
 }: {
   icon: typeof Info
-  glyph: string
   tone: string
   children: string
 }) {
   return (
     <p className={cn("mb-3 flex items-center gap-1.5 font-mono text-xs", tone)}>
-      <span aria-hidden>{glyph}</span>
       <Icon className="size-3.5 shrink-0" aria-hidden />
       {children}
     </p>
@@ -523,12 +520,12 @@ function AnswerBody({ message, actions, live }: { message: Message; actions: Ans
       )}
     >
       {state === "partial" && (
-        <AnswerNote icon={Info} glyph="◐" tone="text-warning">
+        <AnswerNote icon={Info} tone="text-warning">
           Partly answered: the documents don't cover all of it
         </AnswerNote>
       )}
       {state === "general_knowledge" && (
-        <AnswerNote icon={Globe} glyph="◎" tone="text-muted-foreground">
+        <AnswerNote icon={Globe} tone="text-muted-foreground">
           General knowledge, not from your documents
         </AnswerNote>
       )}

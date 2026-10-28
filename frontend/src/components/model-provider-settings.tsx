@@ -5,6 +5,7 @@ import { Link } from "react-router"
 import { toast } from "sonner"
 
 import { StatusDot } from "@/components/glass/status-dot"
+import { ProviderMark } from "@/components/provider-mark"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -654,7 +655,10 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="grid gap-0.5">
-                      <h3 className="text-sm font-medium">{p.label}</h3>
+                      <h3 className="flex items-center gap-2 text-sm font-medium">
+                        <ProviderMark provider={name} />
+                        {p.label}
+                      </h3>
                       <p className="text-xs text-muted-foreground">{describe(p, "chat")}</p>
                     </div>
                     {!(name === "bedrock" && embed === "bedrock") && (
