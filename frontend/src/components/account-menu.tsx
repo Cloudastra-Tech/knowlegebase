@@ -99,12 +99,11 @@ export function AccountMenu() {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              size="lg"
-              aria-label={`Account, ${user.name}`}
-              className="data-[state=open]:bg-sidebar-accent"
-            >
-              <Avatar className="size-8">
+            {/* Named by what it shows, after "Account," (no aria-label: the visible text
+                has to be in the name). */}
+            <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
+              <span className="sr-only">Account, </span>
+              <Avatar aria-hidden className="size-8">
                 <AvatarFallback className="bg-foreground text-xs font-medium text-background">
                   {initials}
                 </AvatarFallback>

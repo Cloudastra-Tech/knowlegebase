@@ -105,7 +105,7 @@ describe("the history sidebar", () => {
     expect(s.getByText("Older")).toBeInTheDocument()
     expect(screen.queryByText(/Chats are kept/)).not.toBeInTheDocument()
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "Account, Pat Public" }))
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Account,\s*Pat Public/ }))
     expect(await screen.findByText(/Chats are kept for 1 year .*\(set by your admin\)/)).toBeInTheDocument()
     expect(screen.queryByRole("menuitem", { name: "Chat settings" })).not.toBeInTheDocument() // not an admin
   })
