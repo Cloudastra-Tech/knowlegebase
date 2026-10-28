@@ -67,7 +67,7 @@ glass:
   # dark fill; light ("Paper") in comments
   pane: { blur: "8px", saturate: "160%", fill: "card at 30%" } # light: oklch(0.975) at 62%
   chrome: { blur: "16px", saturate: "160%", fill: "card at 58%" } # light: white at 64%
-  floating: { blur: "16px", saturate: "160%", backdrop: "brightness(0.92)", fill: "popover at 74%" } # light: white at 76%, brightness(1.08)
+  floating: { blur: "12px", saturate: "160%", backdrop: "brightness(0.85)", fill: "popover at 60%" } # light: white at 62%, brightness(1.12)
   subtle: { blur: "none", fill: "card at 72%" }
 motion:
   ease-out-strong: "cubic-bezier(0.23, 1, 0.32, 1)"
