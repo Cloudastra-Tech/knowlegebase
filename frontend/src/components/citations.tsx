@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ExternalLink, FileText, Lock, Paperclip } from "lucide-react"
 
 import "@/components/chat-motion.css"
+import { PassageMarkdown } from "@/components/passage-markdown"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -108,8 +109,9 @@ function SourcePreview({ source }: { source: Source }) {
   )
 }
 
-// The source viewer: the passage with the document's text around it, the cited span
-// highlighted and scrolled into view, and "Open original" when there is a link.
+// The source viewer: the passage with the document's text around it, rendered as the
+// document shows it (headings, lists, bold), the cited span highlighted and scrolled
+// into view, and "Open original" when there is a link.
 // Full screen on a phone, a side panel from `sm`.
 export function SourceSheet({
   source,
@@ -133,7 +135,7 @@ export function SourceSheet({
 function SourceSheetBody({ source }: { source: Source }) {
   const chunkId = source.chunk_id ?? ""
   const passage = useQuery({ ...queries.passage(chunkId), enabled: chunkId !== "" })
-  const mark = useRef<HTMLElement>(null)
+  const mark = useRef<HTMLDivElement>(null)
   const place = placeOf(passage.data ?? source)
   const updated = updatedOn(source.modified)
   const why = whyOf(source)
@@ -174,20 +176,22 @@ function SourceSheetBody({ source }: { source: Source }) {
             <Skeleton className="h-4 w-4/5" />
           </div>
         ) : (
-          <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+          <>
             {passage.data?.before && (
-              <span className="text-muted-foreground">{passage.data.before}</span>
+              <PassageMarkdown text={passage.data.before} className="text-muted-foreground" />
             )}
-            <mark
+            <div
               ref={mark}
-              className="rounded-sm bg-signal/15 px-0.5 text-foreground [box-decoration-break:clone]"
+              aria-label="Cited passage"
+              role="region"
+              className="-mx-2 my-2 scroll-my-4 rounded-md bg-signal/10 px-2 py-1.5 text-foreground"
             >
-              {text}
-            </mark>
+              <PassageMarkdown text={text} />
+            </div>
             {passage.data?.after && (
-              <span className="text-muted-foreground">{passage.data.after}</span>
+              <PassageMarkdown text={passage.data.after} className="text-muted-foreground" />
             )}
-          </p>
+          </>
         )}
         {passage.isError && (
           <p className="mt-3 text-xs text-muted-foreground">

