@@ -177,6 +177,33 @@ describe("the chat", () => {
     expect(screen.queryByText(/Searching as/)).not.toBeInTheDocument()
   })
 
+  it("lists recent chats under the composer and opens one in place", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations": {
+        conversations: [{ ...SAVED, pinned: false, folder_id: null, messages: undefined }],
+        folders: [],
+      },
+      "GET /api/conversations/c1": SAVED,
+    })
+    const router = renderApp("/chat")
+    const recent = await screen.findByRole("region", { name: "Recent chats" })
+    // The heading and the composer come first, the recent chats after them.
+    const heading = screen.getByRole("heading", { level: 2, name: "Ask your company docs" })
+    const box = screen.getByRole("textbox", { name: "Your question" })
+    expect(heading.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(box.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await userEvent.setup().click(
+      (await screen.findAllByRole("button", { name: /What is the refund policy\?/ })).find((b) => recent.contains(b))!,
+    )
+    expect(await screen.findByText("Refunds are paid within thirty days.")).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe("/chat/c1")
+    expect(screen.queryByRole("region", { name: "Recent chats" })).not.toBeInTheDocument()
+  })
+
   it("draws no art on a saved conversation", async () => {
     session.setToken("tok")
     mockApi({
