@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { History, Plus, RotateCcw, RotateCw, Send, Trash2 } from "lucide-react"
+import { Check, History, Plus, RotateCcw, RotateCw, Send, Trash2, X, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { CodeBlock } from "@/components/api-keys-view"
@@ -241,10 +241,10 @@ function SecretDialog({ shown, onClose }: { shown: ShownSecret | null; onClose: 
   )
 }
 
-// A delivery's state as a mono glyph, coloured, with its word for assistive technology.
-const MARK: Record<Exclude<WebhookDelivery["status"], "pending">, { glyph: string; label: string; tone: string }> = {
-  delivered: { glyph: "✓", label: "Delivered", tone: "text-success" },
-  failed: { glyph: "×", label: "Failed", tone: "text-destructive" },
+// A delivery's state as an icon, coloured, with its word for assistive technology.
+const MARK: Record<Exclude<WebhookDelivery["status"], "pending">, { icon: LucideIcon; label: string; tone: string }> = {
+  delivered: { icon: Check, label: "Delivered", tone: "text-success" },
+  failed: { icon: X, label: "Failed", tone: "text-destructive" },
 }
 
 // One delivery on the timeline: "├─ ✓ 5 min ago  member.added  HTTP 200 · 1 attempt".
@@ -265,12 +265,10 @@ function DeliveryRow({ d, last, hook }: { d: WebhookDelivery; last: boolean; hoo
       <span aria-hidden className="font-mono leading-5 text-muted-foreground select-none">
         {last ? "└─" : "├─"}
       </span>
-      <span className="w-4 shrink-0 text-center font-mono leading-5">
+      <span className="flex h-5 w-4 shrink-0 items-center justify-center font-mono leading-5">
         {mark ? (
           <>
-            <span aria-hidden className={mark.tone}>
-              {mark.glyph}
-            </span>
+            <mark.icon aria-hidden className={`size-3.5 ${mark.tone}`} />
             <span className="sr-only">{mark.label}</span>
           </>
         ) : (

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowRight, BookOpen, Plus, Trash2 } from "lucide-react"
+import { ArrowRight, BookOpen, Circle, CircleCheck, Plus, Trash2 } from "lucide-react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 
@@ -68,16 +68,13 @@ export function SampleDocsToggle({
   )
 }
 
-// A step's box, in mono: "[✓]" with the tick in the signal once it's done, "[ ]" until
-// then. The brackets are decoration; the box is an image named Done or To do.
+// A step's state: a filled check in the signal once it's done, an empty circle until
+// then, as an image named Done or To do.
 function Tick({ done }: { done: boolean }) {
+  const Icon = done ? CircleCheck : Circle
   return (
-    <span
-      role="img"
-      aria-label={done ? "Done" : "To do"}
-      className="shrink-0 font-mono text-sm leading-5 whitespace-pre text-muted-foreground select-none"
-    >
-      [<span className={done ? "text-signal" : undefined}>{done ? "✓" : " "}</span>]
+    <span role="img" aria-label={done ? "Done" : "To do"} className="flex h-5 shrink-0 items-center">
+      <Icon aria-hidden className={done ? "size-4 text-signal" : "size-4 text-muted-foreground"} />
     </span>
   )
 }

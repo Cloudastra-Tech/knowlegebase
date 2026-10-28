@@ -1,19 +1,20 @@
 import type { ComponentProps } from "react"
+import { TriangleAlert, type LucideIcon } from "lucide-react"
 import { Link } from "react-router"
 
 import type { User } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 // A thin note above the screen (the trial, support signed in, a workspace being
-// deleted): a hairline strip of subtle glass with a mono glyph in front. No blur.
-// The glyph is aria-hidden; the words say it.
+// deleted): a hairline strip of subtle glass with an icon in front. No blur.
+// The icon is aria-hidden; the words say it.
 export function ShellStrip({
-  glyph,
+  icon: Icon,
   tone = "muted",
   className,
   children,
   ...props
-}: ComponentProps<"div"> & { glyph: string; tone?: "muted" | "warning" | "destructive" }) {
+}: ComponentProps<"div"> & { icon: LucideIcon; tone?: "muted" | "warning" | "destructive" }) {
   return (
     <div
       data-print="hide"
@@ -27,9 +28,7 @@ export function ShellStrip({
       )}
       {...props}
     >
-      <span aria-hidden className={cn("shrink-0 font-mono font-medium", tone === "warning" && "text-warning")}>
-        {glyph}
-      </span>
+      <Icon aria-hidden className={cn("size-3.5 shrink-0 self-center", tone === "warning" && "text-warning")} />
       <span className="text-pretty">{children}</span>
     </div>
   )
@@ -63,7 +62,7 @@ export function TrialBanner({ user }: { user: User }) {
 
   const urgent = b.read_only || b.status === "past_due" || (b.trial_days_left ?? 99) <= 3
   return (
-    <ShellStrip role="status" data-testid="trial-banner" glyph="!" tone={urgent ? "destructive" : "warning"}>
+    <ShellStrip role="status" data-testid="trial-banner" icon={TriangleAlert} tone={urgent ? "destructive" : "warning"}>
       {text} {link}
       {link && "."}
     </ShellStrip>
