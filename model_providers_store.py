@@ -34,7 +34,8 @@ uses for it ("Bring your own provider" on the Assistant screen):
 A side on `default` takes the server's provider AND its models. A workspace that
 brings its own AWS uses it for all of its Bedrock calls (one AWS connection per
 workspace). Switching a side's provider clears that side's models (another
-provider's model ids mean nothing to it) unless the change names new ones.
+provider's model ids mean nothing to it) unless the change names new ones: for
+chat, its enabled models too (the new default alone, unless chat_models is given).
 
 Every change bumps the workspace's assistant settings version (assistant_store), so
 its agents are built again with the new models and its cached answers aren't reused.
@@ -444,8 +445,12 @@ def _merge(workspace, current, change):
         raise Invalid("Choose a provider of your own for answers to let people pick a "
                       "model: the server's has one.")
     # Kept as stored (a null model stays its provider's default, as .env says);
-    # the default is always among them when read (enabled()).
-    listed = _stored_models(current) if listed is None else listed
+    # the default is always among them when read (enabled()). Switching the chat
+    # provider without naming them starts again from its default alone, as a
+    # switch did before there were several: the old provider's models (and the
+    # key they'd need) go with it.
+    if listed is None:
+        listed = [] if chat != before[0] else _stored_models(current)
     removed = {p for p, k in api_change.items() if not k}
     listed = [] if chat == "default" else [(p, m) for p, m in listed if p not in removed]
     merged["chat_models"] = _dump_models(listed)

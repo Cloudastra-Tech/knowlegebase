@@ -334,17 +334,32 @@ describe("ModelProviderSettings", () => {
     expect(puts[1]).toMatchObject({ role_arn: ROLE, region: "eu-west-1", confirm_reindex: true })
   })
 
-  it("tests by listing each provider's models, and says which enabled ones it didn't list", async () => {
+  it("tests by listing each provider's models, and fails a provider that doesn't list an enabled one", async () => {
     const tests: unknown[] = []
     mockApi({
       "GET /api/admin/assistant/models": TWO,
       "POST /api/admin/assistant/models/test": (body: unknown) => {
         tests.push(body)
         return {
-          ok: true,
+          ok: false,
           providers: [
             { provider: "anthropic", label: "Anthropic", ok: true, models: 12, missing: [] },
-            { provider: "openai", label: "OpenAI", ok: true, models: 80, missing: ["gpt-5"] },
+            {
+              provider: "openai",
+              label: "OpenAI",
+              ok: false,
+              models: 80,
+              missing: ["gpt-5"],
+              error: "It lists 80 models, but not gpt-5: check the model id and that this key can use it.",
+            },
+            {
+              provider: "bedrock",
+              label: "AWS Bedrock",
+              ok: true,
+              models: null,
+              missing: [],
+              checked: ["amazon.nova-pro-v1:0"],
+            },
           ],
         }
       },
@@ -353,9 +368,13 @@ describe("ModelProviderSettings", () => {
     await user.click(await screen.findByRole("button", { name: /Test connection/ }))
     const status = await screen.findByRole("status")
     expect(within(status).getByText("Anthropic: connected")).toBeInTheDocument()
+    expect(within(status).getByText(/lists 12 models\./)).toBeInTheDocument()
+    expect(within(status).getByText("OpenAI: model not found")).toBeInTheDocument()
     expect(within(status).getByText(/lists 80 models, but not gpt-5/)).toBeInTheDocument()
-    expect(status.querySelector('[data-slot="status-dot"]')).toHaveAttribute("data-status", "live")
-    expect(screen.getByText(/it answers nothing, so it costs nothing/)).toBeInTheDocument()
+    expect(within(status).getByText("It answered with amazon.nova-pro-v1:0.")).toBeInTheDocument()
+    const dots = status.querySelectorAll('[data-slot="status-dot"]')
+    expect([...dots].map((d) => d.getAttribute("data-status"))).toEqual(["live", "error", "live"])
+    expect(screen.getByText(/Anthropic's models, for free/)).toBeInTheDocument()
     expect(tests[0]).toMatchObject({
       default_model: { provider: "anthropic", model: "claude-opus-5-5" },
       chat_models: [

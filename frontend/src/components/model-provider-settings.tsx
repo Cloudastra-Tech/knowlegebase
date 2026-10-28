@@ -73,8 +73,9 @@ import { timeAgo } from "@/lib/utils"
 // models people may pick in the chat (each provider's curated list, or a custom id),
 // and one of them is the default. With none, answers use the server's model. SEARCH:
 // one embeddings provider, never picked per chat; changing it rebuilds the index, so
-// it's confirmed first. Test connection only lists each provider's models (free):
-// nothing is answered or embedded. Nothing ever falls back to another provider.
+// it's confirmed first. Test connection lists OpenAI's and Anthropic's models (free);
+// Bedrock answers one token and makes one short embedding, since a list wouldn't show
+// the model access granted. Nothing ever falls back to another provider.
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const DEFAULT = "default"
@@ -856,7 +857,8 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Testing only lists each provider's models: it answers nothing, so it costs nothing.
+          Testing lists OpenAI's and Anthropic's models, for free. AWS Bedrock answers one word and
+          makes one short embedding: a fraction of a cent.
         </p>
         {(settings.updated_by || settings.tested_at) && (
           <p className="text-xs text-muted-foreground">
@@ -955,17 +957,23 @@ function TestResult({ tested }: { tested: ConnectionTest }) {
         <li key={p.provider} className="grid gap-0.5">
           <StatusDot
             status={p.ok ? "live" : "error"}
-            label={p.ok ? `${p.label}: connected` : `${p.label}: couldn't connect`}
+            label={
+              p.ok
+                ? `${p.label}: connected`
+                : p.missing.length
+                  ? `${p.label}: model not found`
+                  : `${p.label}: couldn't connect`
+            }
             className="text-sm"
           />
           <p className="pl-4 text-xs break-words text-muted-foreground">
             {!p.ok
               ? p.error
-              : p.models === null
-                ? "Runs on this server: nothing to reach."
-                : `It lists ${p.models.toLocaleString()} models${
-                    p.missing.length ? `, but not ${p.missing.join(", ")}: check the id and your access.` : "."
-                  }`}
+              : p.checked?.length
+                ? `It answered with ${p.checked.join(" and ")}.`
+                : p.models === null
+                  ? "Runs on this server: nothing to reach."
+                  : `It lists ${p.models.toLocaleString()} models.`}
           </p>
         </li>
       ))}

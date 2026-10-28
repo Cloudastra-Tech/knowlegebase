@@ -18,6 +18,7 @@ fake (tests/test_bedrock.py, tests/anthropic_fakes.py): nothing reaches a networ
 import json
 import pathlib
 import sqlite3
+import threading
 
 import pytest
 
@@ -150,6 +151,60 @@ def test_a_migrated_default_follows_the_servers_model_after_a_save(monkeypatch):
     assert store.enabled(store.get(w)) == [("openai", "gpt-5")]
 
 
+def test_switching_the_chat_provider_without_a_list_leaves_the_old_one_behind(fake_aws):
+    """A row 0026 seeded (its provider's model enabled) switched to another chat
+    provider by a change that doesn't name the enabled models: the new default
+    alone, as a switch did before there were several. The old provider's model
+    isn't left enabled, and its key isn't kept (nor needed)."""
+    w = new_workspace()
+    store.save(w, {"chat_provider": "anthropic", "api_keys": {"anthropic": ANTHROPIC_KEY}},
+               "admin")
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE model_providers SET chat_models = ? WHERE workspace = ?",
+                     (json.dumps([{"provider": "anthropic", "model": None}]), w))
+    conn.close()
+    store.save(w, {"chat_provider": "bedrock", **AWS}, "admin")
+    assert store.enabled(store.get(w)) == [("bedrock", models.BEDROCK_CHAT)]
+    assert store.view(w)["api_keys_saved"] == {}
+    # The same provider kept, without a list: the enabled models stay as they are.
+    store.save(w, {"api_keys": {"anthropic": ANTHROPIC_KEY}, "chat_models": [NOVA, OPUS]},
+               "admin")
+    store.save(w, {"chat_provider": "bedrock", "region": REGION}, "admin")
+    assert store.enabled(store.get(w)) == [("bedrock", models.BEDROCK_CHAT),
+                                           ("anthropic", "claude-opus-5-5")]
+
+
+def test_a_bedrock_pick_reranks_with_the_workspaces_own_aws(fake_aws, monkeypatch):
+    """A workspace answering on Anthropic with Bedrock enabled: a chat answered on
+    its Bedrock pick keeps its text in the CUSTOMER's AWS, the reranker too
+    (rerankers.BedrockReranker reads Models.uses), never the server's account."""
+    import rerankers
+    w = new_workspace()
+    store.save(w, {"chat_provider": "anthropic", "embed_provider": "default", **AWS,
+                   "api_keys": {"anthropic": ANTHROPIC_KEY}, "chat_models": [OPUS, NOVA]},
+               "admin")
+    seen = []
+
+    class Agent:
+        def rerank(self, **request):
+            return {"results": [{"index": i, "relevanceScore": 1.0 - i / 10}
+                                for i in range(len(request["sources"]))]}
+    monkeypatch.setattr(models, "client",
+                        lambda spec, service, **kw: seen.append((spec, service)) or Agent())
+    on = models.for_workspace(w)
+    assert not on.uses("bedrock") and not on.in_house
+    picked = on.with_answer("bedrock", models.BEDROCK_CHAT)
+    assert picked.uses("bedrock") and picked.in_house
+    assert picked.uses("anthropic")             # its fast model's provider still counts
+    with models.scope(picked):
+        assert rerankers.BedrockReranker().scores("refunds", ["a", "b"]) == [1.0, 0.9]
+    ((spec, service),) = seen
+    assert service == "bedrock-agent-runtime"
+    assert (spec.workspace, spec.region, spec.auth, spec.keys) == (w, REGION, "keys",
+                                                                    (KEY_ID, SECRET))
+
+
 # ---- A chat's pick -------------------------------------------------------------------------------
 def _stream(client, h, **body):
     r = client.post("/api/chat/stream", headers=h, json={"question": "How long do refunds take?",
@@ -176,14 +231,16 @@ def test_a_chat_answers_with_its_pick_and_the_guards_stay_on_the_fast_model(
     # The chat keeps it, and the asker's next new chat starts on it.
     assert client.get(f"/api/conversations/{cid}", headers=h).json()["model"] == OPUS
     assert client.get("/api/models", headers=h).json()["last"] == OPUS
-    # The question log names the provider and model that answered.
+    # The question log: the provider that answered (the pick's) and, as its model,
+    # as on every surface, the one that used the most tokens (usage.model): here
+    # the guards' fast model, whose fake reports more. Never the pick's name instead.
     conn = db.connect()
     try:
         row = conn.execute("SELECT provider, model FROM question_log WHERE workspace = ? "
                            "ORDER BY id DESC LIMIT 1", (w,)).fetchone()
     finally:
         conn.close()
-    assert tuple(row) == ("anthropic", "claude-opus-5-5")
+    assert tuple(row) == ("anthropic", models.BEDROCK_FAST)
     # Without a pick, the chat goes on with its own.
     fake.calls.clear()
     r, events = _stream(client, h, conversation_id=cid)
@@ -191,7 +248,7 @@ def test_a_chat_answers_with_its_pick_and_the_guards_stay_on_the_fast_model(
         "claude-opus-5-5"}
 
 
-def test_a_model_that_isnt_enabled_is_refused(client, indexed, fake, fake_aws):
+def test_a_model_that_isnt_enabled_is_refused_when_named(client, indexed, fake, fake_aws):
     w = two_providers(indexed.ws)
     h = login(client, w, "staff")
     cid = client.post("/api/conversations", headers=h, json={}).json()["id"]
@@ -199,19 +256,120 @@ def test_a_model_that_isnt_enabled_is_refused(client, indexed, fake, fake_aws):
     r, _ = _stream(client, h, conversation_id=cid,
                    model={"provider": "openai", "model": "gpt-5"})
     assert r.status_code == 400 and "isn't available" in r.json()["detail"]
-    # The admin turns Opus off: the chat that used it is refused it, with the reason.
+    # The admin turns Opus off: asking for it by name is refused, with the reason.
     admin = login(client, w)
     assert client.put("/api/admin/assistant/models", headers=admin,
                       json={"chat_models": [NOVA]}).status_code == 200
     fake.calls.clear()
-    for body in ({"model": OPUS}, {}):
-        r, _ = _stream(client, h, conversation_id=cid, **body)
-        assert r.status_code == 400, r.text
-        assert "isn't available" in r.json()["detail"]
+    r, _ = _stream(client, h, conversation_id=cid, model=OPUS)
+    assert r.status_code == 400 and "isn't available" in r.json()["detail"]
     assert fake.calls == []                     # nothing reached Claude
     r, events = _stream(client, h, conversation_id=cid, model=NOVA)
     assert r.status_code == 200 and events[-1]["type"] == "done"
     assert client.get("/api/models", headers=h).json()["last"] == NOVA
+
+
+def test_a_chat_whose_model_was_turned_off_starts_on_the_default(client, indexed, fake,
+                                                                  fake_aws):
+    """Every web chat stores its model; turning one off mustn't break the chats
+    that used it. Asked without naming a model, they answer on the default (the
+    Remove dialog's promise) and keep it from then on."""
+    w = two_providers(indexed.ws)
+    h = login(client, w, "staff")
+    cid = client.post("/api/conversations", headers=h, json={}).json()["id"]
+    assert _stream(client, h, conversation_id=cid, model=OPUS)[0].status_code == 200
+    admin = login(client, w)
+    assert client.put("/api/admin/assistant/models", headers=admin,
+                      json={"chat_models": [NOVA]}).status_code == 200
+    fake.calls.clear()
+    r, events = _stream(client, h, conversation_id=cid)
+    assert r.status_code == 200, r.text
+    assert events[-1]["type"] == "done", events[-1]
+    assert fake.calls == []                     # not Claude: the default, on Bedrock
+    assert models.BEDROCK_CHAT in {c[1] for c in fake_aws.runtime.calls}
+    assert client.get(f"/api/conversations/{cid}", headers=h).json()["model"] == NOVA
+    # The service: a chat's stale pick gives the default, never the asker's last pick.
+    assert model_choice.resolve(w, None, {"model_provider": "anthropic",
+                                          "model_id": "claude-opus-5-5"},
+                                "staff") == ("bedrock", models.BEDROCK_CHAT)
+
+
+def test_the_stream_reads_the_chat_once_and_never_on_the_event_loop(
+        client, indexed, fake, fake_aws, monkeypatch):
+    """The chat's model comes from the conversation start_turn read, in the
+    threadpool: no blocking DB read on the event loop, no second read."""
+    import asyncio
+    import conversations_store
+    w = two_providers(indexed.ws)
+    h = login(client, w, "staff")
+    cid = client.post("/api/conversations", headers=h, json={}).json()["id"]
+    real, on_loop = conversations_store.get, []
+
+    def get(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:                     # a worker thread: no loop running
+            on_loop.append(False)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(conversations_store, "get", get)
+    r, events = _stream(client, h, conversation_id=cid, model=OPUS)
+    assert r.status_code == 200 and events[-1]["type"] == "done", events[-1]
+    assert on_loop and not any(on_loop)
+    # Without a model named, the chat's own pick (from the turn's read) answers.
+    fake.calls.clear()
+    r, events = _stream(client, h, conversation_id=cid)
+    assert events[-1]["type"] == "done" and {c["model"] for c in fake.calls} == {
+        "claude-opus-5-5"}
+    assert not any(on_loop)
+
+
+def test_the_default_pick_is_the_agents_own_model_and_a_slow_pick_holds_up_no_other(
+        indexed, fake, fake_aws, monkeypatch):
+    """The web names the default on most questions: it answers with the agent's
+    own model, none made again. Another pick is made outside the agent's lock (it
+    may assume an AWS role), so one slow to make doesn't hold up the next."""
+    from kb.services import agents
+    sonnet = ("anthropic", "claude-sonnet-5-5")
+    w = two_providers(indexed.ws, chat_models=[NOVA, OPUS, dict(zip(("provider", "model"),
+                                                                    sonnet))])
+    run = agents.get_agent(w, "public")
+    made, order, real = [], [], models.Models.answer
+    making_opus, release = threading.Event(), threading.Event()
+
+    class Made(Exception):
+        """Stops the run once its answer model is made: that's all this tests."""
+
+    def answer(self, *args, **kwargs):
+        made.append((self.answer_provider, self.answer_name))
+        if self.answer_name == "claude-opus-5-5":
+            making_opus.set()
+            release.wait(5)
+            order.append("opus made")
+            raise Made("opus")
+        if self.answer_name == sonnet[1]:
+            order.append("sonnet made")
+            raise Made("sonnet")
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(models.Models, "answer", answer)
+
+    answer_text, _ = run("How long do refunds take?",
+                         answer_model=("bedrock", models.BEDROCK_CHAT))
+    assert "30 days" in answer_text and made == []
+
+    def ask_opus():
+        with pytest.raises(Made):
+            run("How long do refunds take?", answer_model=("anthropic", "claude-opus-5-5"))
+    slow = threading.Thread(target=ask_opus)
+    slow.start()
+    try:
+        assert making_opus.wait(5)
+        with pytest.raises(Made, match="sonnet"):
+            run("How long do refunds take?", answer_model=sonnet)
+    finally:
+        release.set()
+        slow.join(10)
+    assert order == ["sonnet made", "opus made"]
 
 
 def test_one_workspace_can_never_use_anothers_models_or_keys(client, fake, fake_aws):

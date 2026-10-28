@@ -236,10 +236,11 @@ def save_provider(body: ProviderIn, user=Depends(require_admin),
 def test_provider(body: ProviderIn, user=Depends(require_admin),
                   audit=audited("model_provider.test")):
     """Test connection, with the settings as typed (saved or not), so a role or a
-    key can be checked before switching to it. FREE: each provider in use (chat,
-    embeddings, the enabled models') lists its models (models.test_connection);
-    no completion and no embedding is ever made. {"ok", "providers": [{provider,
-    label, ok, models, missing, error?}]}, or {"ok": false, "error"} when the
+    key can be checked before switching to it. Each provider in use (chat,
+    embeddings, the enabled models') lists its models for free (OpenAI,
+    Anthropic), or Bedrock answers one token and makes one short embedding
+    (models.test_connection). {"ok", "providers": [{provider, label, ok, models,
+    missing, checked?, error?}]}, or {"ok": false, "error"} when the
     settings can't be tried. Without chat_provider / embed_provider it tests the
     providers saved, or Bedrock for both when the workspace is on the server's
     (the Bring your own AWS form, as before)."""

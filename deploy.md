@@ -1889,13 +1889,16 @@ Assistant → Models the admin ticks the answer models people may pick (each pro
 curated list in `models.CATALOGUE`, or a custom model id) and marks one as the
 default. The chat's composer then shows a model menu (hidden with one model); each
 chat keeps its pick (`conversations.model_provider` / `model_id`, migration 0026),
-and every question is checked against the enabled list: a model turned off is refused
-with a 400, never swapped silently. Only the answer follows the pick: the FAST model
+and every question is checked against the enabled list: a model the request names that
+isn't enabled is refused with a 400, never swapped silently; a chat whose model was
+turned off since starts on the default. Only the answer follows the pick: the FAST model
 (the guards' classifiers, titles, HyDE) stays the default provider's, and search stays
-the workspace's one embeddings provider. The answer cache and the question log name
-the answer model. **Test connection is free**: each provider lists its models (OpenAI
-and Anthropic `models.list`, Bedrock `ListFoundationModels`); nothing is answered or
-embedded.
+the workspace's one embeddings provider. The answer cache keys on the answer model;
+the question log's provider is the answer's, its model the one that used the most
+tokens. **Test connection costs as little as proves it**: OpenAI and Anthropic list
+their models (`models.list`, free), and an enabled model they don't list fails the
+test by name; Bedrock answers one token on its default chat model and, when it embeds,
+makes one short embedding (a model list wouldn't show the model access granted).
 
 How it calls Bedrock: chat through the **Converse API** (`ConverseStream` while an
 answer streams; langchain-aws `ChatBedrockConverse`, with tool calls), embeddings
@@ -2041,9 +2044,10 @@ shows); they are refreshed shortly before they expire, not assumed per question
    }
    ```
 
-3. The admin pastes the role ARN, presses **Test connection** (one free
-   `ListFoundationModels` call, with what's typed, saved or not: nothing is answered or
-   embedded), then Save. The policy includes `bedrock:ListFoundationModels` for it.
+3. The admin pastes the role ARN, presses **Test connection** (with what's typed,
+   saved or not: one Converse of a single token on the default chat model and one
+   short embedding, a fraction of a cent), then Save. It needs only the
+   `bedrock:InvokeModel` the policy above already grants.
 
 Access keys instead: an IAM user with the IAM policy above, its keys pasted on the
 screen. They're sealed under the workspace's data key (`secret_box`), like other
@@ -2078,13 +2082,13 @@ test). With a real account, once:
    `bedrock:InvokeModelWithResponseStream` on the model ARNs are *allowed*.
 3. **Test connection.** On Assistant → Models choose AWS Bedrock, the region, *A role
    it assumes*, paste the role ARN, press Test connection: "AWS Bedrock: connected",
-   and how many models the account lists, naming any enabled model it doesn't. A wrong
-   ExternalId in the trust policy gives `AccessDenied` on AssumeRole; a policy without
-   `bedrock:ListFoundationModels` gives `AccessDeniedException`. Test connection
-   makes no model call, so model access itself shows on the first question (a base id
-   where a profile is needed gives a `ValidationException` naming inference
-   profiles). CloudTrail shows `AssumeRole` with the session name
-   `knowledge-<workspace>` and the `ListFoundationModels` call.
+   naming the models it reached. A wrong ExternalId in the trust policy gives
+   `AccessDenied` on AssumeRole; a model without access granted, or a policy missing
+   its ARN, gives `AccessDeniedException`; a base id where a profile is needed gives a
+   `ValidationException` naming inference profiles. Only the default chat model is
+   invoked: another enabled Bedrock model shows its own access on its first question.
+   CloudTrail shows `AssumeRole` with the session name `knowledge-<workspace>`, the
+   `Converse` call and the embedding's `InvokeModel`.
 4. **Save** (confirm the index rebuild): the top bar shows the rebuild; when it's
    done, the audit log has `model_provider.update` with `reindex: true`.
 5. **Ask a question** in the chat: it streams; the steps show the search; the answer
