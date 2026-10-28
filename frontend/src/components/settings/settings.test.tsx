@@ -110,9 +110,10 @@ describe("the account menu", () => {
 })
 
 describe("the Settings screen", () => {
+  // From md up the sections are tabs across the top.
   const sections = async () => {
-    const nav = await screen.findByRole("navigation", { name: "Settings" })
-    return within(nav).getAllByRole("link").map((l) => l.textContent)
+    const tabs = await screen.findByRole("tablist", { name: "Settings" })
+    return within(tabs).getAllByRole("tab").map((t) => t.textContent)
   }
 
   it("has every section but Billing for a member, General open on a desktop", async () => {
@@ -120,8 +121,8 @@ describe("the Settings screen", () => {
     const router = renderApp("/settings")
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/general"))
     expect(await sections()).toEqual(["General", "Chats", "Connections", "Prompts", "Digests", "API keys", "Security"])
-    const nav = screen.getByRole("navigation", { name: "Settings" })
-    expect(within(nav).getByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page")
+    const tabs = screen.getByRole("tablist", { name: "Settings" })
+    expect(within(tabs).getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true")
     expect(await screen.findByRole("heading", { level: 4, name: "Profile" })).toBeInTheDocument()
   })
 

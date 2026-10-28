@@ -8,30 +8,36 @@ import { DESKTOP, fitsWidth, MEMBER, PHONE, signIn } from "./helpers.ts"
 
 const SECTIONS = ["General", "Chats", "Connections", "Prompts", "Digests", "API keys", "Security"]
 
-test("on a desktop, the sections sit beside the open one, which switches at once and in place", async ({
+test("on a desktop, the sections are tabs over the open one, which switches at once and in place", async ({
   page,
 }) => {
   await page.setViewportSize(DESKTOP)
   await signIn(page, MEMBER)
   await page.goto("/prompts")
   await expect(page).toHaveURL(/\/settings\/prompts$/)
-  const nav = page.getByRole("navigation", { name: "Settings" })
-  await expect(nav.getByRole("link")).toHaveText(SECTIONS)
+  const nav = page.getByRole("tablist", { name: "Settings" })
+  await expect(nav.getByRole("tab")).toHaveText(SECTIONS)
   await expect(page.getByText("No saved prompts yet")).toBeVisible()
-  const before = await nav.boundingBox()
+  // To a hundredth of a pixel: the screen's entrance can leave a sub-pixel
+  // remainder for a frame; a layout shift is whole pixels.
+  const box = async () => {
+    const b = (await nav.boundingBox())!
+    return { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: Math.round(b.width), h: Math.round(b.height) }
+  }
+  const before = await box()
   // Where the title starts (its box is as wide as the crumbs over it, which name the section).
   const at = async () => {
     const box = (await page.locator("[data-screen] h2").boundingBox())!
-    return { x: box.x, y: box.y, height: box.height }
+    return { x: Math.round(box.x * 100) / 100, y: Math.round(box.y * 100) / 100, height: Math.round(box.height) }
   }
   const title = await at()
 
   for (const name of SECTIONS) {
-    await nav.getByRole("link", { name }).click()
-    await expect(nav.getByRole("link", { name })).toHaveAttribute("aria-current", "page")
+    await nav.getByRole("tab", { name }).click()
+    await expect(nav.getByRole("tab", { name })).toHaveAttribute("aria-selected", "true")
     await expect(page.getByRole("heading", { level: 3, name })).toBeVisible()
-    // Nothing moves: the column and the title stay where they were.
-    expect(await nav.boundingBox()).toEqual(before)
+    // Nothing moves: the tabs and the title stay where they were.
+    expect(await box()).toEqual(before)
     expect(await at()).toEqual(title)
     // Switching sections plays no animation (the empty states' 150ms fade aside, once).
     const running = (await page.evaluate(

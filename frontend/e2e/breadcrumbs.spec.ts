@@ -73,7 +73,7 @@ test("Access › Webhooks: the tab is the crumb, and Access goes to its first ta
   await page.goto("/api-keys")
   await expect(page).toHaveURL(/\/settings\/api-keys$/)
   await expect(here(page)).toHaveText("API keys")
-  await page.getByRole("navigation", { name: "Settings" }).getByRole("link", { name: "Digests" }).click()
+  await page.getByRole("tablist", { name: "Settings" }).getByRole("tab", { name: "Digests" }).click()
   await expect(page).toHaveURL(/\/settings\/digests$/)
   await expect(here(page)).toHaveText("Digests")
   await crumbs(page).getByRole("link", { name: "Settings" }).click()
