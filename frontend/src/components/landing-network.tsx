@@ -40,7 +40,17 @@ export function SourceNetwork({ groups, className }: { groups: SourceGroup[]; cl
   const litRef = useRef(-1)
   const wake = useRef<() => void>(() => {})
   const items = groups.flatMap((g) => g.items)
-  const [left, ...right] = groups
+  // The groups either side of the index, split where the two sides come out closest
+  // in height (a group's rows plus its heading), and both centred on it.
+  const height = (g: SourceGroup) => g.items.length + 1.5
+  const total = groups.reduce((n, g) => n + height(g), 0)
+  let split = 1
+  for (let k = 1, run = 0; k < groups.length; k++) {
+    run += height(groups[k - 1])
+    if (Math.abs(total - 2 * run) < Math.abs(total - 2 * groups.slice(0, split).reduce((n, g) => n + height(g), 0))) split = k
+  }
+  const left = groups.slice(0, split)
+  const right = groups.slice(split)
 
   useEffect(() => {
     litRef.current = lit
@@ -172,9 +182,9 @@ export function SourceNetwork({ groups, className }: { groups: SourceGroup[]; cl
           <canvas ref={canvas} className="absolute top-0 left-0" />
         </div>
         <div className="relative flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem_minmax(0,1fr)] lg:gap-0">
-          <div className="flex flex-col gap-8 lg:justify-center">{group(left, "left")}</div>
+          <div className="flex flex-col gap-8 lg:justify-center">{left.map((g) => group(g, "left"))}</div>
           <div ref={middle} aria-hidden className="hidden lg:block" />
-          <div className="flex flex-col gap-8">{right.map((g) => group(g, "right"))}</div>
+          <div className="flex flex-col gap-8 lg:justify-center">{right.map((g) => group(g, "right"))}</div>
         </div>
         <span className="sr-only">Each of these is read into one index; nothing is written back to them.</span>
       </div>

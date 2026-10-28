@@ -183,10 +183,15 @@ export class GlyphGrid {
       }
       return true
     }
-    if (arms.l) g.fillRect(left, cy, cx - left + t, t)
-    if (arms.r) g.fillRect(cx, cy, right - cx, t)
-    if (arms.u) g.fillRect(cx, top, t, cy - top + t)
-    if (arms.d) g.fillRect(cx, cy, t, bottom - cy)
+    // Each pixel once: the lines are translucent, and where two arms overlapped the
+    // overlap came out darker, a dot in every cell of a run (a dotted line).
+    const h = arms.l || arms.r
+    if (h) {
+      const from = arms.l ? left : cx
+      g.fillRect(from, cy, (arms.r ? right : cx + t) - from, t)
+    }
+    if (arms.u) g.fillRect(cx, top, t, cy - top + (h ? 0 : t))
+    if (arms.d) g.fillRect(cx, h || arms.u ? cy + t : cy, t, bottom - (h || arms.u ? cy + t : cy))
     return true
   }
 

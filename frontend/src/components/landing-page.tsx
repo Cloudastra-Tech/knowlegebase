@@ -140,6 +140,11 @@ const SOURCES: SourceGroup[] = [
       { name: "Google Drive", brand: "googledrive", sync: "2,410 files · synced 4m ago" },
       { name: "SharePoint & OneDrive", icon: Share2, sync: "3,118 files · synced 9m ago" },
       { name: "Coda", brand: "coda", sync: "74 pages · synced 20m ago" },
+    ],
+  },
+  {
+    group: "Files and sites",
+    items: [
       { name: "Dropbox", brand: "dropbox", sync: "951 files · synced 7m ago" },
       { name: "Box", brand: "box", sync: "640 files · synced 15m ago" },
       { name: "Amazon S3", icon: Archive, sync: "12,007 files · synced 1h ago" },
@@ -238,7 +243,9 @@ export function LandingPage({
 }) {
   useForcedDark()
   return (
-    <div className="min-h-svh bg-background text-foreground antialiased selection:bg-signal/30">
+    // Focus rings here are neutral, not the app's mint: on the landing, mint means
+    // decoded or cited, and a tab picked with the keyboard is neither.
+    <div className="min-h-svh bg-background text-foreground antialiased selection:bg-signal/30 [--ring:color-mix(in_oklab,var(--foreground)_45%,transparent)]">
       {/* The chrome glass tier, as a bar: blurred over the brain, a hairline below. */}
       <header className="sticky top-0 z-20 border-b border-(--glass-border) bg-(--glass-bg) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturate)">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-8 px-4">
