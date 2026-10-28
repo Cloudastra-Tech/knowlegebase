@@ -752,6 +752,7 @@ export function AssistantMessage({
             standalone={message.standalone}
             hideSteps={actions.hideSteps}
             live={live}
+            sources={sources}
           />
           {message.limited && (
             <LimitNotice text={message.limited} plan={message.limitedBy === "plan"} />

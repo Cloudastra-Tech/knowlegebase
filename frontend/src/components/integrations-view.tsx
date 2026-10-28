@@ -15,26 +15,6 @@ import {
   Unplug,
   Users,
 } from "lucide-react"
-import {
-  siAsana,
-  siBox,
-  siClickup,
-  siCoda,
-  siConfluence,
-  siDropbox,
-  siGithub,
-  siGmail,
-  siGooglecalendar,
-  siGoogledrive,
-  siHubspot,
-  siIntercom,
-  siJira,
-  siLinear,
-  siNotion,
-  siOutline,
-  siZendesk,
-  type SimpleIcon,
-} from "simple-icons"
 
 import {
   AlertDialog,
@@ -57,6 +37,7 @@ import { StatusDot } from "@/components/glass/status-dot"
 import { IntegrationConnectDialog } from "@/components/integration-connect-dialog"
 import { S3ConnectDialog } from "@/components/s3-connect-dialog"
 import { SalesforceConnectDialog } from "@/components/salesforce-connect-dialog"
+import { BrandMark } from "@/components/brand-mark"
 import { ScreenHeader } from "@/components/screen-header"
 import { SlackAppCard } from "@/components/slack-app-card"
 import { SurfaceCards } from "@/components/surface-cards"
@@ -67,6 +48,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, type Integration, type IntegrationStatus, type PermissionPolicy } from "@/lib/api"
+import { BRANDS, brandOf } from "@/lib/brands"
 import { useIndexStatus } from "@/lib/index-status-context"
 import { type StaggerItem, useStaggerOnce } from "@/lib/motion"
 import { queries } from "@/lib/queries"
@@ -74,26 +56,6 @@ import { cn, timeAgo } from "@/lib/utils"
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-// Brand marks by the registry's simple-icons slug (connectors/registry.py).
-const BRANDS: Record<string, SimpleIcon> = {
-  googledrive: siGoogledrive,
-  notion: siNotion,
-  outline: siOutline,
-  confluence: siConfluence,
-  jira: siJira,
-  github: siGithub,
-  dropbox: siDropbox,
-  zendesk: siZendesk,
-  linear: siLinear,
-  box: siBox,
-  intercom: siIntercom,
-  hubspot: siHubspot,
-  asana: siAsana,
-  clickup: siClickup,
-  coda: siCoda,
-  gmail: siGmail,
-  googlecalendar: siGooglecalendar,
-}
 // What a connection with an optional picker syncs while nothing is picked.
 const UNPICKED: Record<string, string> = {
   zendesk: "Every published Help Center article is synced.",
@@ -105,19 +67,13 @@ const UNPICKED: Record<string, string> = {
 }
 const LETTERS: Record<string, string> = {
   sharepoint: "S",
-  slack: "#",
   freshdesk: "F",
   teams_messages: "T",
 }
 
 export function ConnectorIcon({ item }: { item: Integration }) {
-  const brand = item.icon ? BRANDS[item.icon] : undefined
-  if (brand)
-    return (
-      <svg viewBox="0 0 24 24" className="size-5 fill-current" aria-hidden>
-        <path d={brand.path} />
-      </svg>
-    )
+  const brand = item.icon && item.icon in BRANDS ? item.icon : brandOf(item.id)
+  if (brand) return <BrandMark slug={brand} />
   if (item.id === "uploads") return <FileText className="size-5" />
   if (item.id === "website") return <Globe className="size-5" />
   if (item.id === "s3") return <Archive className="size-5" />

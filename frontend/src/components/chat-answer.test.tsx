@@ -155,6 +155,28 @@ describe("the steps trace", () => {
     expect(screen.getByText(/"question": "refund"/)).toBeInTheDocument()
   })
 
+  it("names the platforms each tool searched: Outline's own tools, and where the documents came from", async () => {
+    show({
+      state: "answered",
+      text: "ok",
+      steps: [
+        steps[0],
+        { id: "s2", tool: "search_outline", label: "Searching the Outline wiki", result: "found 2", done: true },
+      ],
+      sources: [
+        { n: 1, title: "Handbook", provider: "GitHub", url: null },
+        { n: 2, title: "Leave", provider: "Outline", url: null },
+        { n: 3, title: "Thread", provider: "Slack", url: null },
+        { n: 4, title: "Notes.pdf", provider: "Upload", url: null },
+      ],
+    })
+    const summary = screen.getByRole("button", { name: /Searched company docs/ })
+    expect(summary).toHaveTextContent("in GitHub, Outline, Slack")
+    await userEvent.setup().click(summary)
+    // The docs search lists where its documents were; the Outline search wears Outline's mark.
+    expect(screen.getAllByText("in GitHub, Outline, Slack")).toHaveLength(2)
+  })
+
   it("says what it is doing while it thinks, before any step", () => {
     show({ streaming: true, status: "Checking your question", steps: [] })
     expect(screen.getByRole("status")).toHaveTextContent("Reading the question")
