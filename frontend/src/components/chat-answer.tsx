@@ -41,7 +41,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Message as MessageRow, MessageAvatar, MessageContent, MessageFooter } from "@/components/ui/message"
+import { Message as MessageRow, MessageContent, MessageFooter } from "@/components/ui/message"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -93,6 +93,7 @@ export interface Message {
 export interface AnswerActions {
   onRetry?: (message: Message) => void
   onRephrase?: (question: string) => void
+  onAskEverywhere?: (question: string) => void // set when the chat is in a space
   onFeedback?: (message: Message, feedback: Feedback | null) => void
   onRegenerate?: (message: Message) => void
   onShare?: (message: Message) => void
@@ -418,6 +419,11 @@ function AnswerBody({ message, actions, live }: { message: Message; actions: Ans
         <AlertDescription>
           <Markdown text={text} className="text-sm text-muted-foreground" />
           <div className="mt-2 flex flex-wrap gap-2">
+            {message.question && actions.onAskEverywhere && (
+              <Button variant="outline" size="sm" onClick={() => actions.onAskEverywhere!(message.question!)}>
+                Ask in All company
+              </Button>
+            )}
             {message.question && actions.onRephrase && (
               <Button variant="outline" size="sm" onClick={() => actions.onRephrase!(message.question!)}>
                 Rephrase
@@ -720,13 +726,6 @@ export function AssistantMessage({
         data-state={message.state}
         aria-label="Answer"
       >
-        {/* The assistant's mark: a braille cell, turning while it writes. */}
-        <MessageAvatar
-          aria-hidden
-          className="size-8 self-start rounded-lg border border-border/70 bg-card font-mono text-sm text-signal group-has-data-[slot=message-footer]/message:translate-y-0"
-        >
-          {message.streaming ? <AsciiSpinner variant="dots" size="sm" label="" /> : <span className="select-none">⣿</span>}
-        </MessageAvatar>
         <MessageContent className="gap-3 pt-1">
           <StepsTrace
             steps={steps}
