@@ -152,23 +152,42 @@ glyph at its highest alpha, not on the flat token.
 
 ## Glass
 
-Three tiers, as utilities in `index.css`. No more than three blurred surfaces visible at once
-(plus one overlay), and never glass inside glass.
+Four tiers, as utilities in `index.css`. Never glass inside glass. The look is real blur over
+real content with one hairline: no glow, no coloured edge, no gradient.
 
-| Tier | Utility | Blur | Fill | For |
+| Tier | Utility | Blur | Fill: dark / Paper | For |
 |---|---|---|---|---|
-| Chrome | `glass` | 16px, saturate 140% | card at 66% | the phone top bar, the composer, the landing header, landing cards |
-| Floating | `glass-strong` | 12px | popover at 86% | popovers, menus, selects, tooltips, dialogs, sheets, the command palette, toasts |
-| Subtle | `glass-subtle` | none | card at 72% | the app sidebar, panels and cards inside a screen |
+| Pane | `glass-pane` | 8px, saturate 160% | card at 30% / oklch(0.975) at 62% | the app sidebar, open and as the rail; one `--glass-edge` hairline on its inner edge |
+| Chrome | `glass` | 16px, saturate 160% | card at 58% / white at 64% | the sticky screen strip (`ScreenStrip`), the phone top bar, the composer, the landing header and cards |
+| Floating | `glass-strong` | 12px, saturate 160%, what's behind dimmed to 0.85 (lifted to 1.12 on Paper) | popover at 60% / white at 62% | popovers, menus, selects, hover cards, tooltips, ⌘K, dialogs, sheets (the phone's sidebar too), toasts (no dim or lift: Sonner's own classes) |
+| Subtle | `glass-subtle` | none | card at 72% | panels and cards inside a screen |
 
-`glass-noise` adds static grain to a large glass surface; it never animates.
+`glass-noise` adds static grain to a large glass surface; it never animates. The dialog, sheet
+and palette overlays are a plain 40% dim, so the floating glass above them frosts the screen.
 
+- **Something to frost.** The app's field (and the chat's) runs full-bleed, under the sidebar.
+  Its glyphs are dots and dashes, which a blur averages to nothing at the ambient ink, so it's
+  drawn at full ink and masked back to the ambient ink beside the sidebar (`ascii.css`): only
+  the pane sees the strong field, as a slow soft frost. The empty new chat's drift doesn't run
+  under the sidebar, so there the pane is a plain tinted sheet.
+- **Contrast** (on the worst realistic composite: blurred body text at 25% of its ink, or the
+  field at full ink): muted text is 6.0:1 or more on dark glass, foreground 12:1. On Paper the
+  muted text on glass is a step darker (`oklch(0.5)`; plain 0.556 is only 4.7:1 on white, and
+  any frost takes it under 4.5:1), which keeps it at 4.9:1 or more. A large solid patch
+  (a primary button) right under a menu's muted text can still take it under 4.5:1; "Reduce
+  effects" makes every tier solid for anyone who needs that.
 - **Fallbacks:** without `backdrop-filter`, under `prefers-reduced-transparency: reduce`, or with
   the app's "Reduce effects" (`:root[data-effects="reduced"]`, set by `setEffects()` in
-  `lib/ascii-loop.ts`), every tier goes solid and the blur goes. Touch screens get 12px.
-- **Cost is blurred area times frame rate.** No full-viewport blur: dialog and sheet overlays are
-  a plain dim. The app field runs at 12 fps and rests while scrolling, which is what keeps the
-  glass above it cheap.
+  `lib/ascii-loop.ts`), every tier goes solid and `backdrop-filter` is `none` (not a 0px blur,
+  which is still a pass). Touch screens get 12px chrome. Print is solid.
+- **Budget, measured** (headless Chrome on the real GPU, an Intel UHD 620, 1280×800, dark; 5s of
+  wheel scrolling, 10s idle, 10s idle with the account menu open; the median of 3 runs):
+  BUDGET_TABLE
+  So the cap is no longer a count of blurred surfaces: it's **one pane (the sidebar) at 8px,
+  plus the chrome pieces (16px) and one floating stack (12px)**. A pane blur over 8px over the
+  moving field, or a second large pane, is what to measure before adding. No full-viewport blur.
+  The app field runs at 12 fps and rests while scrolling and while a menu or dialog holds the
+  page, which is what keeps the glass above it cheap: with a menu open nothing re-blurs.
 - **The backdrop-root trap.** An ancestor with `opacity < 1`, `filter`, `mask`, `clip-path` or
   `will-change` on those becomes the backdrop root, and the blur inside it stops seeing the page.
   Never animate `opacity` on a wrapper that contains glass; animate the content inside it.
