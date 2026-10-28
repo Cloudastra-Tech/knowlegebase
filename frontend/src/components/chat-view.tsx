@@ -1169,7 +1169,10 @@ function UserMessage({
               disabled={busy || !message.id}
               onClick={onEdit}
               className={cn(
+                // Disabled while an answer streams: still hidden until hover, then dimmed
+                // (the Button's own disabled opacity would otherwise show it at 50%).
                 "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100",
+                "disabled:opacity-0 group-hover:disabled:opacity-50 pointer-coarse:disabled:opacity-50",
                 !message.id && "invisible",
               )}
             >
