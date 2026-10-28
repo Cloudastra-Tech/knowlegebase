@@ -90,6 +90,9 @@ test("sending moves the composer down in one short move, and the question pins t
   for (const d of moves) expect(d).toBeLessThanOrEqual(250)
   await expect(conversation(page).getByRole("button", { name: "Copy" })).toHaveCount(1, { timeout: 20_000 })
   const after = await composerBox(page)
+  // Down only: nothing sideways.
+  expect(after.x).toBe(before.x)
+  expect(after.width).toBe(before.width)
   expect(after.y).toBeGreaterThan(before.y + 100)
   expect(after.y + after.height).toBeGreaterThan(DESKTOP.height - 140)
   // The question at the top of the transcript, as before.
@@ -103,6 +106,28 @@ test("sending moves the composer down in one short move, and the question pins t
   expect(Math.abs(again.y - after.y)).toBeLessThan(2)
   const second = (await conversation(page).getByText("How many days of sick leave do employees get?").first().boundingBox()) as Box
   expect(second.y - viewport.y).toBeLessThan(120)
+})
+
+test.describe("with scrollbars shown", () => {
+  // Headless Chromium hides scrollbars; shown, a gutter would be measurable.
+  test.use({ launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] } })
+
+  test("the home's sections stay centred under the composer, and don't move when they scroll", async ({ page }) => {
+    await signIn(page, MEMBER)
+    const recent = page.getByRole("region", { name: "Recent chats" })
+    await expect(recent).toBeVisible()
+    const centre = (b: Box) => b.x + b.width / 2
+    const composer = await composerBox(page)
+    const home = page.locator('[data-drift="below"]')
+    const before = (await home.boundingBox()) as Box
+    expect(Math.abs(centre(before) - centre(composer))).toBeLessThanOrEqual(1)
+    // Grown until it scrolls: same place, same width.
+    await page.evaluate(`document.querySelector('[data-drift="below"]').insertAdjacentHTML("beforeend", '<div style="height:2000px"></div>')`)
+    const grown = (await home.boundingBox()) as Box
+    expect(grown.x).toBe(before.x)
+    expect(grown.width).toBe(before.width)
+    expect((await composerBox(page)).x).toBe(composer.x)
+  })
 })
 
 test("with reduced motion the composer moves at once", async ({ page }) => {

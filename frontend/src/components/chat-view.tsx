@@ -1002,11 +1002,14 @@ export function ChatView({ role }: { role: Role }) {
           />
           {picker.dialog}
         </div>
+        {/* Under the composer: the home's sections, scrolling on their own if they
+            don't fit. The scrollbar's room is kept on both sides, so they stay centred
+            under the composer and never move sideways when they start to scroll. */}
         {empty && (
           <div
             data-drift-blank
             data-print="hide"
-            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain"
+            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
           >
             <ChatHome
               starters={starters}
