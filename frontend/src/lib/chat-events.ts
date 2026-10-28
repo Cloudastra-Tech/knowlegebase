@@ -4,10 +4,8 @@ import { THINKING_EVENT, type ThinkingDetail } from "@/components/ascii/events"
 // as window events, so asking doesn't load the chat's code before it's opened.
 export const FOCUS_COMPOSER = "kb:focus-composer"
 export const TOGGLE_SIDEBAR = "kb:toggle-sidebar"
-// The sidebar's Search chats: the command palette, with chats alone. With a folder
-// (the new chat's home), the chats in it until something is typed.
+// The sidebar's Search chats: the command palette, with chats alone.
 export const OPEN_SEARCH = "kb:open-search"
-export type SearchDetail = { folderId?: string }
 // Put a saved prompt in the composer (detail: its id), asking for its variables.
 export const INSERT_PROMPT = "kb:insert-prompt"
 // New chats ask in this space (detail: its id, or null for all company).

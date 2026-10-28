@@ -91,7 +91,7 @@ import { useUser } from "@/lib/auth-context"
 import { chatCrumbs } from "@/lib/breadcrumbs"
 import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
 import { getEffects } from "@/lib/ascii-loop"
-import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking, type SearchDetail } from "@/lib/chat-events"
+import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
 import { dur, ease, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
@@ -759,9 +759,8 @@ export function ChatView({ role }: { role: Role }) {
     })
   }, [empty, reduced])
 
-  // Search chats (the palette, chats alone), or a folder's chats in it.
-  const openSearch = (detail?: SearchDetail) =>
-    window.dispatchEvent(new CustomEvent<SearchDetail | undefined>(OPEN_SEARCH, { detail }))
+  // Search chats (the palette, chats alone).
+  const openSearch = () => window.dispatchEvent(new CustomEvent(OPEN_SEARCH))
 
   return (
     <div className="relative flex h-full min-h-0 w-full" data-print="flow">
@@ -1243,7 +1242,7 @@ function ChatHeader({
   }
 
   return (
-    <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:glass max-md:z-20 max-md:h-12 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:pt-[env(safe-area-inset-top)]">
+    <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:z-20 max-md:h-12 max-md:border-b max-md:bg-background max-md:pt-[env(safe-area-inset-top)]">
       <PhoneMenuButton data-print="hide" />
       <div className="mx-auto flex min-w-0 max-w-3xl flex-1 px-2">
         <ChatBreadcrumbs crumbs={crumbs} />
