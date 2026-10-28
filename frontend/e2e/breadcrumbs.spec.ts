@@ -101,6 +101,14 @@ test("the title sits at the same height on every screen, crumbs or back button",
       const title = page.locator("[data-screen] h2").first()
       await expect(title).toBeVisible()
       await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0, { timeout: 10_000 })
+      // The screen's entrance (it rises 6px) is over.
+      await expect
+        .poll(() =>
+          page.evaluate(
+            "document.querySelector('[data-screen]').getAnimations().every((a) => a.playState !== 'running')",
+          ),
+        )
+        .toBe(true)
       tops.set(url, Math.round((await title.boundingBox())!.y))
     }
     expect(new Set(tops.values()).size, JSON.stringify([...tops])).toBe(1)
