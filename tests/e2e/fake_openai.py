@@ -4,6 +4,7 @@ the app talks to it through OPENAI_BASE_URL, so no key and no network are needed
 
     /v1/embeddings          a bag-of-words vector per text (64 dimensions, hashed
                             words): texts sharing words are close, so search works
+    /v1/moderations         nothing flagged (the toxicity check, safety.py)
     /v1/chat/completions    answers by who is asking (the prompt's first words):
         the agent (a request with tools)  one sentence from each of the first
                                           three passages search_docs gave it,
@@ -74,6 +75,22 @@ async def embeddings(req: Request):
             "usage": {"prompt_tokens": 1, "total_tokens": 1}}
 
 
+MODERATION_CATEGORIES = ("harassment", "harassment/threatening", "hate", "hate/threatening",
+                         "illicit", "illicit/violent", "self-harm", "self-harm/instructions",
+                         "self-harm/intent", "sexual", "sexual/minors", "violence",
+                         "violence/graphic")
+
+
+@app.post("/v1/moderations")
+async def moderations(req: Request):
+    body = await req.json()
+    items = body["input"] if isinstance(body["input"], list) else [body["input"]]
+    result = {"flagged": False, "categories": dict.fromkeys(MODERATION_CATEGORIES, False),
+              "category_scores": dict.fromkeys(MODERATION_CATEGORIES, 0.0),
+              "category_applied_input_types": {c: ["text"] for c in MODERATION_CATEGORIES}}
+    return {"id": "modr-e2e", "model": body.get("model"), "results": [result for _ in items]}
+
+
 def text_of(message):
     content = message.get("content") or ""
     return content if isinstance(content, str) else " ".join(p.get("text", "") for p in content)
@@ -116,7 +133,8 @@ def reply_for(body):
     if first.startswith("You are an intent classifier"):
         question = first.split('Question: "', 1)[1].split('"', 1)[0]
         return "BLOCK" if "earn" in question.lower() else "ALLOW"
-    if first.startswith(("You detect prompt-injection", "You check whether text reveals")):
+    if first.startswith(("You detect prompt-injection", "You check whether text reveals",
+                         "You check whether a message")):
         return "ALLOW"
     if first.startswith("Rewrite the user's last question"):
         return first.rsplit("Last question: ", 1)[1].split("\n\n", 1)[0]

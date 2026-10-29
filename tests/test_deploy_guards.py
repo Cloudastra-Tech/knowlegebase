@@ -3,8 +3,8 @@ Deploy-time safety settings: the toxicity guard's state in /api/health, the
 REQUIRE_TOXICITY_GUARD startup check, and the Dockerfile's default
 FORWARDED_ALLOW_IPS run through uvicorn's real proxy-headers middleware.
 
-There is no toxicity check (the Guardrails Hub validator was removed, safety.py);
-tests flip safety.toxicity_guard_active to stand for a build with or without one.
+The toxicity check is on unless TOXICITY_GUARD=off (safety.py); tests/conftest.py
+turns it off, so these set it either way.
 """
 
 import asyncio
@@ -33,35 +33,31 @@ def _client(api):
     return TestClient(api.app)
 
 
-@pytest.mark.parametrize("active, shown", [(False, "missing"), (True, "active")])
-def test_health_reports_the_toxicity_guard(api, monkeypatch, active, shown):
-    import safety
-    monkeypatch.setattr(safety, "toxicity_guard_active", active)
+@pytest.mark.parametrize("setting, shown", [("off", "off"), ("on", "active")])
+def test_health_reports_the_toxicity_guard(api, monkeypatch, setting, shown):
+    monkeypatch.setenv("TOXICITY_GUARD", setting)
     r = _client(api).get("/api/health")
     assert r.status_code == 200
     assert r.json()["guards"] == {"toxicity": shown, "toxicity_required": False}
     assert r.json()["ok"] is True
 
 
-def test_missing_guard_still_starts_by_default(api, monkeypatch):
-    import safety
-    monkeypatch.setattr(safety, "toxicity_guard_active", False)
+def test_guard_turned_off_still_starts_by_default(api, monkeypatch):
+    monkeypatch.setenv("TOXICITY_GUARD", "off")
     with _client(api) as client:
-        assert client.get("/api/health").json()["guards"]["toxicity"] == "missing"
+        assert client.get("/api/health").json()["guards"]["toxicity"] == "off"
 
 
-def test_required_guard_refuses_to_start_without_it(api, monkeypatch):
-    import safety
-    monkeypatch.setattr(safety, "toxicity_guard_active", False)
+def test_required_guard_refuses_to_start_turned_off(api, monkeypatch):
+    monkeypatch.setenv("TOXICITY_GUARD", "off")
     monkeypatch.setenv("REQUIRE_TOXICITY_GUARD", "1")
     with pytest.raises(RuntimeError, match="REQUIRE_TOXICITY_GUARD"):
         with _client(api):
             pass
 
 
-def test_required_guard_starts_when_installed(api, monkeypatch):
-    import safety
-    monkeypatch.setattr(safety, "toxicity_guard_active", True)
+def test_required_guard_starts_when_on(api, monkeypatch):
+    monkeypatch.setenv("TOXICITY_GUARD", "on")
     monkeypatch.setenv("REQUIRE_TOXICITY_GUARD", "1")
     with _client(api) as client:
         assert client.get("/api/health").json()["guards"] == {"toxicity": "active",

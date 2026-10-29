@@ -142,12 +142,11 @@ def test_a_fresh_install_without_secrets_or_key_is_ready(server, monkeypatch):
 
 @pytest.mark.parametrize("active, required, status, check", [
     (False, False, 200, None),       # reported under "guards", not a failed check
-    (False, True, 503, "REQUIRE_TOXICITY_GUARD is set but the toxicity guard is not installed"),
+    (False, True, 503, "REQUIRE_TOXICITY_GUARD is set but the toxicity guard is off"),
     (True, True, 200, "ok"),
 ])
 def test_readiness_reports_the_toxicity_guard(server, monkeypatch, active, required, status, check):
-    import safety
-    monkeypatch.setattr(safety, "toxicity_guard_active", active)
+    monkeypatch.setenv("TOXICITY_GUARD", "on" if active else "off")
     if required:
         monkeypatch.setenv("REQUIRE_TOXICITY_GUARD", "1")
     else:
@@ -155,5 +154,5 @@ def test_readiness_reports_the_toxicity_guard(server, monkeypatch, active, requi
     got, body = ready(server)
     assert got == status
     assert body["checks"].get("toxicity_guard") == check
-    assert body["guards"] == {"toxicity": "active" if active else "missing",
+    assert body["guards"] == {"toxicity": "active" if active else "off",
                               "toxicity_required": required}

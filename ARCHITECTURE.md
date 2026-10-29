@@ -130,8 +130,9 @@ LAYER 1 — PERMISSION FILTER   "the wall"
    → The model can't leak what it never received.
 
 LAYER 2 — GUARDRAILS          "the backup net"
-   • Generic checks (too long)          → apply to EVERYONE
-     (no toxicity check: it was the Guardrails Hub validator, removed; deploy.md step 4)
+   • Generic checks (too long, abusive) → apply to EVERYONE
+     (abuse: OpenAI moderation + a fast-model second opinion, or the fast model
+      alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4)
    • Salary checks (input + output)      → apply to PUBLIC only (HR skips them)
    • If a leak slips through             → REASK rewrites it cleanly
 ```

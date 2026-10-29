@@ -59,16 +59,36 @@ nano .env    # paste the real OPENAI_API_KEY (and Outline values if used)
 docker compose up -d --build
 ```
 
-No build secret or token is needed. **Toxicity check:** there is none. It was the
-Guardrails Hub `toxic_language` validator, and the Guardrails Hub is gone
-(`hub.api.guardrailsai.com` no longer resolves), so Guardrails AI was removed in
-2026-10 (`safety.py`). The other checks are unchanged: the question length limit,
-the staff-pay rules, the prompt-injection filter and PII redaction.
-`/api/health` says `"guards": {"toxicity": "missing", …}` and the app logs
-`No toxicity check is installed` at ERROR level when it starts. Leave
-`REQUIRE_TOXICITY_GUARD` unset: with `REQUIRE_TOXICITY_GUARD=1` the server refuses
-to start (and `restart: unless-stopped` keeps retrying, visible in
-`docker compose ps` and the logs), since no toxicity check exists.
+No build secret or token is needed. **Toxicity check:** every question is checked
+for abuse, harassment, hate, threats, sexual content involving minors and
+self-harm encouragement, for everyone (HR and admins too), and refused with
+"Sorry, I can't help with that request." It needs no setting, download or token
+(`safety.py`; it replaces the Guardrails Hub `toxic_language` validator, gone
+with the Hub in 2026-10):
+
+- A workspace whose text goes to OpenAI already (its chat, answer or embedding
+  provider is OpenAI) is checked with OpenAI's moderation endpoint
+  (`omni-moderation-latest`, free of charge), with its own OpenAI key, else the
+  server's `OPENAI_API_KEY`. What it flags gets a second opinion from the
+  workspace's fast model, so a name, a swear word quoted from a document or an HR
+  complaint about harassment isn't refused.
+- Any other workspace (Bedrock, Anthropic with local embeddings, or no OpenAI key)
+  is checked by its own fast model alone: one short call per question. Its text is
+  never sent to OpenAI for this.
+- **It fails open.** If the moderation endpoint can't be reached, the fast model
+  decides; if that fails too, the question goes through and the log says
+  `The toxicity check failed`. The injection filter and the access rules still
+  apply. (A question moderation flagged is refused when the fast model can't give
+  its second opinion.) Nothing is called when the server starts, so an OpenAI
+  outage never stops it starting.
+
+| Setting | Effect |
+|---|---|
+| `TOXICITY_GUARD=off` | No toxicity check, for every workspace. `/api/health` says `"guards": {"toxicity": "off", …}` and the app logs `TOXICITY_GUARD=off` at WARNING when it starts. Default: on (`"toxicity": "active"`). |
+| `REQUIRE_TOXICITY_GUARD=1` | Refuse to start with `TOXICITY_GUARD=off` (and `restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the logs), so the check can't be turned off by mistake. `/api/health/ready` checks it too. |
+
+The other checks are unchanged: the question length limit, the staff-pay rules,
+the prompt-injection filter and PII redaction.
 
 **Upgrading a server that used the Guardrails Hub token** (its `.env` has
 `COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml`, and the folder has
@@ -83,8 +103,9 @@ rm -f guardrails_token.secret
 ```
 
 `docker-compose.guardrails.yml` can be deleted from the repo once no server's
-`.env` names it. If `.env` sets `REQUIRE_TOXICITY_GUARD=1`, remove it before
-deploying, or the new version won't start and the deploy goes back.
+`.env` names it. `REQUIRE_TOXICITY_GUARD=1` can stay in `.env` from the version
+with the moderation check on; only the versions between the Guardrails removal
+and it (no toxicity check at all) refuse to start with it.
 
 A server that still has the even older hand-applied patch (local changes to
 `Dockerfile`, `docker-compose.yml` and `.gitignore` for `gr_token`) drops it first,
@@ -198,7 +219,7 @@ sudo ufw allow 8501/tcp     # skip if your cloud uses security-groups instead
 
 ```bash
 docker compose ps           # STATUS should show "Up"
-curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "missing": there is no toxicity check (step 4)
+curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "active" unless TOXICITY_GUARD=off (step 4)
 ```
 
 Open **`http://<SERVER_IP>:8501`** in a browser.
@@ -1258,20 +1279,19 @@ It should answer 2xx quickly; anything else is retried for 24 hours, and
 - `GET /api/health` — the process is up. Always 200 while it runs; the Docker
   `HEALTHCHECK` uses it. Don't point anything that restarts the container at a
   deeper check: a restart fixes none of what it finds. Its `guards` field says
-  whether the toxicity check is running: `"toxicity": "missing"`, since there is
-  none (step 4).
+  whether the toxicity check is running: `"toxicity": "active"`, or `"off"` with
+  `TOXICITY_GUARD=off` (step 4).
 - `GET /api/health/ready` — the server can actually serve: `config/app.db` opens and
   answers a query, the Chroma index opens, and the encryption key loads **and
   decrypts a stored secret** (a changed `INTEGRATIONS_KEY` otherwise breaks every SSO
   provider and integration silently). With `REQUIRE_TOXICITY_GUARD=1` it also
-  checks a toxicity guard is loaded (`toxicity_guard`), which fails since none
-  exists; without it, the missing guard is only reported under `guards`. 503 with
-  the failing check otherwise:
+  checks the toxicity check is on (`toxicity_guard`); without it, one turned off is
+  only reported under `guards`. 503 with the failing check otherwise:
 
   ```json
   {"ok": false, "checks": {"database": "ok", "search_index": "ok",
    "integrations_key": "the encryption key doesn't decrypt the stored secrets"},
-   "guards": {"toxicity": "missing", "toxicity_required": false}}
+   "guards": {"toxicity": "active", "toxicity_required": false}}
   ```
 
   Point an external uptime monitor (Better Stack, UptimeRobot, Uptime Kuma on
@@ -2152,11 +2172,17 @@ commit them from the server or copy them back if you want them in the repo.
   Never `*`: it trusts the header from anyone. With nginx on the same host, also
   consider publishing the port on loopback only (`"127.0.0.1:8501:8501"`) so
   nothing can bypass nginx.
-- **`/api/health` shows `"toxicity": "missing"`** — expected: there is no toxicity
-  check since the Guardrails Hub validator was removed (step 4). With
-  `REQUIRE_TOXICITY_GUARD=1` the container instead keeps restarting and its log
-  ends with `REQUIRE_TOXICITY_GUARD is set but this build has no toxicity check`:
-  remove that line from `.env`.
+- **`/api/health` shows `"toxicity": "off"`** — `.env` sets `TOXICITY_GUARD=off`
+  (step 4); remove it to turn the check back on. With `REQUIRE_TOXICITY_GUARD=1`
+  as well, the container keeps restarting and its log ends with
+  `REQUIRE_TOXICITY_GUARD is set but TOXICITY_GUARD=off turns the toxicity check
+  off`: remove one of the two. (`"toxicity": "missing"` is a version from before
+  the moderation check, which had none.)
+- **`The moderation endpoint failed` in the logs** — OpenAI's moderation endpoint
+  couldn't be reached or refused the key; the workspace's fast model checked the
+  question instead (step 4). **`The toxicity check failed`** — that failed too, so
+  the question went through unchecked for abuse (it fails open). The same provider
+  error usually shows up in chat; fix the key or the provider, no restart needed.
 - **Someone is locked out after "Require single sign-on" was turned on** — only
   admins keep passwords. If the provider itself is broken, sign in as an admin
   with a password and turn it off under **Access → Sign-in**, or run

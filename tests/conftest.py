@@ -29,6 +29,10 @@ os.environ["REINDEX_ON_SETTINGS_CHANGE"] = "off"
 # No model calls for a chat's title or its follow-ups (kb/services/suggestions.py):
 # the question's own words, and follow-ups from the cited passages' headings.
 os.environ.update(CHAT_AUTO_TITLE="off", CHAT_FOLLOWUPS="headings")
+# The toxicity check (safety.py) would put a moderation call, or one more prompt
+# to the fake FAST model, in front of every question; tests/test_safety.py and the
+# health tests turn it on for themselves.
+os.environ["TOXICITY_GUARD"] = "off"
 os.environ.update(APP_DB=os.path.join(_tmp, "app.db"),
                   USERS_FILE=os.path.join(_tmp, "users.json"),
                   SSO_CONFIG=os.path.join(_tmp, "sso.json"))
@@ -163,13 +167,16 @@ def no_data_keys_kept_between_tests():
 def no_provider_model_lists(monkeypatch):
     """Test connection lists a provider's models over the network (models.LISTS).
     No test reaches a real provider: the SDK clients raise unless a test puts its
-    own stand-in in their place (tests/test_model_choice.py)."""
+    own stand-in in their place (tests/test_model_choice.py). The same for the
+    toxicity check's moderation calls (safety._moderation_client)."""
     import models
+    import safety
 
     def offline(key=None):
         raise AssertionError("A test tried to reach a model provider's API.")
     monkeypatch.setattr(models, "_openai_client", offline)
     monkeypatch.setattr(models, "_anthropic_client", offline)
+    monkeypatch.setattr(safety, "_moderation_client", offline)
 
 
 @pytest.fixture
