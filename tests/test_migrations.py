@@ -299,9 +299,11 @@ def test_the_alembic_command_line_upgrades_the_same_way(tmp_path, monkeypatch):
     _load(path, FIXTURES[0].read_text())
     monkeypatch.setattr(db, "DB_PATH", path)
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    command.current(config)                      # looking doesn't adopt it
+    with db.alembic_lock:
+        command.current(config)                      # looking doesn't adopt it
     assert tables(path) == {"sessions", "integrations"}
-    command.upgrade(config, "head")
+    with db.alembic_lock:
+        command.upgrade(config, "head")
     assert version(path) == [HEAD] and "members" in tables(path)
     assert rows(path)["sessions"][1]["workspace"] == "acme"
 
@@ -315,7 +317,8 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
     path = str(tmp_path / "app.db")
     monkeypatch.setattr(db, "DB_PATH", path)
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    command.upgrade(config, "0013")
+    with db.alembic_lock:
+        command.upgrade(config, "0013")
     log_row = ("INSERT INTO question_log (workspace, at, day, user, surface, message_id, "
                "text_mode, question, outcome) VALUES ('w', ?, 'd', 'u', ?, ?, 'full', ?, "
                "'answered')")
@@ -328,7 +331,8 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(log_row, (2, "teams", None, None))
     conn.close()
-    command.upgrade(config, "0015")
+    with db.alembic_lock:
+        command.upgrade(config, "0015")
     with sqlite3.connect(path) as conn:
         for surface in ("teams", "extension", "email"):
             conn.execute(log_row, (2, surface, None, None))

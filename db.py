@@ -54,6 +54,10 @@ RLS = os.getenv("DB_RLS", "on").strip().lower() not in ("off", "0", "false", "no
 log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _migrated = set()                  # databases brought up to date, this process
+# Alembic keeps its `context` and `op` in module globals, so two Alembic commands at
+# once in one process (a job's first connect() on its database while a test or a
+# tool upgrades another) clobber each other's. Every one of them runs under this.
+alembic_lock = threading.RLock()
 # The current request's / job's tenant: a one-item list, shared by the threads
 # its work runs in (a copied context keeps the same list), so a dependency that
 # runs in a worker thread can still name the workspace for the endpoint.
@@ -173,7 +177,7 @@ def migrate(path=None, url=None):
         use_wal(path)
     config = Config()
     config.set_main_option("script_location", MIGRATIONS)
-    with engine(path, url).begin() as connection:
+    with alembic_lock, engine(path, url).begin() as connection:
         config.attributes["connection"] = connection
         command.upgrade(config, "head")
     if url:
