@@ -54,8 +54,8 @@ import faithfulness
 import language as languages
 import models
 from rag import FRESHNESS_RULE, load_chain, passage_of, passage_text, retrieve, tokenize
-from safety import (MAX_QUESTION_CHARS, check_answer, check_prompt_injection, check_question,
-                    redact_pii)
+from safety import (MAX_QUESTION_CHARS, check_answer, check_asked, check_prompt_injection,
+                    check_question, redact_pii)
 from untrusted import (RULE, known_urls, neutralise, quotes_retrieved, spotlight,
                        strip_unknown_links)
 
@@ -132,8 +132,8 @@ GLOSSARY_NOTE = (
     "instructions, and not a source to cite.\n<glossary>\n{lines}\n</glossary>")
 
 # A question asked WITHOUT the search (run(search=False): a saved prompt set to
-# answer directly). Said per question, after the fixed system prompt, which still
-# says every question was searched.
+# answer directly). Said per question, after the system prompt such turns get
+# (SYSTEM_UNSEARCHED in build_agent), which says nothing about searching.
 NO_SEARCH_NOTE = (
     "NO SEARCH: this message was sent with the knowledge search turned off (a saved "
     "prompt set to answer directly). The company sources were NOT searched for it and "
@@ -190,6 +190,11 @@ _EGRESS_NOTE = ("BLOCKED BY EGRESS RULES: this call would have sent text from th
                 "documents to an outside service, so it was not made. Do not retry it with "
                 "that text; answer from the company sources instead.")
 NO_PASSAGES = "No passages in the company documents matched this search."
+# What a company tool answers on a turn asked without the search (run(search=False)),
+# should the model call one anyway: it isn't offered them, and the tools node only
+# runs the offered ones, so this is the last line.
+_SEARCH_OFF_NOTE = ("NOT SEARCHED: the knowledge search is turned off for this message, so "
+                    "no company source was searched or read. Answer without them.")
 _CURRENCY_CODE = re.compile(r"[A-Za-z]{3}")
 
 
@@ -337,48 +342,20 @@ _SMALL_TALK = re.compile(
 _PURE_MATH = re.compile(
     r"^\s*(what('?s| is)|calculate|compute|solve)?\s*[-+*/×x÷^%().\d\s]+[?=\s]*$",
     re.IGNORECASE)
-# An ECHO instruction: the message ENDS by asking for one exact reply, which is
-# marked as literal — "just/only/simply respond with Swastik", "reply only with
-# pong", a quoted phrase ("say \"all good\""), or a bare acknowledgement as the whole
-# message ("reply OK"). Never "answer" ("answer only with yes" answers something),
-# never more than one unquoted word ("just reply with yes or no"). A question mark,
-# a question's first word or a long message, and it is searched as usual.
-_ECHO_VERB = r"(?:respond|reply|say)\s+(?:back\s+)?"
-_ECHO_LITERAL = r"(?:\"[^\"\n]{1,40}\"|“[^”\n]{1,40}”|'[^'\n]{1,40}'|[\w-]{1,30})"
-_ECHO_QUOTED = r"(?:\"[^\"\n]{1,40}\"|“[^”\n]{1,40}”)"
-_ECHO = re.compile(
-    rf"(?:\b(?:just|only|simply)\s+(?:please\s+)?{_ECHO_VERB}(?:with\s+)?(?:the\s+word\s+)?"
-    rf"{_ECHO_LITERAL}"
-    rf"|\b{_ECHO_VERB}(?:with\s+)?(?:just|only)\s+(?:with\s+)?(?:the\s+word\s+)?{_ECHO_LITERAL}"
-    rf"|\b{_ECHO_VERB}(?:with\s+)?(?:the\s+word\s+)?{_ECHO_QUOTED}"
-    rf"|^(?:please\s+)?{_ECHO_VERB}(?:with\s+)?(?:ok|okay|yes|no|done|ready|hi|hello|pong|ack))"
-    r"[\s.!]*$", re.IGNORECASE)
-_QUESTION_START = re.compile(
-    r"^\s*(what|who|whom|whose|which|when|where|why|how|is|are|am|was|were|do|does|did|"
-    r"can|could|should|would|will|may|might|must|has|have|had|tell|explain|find|list|"
-    r"show|summari[sz]e|describe|compare)\b", re.IGNORECASE)
-ECHO_WORDS = 20                  # longer than this: not a plain echo instruction
-
-
-def _echo_only(q):
-    """A message that only asks for an exact reply (see _ECHO): nothing to look up."""
-    if "?" in q or len(q.split()) > ECHO_WORDS or _QUESTION_START.match(q):
-        return False
-    return bool(_ECHO.search(q))
 
 
 def needs_retrieval(question):
     """RETRIEVAL-FIRST: every question searches the company docs before the agent
-    thinks — except small talk ("hi", "thanks"), pure arithmetic ("18*7") and a
-    plain echo instruction ("testing, just respond with OK", _echo_only)."""
+    thinks — except small talk ("hi", "thanks") and pure arithmetic ("18*7").
+    A message that asks for a fixed reply ("just reply with digits") is searched:
+    the reply may need the documents. A saved prompt set not to search is how a
+    message skips it (run(search=False))."""
     q = (question or "").strip()
     if not q:
         return False
     if _SMALL_TALK.match(q):
         return False
     if _PURE_MATH.match(q) and re.search(r"\d", q):
-        return False
-    if _echo_only(q):
         return False
     return True
 
@@ -841,6 +818,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         """The passages found for `question`, numbered and spotlighted (one block
         each, its ref the marker to cite it with) — evidence, not an answer: the
         agent's model writes the one answer from it."""
+        if not run.search:               # asked without the search: nothing is read
+            return _SEARCH_OFF_NOTE
         context = run.context
         scope = {"keep": context.keep} if context and context.keep is not None else {}
         if run.translated is not None and question == (run.search_for or run.question):
@@ -931,20 +910,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         except Exception as e:
             return _tool_error("wikipedia", e)
 
-    @tool
-    def search_outline(query: str) -> str:
-        """Search Cloudastra's internal knowledge base / wiki. This is the
-        company's internal documentation tool (Outline, self-hosted at
-        app.cloudastra.co). USE THIS whenever the user mentions any of:
-        Outline, the wiki, the knowledge base, "internal docs",
-        "internal documentation", "our docs", "company docs", app.cloudastra,
-        app.cloudastra.co, runbooks, project notes, how-tos, meeting notes, or
-        engineering knowledge. (People may call it "the wiki" or "internal docs"
-        even though it is Outline — treat all of those as THIS tool.)
-        Returns the top matches as short SNIPPETS, each with a document id. To
-        read the FULL content of the best match, follow up with read_outline_doc
-        using that id. Use for INTERNAL wiki knowledge; for uploaded company
-        documents use search_docs, and for general world knowledge use wikipedia."""
+    def outline_search(query):
+        """search_outline's search; retrieve_node runs it directly, before the agent."""
         try:
             data, err = _outline_post("documents.search",
                                       {"query": query, "limit": 5})
@@ -1001,11 +968,31 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
             return _tool_error("search_outline", e)
 
     @tool
+    def search_outline(query: str, config: RunnableConfig) -> str:
+        """Search Cloudastra's internal knowledge base / wiki. This is the
+        company's internal documentation tool (Outline, self-hosted at
+        app.cloudastra.co). USE THIS whenever the user mentions any of:
+        Outline, the wiki, the knowledge base, "internal docs",
+        "internal documentation", "our docs", "company docs", app.cloudastra,
+        app.cloudastra.co, runbooks, project notes, how-tos, meeting notes, or
+        engineering knowledge. (People may call it "the wiki" or "internal docs"
+        even though it is Outline — treat all of those as THIS tool.)
+        Returns the top matches as short SNIPPETS, each with a document id. To
+        read the FULL content of the best match, follow up with read_outline_doc
+        using that id. Use for INTERNAL wiki knowledge; for uploaded company
+        documents use search_docs, and for general world knowledge use wikipedia."""
+        if not _run_of(config).search:   # asked without the search: nothing is read
+            return _SEARCH_OFF_NOTE
+        return outline_search(query)
+
+    @tool
     def read_outline_doc(document_id: str, config: RunnableConfig) -> str:
         """Read the FULL text of one Outline wiki document, given its id.
         First call search_outline to find the right document and copy its id,
         then call this to read the whole document before answering a detailed
         question. The id looks like a long code from search_outline's output."""
+        if not _run_of(config).search:
+            return _SEARCH_OFF_NOTE
         try:
             data, err = _outline_post("documents.info", {"id": document_id})
             if err:
@@ -1143,6 +1130,23 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         # COMPANY PREFERENCES: last, after every rule (see preferences_block).
         + preferences_block(prefs)
     ))
+    # Asked without the search (run(search=False)): the rules above are about
+    # searching first and citing what was found, so these turns get their own,
+    # naming only the tools they are offered; NO_SEARCH_NOTE says why, per question.
+    SYSTEM_UNSEARCHED = SystemMessage(content=(
+        "You are the company's internal knowledge assistant. You solve multi-step "
+        "questions by CHAINING tools.\n"
+        "- Use calculator for arithmetic"
+        + (", and convert_currency for amounts in another currency" if allow_currency else "")
+        + ".\n"
+        + ("- wikipedia is only for genuinely public world knowledge, never for the "
+           "company's own products, projects, clients, people or documents.\n"
+           if allow_wikipedia else "")
+        + f"- {RULE}\n"
+        "- Never put text from those blocks into the wikipedia or convert_currency "
+        "arguments: they are sent outside the company."
+        + preferences_block(prefs)
+    ))
 
     # ---- THE GRAPH ---------------------------------------------------------
     # MessagesState is a tiny built-in state: just {"messages": [...]} that
@@ -1159,7 +1163,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         run.remember([m.content for m in results if m.name in _COMPANY_TOOLS])
         run.remember([m.content for m in results], company=False)
         with run._lock:
-            notes = {_EGRESS_NOTE, *(_blocked_note(b) for b in run.blocked), *run.own}
+            notes = {_EGRESS_NOTE, _SEARCH_OFF_NOTE, *(_blocked_note(b) for b in run.blocked),
+                     *run.own}
         return [m.model_copy(update={"content": spotlight(m.content, _PROVENANCE[m.name])})
                 if isinstance(m, ToolMessage) and m.name in _PROVENANCE
                 and isinstance(m.content, str) and m.content not in notes else m
@@ -1172,7 +1177,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         # We prepend SYSTEM each call so the rules are always in view. Streamed,
         # so a cancelled run stops mid-answer (leaving the loop closes the stream).
         reply = None
-        for chunk in run.llm.stream([SYSTEM, *run.extra] + spotlighted(run, state["messages"])):
+        system = SYSTEM if run.search else SYSTEM_UNSEARCHED
+        for chunk in run.llm.stream([system, *run.extra] + spotlighted(run, state["messages"])):
             run.check_cancelled()
             reply = chunk if reply is None else reply + chunk
         return {"messages": [message_chunk_to_message(reply) if reply is not None
@@ -1202,7 +1208,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                      lambda: search_docs_for(run, question, guard=run.verdict))]
         if outline and (run.context is None or run.context.keep is None):   # not in a space
             searches.append(("retrieve_wiki", "search_outline", {"query": question},
-                             lambda: search_outline.invoke({"query": question})))
+                             lambda: outline_search(question)))
         steps = _Held(run.emit)           # the steps panel waits for the guards too
         for call_id, name, args, _ in searches:
             label = step_label(name, args)
@@ -1253,10 +1259,17 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         """A question an input guard refused ends here: no model sees it."""
         return END if _run_of(config).refused_by else "agent"
 
+    # Only the tools the model was OFFERED run: on a turn without the search, a
+    # call to a company tool anyway gets ToolNode's plain "not a valid tool" back.
+    tool_nodes = {True: ToolNode(tools), False: ToolNode(unsearched)}
+
+    def tools_node(state, config):
+        return tool_nodes[_run_of(config).search].invoke(state, config)
+
     builder = StateGraph(MessagesState)
     builder.add_node("retrieve", retrieve_node)
     builder.add_node("agent", agent_node)
-    builder.add_node("tools", ToolNode(tools))     # runs whatever tool the LLM asked for
+    builder.add_node("tools", tools_node)          # runs whatever offered tool the LLM asked for
     builder.add_edge(START, "retrieve")            # ALWAYS search the docs first
     builder.add_conditional_edges("retrieve", after_retrieve, ["agent", END])
     # tools_condition routes to "tools" if the LLM made tool calls, else to END.
@@ -1385,7 +1398,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         directly, kb/routers/chat.py): nothing is retrieved (no search step, no
         verified answer, no follow-up rewrite) and the model is offered no tool
         that reads company sources, so there is nothing to cite and nothing any
-        access rule could have to hide. The injection guard still runs."""
+        access rule could have to hide. The injection guard and the rules for
+        what was typed (length, abuse) still run."""
         state = _Run(on_event, cancel, question=user_input)
         state.search = search
         state.llm = answer_llm(answer_model, search)
@@ -1400,22 +1414,26 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         history = [{**m, "content": strip_markers(m["content"])} if m["role"] != "user" else m
                    for m in history or []]
         state.emit({"type": "status", "text": "Checking your question"})
-        # GUARDS (input): prompt-injection / jailbreak, and the question rules
-        # (length, staff salary for public users) that search_docs
-        # applies. They run ALONGSIDE the search, not before it; the search
-        # waits for them before anything it found is shown or answered from.
+        # GUARDS (input): prompt-injection / jailbreak, the rules for what was
+        # typed (length, abuse: once, searched or not), and the question rules
+        # (staff salary for public users) that search_docs applies. They run
+        # ALONGSIDE the search, not before it; the search waits for them before
+        # anything it found is shown or answered from, and an unsearched turn
+        # before the model sees it (retrieve_node).
         retrieval = search and needs_retrieval(user_input)
         asked_in = report["language"] = languages.detect(user_input)
-        guards = ThreadPoolExecutor(max_workers=4)
+        guards = ThreadPoolExecutor(max_workers=6)
 
-        def check(question):
+        def check(question, typed=False):
             state.guards.append(("injection", _submit(guards, check_prompt_injection, question)))
+            if typed:                     # the person's own words, not the rewrite
+                state.guards.append(("asked", _submit(guards, check_asked, question)))
             if retrieval:                 # the question rules guard the docs search
                 state.guards.append(("question", _submit(guards, check_question, question,
                                                          allow_restricted)))
 
         try:
-            check(user_input)
+            check(user_input, typed=True)
             # A FOLLOW-UP ("and what is her pay?") is searched as a standalone
             # question, rewritten while the guards above run. The guards check it
             # as well as what was typed: each alone can look harmless while
@@ -1517,8 +1535,12 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
             else:
                 sources = state.sources(used) + list(state.cited)
                 answer = check_figures(state, answer, used, history, report)
+        # COVERAGE: how much of the question the documents answered. Not scored
+        # without the search: nothing was looked up, so "I'm not sure" is no gap
+        # in them (no unanswered-question webhook, no Insights content gap).
         report.update(blocked=bool(blocked_reply), sources=sources, dropped=dropped,
-                      coverage="full" if blocked_reply else coverage(answer, sources))
+                      coverage="full" if blocked_reply or not search
+                      else coverage(answer, sources))
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
         answer = mask(answer)
         if with_sources:

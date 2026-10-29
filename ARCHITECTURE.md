@@ -130,7 +130,8 @@ LAYER 1 — PERMISSION FILTER   "the wall"
    → The model can't leak what it never received.
 
 LAYER 2 — GUARDRAILS          "the backup net"
-   • Generic checks (too long, abusive) → apply to EVERYONE
+   • Generic checks (too long, abusive) → apply to EVERYONE, once per question
+     as typed, searched or not (not per search query or follow-up rewrite)
      (abuse: OpenAI moderation + a fast-model second opinion, or the fast model
       alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4)
    • Salary checks (input + output)      → apply to PUBLIC only (HR skips them)

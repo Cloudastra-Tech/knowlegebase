@@ -27,7 +27,8 @@ READ_MAX_CHARS = 60_000
 
 
 class Refused(Exception):
-    """The question rules refused the query (safety.check_question): the message says why."""
+    """The question rules refused the query (safety.check_asked, check_question): the
+    message says why."""
 
 
 def search(ws, who, query, k=5):
@@ -41,7 +42,11 @@ def search(ws, who, query, k=5):
 
 def _search(ws, who, query, k):
     viewer = access.of(who)
-    ok, reason = safety.check_question(query, safety.may_see_restricted(viewer))
+    # The query is what someone typed: the rules for that (length, abuse), then
+    # the search's own (staff pay), as a chat question gets.
+    ok, reason = safety.check_asked(query)
+    if ok:
+        ok, reason = safety.check_question(query, safety.may_see_restricted(viewer))
     if not ok:
         raise Refused(reason)
     k = max(1, min(MAX_K, int(k)))

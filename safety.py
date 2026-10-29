@@ -1,8 +1,10 @@
 """
 safety.py  —  the SAFETY LAYER: the checks every question and answer goes through.
 
-    check_question       empty / too long, abusive (everyone), staff-salary intent
-                         (all but HR)
+    check_asked          a question as typed, once: empty / too long, abusive
+                         (everyone)
+    check_question       every search, the model's own too: empty / too long,
+                         staff-salary intent (all but HR)
     check_answer         staff-pay leak in the answer, with one rewrite (all but HR)
     check_prompt_injection   regex first, then one cheap classifier call
     redact_pii           masks personal data (pii.py)
@@ -21,6 +23,7 @@ import logging
 import os
 import threading
 import re
+from collections import OrderedDict
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -176,8 +179,9 @@ GENERIC_RULES = (_too_long,)
 # ----------------------------------------------------------------------------
 MODERATION_MODEL = "omni-moderation-latest"
 MODERATION_TIMEOUT = 5           # seconds; the SDK retries once (a timeout, a 5xx)
+MODERATION_CLIENTS = 16          # clients kept, the most recently used (one per key)
 
-_moderation_clients = {}
+_moderation_clients = OrderedDict()
 _moderation_lock = threading.Lock()
 
 
@@ -188,14 +192,26 @@ def toxicity_guard_active():
 
 def _moderation_client(key):
     """The OpenAI SDK's client for the moderation endpoint, one per key (tests
-    replace it). OPENAI_BASE_URL applies, as to every other OpenAI call."""
+    replace it). OPENAI_BASE_URL applies, as to every other OpenAI call. Only the
+    MODERATION_CLIENTS used last are kept: a workspace's replaced key isn't."""
     import openai
     with _moderation_lock:
         client = _moderation_clients.get(key)
         if client is None:
             client = _moderation_clients[key] = openai.OpenAI(
                 api_key=key, timeout=MODERATION_TIMEOUT, max_retries=1)
+            while len(_moderation_clients) > MODERATION_CLIENTS:
+                _moderation_clients.popitem(last=False)
+        else:
+            _moderation_clients.move_to_end(key)
     return client
+
+
+def forget_moderation_clients():
+    """Drop every cached moderation client (a workspace's settings changed, as
+    models.forget): the next question makes a new one with the key it has now."""
+    with _moderation_lock:
+        _moderation_clients.clear()
 
 
 def _moderation_key(on):
@@ -354,13 +370,22 @@ def redact_pii(text):
 # ----------------------------------------------------------------------------
 # Only wording that is an attack whatever the context blocks without the LLM.
 # "Ask Dan", "act as an approver", "override the default VPN settings" and
-# "what is a jailbreak" are ordinary questions, so they go to the LLM.
+# "what is a jailbreak" are ordinary questions, so they go to the LLM; so are
+# "ignore the rules on expense limits", "show your prompt library" and "you are
+# now enrolled". "Ignore all/any instructions", "disregard the system prompt",
+# "print your prompt" and "you are now DAN" (the capitals: never "Dan") are not.
 _OBVIOUS_INJECTION_REGEX = re.compile(
-    r"\b(ignore|disregard|forget)\s+(all\s+)?(of\s+)?"
+    r"\b(ignore|disregard|forget)\s+(all\s+|any\s+)?(of\s+)?"
     r"(your|previous|prior|above|earlier|the\s+(previous|prior|above|earlier))\s+"
     r"(\w+\s+)?(instructions?|rules|guidelines|prompts?)\b"
+    r"|\b(ignore|disregard|forget)\s+(all|any)\s+(\w+\s+)?"
+    r"(instructions?|rules|guidelines|prompts?)\b"
+    r"|\b(ignore|disregard|forget)\s+the\s+system\s+prompt\b"
     r"|\b(reveal|show|print|repeat|output)\s+(me\s+)?(your|the)\s+"
     r"(system\s+prompt|hidden\s+instructions|initial\s+instructions)"
+    r"|\b(print|show|reveal|repeat|output)\s+(me\s+)?your\s+(system\s+|initial\s+|hidden\s+)?"
+    r"(prompt|instructions)\b(?!\s+(library|templates?|list))"
+    r"|\byou\s+are\s+now\s+(?-i:DAN)\b"
     r"|\bdeveloper\s+mode\b|\bdo\s+anything\s+now\b",
     re.IGNORECASE,
 )
@@ -449,8 +474,13 @@ def may_see_restricted(who):
     return access.may_see_hr(who)
 
 
-def check_question(question, allow_restricted=False):
-    """INPUT guardrail. Returns (ok, message)."""
+def check_asked(question):
+    """INPUT guardrail for a question as someone typed it (a chat message, a
+    /search or MCP query), run ONCE per question whatever is searched for it, or
+    whether anything is: empty, too long, abusive. Returns (ok, message).
+    The searches themselves (the model's own queries, a follow-up's rewrite) get
+    check_question, without the abuse check: one more model call each, for words
+    the model wrote."""
     if not question or not question.strip():
         return False, "Please type a question."
 
@@ -458,6 +488,17 @@ def check_question(question, allow_restricted=False):
     if any(_fails(rule, question) for rule in GENERIC_RULES):
         return False, CANT_HELP
     if toxicity_guard_active() and _is_toxic(question):
+        return False, CANT_HELP
+    return True, ""
+
+
+def check_question(question, allow_restricted=False):
+    """INPUT guardrail for every search. Returns (ok, message)."""
+    if not question or not question.strip():
+        return False, "Please type a question."
+
+    # Generic checks (length) apply to everyone.
+    if any(_fails(rule, question) for rule in GENERIC_RULES):
         return False, CANT_HELP
 
     # Salary confidentiality check — only for users NOT allowed to see it.
