@@ -428,3 +428,145 @@ describe("the shared ASCII loop", () => {
     expect(draw).toHaveBeenCalledTimes(held)
   })
 })
+
+// Pacing: the draws are cheap, but the frames come late, as they do when the canvas
+// costs the browser more than the script (no GPU, or a slow one). The governor decides
+// every 30 drawn frames, after 10 to warm up, so these move a window at a time.
+describe("the shared ASCII loop's pacing", () => {
+  function drift(subscribe: Loop["subscribe"], fps = 20) {
+    const times: number[] = []
+    const el = box()
+    const handle = subscribe(el, () => times.push(clock), { still: 0, fps, priority: "ambient" })
+    show(el)
+    // Frames until `n` more are drawn: on time; "late", every fourth 50ms late whatever
+    // the rate; or "weak", a machine that can't keep up past 14 fps: drawing faster than
+    // that, the frame after each draw comes a frame late.
+    const run = (n: number, frames: "on" | "late" | "weak" = "on") => {
+      const target = times.length + n
+      let seen = times.length
+      for (let i = 0; times.length < target && i < 10_000; i++) {
+        const drew = times.length > seen
+        seen = times.length
+        const fast = times.length > 1 && times[times.length - 1] - times[times.length - 2] < 70
+        const late = frames === "late" ? i % 4 === 3 : frames === "weak" && drew && fast
+        step(1, late ? (frames === "late" ? 50 : 2000 / 60) : 1000 / 60)
+      }
+    }
+    // The rate it draws at over the next window.
+    const rate = (frames: "on" | "weak" = "on") => {
+      const from = times.length
+      run(30, frames)
+      return Math.round(29_000 / (times[times.length - 1] - times[from]))
+    }
+    // Windows until it draws at `fps`; how long that took (ms).
+    const until = (fps: number, frames: "on" | "weak" = "on") => {
+      const at = clock
+      while (rate(frames) !== fps && clock - at < 120_000);
+      return clock - at
+    }
+    run(40) // warmed up, and past the page's first seconds
+    return { handle, run, rate, until }
+  }
+
+  it("counts the frames that came late, not those of a slower display", async () => {
+    const { lateShare } = await load()
+    const on = Array.from({ length: 60 }, () => 1000 / 60)
+    expect(lateShare(on.slice(0, 10))).toBeNull() // too few to say
+    expect(lateShare(on)).toBe(0)
+    expect(lateShare(on.map((g, i) => (i % 3 === 2 ? 50 : g)))).toBeCloseTo(1 / 3)
+    expect(lateShare(on.map(() => 1000 / 30))).toBe(0) // a 30 Hz display, or saving power
+    expect(lateShare(on.map((g, i) => (i % 4 ? 1000 / 120 : g)))).toBe(0) // 120 Hz, now and then 60
+  })
+
+  it("steps the art down when frames keep coming late, though its draws are cheap", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    const { subscribe } = await load()
+    const art = drift(subscribe)
+    expect(art.rate()).toBe(20)
+
+    art.run(30, "late")
+    expect(art.rate()).toBe(12)
+    art.run(30, "late")
+    expect(art.rate()).toBe(6)
+    art.run(30, "late")
+    expect(frames.size).toBe(0) // still
+  })
+
+  it("holds the slower rate for a while before trying again, and longer each time", async () => {
+    const { subscribe } = await load()
+    const art = drift(subscribe)
+    // A machine that keeps up at 12 fps and not at 20: 20 comes late, so 12, held 10s
+    // (then a window at 20, 1.5s, which comes late again).
+    expect(art.rate("weak")).toBe(20)
+    let down = clock
+    expect(art.rate("weak")).toBe(12)
+    art.until(20, "weak")
+    expect(clock - down).toBeGreaterThanOrEqual(11_500)
+    expect(clock - down).toBeLessThan(14_500)
+
+    // Late again at 20: 12, held twice as long, not flapping between the two.
+    down = clock
+    expect(art.rate("weak")).toBe(12)
+    art.until(20, "weak")
+    expect(clock - down).toBeGreaterThanOrEqual(21_500)
+    expect(clock - down).toBeLessThan(24_500)
+  })
+
+  it("passes over the 12 fps level for the chat's 12 fps field", async () => {
+    const { subscribe } = await load()
+    const field = drift(subscribe, 12)
+    field.run(30, "late")
+    expect(field.rate()).toBe(6)
+  })
+
+  it("doesn't take a pause, a hidden tab or the app's own long task for lateness", async () => {
+    const { subscribe } = await load()
+    const art = drift(subscribe)
+    for (let s = 0; s < 8; s++) {
+      art.run(15)
+      step(1, s % 2 ? 400 : 120) // the app's long task (120ms), or a stall the loop slept through
+      art.run(15)
+    }
+    setHidden(true)
+    step(1, 5000)
+    setHidden(false)
+    expect(art.rate()).toBe(20)
+    expect(art.rate()).toBe(20)
+  })
+
+  it("doesn't count the page's first seconds", async () => {
+    const { subscribe } = await load()
+    const draw = vi.fn()
+    const el = box()
+    subscribe(el, draw, { still: 0, fps: 20, priority: "ambient" })
+    show(el)
+    for (let i = 0; i < 80; i++) step(1, i % 3 === 2 ? 50 : 1000 / 60) // mounting, the first requests
+    step(240)
+    draw.mockClear()
+    step(120)
+    expect(draw).toHaveBeenCalledTimes(40) // 20 fps
+  })
+
+  it("starts a small device at 12 fps, and tries the full rate once the page has settled", async () => {
+    Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, get: () => 4 })
+    const { subscribe } = await load()
+    const start = clock
+    const art = drift(subscribe)
+    expect(art.rate()).toBe(12)
+    art.until(20)
+    expect(clock - start).toBeGreaterThanOrEqual(10_000)
+    expect(clock - start).toBeLessThan(13_000)
+    Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, get: () => 8 })
+  })
+
+  it("keeps the level for the visit when the art hands over to the field and back", async () => {
+    const { subscribe } = await load()
+    const first = drift(subscribe)
+    first.run(30, "late")
+    first.handle.stop() // the first question sent: the art goes
+    expect(frames.size).toBe(0)
+
+    const next = drift(subscribe) // New chat
+    expect(next.rate()).toBe(12)
+  })
+})

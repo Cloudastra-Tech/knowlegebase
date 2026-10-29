@@ -306,8 +306,17 @@ loading, an animation that blocks a click.
 - **Still frame** with reduced motion or `setEffects("reduced")`, following a change live.
 - **Budget:** the app's pieces (the field, spinners, the thinking line) get 4ms of drawing per
   frame between them. When the 95th percentile of 30 drawn frames is over, the field steps down
-  to 6 fps, then still; under 2ms it steps back up, and a still field tries moving again after
-  10s (doubling, up to 160s, each time it has to stop again). The landing's hero gets 8ms: it is
+  (the drift to 12 fps, then the field and the drift to 6, then still); under 2ms it steps back
+  up, and a still field tries moving again after 10s (doubling, up to 160s, each time it has to
+  stop again). **Pacing:** a draw's cost is only its script; the canvas is rasterised and
+  composited after it, and without a GPU that's most of the work (the drift at DPR 2, no GPU,
+  the CPU slowed 6×: 5% of the main thread in script, 68% busy, one frame in seven late, and
+  the budget never moved). So the field's frames are also timed: when over a tenth of them
+  come late (past 25ms and 1.75× the quickest quarter's gap, so a 30 Hz display is on time),
+  it steps down the same way and holds the slower rate for the same doubling wait before
+  trying the faster one. Pauses (over 250ms), a hidden tab and the first 40 drawn frames
+  don't count. A device with 4 cores or fewer, or 4 GB or less, starts at 12 fps and tries
+  the full rate after 10s. The level lasts the visit. The landing's hero gets 8ms: it is
   alone on its page, and a lower frame rate can't make a draw cheaper. Past 8ms it runs at 20
   fps until draws are under 6ms. A piece's first 10 frames don't count. In development it warns
   once when frames overrun three in a row.
