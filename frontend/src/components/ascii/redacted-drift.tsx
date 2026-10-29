@@ -481,8 +481,10 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
     lens.r = W < PHONE ? LENS_R_SMALL : LENS_R
     cv.width = Math.max(1, Math.round(W * dpr))
     cv.height = Math.max(1, Math.round(H * dpr))
-    cv.style.width = `${W}px`
-    cv.style.height = `${H}px`
+    // Exactly its pixels, so the compositor copies them 1:1 (a box a fraction of a
+    // px off them, as at a zoom or a fractional DPR, would resample the whole art).
+    cv.style.width = `${cv.width / dpr}px`
+    cv.style.height = `${cv.height / dpr}px`
     ctx?.setTransform(dpr, 0, 0, dpr, 0, 0)
     const rel = (n: Element | null): Box | null => {
       if (!n) return null
@@ -533,7 +535,13 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       d.font = `${d.px}px ${s.fontFamily}`
       if (ctx) {
         ctx.font = d.font
-        d.cw = ctx.measureText("0").width || d.cw
+        // A cell is whole device pixels wide (the font's 7.8px advance at 13px is 8 at
+        // DPR 1, 15.6 is 16 at 2). Every tile of a line then starts on a whole pixel,
+        // as the first does (place), and so does every glyph read in it: at a
+        // fraction the tile is resampled and the glyphs are drawn between pixels,
+        // which on a 1x screen smears each mark and letter over the next pixel.
+        const advance = ctx.measureText("0").width
+        if (advance) d.cw = Math.max(1, Math.round(advance * dpr)) / dpr
       }
     }
     // Lines keep their place along the way when they're laid out again. They run the
@@ -555,13 +563,16 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
         // open lays the art out again every frame).
         const was = prev[rank]
         const same = was && was.text === text && was.tileW === tileW && was.d.px === d.px && was.dpr === dpr
-        const spans = lineSpans(
-          W,
-          y,
-          d.px * 0.5 + 8, // and the 8px a line may lean towards the composer
-          Math.abs(y - zone.cy) < zone.b ? { cx: zone.cx, hx: zoneHalfWidth(zone, y) } : null,
-          LENS,
-          covers,
+        const spans = snapSpans(
+          lineSpans(
+            W,
+            y,
+            d.px * 0.5 + 8, // and the 8px a line may lean towards the composer
+            Math.abs(y - zone.cy) < zone.b ? { cx: zone.cx, hx: zoneHalfWidth(zone, y) } : null,
+            LENS,
+            covers,
+          ),
+          dpr,
         )
         return {
           baseY: y,
@@ -607,7 +618,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       } else copies.push({ at: y < top ? "top" : "bottom", w: Math.min(1, inside / half) })
       frost.push({ g, slices: frostSlices(spans, f.box.x, f.box.x + f.box.w, f.sigma), copies })
     })
-    return { sharp, frost }
+    return { sharp: snapSpans(sharp, dpr), frost }
   }
 
   // A canvas under each glass the art frosts, placed over it and shaped as it is.
@@ -930,7 +941,7 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
       const read = LENS_ALPHA[ink.dark ? "dark" : "light"]
       for (const [n, cell] of lensCells) {
         const x = x0 + n * cw - baseAbs
-        c.clearRect(x - 0.5, top, cw + 1, sh)
+        c.clearRect(x, top, cw, sh) // the cell: its mark is inside it
         const ch = ln.text[mod(n, ln.text.length)]
         const scrambling = cell.out >= 0 || now - cell.t < LENS_IN
         const dx = x + cw / 2 - lens.x
@@ -1134,6 +1145,18 @@ function driftScene(el: HTMLElement, cv: HTMLCanvasElement, aura: HTMLElement | 
 }
 
 const mod = (a: number, n: number) => ((a % n) + n) % n
+
+// Spans with their ends on whole device pixels: a stretch is drawn clipped to its ends,
+// and an end between pixels leaves a half-inked column there.
+function snapSpans(spans: [number, number, number][], dpr: number) {
+  const out: [number, number, number][] = []
+  for (const [a, b, k] of spans) {
+    const x0 = Math.round(a * dpr) / dpr
+    const x1 = Math.round(b * dpr) / dpr
+    if (x1 > x0) out.push([x0, x1, k])
+  }
+  return out
+}
 
 // Spans less the stretch [a, b).
 function cut(spans: [number, number, number][], a: number, b: number) {

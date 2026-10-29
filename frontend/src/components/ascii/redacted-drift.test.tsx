@@ -16,6 +16,8 @@ let clears = 0
 let drawn = 0
 let rings = 0
 let fine = true
+let advance = 7 // the font's "0", as measureText gives it
+let tiles: number[] = [] // where line sprites are drawn (x), drawImage at the art's scale
 
 function step(n = 1, ms = 1000 / 60) {
   for (let i = 0; i < n; i++) {
@@ -37,9 +39,11 @@ function fakeContext() {
       clears++
       if (w >= 1000) drawn++ // the whole art: a frame
     },
-    measureText: () => ({ width: 7 }),
+    measureText: () => ({ width: advance }),
     fillRect() {},
-    drawImage() {},
+    drawImage(...args: unknown[]) {
+      if (args.length === 5) tiles.push(args[1] as number) // a line's sprite (the frost's take 9)
+    },
     createImageData: (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
     putImageData() {},
     globalCompositeOperation: "source-over",
@@ -101,6 +105,8 @@ beforeEach(() => {
   drawn = 0
   rings = 0
   fine = true
+  advance = 7
+  tiles = []
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb))
   vi.stubGlobal("cancelAnimationFrame", () => {
     frames = []
@@ -216,6 +222,35 @@ function frame() {
 }
 // The lens's glyphs: readable, but quieter than a decode (and not scrambling).
 const lensGlyphs = (gs: Glyph[]) => gs.filter((g) => g.alpha > 0.25 && g.alpha <= 0.5)
+
+describe("RedactedDrift on whole pixels", () => {
+  // A font's advance is seldom whole (7.8px for a 13px mono "0"). Drawn at a fraction
+  // a tile is resampled and a glyph lands between pixels: on a 1x screen every mark
+  // and letter smears into the next pixel.
+  it.each([1, 2])("draws every tile and every letter it reads on device pixels at DPR %i", (dpr) => {
+    vi.stubGlobal("devicePixelRatio", dpr)
+    advance = 7.8
+    const { container } = render(<Column />)
+    const root = container.firstElementChild as HTMLElement
+    step(10)
+    const y = linesOf(container).find((ly) => ly > 300 && ly < 640)!
+    point(root, "pointerdown", 300, y + 10)
+    point(root, "click", 300, y + 10)
+    step(40) // past the reveal
+    const read = readable(frame())
+    expect(read.length).toBeGreaterThan(20)
+    const whole = (x: number) => Math.abs(x * dpr - Math.round(x * dpr)) < 1e-6
+    expect(read.filter((g) => !whole(g.x))).toEqual([])
+    // A minute of drifting: lines' next tiles come on screen.
+    tiles = []
+    for (let i = 0; i < 60 * 60; i++) {
+      if (i % 600 === 0) window.dispatchEvent(new Event("pointermove"))
+      step()
+    }
+    expect(tiles.some((x) => x > 0)).toBe(true)
+    expect(tiles.filter((x) => !whole(x))).toEqual([])
+  })
+})
 
 describe("RedactedDrift and the pointer", () => {
   it("reads the line under a mouse, within the lens's radius only, and closes it again", () => {
