@@ -19,6 +19,11 @@ crawl) are checked the same way with check_connector(), against their OWN
 list, CONNECTOR_ALLOW_PRIVATE_HOSTS (for a test site on this machine), so
 opening sign-in to a local IdP never opens the crawler to localhost.
 
+A model provider whose address a workspace admin types in (Azure OpenAI's
+endpoint, an OpenAI-compatible server's base URL: models.py) is checked with
+check_model_endpoint(), against MODEL_ALLOW_PRIVATE_HOSTS (a vLLM or Ollama on
+this machine or its network), on save and on every request (model_http()).
+
 The check runs when the settings are saved and again on every request
 (an httpx event hook), since a host's DNS can change after it was saved.
 httpx looks the host up again to connect, so a DNS server that answers
@@ -43,6 +48,9 @@ class UnsafeURL(ValueError):
 
 SSO_ALLOW = "SSO_ALLOW_PRIVATE_HOSTS"
 CONNECTOR_ALLOW = "CONNECTOR_ALLOW_PRIVATE_HOSTS"
+MODEL_ALLOW = "MODEL_ALLOW_PRIVATE_HOSTS"
+# Who is refused a private address, as the message says it.
+_WHO = {SSO_ALLOW: "sign-in", CONNECTOR_ALLOW: "connectors", MODEL_ALLOW: "model providers"}
 
 
 def _allowed_private(env=SSO_ALLOW):
@@ -94,8 +102,7 @@ def check(url, allow_env=SSO_ALLOW):
     """Raise UnsafeURL unless the server may call `url`."""
     host, port, allowed = _parse(url, allow_env)
     if not allowed:
-        _check_addresses(host, _resolve(host, port),
-                         "connectors" if allow_env == CONNECTOR_ALLOW else "sign-in")
+        _check_addresses(host, _resolve(host, port), _WHO.get(allow_env, "sign-in"))
 
 
 def check_connector(url):
@@ -103,11 +110,16 @@ def check_connector(url):
     check(url, CONNECTOR_ALLOW)
 
 
-async def check_async(url):
-    host, port, allowed = _parse(url)
+def check_model_endpoint(url):
+    """check() for a model provider's address an admin typed (MODEL_ALLOW_PRIVATE_HOSTS)."""
+    check(url, MODEL_ALLOW)
+
+
+async def check_async(url, allow_env=SSO_ALLOW):
+    host, port, allowed = _parse(url, allow_env)
     if not allowed:
         infos = await asyncio.get_running_loop().run_in_executor(None, _resolve, host, port)
-        _check_addresses(host, infos)
+        _check_addresses(host, infos, _WHO.get(allow_env, "sign-in"))
 
 
 async def httpx_hook(request):
@@ -117,3 +129,26 @@ async def httpx_hook(request):
 
 def httpx_hook_sync(request):
     check(str(request.url))
+
+
+def model_http():
+    """(httpx.Client, httpx.AsyncClient) for a model provider at an address an admin
+    typed: every request is checked first (check_model_endpoint), so a host whose DNS
+    moves to a private address after it was saved is refused too. Made once and
+    shared: the check is per request, not per client."""
+    global _model_http
+    if _model_http is None:
+        import httpx
+
+        async def hook_async(request):
+            await check_async(str(request.url), MODEL_ALLOW)
+
+        def hook(request):
+            check_model_endpoint(str(request.url))
+
+        _model_http = (httpx.Client(event_hooks={"request": [hook]}),
+                       httpx.AsyncClient(event_hooks={"request": [hook_async]}))
+    return _model_http
+
+
+_model_http = None
