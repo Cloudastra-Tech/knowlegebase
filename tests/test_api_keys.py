@@ -361,6 +361,25 @@ def test_search_returns_passages_and_no_answer(kb, monkeypatch):
                           json={"query": "refunds", "k": 99}).status_code == 422
 
 
+def test_a_search_query_is_checked_for_abuse_once(kb, monkeypatch):
+    """The query as sent is a question someone typed: the per-question rules
+    (length, abuse) check it once, then the search's own rules."""
+    import safety
+    w = kb.workspace_with_docs()
+    key = kb.key(w, "staff", ["search"])
+    asked = []
+
+    def check_asked(question):
+        asked.append(question)
+        return (False, safety.CANT_HELP) if "stupid" in question else (True, "")
+    monkeypatch.setattr(safety, "check_asked", check_asked)
+    r = kb.client.post("/api/v1/search", headers=bearer(key), json={"query": "you stupid bot"})
+    assert r.status_code == 400 and r.json()["detail"] == safety.CANT_HELP
+    assert kb.client.post("/api/v1/search", headers=bearer(key),
+                          json={"query": "refunds"}).json()["results"]
+    assert asked == ["you stupid bot", "refunds"]
+
+
 def test_documents_and_sources(kb, monkeypatch):
     from kb.services import indexing
     queued = []

@@ -844,6 +844,8 @@ def forget(workspace=None):
         for key in [k for k in _clients if workspace is None or k[1][-1] == workspace
                     or k[0][-1] == workspace]:
             del _clients[key]
+    import safety   # safety imports models: here, not at the top
+    safety.forget_moderation_clients()
 
 
 def _aws_error(e):

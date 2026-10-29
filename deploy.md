@@ -59,7 +59,8 @@ nano .env    # paste the real OPENAI_API_KEY (and Outline values if used)
 docker compose up -d --build
 ```
 
-No build secret or token is needed. **Toxicity check:** every question is checked
+No build secret or token is needed. **Toxicity check:** every question (a chat
+message, searched or not, a `/search` or MCP query) is checked once, as typed,
 for abuse, harassment, hate, threats, sexual content involving minors and
 self-harm encouragement, for everyone (HR and admins too), and refused with
 "Sorry, I can't help with that request." It needs no setting, download or token

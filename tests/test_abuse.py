@@ -171,6 +171,20 @@ def test_usage_is_rolled_up_per_workspace_and_day():
     assert days["2026-10-24"]["questions"] == 1
 
 
+def test_usage_is_priced_by_who_answered_as_the_spend_caps_are():
+    """An OpenAI-compatible server's model has no known price, and Azure's dated
+    gpt-4o is at gpt-4o's: never the gpt-4o-mini default."""
+    ws = ws_()
+    for model, provider in (("llama3.1:70b", "openai_compatible"),
+                            ("gpt-4o-2024-11-20", "azure")):
+        log_store.add(ws, "a", "web", "answered", text_mode="metadata", at=NOW - 60,
+                      model=model, provider=provider, tokens_in=1000, tokens_out=0)
+    abuse.rollup_usage(NOW)
+    cost = abuse_store.usage(ws, "2026-10-25", "2026-10-25")["2026-10-25"]["cost_usd"]
+    assert cost == pytest.approx(0.0025)                  # 1000 x 2.50 / 1e6, the gpt-4o
+    assert cost == pytest.approx(spend.cost(ws, "2026-10-25"))
+
+
 # ---- Spend caps -----------------------------------------------------------------------------
 def test_spend_caps_warn_then_refuse_with_a_429(client, idp, mails):  # noqa: F811
     ws = new_workspace()
