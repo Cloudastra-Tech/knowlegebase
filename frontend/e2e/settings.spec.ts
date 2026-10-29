@@ -26,13 +26,10 @@ test("on a desktop, the sections are tabs over the open one, which switches at o
   }
   // Let the screen's entrance finish first (finite animations only: the drift and
   // skeletons loop), or `before` catches it a fraction of a pixel short.
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((a) => a.playState === "running" && a.effect?.getComputedTiming().iterations !== Infinity)
-        .map((a) => a.finished.catch(() => {})),
-    ),
+  await page.evaluate(
+    `Promise.all(document.getAnimations()
+      .filter((a) => a.playState === "running" && a.effect?.getComputedTiming().iterations !== Infinity)
+      .map((a) => a.finished.catch(() => {})))`,
   )
   const before = await box()
   // Where the title starts (its box is as wide as the crumbs over it, which name the section).
