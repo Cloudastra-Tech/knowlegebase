@@ -3,8 +3,8 @@ Deploy-time safety settings: the toxicity guard's state in /api/health, the
 REQUIRE_TOXICITY_GUARD startup check, and the Dockerfile's default
 FORWARDED_ALLOW_IPS run through uvicorn's real proxy-headers middleware.
 
-The Guardrails Hub validator is never installed here; tests flip
-safety.toxicity_guard_active to stand for an image built with or without it.
+There is no toxicity check (the Guardrails Hub validator was removed, safety.py);
+tests flip safety.toxicity_guard_active to stand for a build with or without one.
 """
 
 import asyncio

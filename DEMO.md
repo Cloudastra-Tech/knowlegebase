@@ -170,7 +170,7 @@ Then point to the code:
 | **OpenAI** | embeddings (`text-embedding-3-small`) + answers (`gpt-4o-mini`) |
 | **Chroma** | vector database (meaning search) |
 | **BM25 + RRF** | keyword search, merged with meaning search |
-| **Guardrails AI** | safety checks on input & output |
+| **safety.py** | safety checks on input & output (our own rules + a classifier) |
 | **Permission filter** | role-based access control |
 
 ---

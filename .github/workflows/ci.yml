@@ -1,8 +1,7 @@
 # Runs the backend tests, the frontend lint + build, the end-to-end smoke tests, a
 # build of the production Docker image and the dependency / secret scans on every
 # PR into dev or main and every push to them. Feature work goes to dev; dev is promoted to main, which is
-# production. No secrets needed: the tests fake OpenAI and the sign-in providers,
-# and the image is built without the Guardrails Hub token (deploy.md, step 4).
+# production. No secrets needed: the tests fake OpenAI and the sign-in providers.
 name: CI
 
 on:
@@ -125,9 +124,8 @@ jobs:
             frontend/test-results/
           retention-days: 7
 
-  # The production image, built as the server builds it but without the
-  # Guardrails Hub secret, then started once to check it answers /api/health.
-  # Never pushed.
+  # The production image, built as the server builds it, then started once to
+  # check it answers /api/health. Never pushed.
   docker:
     runs-on: ubuntu-latest
     steps:

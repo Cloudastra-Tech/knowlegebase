@@ -39,7 +39,7 @@ import models
 import rerankers
 import vector_store
 from ingest import CHROMA_LOCK
-from safety import check_question, check_answer  # our Guardrails-AI safety layer
+from safety import check_question, check_answer  # our safety layer (safety.py)
 from untrusted import RULE, spotlight
 
 load_dotenv()

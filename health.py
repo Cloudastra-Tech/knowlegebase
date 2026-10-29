@@ -13,8 +13,9 @@ a deploy gate or an uptime monitor: it touches each thing a request needs.
                        (or an old-format stored secret): a changed
                        INTEGRATIONS_KEY breaks every SSO provider and
                        integration while everything else looks fine
-    toxicity_guard     only with REQUIRE_TOXICITY_GUARD=1: the Guardrails Hub
-                       toxicity validator is loaded (safety.guards_status())
+    toxicity_guard     only with REQUIRE_TOXICITY_GUARD=1: a toxicity check is
+                       loaded (safety.guards_status()). None exists since the
+                       Guardrails Hub validator was removed, so this fails
 
 Nothing here creates or changes anything: a missing database or index is
 reported, not made. Reasons are short and safe to show to anyone (the endpoint

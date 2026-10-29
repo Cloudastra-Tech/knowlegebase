@@ -4,14 +4,7 @@
 # It stops there: deploying stays manual, with scripts/deploy.sh on the server
 # (deploy.md, "Deploying"), until the owner wires the secrets for the deploy job
 # sketched at the bottom.
-#
-# The image is built WITHOUT the Guardrails Hub token, on purpose: the toxicity
-# validator's install writes the token into the image (Dockerfile), and a pushed
-# image must never carry it. So these images run without the toxicity check
-# (/api/health says "toxicity": "missing"); with REQUIRE_TOXICITY_GUARD=1 they
-# refuse to start, and deploy.sh then goes back to the previous version. Production
-# keeps building on the server with the token (`scripts/deploy.sh vX.Y.Z`) until
-# the validator can get its token at run time.
+
 name: Release image
 
 on:
@@ -78,13 +71,6 @@ jobs:
             GIT_SHA=${{ steps.commit.outputs.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # The same check as CI's docker job, on what was pushed.
-      - name: No Guardrails token in the image
-        run: |
-          image="ghcr.io/cloudastra-tech/knowlegebase:sha-${{ steps.commit.outputs.sha }}"
-          if docker run --rm --entrypoint sh "$image" -c 'test -e /root/.guardrailsrc'; then
-            echo "::error::$image has /root/.guardrailsrc: it must never be pushed"; exit 1
-          fi
 
   # Deploying from here, once the owner wants it (deploy.md, "Deploying"):
   #   1. Settings > Environments > New environment "production": required reviewers,

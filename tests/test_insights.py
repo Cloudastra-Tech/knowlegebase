@@ -142,10 +142,10 @@ def test_tokens_and_the_model_come_from_the_model_calls(client, fakes, fresh_def
 
 def test_the_guards_count_toward_the_question_whatever_thread_they_run_in(fakes, monkeypatch):
     """The token counter is a context variable. agent.py runs the input guards
-    (and the search) in a plain thread pool, and Guardrails runs the salary
-    classifiers in its own thread: neither carries the context, so their model
-    calls went uncounted. Jobs are now submitted in a copy of the caller's
-    context (agent._submit), and the context rides in the guards' metadata."""
+    (and the search) in a plain thread pool, which does not carry the context,
+    so their model calls went uncounted. Jobs are now submitted in a copy of the
+    caller's context (agent._submit), and the guards run their classifiers in
+    the thread that calls them (safety.py)."""
     import safety
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 

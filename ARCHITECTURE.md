@@ -25,7 +25,7 @@ If you can read this, you can explain the app to anyone.
 | **RRF** | Merges keyword + meaning results | The judge that ranks both |
 | **OpenAI `gpt-4o-mini`** | Writes the final answer (ANSWER_MODEL; small jobs on FAST_MODEL, models.py) | The writer |
 | **AWS Bedrock** (optional) | Every model above instead of OpenAI, in the company's own AWS account: `MODEL_PROVIDER=bedrock`, or one workspace's "Bring your own AWS" (models.py, deploy.md "AWS Bedrock"). Chat and embeddings can be on different providers (`CHAT_PROVIDER`, `EMBED_PROVIDER`, models.py's REGISTRY; deploy.md "Model providers"), e.g. Claude through Anthropic's API for chat (`CHAT_PROVIDER=anthropic`; deploy.md "Anthropic") | The in-house translator and writer |
-| **Guardrails AI** | Safety checks on input & output | The security guard |
+| **safety.py** | Safety checks on input & output (our own rules + a FAST-model classifier) | The security guard |
 | **Permission filter** | Decides which docs you may search | The keycard / access control |
 
 **Everything is free except the two OpenAI models** (a few cents to run).
@@ -66,8 +66,8 @@ and (b) who is allowed to see it.
    a question       └──────────────────┬──────────────────┘
                                        ▼
                     ┌──────────────────────────────────────┐
-                    │  GUARD 1 — INPUT (Guardrails AI)      │
-                    │  • too long? toxic?  → block (anyone) │
+                    │  GUARD 1 — INPUT (safety.py)          │
+                    │  • too long?         → block (anyone) │
                     │  • about staff salary? → block        │
                     │       (ONLY if you're 'public')       │
                     └──────────────────┬───────────────────┘
@@ -96,7 +96,7 @@ and (b) who is allowed to see it.
                     └──────────────────┬───────────────────┘
                                        ▼
                     ┌──────────────────────────────────────┐
-                    │  GUARD 2 — OUTPUT (Guardrails AI)     │
+                    │  GUARD 2 — OUTPUT (safety.py)         │
                     │  • does the answer leak staff pay?    │
                     │       (ONLY checked if 'public')      │
                     │  • if leak → REASK: rewrite without it│
@@ -130,7 +130,8 @@ LAYER 1 — PERMISSION FILTER   "the wall"
    → The model can't leak what it never received.
 
 LAYER 2 — GUARDRAILS          "the backup net"
-   • Generic checks (too long / toxic)  → apply to EVERYONE
+   • Generic checks (too long)          → apply to EVERYONE
+     (no toxicity check: it was the Guardrails Hub validator, removed; deploy.md step 4)
    • Salary checks (input + output)      → apply to PUBLIC only (HR skips them)
    • If a leak slips through             → REASK rewrites it cleanly
 ```
@@ -834,9 +835,9 @@ flowchart TD
 ```mermaid
 flowchart TD
     U["User types a question"] --> ROLE{"Account's role"}
-    ROLE -->|Public| INP{"Input Guard (Guardrails AI)"}
+    ROLE -->|Public| INP{"Input Guard (safety.py)"}
     ROLE -->|HR / Admin| INP
-    INP -->|too long or toxic| B1["Blocked (everyone)"]
+    INP -->|too long| B1["Blocked (everyone)"]
     INP -->|staff-salary question AND public| B2["Blocked (not authorized)"]
     INP -->|ok| FILT["Permission filter:<br/>keep only chunks this role may see"]
     FILT --> BM25["BM25 keyword search"]
@@ -845,7 +846,7 @@ flowchart TD
     CHROMA --> RRF
     RRF --> AUG["Augment: paste chunks into the prompt"]
     AUG --> GEN["gpt-4o-mini writes the answer"]
-    GEN --> OUTG{"Output Guard (Guardrails AI)"}
+    GEN --> OUTG{"Output Guard (safety.py)"}
     OUTG -->|clean| SHOW["Show answer to user"]
     OUTG -->|leaks staff pay AND public| REASK["Reask: rewrite without the pay"]
     REASK --> SHOW
