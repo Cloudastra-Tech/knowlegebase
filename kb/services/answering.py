@@ -96,20 +96,23 @@ def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, sta
 
 
 def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None,
-        cache=True, model=None):
+        cache=True, model=None, search=True):
     """_ask() with the workspace's models (models.scope): the answer cache's
     embeddings and every model the answer needs are its provider's. model:
     (provider, model id), the answer model the chat picked, already checked
     against the workspace's enabled ones (kb/services/model_choice.py); None:
-    the workspace's default. It's part of the answer cache's key (release())."""
+    the workspace's default. It's part of the answer cache's key (release()).
+    search: False answers without searching the knowledge (a saved prompt set not
+    to search, agent.run(search=)); such an answer is never cached or served from it."""
     with models.scope_for(ws) as on:
         with models.scope(on.with_answer(*model) if model else on):
             return _ask(ws, user, role, question, surface=surface, turn=turn,
-                        on_event=on_event, cancel=cancel, out=out, cache=cache, model=model)
+                        on_event=on_event, cancel=cancel, out=out, cache=cache, model=model,
+                        search=search)
 
 
 def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None,
-         out=None, cache=True, model=None):
+         out=None, cache=True, model=None, search=True):
     """Answer `question` in workspace `ws` for `user` (a dict with "username") as
     `role` -> Answer. role: the asker as a viewer (access.Viewer: what they may
     see), or a bare role (its own principals: "public" is everyone's content
@@ -140,9 +143,10 @@ def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=
         asker["context"] = context
     # ANSWER CACHE: never for a follow-up (its meaning depends on the conversation),
     # nor with files attached (they're the asker's, and only this chat's); in a
-    # space, keyed by the space as it is now (its sources and instructions).
+    # space, keyed by the space as it is now (its sources and instructions); nor
+    # without the search (its answer isn't one from the knowledge).
     scope = None
-    if not (turn and turn.get("history")) and not (context and context.files):
+    if search and not (turn and turn.get("history")) and not (context and context.files):
         try:
             scope = answer_cache.scope(ws, who, _space_key(ws, context))
         except Exception:
@@ -158,6 +162,8 @@ def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=
         run = question_log.tracked(agents.get_agent(ws, role), ws, user, role, surface, turn)
         if model:
             asker["answer_model"] = model
+        if not search:
+            asker["search"] = False
         answer, trace, sources = run(question, with_sources=True, on_event=on_event,
                                      cancel=cancel, history=turn["history"] if turn else None,
                                      out=out, **asker)
