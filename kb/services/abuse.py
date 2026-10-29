@@ -83,29 +83,31 @@ def _workspaces(conn, since):
 # ---- Usage per day --------------------------------------------------------------------------
 def rollup_usage(now=None, days_back=7):
     """usage_daily for every workspace with questions, for today and the days_back
-    before it. Returns {workspace: days rolled up}."""
+    before it. Returns {workspace: days rolled up}. Priced by the model AND the
+    provider that answered, as the spend caps are (spend.cost): an
+    OpenAI-compatible server's model has no known price, never gpt-4o-mini's."""
     from kb.services.insights import cost_of
     now = time.time() if now is None else now
     since = day_of(now - days_back * 86400)
     conn = db.connect()
     try:
         rows = conn.execute(
-            "SELECT workspace, day, model, COUNT(*), COUNT(DISTINCT user), "
+            "SELECT workspace, day, model, provider, COUNT(*), "
             "SUM(cache_hit IS NOT NULL), SUM(tokens_in), SUM(tokens_out) FROM question_log "
-            "WHERE day >= ? GROUP BY workspace, day, model", (since,)).fetchall()
+            "WHERE day >= ? GROUP BY workspace, day, model, provider", (since,)).fetchall()
         users = {(r[0], r[1]): r[2] for r in conn.execute(
             "SELECT workspace, day, COUNT(DISTINCT user) FROM question_log WHERE day >= ? "
             "GROUP BY workspace, day", (since,))}
     finally:
         conn.close()
     totals = {}
-    for ws, day, model, n, _, cached, t_in, t_out in rows:
+    for ws, day, model, provider, n, cached, t_in, t_out in rows:
         t = totals.setdefault((ws, day), [0, 0, 0, 0, 0.0])
         t[0] += n
         t[1] += cached or 0
         t[2] += t_in or 0
         t[3] += t_out or 0
-        t[4] += cost_of(model, t_in, t_out) or 0.0      # an unknown price counts as none
+        t[4] += cost_of(model, t_in, t_out, provider) or 0.0   # an unknown price: none
     done = {}
     for (ws, day), (n, cached, t_in, t_out, cost) in totals.items():
         abuse_store.save_usage(ws, day, n, users.get((ws, day), 0), cached, t_in, t_out, cost)
