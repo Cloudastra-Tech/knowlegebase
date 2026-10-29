@@ -32,7 +32,7 @@ test("a picked model answers, and the chat keeps it", async ({ page }) => {
     await page.goto("/admin/assistant")
     const models = page.getByRole("region", { name: "Models" })
     await models.getByRole("button", { name: "Add a provider" }).click()
-    await page.getByRole("menuitem", { name: "OpenAI" }).click()
+    await page.getByRole("menuitem", { name: "OpenAI", exact: true }).click()
     const list = models.getByRole("list", { name: "OpenAI models" })
     await expect(list.getByRole("checkbox", { name: "GPT-4o mini", exact: true })).toBeChecked()
     await list.getByRole("checkbox", { name: "GPT-5", exact: true }).click()

@@ -55,14 +55,14 @@ def cost(ws, day):
     from kb.services.insights import cost_of
     conn = db.connect()
     try:
-        rows = conn.execute("SELECT model, SUM(tokens_in), SUM(tokens_out) FROM question_log "
-                            "WHERE workspace = ? AND day = ? GROUP BY model",
-                            (ws, day)).fetchall()
+        rows = conn.execute("SELECT model, SUM(tokens_in), SUM(tokens_out), provider "
+                            "FROM question_log WHERE workspace = ? AND day = ? "
+                            "GROUP BY model, provider", (ws, day)).fetchall()
     finally:
         conn.close()
     # A model whose price isn't known (a Bedrock model not in insights.BEDROCK_PRICES)
     # counts as nothing: set a cap's model prices before relying on it there.
-    return round(sum(cost_of(r[0], r[1], r[2]) or 0.0 for r in rows), 6)
+    return round(sum(cost_of(r[0], r[1], r[2], r[3]) or 0.0 for r in rows), 6)
 
 
 def until_midnight(now):

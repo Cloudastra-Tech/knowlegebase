@@ -60,6 +60,7 @@ import {
   type ModelProviderChange,
   type ModelProviderSettings as Settings,
   type ModelRef,
+  type ProviderEndpoint,
   type ProviderInfo,
 } from "@/lib/api"
 import { sameModel, TIER_LABEL } from "@/lib/chat-models"
@@ -73,9 +74,11 @@ import { timeAgo } from "@/lib/utils"
 // models people may pick in the chat (each provider's curated list, or a custom id),
 // and one of them is the default. With none, answers use the server's model. SEARCH:
 // one embeddings provider, never picked per chat; changing it rebuilds the index, so
-// it's confirmed first. Test connection lists OpenAI's and Anthropic's models (free);
-// Bedrock answers one token and makes one short embedding, since a list wouldn't show
-// the model access granted. Nothing ever falls back to another provider.
+// it's confirmed first. Test connection lists OpenAI's, Anthropic's, Gemini's and a
+// compatible server's models (free); Bedrock and Azure answer one short reply and make
+// one short embedding, since a list wouldn't show the model access or deployments.
+// Azure and an OpenAI-compatible server take an address too (shown back, not secret),
+// which the server refuses when it's private. Nothing ever falls back to another provider.
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const DEFAULT = "default"
@@ -101,7 +104,21 @@ const ABOUT: Record<string, Partial<Record<Side, string>>> = {
   },
   anthropic: { chat: "Claude, through Anthropic's API, with this workspace's own API key." },
   local: { embeddings: "Runs on this server's CPU: nothing leaves the server." },
+  gemini: {
+    chat: "Google's Gemini models, with this workspace's own API key.",
+    embeddings: "Google's Gemini embedding model, with this workspace's own API key.",
+  },
+  azure: {
+    chat: "Your Azure OpenAI resource: models are called by their deployment names.",
+    embeddings: "An embedding deployment on your Azure OpenAI resource.",
+  },
+  openai_compatible: {
+    chat: "Any server with OpenAI's chat API: Groq, Together, OpenRouter, vLLM, Ollama.",
+    embeddings: "An embedding model on a server with OpenAI's embeddings API.",
+  },
 }
+// What a provider calls the model ids typed for it.
+const modelNoun = (p: ProviderInfo | undefined) => (p?.api_version ? "deployment" : "model")
 // What the local models download the first time (deploy.md, "Local embeddings").
 const LOCAL_DOWNLOAD: Record<string, string> = { "BAAI/bge-small-en-v1.5": "about 67 MB" }
 
@@ -176,7 +193,9 @@ function ApiKeyField({
   return (
     <Field>
       {typing ? (
-        <FieldLabel htmlFor={id}>{provider.label} API key</FieldLabel>
+        <FieldLabel htmlFor={id}>
+          {provider.label} API key{provider.key_optional ? " (optional)" : ""}
+        </FieldLabel>
       ) : (
         <FieldTitle>{provider.label} API key</FieldTitle>
       )}
@@ -187,7 +206,7 @@ function ApiKeyField({
             type="password"
             className="sm:w-96"
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Paste the key"
+            placeholder={provider.key_optional ? "Leave empty if the server takes none" : "Paste the key"}
             autoComplete="new-password"
             spellCheck={false}
           />
@@ -231,6 +250,58 @@ function ApiKeyField({
   )
 }
 
+// Where a provider that takes an address is: Azure's endpoint and api-version, or an
+// OpenAI-compatible server's base URL. Not secret: the saved values come back. The
+// server refuses a private or loopback address unless it allows it.
+function EndpointFields({
+  provider,
+  value,
+  defaultVersion,
+  onChange,
+}: {
+  provider: ProviderInfo
+  value: ProviderEndpoint
+  defaultVersion?: string
+  onChange: (value: ProviderEndpoint) => void
+}) {
+  const id = `mp-url-${provider.name}`
+  const azure = !!provider.api_version
+  return (
+    <div className={azure ? "grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]" : "grid gap-4"}>
+      <Field>
+        <FieldLabel htmlFor={id}>{azure ? "Endpoint" : "Base URL"}</FieldLabel>
+        <Input
+          id={id}
+          inputMode="url"
+          value={value.base_url ?? ""}
+          onChange={(e) => onChange({ ...value, base_url: e.target.value })}
+          placeholder={azure ? "https://your-resource.openai.azure.com" : "https://api.groq.com/openai/v1"}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <FieldDescription>
+          {azure
+            ? "Your resource's endpoint, from Keys and Endpoint in the Azure portal."
+            : "Where the server's OpenAI API is, usually ending in /v1. A public https address, unless this server allows a private one."}
+        </FieldDescription>
+      </Field>
+      {azure && (
+        <Field>
+          <FieldLabel htmlFor={`${id}-version`}>API version</FieldLabel>
+          <Input
+            id={`${id}-version`}
+            value={value.api_version ?? ""}
+            onChange={(e) => onChange({ ...value, api_version: e.target.value })}
+            placeholder={defaultVersion ?? ""}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+      )}
+    </div>
+  )
+}
+
 // One provider's answer models: its curated list (and any custom ids enabled), each
 // with a checkbox, and a field to add another model id.
 function ProviderModels({
@@ -251,10 +322,15 @@ function ProviderModels({
   const [custom, setCustom] = useState("")
   const mine = enabled.filter((m) => m.provider === provider.name)
   const extra = mine.filter((m) => !catalogue.some((c) => c.id === m.model))
+  // No curated list (Azure's deployments, a compatible server's models): every id is typed.
+  const typed = !!provider.typed_models
+  const noun = modelNoun(provider)
   const rows = [
     ...catalogue.map((c) => ({ id: c.id, label: c.label, tier: TIER_LABEL[c.tier] })),
-    ...extra.map((m) => ({ id: m.model, label: m.model, tier: "Custom" })),
+    ...extra.map((m) => ({ id: m.model, label: m.model, tier: typed ? "" : "Custom" })),
   ]
+  const idName = noun === "deployment" ? "deployment name" : "model id"
+  const placeholder = rows.length || !typed ? `Another ${idName}` : idName[0].toUpperCase() + idName.slice(1)
   const add = () => {
     const id = custom.trim()
     if (!id) return
@@ -263,6 +339,13 @@ function ProviderModels({
   }
   return (
     <div className="grid gap-2">
+      {typed && rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          {noun === "deployment"
+            ? "Add the deployment names people can pick, as they're named on your resource."
+            : "Add the model ids people can pick, as the server names them."}
+        </p>
+      )}
       <ul className="grid gap-1" aria-label={`${provider.label} models`}>
         {rows.map((row) => {
           const id = `mp-model-${provider.name}-${row.id}`
@@ -289,7 +372,7 @@ function ProviderModels({
       </ul>
       <div className="flex items-center gap-2">
         <Input
-          aria-label={`Another ${provider.label} model id`}
+          aria-label={`Another ${provider.label} ${idName}`}
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
           onKeyDown={(e) => {
@@ -298,7 +381,7 @@ function ProviderModels({
               add()
             }
           }}
-          placeholder="Another model id"
+          placeholder={placeholder}
           autoComplete="off"
           spellCheck={false}
           className="h-8 sm:w-72"
@@ -337,6 +420,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   const [enabled, setEnabled] = useState<ModelRef[]>(savedModels)
   const [chosenDefault, setChosenDefault] = useState<ModelRef | null>(savedDefault)
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
+  const [endpoints, setEndpoints] = useState<Record<string, ProviderEndpoint>>(settings.endpoints ?? {})
   const [region, setRegion] = useState(settings.region ?? "")
   const [auth, setAuth] = useState<AwsAuth>(settings.auth)
   const [roleArn, setRoleArn] = useState(settings.role_arn ?? "")
@@ -361,7 +445,14 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   const keyed = [...new Set([...added, embed])]
     .map(info)
     .filter((p): p is ProviderInfo => !!p?.api_key)
+  // Every provider whose address is typed here, the same way.
+  const addressed = [...new Set([...added, embed])]
+    .map(info)
+    .filter((p): p is ProviderInfo => !!p?.base_url)
   const embedDefault = embed !== DEFAULT ? defaults[embed]?.embed_model : null
+  // A search provider with no default embedding model (Azure, a compatible server):
+  // its model is named right under the choice, not tucked away in Advanced.
+  const namesEmbedModel = embed !== DEFAULT && !embedDefault
   const sizes = embed === "bedrock" ? settings.embed_dimensions[embedModel || embedDefault || ""] : undefined
   const full = enabled.length >= maxModels
   const labelOf = (m: ModelRef) =>
@@ -410,6 +501,15 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
       keyed.map((p) => [p.name, apiKeys[p.name]?.trim()]).filter(([, k]) => k),
     )
     if (Object.keys(keys).length) out.api_keys = keys
+    if (addressed.length)
+      out.endpoints = Object.fromEntries(
+        addressed.map((p) => {
+          const e = endpoints[p.name] ?? { base_url: null, api_version: null }
+          const typed: Partial<ProviderEndpoint> = { base_url: e.base_url?.trim() || null }
+          if (p.api_version) typed.api_version = e.api_version?.trim() || null
+          return [p.name, typed]
+        }),
+      )
     if (bedrock) {
       Object.assign(out, { region: region.trim() || null, auth, role_arn: roleArn.trim() || null })
       if (auth === "keys" && (keyId || secret)) {
@@ -499,6 +599,19 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
       saved={!!settings.api_keys_saved?.[p.name]}
       hint={settings.api_key_hints?.[p.name]}
       onChange={(key) => setApiKeys((all) => ({ ...all, [p.name]: key }))}
+    />
+  )
+  // The address of a provider that takes one (answers and search share it).
+  const endpointFields = (p: ProviderInfo) => (
+    <EndpointFields
+      key={`url-${p.name}`}
+      provider={p}
+      value={endpoints[p.name] ?? { base_url: null, api_version: null }}
+      defaultVersion={defaults[p.name]?.api_version}
+      onChange={(value) => {
+        setTested(null)
+        setEndpoints((all) => ({ ...all, [p.name]: value }))
+      }}
     />
   )
   const awsFields = (
@@ -674,6 +787,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                       </Button>
                     )}
                   </div>
+                  {p.base_url && endpointFields(p)}
                   {p.api_key && keyField(p)}
                   {name === "bedrock" && awsFields}
                   <ProviderModels
@@ -765,10 +879,45 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
         </p>
 
         {/* Search on a provider no answers use: its credentials here. */}
-        {embed !== DEFAULT && !added.includes(embed) && (
+        {embed !== DEFAULT && !added.includes(embed) && (embed === "bedrock" || info(embed)?.api_key) && (
           <div className="grid gap-4 rounded-xl border border-border/70 p-4">
-            {embed === "bedrock" ? awsFields : info(embed)?.api_key ? keyField(info(embed)!) : null}
+            {embed === "bedrock" ? (
+              awsFields
+            ) : (
+              <>
+                {info(embed)?.base_url && endpointFields(info(embed)!)}
+                {keyField(info(embed)!)}
+              </>
+            )}
           </div>
+        )}
+
+        {namesEmbedModel && (
+          <Field>
+            <FieldLabel htmlFor="mp-embed">
+              {modelNoun(info(embed)) === "deployment" ? "Embedding deployment" : "Embedding model"}
+            </FieldLabel>
+            <Input
+              id="mp-embed"
+              className="sm:w-96"
+              value={embedModel}
+              onChange={(e) => {
+                setEmbedModel(e.target.value)
+                setEmbedDims(null)
+                setTested(null)
+              }}
+              placeholder={
+                modelNoun(info(embed)) === "deployment" ? "text-embedding-3-small" : "nomic-embed-text"
+              }
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <FieldDescription>
+              {modelNoun(info(embed)) === "deployment"
+                ? "The name of the embedding deployment on your resource. Changing it rebuilds search."
+                : "The id of the server's embedding model. Changing it rebuilds search."}
+            </FieldDescription>
+          </Field>
         )}
 
 
@@ -794,7 +943,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                       value={chatProvider === settings.chat_provider ? fastModel : ""}
                       onChange={(e) => setFastModel(e.target.value)}
                       disabled={chatProvider !== settings.chat_provider}
-                      placeholder={defaults[chatProvider]?.fast_model ?? ""}
+                      placeholder={defaults[chatProvider]?.fast_model ?? "The default model"}
                       autoComplete="off"
                     />
                     <FieldDescription>
@@ -803,7 +952,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                     </FieldDescription>
                   </Field>
                 )}
-                {embed !== DEFAULT && (
+                {embed !== DEFAULT && !namesEmbedModel && (
                   <Field>
                     <FieldLabel htmlFor="mp-embed">Embedding model</FieldLabel>
                     <Input
@@ -857,8 +1006,9 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Testing lists OpenAI's and Anthropic's models, for free. AWS Bedrock answers one word and
-          makes one short embedding: a fraction of a cent.
+          Testing lists OpenAI's, Anthropic's, Gemini's and a compatible server's models, for free.
+          AWS Bedrock and Azure OpenAI answer one word and make one short embedding: a fraction of a
+          cent.
         </p>
         {(settings.updated_by || settings.tested_at) && (
           <p className="text-xs text-muted-foreground">
@@ -1036,7 +1186,7 @@ function ProviderPicker({
             ? ` It downloads a model of ${download} once.`
             : " It downloads its model once.")}
       </FieldDescription>
-      {d && (
+      {d && (side === "chat" ? d.chat_model : d.embed_model) && (
         <p className="font-mono text-xs break-all text-muted-foreground">
           {side === "chat"
             ? `${d.chat_model ?? ""}${d.fast_model ? ` · fast ${d.fast_model}` : ""}`

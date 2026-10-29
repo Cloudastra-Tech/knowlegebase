@@ -78,6 +78,21 @@ ANTHROPIC_PRICES = {
     "claude-sonnet-5-5": (2.00, 10.00), "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00), "claude-opus-5-5": (4.00, 20.00),
     "claude-opus-5": (5.00, 25.00), "claude-opus-4-8": (5.00, 25.00)}
+# Google Gemini's API, USD per million tokens (in, out), paid tier, text, prompts up to
+# 200k tokens (ai.google.dev/gemini-api/docs/pricing, October 2026). Gemini 4 Argon
+# and 3.8 / 3.6 Flash are at their introductory prices here: they double on 1 December
+# 2026 and 1 January 2027. A Gemini model that isn't here has an UNKNOWN cost.
+GEMINI_PRICES = {
+    "gemini-4-argon": (2.00, 10.00), "gemini-3.8-flash": (0.75, 3.75),
+    "gemini-3.6-flash": (0.75, 3.75), "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.1-flash-lite": (0.25, 1.50), "gemini-3.1-pro-preview": (2.00, 12.00),
+    "gemini-2.5-pro": (1.25, 10.00), "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40), "gemini-embedding-001": (0.15, 0.0),
+    "gemini-embedding-2": (0.20, 0.0)}
+# Providers whose costs aren't known here: an OpenAI-compatible server's models are
+# whatever it serves, at its own prices (or none: a self-hosted one).
+UNPRICED_PROVIDERS = ("openai_compatible",)
+_DATED = re.compile(r"-\d{4}-\d{2}-\d{2}$")      # gpt-4o-2024-11-20: a dated snapshot
 UPLOADED = "Company documents"          # how agent.py cites an uploaded file
 
 NEVER_CITED_DAYS = env_int("INSIGHTS_NEVER_CITED_DAYS", 30)
@@ -167,11 +182,22 @@ def is_bedrock(model):
                                            and ":" in m)
 
 
-def price_of(model):
+def price_of(model, provider=None):
     """(in, out) USD per million tokens, or None when it's an unknown Bedrock model.
     An unknown OpenAI model is priced as gpt-4o-mini, as before; an unknown Claude
-    model (Anthropic's API) is unknown."""
-    if (model or "").startswith("claude-"):
+    or Gemini model is unknown. provider: who answered (the question log's), when
+    known. An OpenAI-compatible server's models are unknown; Azure OpenAI's (the
+    model its reply names, gpt-4o-2024-11-20) are at OpenAI's list price when
+    listed (an estimate: Azure prices each deployment type and region itself),
+    else unknown, never another model's."""
+    m = model or ""
+    if provider in UNPRICED_PROVIDERS:
+        return None
+    if provider == "azure":
+        return PRICES.get(m) or PRICES.get(_DATED.sub("", m))
+    if provider == "gemini" or m.startswith(("gemini-", "models/gemini-")):
+        return GEMINI_PRICES.get(m.removeprefix("models/"))
+    if m.startswith("claude-"):
         return ANTHROPIC_PRICES.get(model)
     if not is_bedrock(model):
         return PRICES.get(model or "", DEFAULT_PRICE)
@@ -179,9 +205,9 @@ def price_of(model):
     return BEDROCK_PRICES.get(m) or BEDROCK_PRICES.get(_GEO.sub("", m))
 
 
-def cost_of(model, tokens_in, tokens_out):
+def cost_of(model, tokens_in, tokens_out, provider=None):
     """USD for the tokens, or None when the model's price isn't known (price_of)."""
-    price = price_of(model)
+    price = price_of(model, provider)
     if price is None:
         return None
     price_in, price_out = price
@@ -307,7 +333,8 @@ def summarize(rows, resolve):
         totals[r["outcome"]] = totals.get(r["outcome"], 0) + 1
         totals["tokens_in"] += r["tokens_in"] or 0
         totals["tokens_out"] += r["tokens_out"] or 0
-        cost += cost_of(r["model"], r["tokens_in"], r["tokens_out"]) or 0.0
+        cost += cost_of(r["model"], r["tokens_in"], r["tokens_out"],
+                        r.get("provider")) or 0.0
         if r["latency_ms"] is not None and r["outcome"] not in ("error", "stopped"):
             latencies.append(r["latency_ms"])
         if r["outcome"] == "blocked":
@@ -583,8 +610,9 @@ def report(ws, viewer, since_day, until_day, now=None):
         cost_usd=round(cost, 6),
         # Models whose price isn't known (a Bedrock model not in BEDROCK_PRICES):
         # their tokens aren't in cost_usd, and the screen says so.
-        cost_unknown_models=[m for m in log_store.models_used(ws, since_day, until_day)
-                             if price_of(m) is None],
+        cost_unknown_models=sorted({m for m, p in log_store.models_used(ws, since_day,
+                                                                         until_day)
+                                    if price_of(m, p) is None}),
         latency_p50_ms=percentile(hist, 50), latency_p95_ms=percentile(hist, 95),
         rates={"answered": _rate(totals["answered"] + totals["partial"], questions),
                "not_found": _rate(totals["not_found"], questions),

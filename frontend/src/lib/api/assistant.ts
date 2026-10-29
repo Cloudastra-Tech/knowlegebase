@@ -194,6 +194,16 @@ export interface ProviderInfo {
   tool_calls: boolean
   in_house: boolean // text stays in the customer's own cloud account
   api_key: boolean // takes the workspace's own API key
+  base_url?: boolean // the admin types its address (Azure's endpoint, a compatible server's URL)
+  api_version?: boolean // ... and an api-version (Azure)
+  key_optional?: boolean // its key may be left out (a self-hosted server)
+  typed_models?: boolean // no curated list: model ids (Azure deployments) are typed in
+}
+
+// The address typed for a provider that takes one: never secret, shown back.
+export interface ProviderEndpoint {
+  base_url: string | null
+  api_version: string | null
 }
 
 export interface ProviderDefaults {
@@ -201,6 +211,7 @@ export interface ProviderDefaults {
   fast_model: string | null
   embed_model: string | null
   embed_dims: number | null
+  api_version?: string // Azure: the api-version used when none is typed
 }
 
 // A model of a provider's curated list (models.CATALOGUE).
@@ -228,6 +239,7 @@ export interface ModelProviderSettings {
   access_key_hint: string | null
   api_keys_saved: Record<string, boolean> // only whether a key is saved, never the key
   api_key_hints?: Record<string, string> // its last 4 characters
+  endpoints?: Record<string, ProviderEndpoint> // Azure's endpoint, a compatible server's URL
   chat_models?: EnabledModel[] // the answer models people may pick, the default first
   default_model?: ModelRef | null // null: chat is on the server's provider
   catalogue?: Record<string, CatalogueModel[]> // per chat provider
@@ -269,6 +281,7 @@ export interface ModelProviderChange {
   chat_provider?: string
   embed_provider?: string
   api_keys?: Record<string, string | null> // write-only; null removes it
+  endpoints?: Record<string, Partial<ProviderEndpoint>>
   region?: string | null
   auth?: AwsAuth
   role_arn?: string | null
@@ -283,8 +296,9 @@ export interface ModelProviderChange {
   confirm_reindex?: boolean
 }
 
-// Test connection: OpenAI and Anthropic list their models (free); Bedrock answers one
-// token on its default model and makes one short embedding.
+// Test connection: OpenAI, Anthropic, Gemini and an OpenAI-compatible server list their
+// models (free); Bedrock and Azure answer one short reply on the default model and make
+// one short embedding.
 export interface ProviderTest {
   provider: string
   label: string
