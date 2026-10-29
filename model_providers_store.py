@@ -70,7 +70,10 @@ FIELDS = ("provider", "chat_provider", "embed_provider", "region", "auth", "role
           "chat_model", "fast_model", "embed_model", "embed_dims", "access_key_id",
           "secret_access_key", "api_keys", "chat_models", "default_model", "endpoints")
 MAX_MODELS = 24                 # enabled chat models per workspace
-ENDPOINTS_KEY = "_endpoints"    # in the sealed api_keys JSON: never a provider's name
+# In the sealed api_keys JSON beside the keys, never a provider's name: every reader
+# goes through _api_keys() (which skips it) or _endpoints(). Known follow-up: move the
+# addresses to a column of their own (a migration), out of the sealed blob.
+ENDPOINTS_KEY = "_endpoints"
 KEY_ID = r"^[A-Z0-9]{16,128}$"
 API_KEY = re.compile(r"^[\x21-\x7e]{16,512}$")      # printable, no spaces
 SHORT_KEY = re.compile(r"^[\x21-\x7e]{1,512}$")
@@ -78,6 +81,11 @@ SHORT_KEY = re.compile(r"^[\x21-\x7e]{1,512}$")
 
 class Invalid(ValueError):
     """A change was refused: the message says why, for the admin making it."""
+
+
+class Unused(Invalid):
+    """A key or an address was typed for a provider that nothing would use (no model
+    enabled, not search's): it would be dropped, so the change is refused instead."""
 
 
 def chat_choices():
@@ -249,6 +257,7 @@ def _endpoints(workspace, row):
 
 
 def _seal(workspace, api_keys, endpoints):
+    # The endpoints ride in the keys' sealed JSON (ENDPOINTS_KEY): see its note.
     value = {**api_keys, **({ENDPOINTS_KEY: endpoints} if endpoints else {})}
     return secret_box.seal(value, workspace) if value else None
 
@@ -548,12 +557,30 @@ def _merge(workspace, current, change):
     # key they'd need) go with it.
     if listed is None:
         listed = [] if chat != before[0] else _stored_models(current)
-    removed = {p for p, k in api_change.items() if not k}
+    # A null key removes the provider (its models, its address) unless the key is
+    # optional (an OpenAI-compatible server that takes none): then only the key goes.
+    removed = {p for p, k in api_change.items()
+               if not k and not models.REGISTRY[p].key_optional}
     listed = [] if chat == "default" else [(p, m) for p, m in listed if p not in removed]
     merged["chat_models"] = _dump_models(listed)
     api_keys = {**_api_keys(workspace, current), **api_change}
     # Only the providers in use keep a key: one left behind is a secret for nothing.
     used = _providers_of(merged)
+    # A key or an address typed now for a provider nothing uses would be dropped
+    # without a word (one added with no model ticked: Azure, a compatible server
+    # have no default). Refused instead, saying what's missing.
+    for p in dict.fromkeys((*api_change, *endpoint_change)):
+        if p in used:
+            continue
+        info = models.REGISTRY[p]
+        typed = (["key"] if api_change.get(p) else []) + (
+            ["endpoint" if info.api_version else "base URL"]
+            if (endpoint_change.get(p) or {}).get("base_url") else [])
+        if typed:
+            noun = "deployment" if info.api_version else "model"
+            raise Unused(f"Add at least one {info.label} {noun} people can pick (or use it "
+                         f"for search), or remove it: its {' and '.join(typed)} can't be "
+                         "saved on its own.")
     api_keys = {p: k for p, k in api_keys.items() if k and p in used}
     # The addresses the same way: a provider's goes with it, or with its key.
     endpoints = {**_endpoints(workspace, current)}

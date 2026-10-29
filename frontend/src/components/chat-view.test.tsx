@@ -484,6 +484,52 @@ describe("the chat", () => {
     expect(screen.queryByText("No search")).not.toBeInTheDocument()
   })
 
+  it("lets go of a saved prompt once its text is replaced, and keeps it while added to", async () => {
+    session.setToken("tok")
+    const asked: unknown[] = []
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/prompts": {
+        prompts: [{ id: "p1", title: "Echo", body: "Echo body", variables: [], search: false,
+                    workspace: false, editable: true, updated_at: 1 }],
+        can_manage_workspace: false,
+      },
+      "POST /api/conversations": {
+        id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1,
+      },
+      "POST /api/chat/stream": (body: unknown) => {
+        asked.push(body)
+        return sse({ type: "done", answer: `Answer ${asked.length}`, sources: [], steps: [], state: "answered", message_id: `a${asked.length}` })
+      },
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    const box = await screen.findByRole("textbox", { name: "Your question" })
+
+    // Added to: still the prompt, sent with its id.
+    await user.type(box, "/Ech")
+    await user.click(await screen.findByRole("option", { name: /Echo/ }))
+    await user.type(box, " for Acme")
+    expect(screen.getByText("No search")).toBeInTheDocument()
+    await user.type(box, "{Enter}")
+    expect(await screen.findByText("Answer 1")).toBeInTheDocument()
+    expect(asked[0]).toMatchObject({ question: "Echo body for Acme", prompt_id: "p1" })
+
+    // Replaced (select all, type another question): the prompt and its chip go.
+    await user.type(box, "/Ech")
+    await user.click(await screen.findByRole("option", { name: /Echo/ }))
+    expect(screen.getByText("No search")).toBeInTheDocument()
+    await user.keyboard("{Control>}a{/Control}")
+    await user.keyboard("What is the refund policy?")
+    expect(box).toHaveValue("What is the refund policy?")
+    expect(screen.queryByText("No search")).not.toBeInTheDocument()
+    await user.type(box, "{Enter}")
+    expect(await screen.findByText("Answer 2")).toBeInTheDocument()
+    expect(asked[1]).toMatchObject({ question: "What is the refund policy?" })
+    expect(asked[1]).not.toHaveProperty("prompt_id")
+  })
+
   it("goes back to a new chat when the conversation isn't there", async () => {
     session.setToken("tok")
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })

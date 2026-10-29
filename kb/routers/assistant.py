@@ -222,6 +222,8 @@ def save_provider(body: ProviderIn, user=Depends(require_admin),
                 raise HTTPException(409, "This changes the embedding model: the workspace's "
                                          "index will be rebuilt. Confirm to go ahead.")
         view, before, after = model_providers_store.save(ws, change, user["username"])
+    except model_providers_store.Unused as e:
+        raise HTTPException(422, str(e))     # a key / address for no model: not dropped
     except (model_providers_store.Invalid, models.ProviderError) as e:
         raise HTTPException(400, str(e))
     reindex = before != after and indexing.embeddings_of(ws) is not None

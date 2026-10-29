@@ -30,6 +30,7 @@ import {
 import {
   Field,
   FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
   FieldLegend,
@@ -119,6 +120,9 @@ const ABOUT: Record<string, Partial<Record<Side, string>>> = {
 }
 // What a provider calls the model ids typed for it.
 const modelNoun = (p: ProviderInfo | undefined) => (p?.api_version ? "deployment" : "model")
+// Why a provider added for answers can't be saved yet: nothing for people to pick.
+const missingText = (p: ProviderInfo) =>
+  p.typed_models ? `Add at least one ${modelNoun(p)}.` : "Tick or add at least one model."
 // What the local models download the first time (deploy.md, "Local embeddings").
 const LOCAL_DOWNLOAD: Record<string, string> = { "BAAI/bge-small-en-v1.5": "about 67 MB" }
 
@@ -176,6 +180,8 @@ function JsonBlock({ label, value }: { label: string; value: object }) {
 
 // A provider's API key: write-only. Typed into an uncontrolled field (so the value
 // is never copied into the page's markup), sent once, then only "Key saved ••••last4".
+// An optional key (a compatible server's) can be removed alone: onChange(null), and
+// the server, its address and its models stay.
 function ApiKeyField({
   provider,
   saved,
@@ -185,9 +191,10 @@ function ApiKeyField({
   provider: ProviderInfo
   saved: boolean
   hint?: string
-  onChange: (key: string) => void
+  onChange: (key: string | null) => void
 }) {
   const [replacing, setReplacing] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const id = `mp-key-${provider.name}`
   const typing = !saved || replacing
   return (
@@ -224,6 +231,23 @@ function ApiKeyField({
             </Button>
           )}
         </div>
+      ) : clearing ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-sm text-muted-foreground">
+            Removed when you save. Requests then go without a key.
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              onChange("")
+              setClearing(false)
+            }}
+          >
+            Keep saved key
+          </Button>
+        </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 inline-flex items-center gap-1.5 text-sm">
@@ -240,6 +264,20 @@ function ApiKeyField({
           >
             Replace
           </Button>
+          {provider.key_optional && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Remove the ${provider.label} key`}
+              onClick={() => {
+                onChange(null)
+                setClearing(true)
+              }}
+            >
+              Remove key
+            </Button>
+          )}
         </div>
       )}
       <FieldDescription>
@@ -303,7 +341,9 @@ function EndpointFields({
 }
 
 // One provider's answer models: its curated list (and any custom ids enabled), each
-// with a checkbox, and a field to add another model id.
+// with a checkbox, and a field to add another model id. With none enabled, a line says
+// what to do; after a refused Save (`missing`) the same line says it as an error, in
+// the same place, so nothing moves.
 function ProviderModels({
   provider,
   catalogue,
@@ -311,6 +351,7 @@ function ProviderModels({
   onToggle,
   onAdd,
   full,
+  missing,
 }: {
   provider: ProviderInfo
   catalogue: CatalogueModel[]
@@ -318,6 +359,7 @@ function ProviderModels({
   onToggle: (model: string, on: boolean) => void
   onAdd: (model: string) => void
   full: boolean
+  missing?: boolean
 }) {
   const [custom, setCustom] = useState("")
   const mine = enabled.filter((m) => m.provider === provider.name)
@@ -339,12 +381,18 @@ function ProviderModels({
   }
   return (
     <div className="grid gap-2">
-      {typed && rows.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          {noun === "deployment"
-            ? "Add the deployment names people can pick, as they're named on your resource."
-            : "Add the model ids people can pick, as the server names them."}
-        </p>
+      {missing ? (
+        <FieldError>{missingText(provider)}</FieldError>
+      ) : (
+        mine.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            {!typed
+              ? "Tick the models people can pick, or add another model id."
+              : noun === "deployment"
+                ? "Add the deployment names people can pick, as they're named on your resource."
+                : "Add the model ids people can pick, as the server names them."}
+          </p>
+        )
       )}
       <ul className="grid gap-1" aria-label={`${provider.label} models`}>
         {rows.map((row) => {
@@ -372,6 +420,7 @@ function ProviderModels({
       </ul>
       <div className="flex items-center gap-2">
         <Input
+          id={`mp-add-${provider.name}`}
           aria-label={`Another ${provider.label} ${idName}`}
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
@@ -419,7 +468,10 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   })
   const [enabled, setEnabled] = useState<ModelRef[]>(savedModels)
   const [chosenDefault, setChosenDefault] = useState<ModelRef | null>(savedDefault)
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
+  // A key typed (string), or null: remove the saved optional key alone.
+  const [apiKeys, setApiKeys] = useState<Record<string, string | null>>({})
+  // Save was refused for an answer provider with no model: say so in its section.
+  const [showMissing, setShowMissing] = useState(false)
   const [endpoints, setEndpoints] = useState<Record<string, ProviderEndpoint>>(settings.endpoints ?? {})
   const [region, setRegion] = useState(settings.region ?? "")
   const [auth, setAuth] = useState<AwsAuth>(settings.auth)
@@ -455,6 +507,9 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
   const namesEmbedModel = embed !== DEFAULT && !embedDefault
   const sizes = embed === "bedrock" ? settings.embed_dimensions[embedModel || embedDefault || ""] : undefined
   const full = enabled.length >= maxModels
+  // Answer providers added with nothing ticked: their key and address would have
+  // nothing to be saved for. One that's search's provider too needs no model.
+  const missing = added.filter((p) => p !== embed && !enabled.some((m) => m.provider === p))
   const labelOf = (m: ModelRef) =>
     catalogue[m.provider]?.find((c) => c.id === m.model)?.label ?? m.model
 
@@ -497,9 +552,14 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
     } else {
       out.chat_provider = DEFAULT
     }
-    const keys = Object.fromEntries(
-      keyed.map((p) => [p.name, apiKeys[p.name]?.trim()]).filter(([, k]) => k),
-    )
+    // A key typed goes once; null (an optional key removed) clears it alone.
+    const keys: Record<string, string | null> = {}
+    for (const p of keyed) {
+      const k = apiKeys[p.name]
+      if (k === null) {
+        if (p.key_optional) keys[p.name] = null
+      } else if (k?.trim()) keys[p.name] = k.trim()
+    }
     if (Object.keys(keys).length) out.api_keys = keys
     if (addressed.length)
       out.endpoints = Object.fromEntries(
@@ -717,6 +777,11 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
     <form
       onSubmit={(e) => {
         e.preventDefault()
+        if (missing.length) {
+          setShowMissing(true)
+          document.getElementById(`mp-add-${missing[0]}`)?.focus()
+          return
+        }
         submit(change())
       }}
     >
@@ -797,6 +862,7 @@ function ProviderForm({ settings, onRebuild }: { settings: Settings; onRebuild: 
                     onToggle={(model, on) => toggle(name, model, on)}
                     onAdd={(model) => toggle(name, model, true)}
                     full={full}
+                    missing={showMissing && missing.includes(name)}
                   />
                 </section>
               )

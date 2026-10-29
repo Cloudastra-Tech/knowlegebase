@@ -186,7 +186,7 @@ def test_azure_is_called_by_deployment_with_its_endpoint_and_api_version(classes
     assert (made["azure_endpoint"], made["azure_deployment"], made["model"]) == (
         AZURE_URL, "gpt-4o-prod", "gpt-4o-prod")
     assert made["api_version"] == models.AZURE_API_VERSION == "2024-10-21"
-    assert made["api_key"] == AZURE_KEY and made["temperature"] == 0
+    assert made["api_key"] == AZURE_KEY and "temperature" not in made
     assert made["use_responses_api"] is False
     # The endpoint is an admin's: every request goes through url_guard.
     assert (made["http_client"], made["http_async_client"]) == url_guard.model_http()
@@ -360,11 +360,12 @@ def test_keys_are_never_returned_and_addresses_are(client, classes):
             assert key not in text
     assert {p["name"]: p["typed_models"] for p in body["providers"]}["azure"] is True
     assert body["provider_defaults"]["azure"]["api_version"] == "2024-10-21"
-    # Removing a provider's key takes its address and models with it.
-    store.save(w, {"api_keys": {models.COMPAT: None}}, "admin")
+    # Removing a provider's key takes its models with it (an optional key, a
+    # compatible server's, goes alone: test_clearing_an_optional_key_...).
+    store.save(w, {"api_keys": {"gemini": None}}, "admin")
     view = store.view(w)
-    assert models.COMPAT not in view["endpoints"]
-    assert [m["provider"] for m in view["chat_models"]] == ["azure", "gemini"]
+    assert [m["provider"] for m in view["chat_models"]] == ["azure", models.COMPAT]
+    assert view["api_keys_saved"] == {"azure": True, models.COMPAT: True}
 
 
 def test_a_missing_address_fails_closed_never_the_servers(monkeypatch, classes):
@@ -484,3 +485,112 @@ def test_insights_prices_gemini_and_not_a_compatible_server():
     assert insights.cost_of("gpt-4o-2024-11-20", 1_000_000, 0, "azure") == pytest.approx(2.50)
     assert insights.cost_of("my-deployment", 1000, 1000, "azure") is None
     assert insights.cost_of("gpt-4o-mini", 1_000_000, 0) == pytest.approx(0.15)   # as before
+
+
+# ---- Review findings (dev, PRs #141-#146) -------------------------------------------------------------
+def test_azure_is_never_sent_a_temperature(classes):
+    """Deployment names are the customer's own, so langchain-openai can't tell a
+    GPT-5 / o-series deployment from another: temperature=0 would be sent, and Azure
+    refuses it (400 "temperature does not support 0") on every question. It never goes."""
+    w = azure_workspace(default_model={"provider": "azure", "model": "reasoning-prod"})
+    on = models.for_workspace(w)
+    assert on.fast_name == "reasoning-prod"            # no fast deployment: the guards run on it
+    on.answer(temperature=0, max_tokens=500)
+    on.fast(temperature=0, max_tokens=30)
+    for made in classes[-2:]:
+        assert made["azure_deployment"] == "reasoning-prod"
+        assert "temperature" not in made
+
+
+def test_the_fast_model_stays_the_workspaces_whatever_a_chat_picks(classes):
+    """No fast deployment: the workspace's default deployment does the small jobs. A
+    chat picking another deployment of the same provider, or another provider's
+    model, moves only the answer: the guards, HyDE, rewrite and titles stay put."""
+    w = azure_workspace(chat_models=[
+        {"provider": "azure", "model": "gpt-4o-prod"},
+        {"provider": "azure", "model": "o3-prod"},
+        {"provider": models.COMPAT, "model": "llama-3.3-70b"}],
+        api_keys={"azure": AZURE_KEY, models.COMPAT: COMPAT_KEY},
+        endpoints={"azure": {"base_url": AZURE_URL}, models.COMPAT: {"base_url": COMPAT_URL}})
+    on = models.for_workspace(w)
+    assert on.fast_name == "gpt-4o-prod"
+    same = on.with_answer("azure", "o3-prod")
+    assert (same.answer_name, same.fast_name) == ("o3-prod", "gpt-4o-prod")
+    same.fast()
+    assert classes[-1]["azure_deployment"] == "gpt-4o-prod"
+    same.answer()
+    assert classes[-1]["azure_deployment"] == "o3-prod"
+    other = on.with_answer(models.COMPAT, "llama-3.3-70b")
+    assert (other.answer_name, other.fast_name) == ("llama-3.3-70b", "gpt-4o-prod")
+    other.fast()
+    assert classes[-1]["azure_deployment"] == "gpt-4o-prod"
+    # The workspace's own default changes nothing.
+    assert on.with_answer("azure", "gpt-4o-prod") is on
+
+
+@pytest.mark.parametrize("provider, endpoint, noun", [
+    ("azure", {"base_url": AZURE_URL, "api_version": None}, "deployment"),
+    (models.COMPAT, {"base_url": COMPAT_URL}, "model"),
+])
+def test_a_provider_added_with_no_model_is_refused_not_dropped(client, provider, endpoint, noun):
+    """The settings screen adding Azure / a compatible server sends its key and address
+    with no model ticked (they have no default): it used to save "fine" and drop both."""
+    w = new_workspace()
+    h = login(client, w)
+    key = AZURE_KEY if provider == "azure" else COMPAT_KEY
+    r = client.put("/api/admin/assistant/models", headers=h, json={
+        "embed_provider": "default", "chat_provider": "default",
+        "api_keys": {provider: key}, "endpoints": {provider: endpoint}})
+    assert r.status_code == 422, r.json()["detail"]
+    assert f"Add at least one {models.REGISTRY[provider].label} {noun}" in r.json()["detail"]
+    view = store.view(w)
+    assert view["api_keys_saved"] == {} and view["endpoints"] == {}
+    # An address alone (a compatible server that takes no key) is refused the same way.
+    with pytest.raises(store.Invalid, match=f"at least one .* {noun}"):
+        store.save(w, {"endpoints": {provider: endpoint}}, "admin")
+    # With a model it saves, key and address kept.
+    store.save(w, {"default_model": {"provider": provider, "model": "my-model"},
+                   "api_keys": {provider: key}, "endpoints": {provider: endpoint}}, "admin")
+    assert store.view(w)["api_keys_saved"] == {provider: True}
+    assert store.view(w)["endpoints"][provider]["base_url"] == endpoint["base_url"]
+
+
+def test_clearing_an_optional_key_keeps_the_server_and_its_models(classes):
+    """A compatible server's key is optional: a null key clears the key alone. Its base
+    URL and models stay, and requests go without a key (never the server's)."""
+    w = azure_workspace(chat_models=[{"provider": "azure", "model": "gpt-4o-prod"},
+                                     {"provider": models.COMPAT, "model": "llama-3.3-70b"}],
+                        api_keys={"azure": AZURE_KEY, models.COMPAT: COMPAT_KEY},
+                        endpoints={"azure": {"base_url": AZURE_URL},
+                                   models.COMPAT: {"base_url": COMPAT_URL}})
+    store.save(w, {"api_keys": {models.COMPAT: None}}, "admin")
+    view = store.view(w)
+    assert view["api_keys_saved"] == {"azure": True}
+    assert view["endpoints"][models.COMPAT]["base_url"] == COMPAT_URL
+    assert [m["model"] for m in view["chat_models"]] == ["gpt-4o-prod", "llama-3.3-70b"]
+    models.for_workspace(w).with_answer(models.COMPAT, "llama-3.3-70b").answer()
+    assert (classes[-1]["base_url"], classes[-1]["api_key"]) == (COMPAT_URL, models.NO_KEY)
+    # Removing it (the screen's Remove: its key, and its models left out) still drops it all.
+    store.save(w, {"api_keys": {models.COMPAT: None},
+                   "chat_models": [{"provider": "azure", "model": "gpt-4o-prod"}]}, "admin")
+    view = store.view(w)
+    assert models.COMPAT not in view["endpoints"]
+    assert [m["provider"] for m in view["chat_models"]] == ["azure"]
+
+
+def test_the_endpoints_kept_in_the_sealed_keys_are_never_read_as_a_key():
+    """ENDPOINTS_KEY lives in the same sealed JSON as the API keys (a known follow-up:
+    its own column). No reader may take it for a provider's key."""
+    w = azure_workspace(chat_models=[{"provider": "azure", "model": "gpt-4o-prod"},
+                                     {"provider": models.COMPAT, "model": "llama-3.3-70b"}],
+                        api_keys={"azure": AZURE_KEY},
+                        endpoints={"azure": {"base_url": AZURE_URL},
+                                   models.COMPAT: {"base_url": COMPAT_URL}})
+    view = store.view(w)
+    assert store.ENDPOINTS_KEY not in view["api_keys_saved"]
+    assert store.ENDPOINTS_KEY not in view["api_key_hints"]
+    on = models.for_workspace(w)
+    assert {p for p, _ in on.spec.api_keys} == {"azure", models.COMPAT}
+    assert all(isinstance(s, str) for s in on.secrets())
+    with pytest.raises(store.Invalid):
+        store.save(w, {"api_keys": {store.ENDPOINTS_KEY: "x" * 20}}, "admin")

@@ -1928,10 +1928,13 @@ for `2024-10-21`), and types each deployment people may pick; for search, an emb
 deployment. The endpoint goes through `url_guard` (Model providers, above): a private
 endpoint (a Private Link address) needs `MODEL_ALLOW_PRIVATE_HOSTS`.
 
-- **Deployment names.** A deployment named after its model (`gpt-5-mini`) gets
-  langchain-openai's per-model handling (no temperature on GPT-5); one with another name
-  is sent the pipeline's `temperature=0`, which reasoning models refuse: name GPT-5 /
-  o-series deployments after their model.
+- **No temperature.** Deployment names are your own, so nothing can tell a GPT-5 /
+  o-series deployment (which refuses `temperature=0` with a 400) from another: the
+  pipeline's `temperature=0` is never sent to Azure, whatever a deployment is named.
+  Each deployment runs at its model's own default, as Gemini and Claude do.
+- **The fast model** (the guards, query rewrite, HyDE, titles) is the fast deployment
+  when one is set, else the workspace's **default** deployment: a chat that picks another
+  deployment, or another provider's model, moves only its answer.
 - **Test connection** makes one short reply (16 tokens at most) from the default
   deployment and, when Azure embeds, one short embedding: the data plane lists base
   models, not the resource's deployments, so a list proves nothing. A wrong name gives
@@ -1967,7 +1970,8 @@ OPENAI_COMPAT_FAST_MODEL=llama-3.1-8b-instant           # empty: the chat model
   `stream_options.include_usage` for the token counts; embeddings as plain text (no
   token ids), floats back, 100 texts a request. The key is sent as the bearer token; a
   server without one gets the placeholder `no-key`. The server's `OPENAI_API_KEY` never
-  goes to it.
+  goes to it. *Remove key* on Assistant → Models clears a saved key alone: the base URL
+  and models stay (*Remove* takes the whole server).
 - **The base URL is checked** (Model providers, above): a workspace's must be a public
   https address unless `MODEL_ALLOW_PRIVATE_HOSTS` lists it, e.g.
   `MODEL_ALLOW_PRIVATE_HOSTS=localhost:11434` for an Ollama on this machine, then
