@@ -24,6 +24,16 @@ test("on a desktop, the sections are tabs over the open one, which switches at o
     const b = (await nav.boundingBox())!
     return { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: Math.round(b.width), h: Math.round(b.height) }
   }
+  // Let the screen's entrance finish first, or `before` catches it a fraction of a
+  // pixel short: the tabs hold still across two reads 100ms apart.
+  let last = await box()
+  await expect
+    .poll(async () => {
+      const prev = last
+      last = await box()
+      return JSON.stringify(last) === JSON.stringify(prev)
+    }, { intervals: [100] })
+    .toBe(true)
   const before = await box()
   // Where the title starts (its box is as wide as the crumbs over it, which name the section).
   const at = async () => {

@@ -4,7 +4,11 @@ table made by migrations/versions/0018_spaces_attachments_prompts.py):
 
     prompt_templates    a person's own prompts (owner = their username) and the
                         workspace's (owner NULL), which its admins keep. A body
-                        may hold {{variables}}, filled in before it is asked
+                        may hold {{variables}}, filled in before it is asked.
+                        `search_knowledge` (0027): 1 runs it as any question,
+                        searching the knowledge first; 0 answers it directly,
+                        nothing searched or cited (kb/routers/chat.py,
+                        agent.run(search=)). Read back as `search`, a bool.
 
 variables() finds them; fill() puts values in. Only these and SQL live here; who
 may change which is kb/routers/prompts.py.
@@ -58,6 +62,7 @@ def _row(r):
         return None
     out = dict(r)
     out["variables"] = json.loads(out["variables"] or "[]")
+    out["search"] = bool(out.pop("search_knowledge", 1))
     return out
 
 
@@ -84,25 +89,41 @@ def count(workspace, owner):
                             "owner = ?", (workspace, owner)).fetchone()[0]
 
 
-def create(workspace, owner, title, body, created_by):
-    """owner None: a workspace template."""
+def create(workspace, owner, title, body, created_by, search=True):
+    """owner None: a workspace template. search False: answered without searching."""
     now = time.time()
     pid = uuid.uuid4().hex
     with _db() as conn:
         conn.execute("INSERT INTO prompt_templates (id, workspace, owner, title, body, variables, "
-                     "created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "search_knowledge, created_by, created_at, updated_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (pid, workspace, owner, title, body, json.dumps(variables(body)),
-                      created_by, now, now))
+                      int(bool(search)), created_by, now, now))
     return get(workspace, pid)
 
 
-def update(workspace, prompt_id, title, body):
+def update(workspace, prompt_id, title, body, search=None):
+    """search None: left as it is."""
     with _db() as conn:
         conn.execute("UPDATE prompt_templates SET title = ?, body = ?, variables = ?, "
-                     "updated_at = ? WHERE id = ? AND workspace = ?",
-                     (title, body, json.dumps(variables(body)), time.time(), prompt_id,
+                     "search_knowledge = COALESCE(?, search_knowledge), updated_at = ? "
+                     "WHERE id = ? AND workspace = ?",
+                     (title, body, json.dumps(variables(body)),
+                      None if search is None else int(bool(search)), time.time(), prompt_id,
                       workspace))
     return get(workspace, prompt_id)
+
+
+def searches(workspace, username, prompt_id):
+    """Whether running the prompt `prompt_id` searches the knowledge: False only
+    for one `username` may use (theirs or the workspace's) that is set not to.
+    Anything else (no id, gone, someone else's) searches, as any question."""
+    if not prompt_id:
+        return True
+    p = get(workspace, prompt_id)
+    if not p or (p["owner"] is not None and p["owner"] != username):
+        return True
+    return p["search"]
 
 
 def delete(workspace, prompt_id):
