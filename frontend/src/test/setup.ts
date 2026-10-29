@@ -34,6 +34,10 @@ window.matchMedia = (query: string) =>
 // The app's background field draws on a canvas (AppBackdrop): no 2D context here, so
 // it draws nothing, quietly (jsdom would print "not implemented" for every screen).
 HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
+// jsdom reports the machine's own cores, and the ASCII loop starts a level down on a
+// device with 4 or fewer (lib/ascii-loop.ts): a CI runner would draw the art at other
+// rates than a laptop. A desktop's, everywhere; a test can say otherwise.
+Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, get: () => 8 })
 window.scrollTo = () => {}
 Element.prototype.scrollIntoView = () => {}
 Element.prototype.scrollTo = () => {}

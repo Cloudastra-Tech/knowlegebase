@@ -3,11 +3,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router"
 import { Building2, MessageSquareText } from "lucide-react"
 
+import { NoSearchChip } from "@/components/no-search-chip"
 import { PromptVariablesDialog } from "@/components/prompt-variables-dialog"
 import { Command, CommandGroup, CommandItem, CommandList } from "@/components/ui/command"
 import type { SavedPrompt } from "@/lib/api"
 import { INSERT_PROMPT } from "@/lib/chat-events"
-import { slashQuery } from "@/lib/prompts"
+import { holdsPrompt, slashQuery } from "@/lib/prompts"
 import { queries } from "@/lib/queries"
 
 const SHOWN = 8
@@ -15,7 +16,11 @@ const SHOWN = 8
 // Saved prompts in the composer (chat.md C22): "/" at the start of the box lists
 // them (↑ ↓ to move, Enter or Tab to choose, Esc to close); the command palette
 // puts one in too (INSERT_PROMPT). A prompt with {{variables}} asks for each
-// first. Returns the menu, the dialog, and the composer's key handler.
+// first. Returns the menu, the dialog, the composer's key handler, and the prompt
+// now in the box (`prompt`, while the box still holds the text it put in, whole:
+// holdsPrompt; replaced, edited into or emptied, or `forget()`, it's let go): one
+// set not to search is asked without the search (its id goes with the question),
+// and `chip` says so beside the composer's other chips.
 export function usePromptPicker({
   input,
   setInput,
@@ -36,25 +41,30 @@ export function usePromptPicker({
     .slice(0, SHOWN)
   const [active, setActive] = useState(0)
   const [filling, setFilling] = useState<SavedPrompt | null>(null)
+  // The prompt in the box, and the text it put there (its variables filled in).
+  const [inBox, setInBox] = useState<{ prompt: SavedPrompt; text: string } | null>(null)
   const current = matches[Math.min(active, matches.length - 1)]
+  // Its text gone from the box (sent, cleared, replaced, edited): no longer that prompt.
+  if (inBox && !holdsPrompt(input, inBox.text)) setInBox(null)
 
-  // Put text in the box, the cursor at its end.
+  // Put a prompt's text in the box, the cursor at its end.
   const put = useCallback(
-    (text: string) => {
+    (text: string, from: SavedPrompt) => {
       setInput(text)
+      setInBox({ prompt: from, text })
       requestAnimationFrame(() => {
         const el = inputRef.current
         el?.focus()
         el?.setSelectionRange(text.length, text.length)
       })
     },
-    [setInput, inputRef],
+    [setInput, inputRef, setInBox],
   )
 
   const choose = useCallback(
     (p: SavedPrompt) => {
       if (p.variables.length) setFilling(p)
-      else put(p.body)
+      else put(p.body, p)
     },
     [put, setFilling],
   )
@@ -136,10 +146,13 @@ export function usePromptPicker({
       onOpenChange={(o) => !o && setFilling(null)}
       onUse={(text) => {
         setFilling(null)
-        put(text)
+        if (filling) put(text, filling)
       }}
     />
   )
 
-  return { menu, dialog, intercept }
+  const forget = () => setInBox(null)
+  const chip = inBox && !inBox.prompt.search ? <NoSearchChip onRemove={forget} /> : null
+
+  return { menu, dialog, intercept, chip, prompt: inBox?.prompt ?? null, forget }
 }

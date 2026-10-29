@@ -24,7 +24,7 @@ If you can read this, you can explain the app to anyone.
 | **BM25** | Keyword search (exact words) | The index at the back of a book |
 | **RRF** | Merges keyword + meaning results | The judge that ranks both |
 | **OpenAI `gpt-4o-mini`** | Writes the final answer (ANSWER_MODEL; small jobs on FAST_MODEL, models.py) | The writer |
-| **AWS Bedrock** (optional) | Every model above instead of OpenAI, in the company's own AWS account: `MODEL_PROVIDER=bedrock`, or one workspace's "Bring your own AWS" (models.py, deploy.md "AWS Bedrock"). Chat and embeddings can be on different providers (`CHAT_PROVIDER`, `EMBED_PROVIDER`, models.py's REGISTRY; deploy.md "Model providers"), e.g. Claude through Anthropic's API for chat (`CHAT_PROVIDER=anthropic`; deploy.md "Anthropic") | The in-house translator and writer |
+| **AWS Bedrock** (optional) | Every model above instead of OpenAI, in the company's own AWS account: `MODEL_PROVIDER=bedrock`, or one workspace's "Bring your own AWS" (models.py, deploy.md "AWS Bedrock"). Chat and embeddings can be on different providers (`CHAT_PROVIDER`, `EMBED_PROVIDER`, models.py's REGISTRY; deploy.md "Model providers"), e.g. Claude through Anthropic's API for chat (`CHAT_PROVIDER=anthropic`; deploy.md "Anthropic"); Google Gemini, Azure OpenAI and any OpenAI-compatible server (Groq, vLLM, Ollama...) through the same OpenAI client (deploy.md "Google Gemini", "Azure OpenAI", "OpenAI-compatible servers") | The in-house translator and writer |
 | **safety.py** | Safety checks on input & output (our own rules + a FAST-model classifier) | The security guard |
 | **Permission filter** | Decides which docs you may search | The keycard / access control |
 
@@ -130,8 +130,10 @@ LAYER 1 — PERMISSION FILTER   "the wall"
    → The model can't leak what it never received.
 
 LAYER 2 — GUARDRAILS          "the backup net"
-   • Generic checks (too long)          → apply to EVERYONE
-     (no toxicity check: it was the Guardrails Hub validator, removed; deploy.md step 4)
+   • Generic checks (too long, abusive) → apply to EVERYONE, once per question
+     as typed, searched or not (not per search query or follow-up rewrite)
+     (abuse: OpenAI moderation + a fast-model second opinion, or the fast model
+      alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4)
    • Salary checks (input + output)      → apply to PUBLIC only (HR skips them)
    • If a leak slips through             → REASK rewrites it cleanly
 ```

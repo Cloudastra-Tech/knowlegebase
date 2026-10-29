@@ -239,6 +239,13 @@ describe("ModelProviderSettings", () => {
     // Opus off: the default can't stay on it.
     const anthropic = screen.getByRole("list", { name: "Anthropic models" })
     await user.click(within(anthropic).getByRole("checkbox", { name: /Claude Opus 5.5/ }))
+    // Anthropic with nothing ticked isn't saved (its key would go without a word).
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    const section = screen.getByRole("region", { name: "Anthropic" })
+    expect(within(section).getByRole("alert")).toHaveTextContent("Tick or add at least one model.")
+    expect(puts).toHaveLength(0)
+    await user.click(within(anthropic).getByRole("checkbox", { name: /Claude Sonnet 5.5/ }))
+    expect(within(section).queryByRole("alert")).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(puts).toHaveLength(1))
     expect(puts[0]).toMatchObject({
@@ -246,6 +253,7 @@ describe("ModelProviderSettings", () => {
       chat_models: [
         { provider: "openai", model: "gpt-5" },
         { provider: "openai", model: "gpt-9-preview" },
+        { provider: "anthropic", model: "claude-sonnet-5-5" },
       ],
     })
     expect(puts[0]).not.toHaveProperty("api_keys")
@@ -374,7 +382,7 @@ describe("ModelProviderSettings", () => {
     expect(within(status).getByText("It answered with amazon.nova-pro-v1:0.")).toBeInTheDocument()
     const dots = status.querySelectorAll('[data-slot="status-dot"]')
     expect([...dots].map((d) => d.getAttribute("data-status"))).toEqual(["live", "error", "live"])
-    expect(screen.getByText(/Anthropic's models, for free/)).toBeInTheDocument()
+    expect(screen.getByText(/Anthropic's, Gemini's and a compatible server's models, for free/)).toBeInTheDocument()
     expect(tests[0]).toMatchObject({
       default_model: { provider: "anthropic", model: "claude-opus-5-5" },
       chat_models: [
@@ -420,5 +428,286 @@ describe("ModelProviderSettings", () => {
     const alert = await screen.findByRole("alert")
     expect(within(alert).getByText("Couldn't connect")).toBeInTheDocument()
     expect(within(alert).getByText("Paste your Anthropic API key.")).toBeInTheDocument()
+  })
+})
+
+// Google Gemini, Azure OpenAI and an OpenAI-compatible server, as the registry
+// describes them (models.py).
+const MORE = [
+  ...PROVIDERS,
+  { name: "gemini", label: "Google Gemini", chat: true, embeddings: true, in_house: false, api_key: true },
+  {
+    name: "azure",
+    label: "Azure OpenAI",
+    chat: true,
+    embeddings: true,
+    in_house: false,
+    api_key: true,
+    base_url: true,
+    api_version: true,
+    typed_models: true,
+  },
+  {
+    name: "openai_compatible",
+    label: "OpenAI-compatible",
+    chat: true,
+    embeddings: true,
+    in_house: false,
+    api_key: true,
+    base_url: true,
+    key_optional: true,
+    typed_models: true,
+  },
+].map((p) => ({ vision: false, prompt_caching: "none", tool_calls: true, ...p }))
+const WITH_MORE = {
+  ...SETTINGS,
+  providers: MORE,
+  catalogue: {
+    ...CATALOGUE,
+    gemini: [m("gemini-4-argon", "Gemini 4 Argon", "best"), m("gemini-3.8-flash", "Gemini 3.8 Flash", "balanced")],
+    azure: [],
+    openai_compatible: [],
+  },
+  provider_defaults: {
+    ...SETTINGS.provider_defaults,
+    gemini: {
+      chat_model: "gemini-3.8-flash",
+      fast_model: "gemini-3.5-flash-lite",
+      embed_model: "gemini-embedding-001",
+      embed_dims: 3072,
+    },
+    azure: { chat_model: null, fast_model: null, embed_model: null, embed_dims: null, api_version: "2024-10-21" },
+    openai_compatible: { chat_model: null, fast_model: null, embed_model: null, embed_dims: null },
+  },
+}
+
+function saving(settings: object, reindex = false) {
+  const puts: Record<string, unknown>[] = []
+  mockApi({
+    "GET /api/admin/assistant/models": settings,
+    "PUT /api/admin/assistant/models": (body: Record<string, unknown>) => {
+      puts.push(body)
+      return { ...settings, updated_at: 2, reindex }
+    },
+  })
+  return puts
+}
+
+describe("ModelProviderSettings: Gemini, Azure OpenAI, OpenAI-compatible", () => {
+  it("offers all three for answers and search", async () => {
+    mockApi({ "GET /api/admin/assistant/models": WITH_MORE })
+    const user = renderSettings()
+    await user.click(await screen.findByRole("button", { name: "Add a provider" }))
+    expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual([
+      "OpenAI",
+      "AWS Bedrock",
+      "Anthropic",
+      "Google Gemini",
+      "Azure OpenAI",
+      "OpenAI-compatible",
+    ])
+    await user.keyboard("{Escape}")
+    expect(await options(user, "Search (embeddings)")).toEqual([
+      "Server default (OpenAI)",
+      "OpenAI",
+      "AWS Bedrock",
+      "Local (on this server)",
+      "Google Gemini",
+      "Azure OpenAI",
+      "OpenAI-compatible",
+    ])
+  })
+
+  it("adds Gemini with its default model ticked and its key, and no address", async () => {
+    const puts = saving(WITH_MORE)
+    const user = renderSettings()
+    await addProvider(user, "Google Gemini")
+    const list = screen.getByRole("list", { name: "Google Gemini models" })
+    expect(within(list).getByRole("checkbox", { name: /Gemini 3.8 Flash/ })).toBeChecked()
+    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Endpoint")).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText("Google Gemini API key"))
+    await user.paste("AIza-test-key-000000000000")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toMatchObject({
+      default_model: { provider: "gemini", model: "gemini-3.8-flash" },
+      api_keys: { gemini: "AIza-test-key-000000000000" },
+    })
+    expect(puts[0]).not.toHaveProperty("endpoints")
+  })
+
+  it("adds Azure OpenAI with its endpoint, api-version and a deployment name", async () => {
+    const puts = saving(WITH_MORE)
+    const user = renderSettings()
+    await addProvider(user, "Azure OpenAI")
+    // No curated list: nothing ticked, a deployment name to type.
+    expect(screen.getByText(/Add the deployment names people can pick/)).toBeInTheDocument()
+    expect(screen.getByLabelText("API version")).toHaveAttribute("placeholder", "2024-10-21")
+    await user.type(screen.getByLabelText("Endpoint"), "https://contoso.openai.azure.com")
+    await user.click(screen.getByLabelText("Azure OpenAI API key"))
+    await user.paste("azure-key-000000000000000000")
+    await user.type(
+      screen.getByRole("textbox", { name: "Another Azure OpenAI deployment name" }),
+      "gpt-4o-prod{Enter}",
+    )
+    const list = screen.getByRole("list", { name: "Azure OpenAI models" })
+    expect(within(list).getByRole("checkbox", { name: /gpt-4o-prod/ })).toBeChecked()
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toMatchObject({
+      default_model: { provider: "azure", model: "gpt-4o-prod" },
+      chat_models: [{ provider: "azure", model: "gpt-4o-prod" }],
+      api_keys: { azure: "azure-key-000000000000000000" },
+      endpoints: { azure: { base_url: "https://contoso.openai.azure.com", api_version: null } },
+    })
+  })
+
+  it("adds an OpenAI-compatible server whose key is optional", async () => {
+    const puts = saving(WITH_MORE)
+    const user = renderSettings()
+    await addProvider(user, "OpenAI-compatible")
+    expect(screen.getByLabelText("OpenAI-compatible API key (optional)")).toHaveAttribute(
+      "placeholder",
+      "Leave empty if the server takes none",
+    )
+    expect(screen.queryByLabelText("API version")).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText("Base URL"), "https://api.groq.com/openai/v1")
+    await user.type(
+      screen.getByRole("textbox", { name: "Another OpenAI-compatible model id" }),
+      "llama-3.3-70b-versatile{Enter}",
+    )
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toMatchObject({
+      default_model: { provider: "openai_compatible", model: "llama-3.3-70b-versatile" },
+      endpoints: { openai_compatible: { base_url: "https://api.groq.com/openai/v1" } },
+    })
+    expect(puts[0]).not.toHaveProperty("api_keys")
+    expect((puts[0].endpoints as Record<string, object>).openai_compatible).not.toHaveProperty("api_version")
+  })
+
+  it("puts search on Azure with its endpoint and embedding deployment, asking before a rebuild", async () => {
+    const puts = saving(WITH_MORE, true)
+    const user = renderSettings()
+    await choose(user, "Search (embeddings)", "Azure OpenAI")
+    expect(screen.getByText(/An embedding deployment on your Azure OpenAI resource/)).toBeInTheDocument()
+    await user.type(screen.getByLabelText("Endpoint"), "https://contoso.openai.azure.com")
+    await user.type(screen.getByLabelText("API version"), "2025-04-01-preview")
+    await user.click(screen.getByLabelText("Azure OpenAI API key"))
+    await user.paste("azure-key-000000000000000000")
+    await user.type(screen.getByLabelText("Embedding deployment"), "embed-small-prod")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    const dialog = await screen.findByRole("alertdialog")
+    expect(puts).toHaveLength(0)
+    await user.click(within(dialog).getByRole("button", { name: "Save and rebuild" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toMatchObject({
+      embed_provider: "azure",
+      embed_model: "embed-small-prod",
+      api_keys: { azure: "azure-key-000000000000000000" },
+      endpoints: {
+        azure: { base_url: "https://contoso.openai.azure.com", api_version: "2025-04-01-preview" },
+      },
+      confirm_reindex: true,
+    })
+  })
+
+  it("shows the saved addresses back, and only a key's last 4 characters", async () => {
+    mockApi({
+      "GET /api/admin/assistant/models": {
+        ...WITH_MORE,
+        chat_provider: "openai_compatible",
+        chat_model: "llama3.1:8b",
+        api_keys_saved: { azure: true },
+        api_key_hints: { azure: "0own" },
+        endpoints: {
+          openai_compatible: { base_url: "http://localhost:11434/v1", api_version: null },
+          azure: { base_url: "https://contoso.openai.azure.com", api_version: "2024-10-21" },
+        },
+        chat_models: [
+          {
+            ...enabled("openai_compatible", "llama3.1:8b", "llama3.1:8b", "balanced", true),
+            provider_label: "OpenAI-compatible",
+          },
+          { ...enabled("azure", "gpt-4o-prod", "gpt-4o-prod", "balanced"), provider_label: "Azure OpenAI" },
+        ],
+        default_model: { provider: "openai_compatible", model: "llama3.1:8b" },
+      },
+    })
+    renderSettings()
+    expect(await screen.findByLabelText("Base URL")).toHaveValue("http://localhost:11434/v1")
+    expect(screen.getByLabelText("Endpoint")).toHaveValue("https://contoso.openai.azure.com")
+    expect(screen.getByLabelText("API version")).toHaveValue("2024-10-21")
+    expect(screen.getByText("••••0own")).toBeInTheDocument()
+    // Typed models show without a tier: there's no curated list to rank them in.
+    const list = screen.getByRole("list", { name: "Azure OpenAI models" })
+    expect(within(list).getByRole("checkbox", { name: /gpt-4o-prod/ })).toBeChecked()
+    expect(within(list).queryByText("Custom")).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ["Azure OpenAI", "Endpoint", "https://contoso.openai.azure.com", "Add at least one deployment.", "deployment name"],
+    ["OpenAI-compatible", "Base URL", "https://api.groq.com/openai/v1", "Add at least one model.", "model id"],
+  ])(
+    "won't save %s with nothing to pick: says so in place, then saves once one is added",
+    async (label, addressLabel, address, message, idName) => {
+      const puts = saving(WITH_MORE)
+      const user = renderSettings()
+      await addProvider(user, label)
+      await user.type(screen.getByLabelText(addressLabel), address)
+      await user.click(screen.getByLabelText(new RegExp(`^${label} API key`)))
+      await user.paste("key-000000000000000000000000")
+      const section = screen.getByRole("region", { name: label })
+      await user.click(screen.getByRole("button", { name: "Save" }))
+      // The message takes the hint's place (no shift), and nothing is sent.
+      expect(within(section).getByRole("alert")).toHaveTextContent(message)
+      expect(within(section).queryByText(/people can pick, as/)).not.toBeInTheDocument()
+      expect(puts).toHaveLength(0)
+      const field = screen.getByRole("textbox", { name: `Another ${label} ${idName}` })
+      expect(field).toHaveFocus()
+      await user.type(field, "my-model{Enter}")
+      expect(within(section).queryByRole("alert")).not.toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Save" }))
+      await waitFor(() => expect(puts).toHaveLength(1))
+      expect(puts[0]).toMatchObject({ default_model: { model: "my-model" } })
+    },
+  )
+
+  it("clears a compatible server's optional key alone, keeping its address and models", async () => {
+    const compat = {
+      ...WITH_MORE,
+      chat_provider: "openai_compatible",
+      chat_model: "llama3.1:8b",
+      api_keys_saved: { openai_compatible: true, azure: true },
+      api_key_hints: { openai_compatible: "1234", azure: "0own" },
+      endpoints: {
+        openai_compatible: { base_url: "https://api.groq.com/openai/v1", api_version: null },
+        azure: { base_url: "https://contoso.openai.azure.com", api_version: null },
+      },
+      chat_models: [
+        { ...enabled("openai_compatible", "llama3.1:8b", "llama3.1:8b", "balanced", true), provider_label: "OpenAI-compatible" },
+        { ...enabled("azure", "gpt-4o-prod", "gpt-4o-prod", "balanced"), provider_label: "Azure OpenAI" },
+      ],
+      default_model: { provider: "openai_compatible", model: "llama3.1:8b" },
+    }
+    const puts = saving(compat)
+    const user = renderSettings()
+    // Only an optional key can be removed alone; a required one goes with its provider.
+    expect(screen.queryByRole("button", { name: "Remove the Azure OpenAI key" })).toBeNull()
+    await user.click(await screen.findByRole("button", { name: "Remove the OpenAI-compatible key" }))
+    expect(screen.getByText(/Removed when you save/)).toBeInTheDocument()
+    // Changed their mind, then removed it after all.
+    await user.click(screen.getByRole("button", { name: "Keep saved key" }))
+    expect(screen.getByText("••••1234")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Remove the OpenAI-compatible key" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0].api_keys).toEqual({ openai_compatible: null })
+    expect(puts[0]).toMatchObject({
+      default_model: { provider: "openai_compatible", model: "llama3.1:8b" },
+      endpoints: { openai_compatible: { base_url: "https://api.groq.com/openai/v1" } },
+    })
+    expect(puts[0].chat_models).toContainEqual({ provider: "openai_compatible", model: "llama3.1:8b" })
   })
 })

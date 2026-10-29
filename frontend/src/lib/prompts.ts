@@ -24,3 +24,12 @@ export function slashQuery(text: string): string | null {
   const m = /^\/([^\n]*)$/.exec(text)
   return m ? m[1] : null
 }
+
+// A saved prompt is still in the composer while the text it put in is there whole
+// (spacing aside): added to before or after, it's still that prompt. Edited into,
+// replaced or cleared, it's the person's own question, sent without the prompt.
+export function holdsPrompt(text: string, inserted: string): boolean {
+  const squash = (s: string) => s.split(/\s+/).filter(Boolean).join(" ")
+  const needle = squash(inserted)
+  return needle.length > 0 && squash(text).includes(needle)
+}

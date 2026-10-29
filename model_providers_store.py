@@ -13,7 +13,15 @@ uses for it ("Bring your own provider" on the Assistant screen):
     api_keys         {provider: API key} for the providers the workspace brings its
                      own key for, SEALED under the workspace's key (secret_box);
                      never shown again, only "saved". A provider chosen here that
-                     takes a key needs one: never the server's key instead
+                     takes a key needs one: never the server's key instead (an
+                     OpenAI-compatible server may take none: key_optional).
+                     The same sealed JSON keeps, under ENDPOINTS_KEY, the
+                     addresses typed for the providers that take one: {provider:
+                     {base_url, api_version}} (Azure OpenAI's endpoint and
+                     api-version, an OpenAI-compatible server's base URL). They
+                     aren't secret and are shown back; kept here so no migration
+                     is needed, and sealed like the rest. Each is url_guard-checked
+                     (MODEL_ALLOW_PRIVATE_HOSTS) when saved, and on every request
     region           the AWS region its Bedrock runs in (us-east-1, eu-central-1, ...)
     auth             role      the server assumes role_arn, passing external_id (preferred:
                                no AWS secret is stored here)
@@ -47,10 +55,12 @@ import json
 import re
 import secrets
 import time
+from urllib.parse import urlsplit
 
 import db
 import models
 import secret_box
+import url_guard
 
 secret_box.register("model_providers", "access_keys", ("workspace",))
 secret_box.register("model_providers", "api_keys", ("workspace",))
@@ -58,14 +68,24 @@ secret_box.register("model_providers", "api_keys", ("workspace",))
 AUTHS = ("role", "keys")
 FIELDS = ("provider", "chat_provider", "embed_provider", "region", "auth", "role_arn",
           "chat_model", "fast_model", "embed_model", "embed_dims", "access_key_id",
-          "secret_access_key", "api_keys", "chat_models", "default_model")
+          "secret_access_key", "api_keys", "chat_models", "default_model", "endpoints")
 MAX_MODELS = 24                 # enabled chat models per workspace
+# In the sealed api_keys JSON beside the keys, never a provider's name: every reader
+# goes through _api_keys() (which skips it) or _endpoints(). Known follow-up: move the
+# addresses to a column of their own (a migration), out of the sealed blob.
+ENDPOINTS_KEY = "_endpoints"
 KEY_ID = r"^[A-Z0-9]{16,128}$"
 API_KEY = re.compile(r"^[\x21-\x7e]{16,512}$")      # printable, no spaces
+SHORT_KEY = re.compile(r"^[\x21-\x7e]{1,512}$")
 
 
 class Invalid(ValueError):
     """A change was refused: the message says why, for the admin making it."""
+
+
+class Unused(Invalid):
+    """A key or an address was typed for a provider that nothing would use (no model
+    enabled, not search's): it would be dropped, so the change is refused instead."""
 
 
 def chat_choices():
@@ -189,6 +209,8 @@ def view(workspace):
             "role_arn": row["role_arn"], "external_id": row["external_id"],
             "keys_saved": bool(keys), "access_key_hint": keys[0][-4:] if keys else None,
             "api_keys_saved": {p: True for p, k in _api_keys(workspace, row).items() if k},
+            # The addresses typed for Azure / an OpenAI-compatible server: not secret.
+            "endpoints": _endpoints(workspace, row),
             # Its last 4 characters, as the provider's own console shows them.
             "api_key_hints": {p: k[-4:] for p, k in _api_keys(workspace, row).items() if k},
             "chat_models": [{**describe_model(p, m), "default": i == 0}
@@ -216,10 +238,28 @@ def _keys(workspace, row):
     return (value.get("id"), value.get("secret")) if value.get("id") else None
 
 
-def _api_keys(workspace, row):
+def _sealed(workspace, row):
     if not row or not row.get("api_keys"):
         return {}
     return dict(secret_box.unseal(row["api_keys"], workspace) or {})
+
+
+def _api_keys(workspace, row):
+    """{provider: key}: the sealed JSON without the endpoints kept beside the keys."""
+    return {p: k for p, k in _sealed(workspace, row).items() if p != ENDPOINTS_KEY}
+
+
+def _endpoints(workspace, row):
+    """{provider: {base_url, api_version}} as typed for the providers that take one."""
+    found = _sealed(workspace, row).get(ENDPOINTS_KEY) or {}
+    return {p: {"base_url": e.get("base_url"), "api_version": e.get("api_version")}
+            for p, e in found.items() if isinstance(e, dict)}
+
+
+def _seal(workspace, api_keys, endpoints):
+    # The endpoints ride in the keys' sealed JSON (ENDPOINTS_KEY): see its note.
+    value = {**api_keys, **({ENDPOINTS_KEY: endpoints} if endpoints else {})}
+    return secret_box.seal(value, workspace) if value else None
 
 
 def spec(workspace):
@@ -228,10 +268,11 @@ def spec(workspace):
     row = get(workspace)
     if not row or sides(row) == ("default", "default"):
         return None
-    return _spec_of(row, _keys(workspace, row), _api_keys(workspace, row), workspace)
+    return _spec_of(row, _keys(workspace, row), _api_keys(workspace, row), workspace,
+                    _endpoints(workspace, row))
 
 
-def _spec_of(row, keys, api_keys, workspace):
+def _spec_of(row, keys, api_keys, workspace, endpoints=None):
     """The Spec the row makes. A side on default takes the server's provider and
     models; a chosen one takes the row's models, or that provider's defaults."""
     chat, embed = sides(row)
@@ -260,9 +301,14 @@ def _spec_of(row, keys, api_keys, workspace):
            if "bedrock" in used else dict(region=server.region, auth=server.auth)
            if "bedrock" in (chat_p, embed_p) else {})
     own = tuple((p, api_keys.get(p)) for p in used if models.REGISTRY[p].api_key_env)
+    # Its own address for each provider that takes one (Azure, OpenAI-compatible).
+    typed = tuple((p, (endpoints or {}).get(p, {}).get("base_url"),
+                   (endpoints or {}).get(p, {}).get("api_version"))
+                  for p in used if models.REGISTRY[p].base_url)
     return models.Spec(provider=chat_p, embed_provider=None if embed_p == chat_p else embed_p,
                        chat_model=chat_model, fast_model=fast_model, embed_model=embed_model,
-                       embed_dims=dims, api_keys=own or None, workspace=workspace, **aws)
+                       embed_dims=dims, api_keys=own or None, workspace=workspace,
+                       endpoints=typed or None, **aws)
 
 
 def bedrock_preview(workspace, row):
@@ -344,6 +390,8 @@ def clean(change, current):
                 raise Invalid("That isn't an AWS secret access key.")
         elif key == "api_keys":
             value = _clean_api_keys(value)
+        elif key == "endpoints":
+            value = _clean_endpoints(value)
         elif key == "chat_models":
             if not isinstance(value, list):
                 raise Invalid("The enabled models are a list.")
@@ -387,13 +435,57 @@ def _clean_api_keys(value):
         if info is None or not info.api_key_env:
             raise Invalid(f"{_label(provider)} doesn't take an API key here.")
         key = str(key or "").strip() or None
-        if key and not API_KEY.match(key):
+        # A self-hosted server's key is whatever it was started with.
+        if key and not (SHORT_KEY if info.key_optional else API_KEY).match(key):
             raise Invalid(f"That isn't a {info.label} API key.")
         out[provider] = key
     return out
 
 
-def complete(row, keys, api_keys=None):
+def _clean_endpoints(value):
+    """{provider: {base_url, api_version}} -> checked: only providers that take an
+    address; https (or a host in MODEL_ALLOW_PRIVATE_HOSTS), never a private or
+    loopback one (url_guard), no credentials, query or fragment in it; an
+    api-version only where one is taken (Azure), dated."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise Invalid("Endpoints are given per provider.")
+    out = {}
+    for provider, given in value.items():
+        info = models.REGISTRY.get(provider)
+        if info is None or not info.base_url:
+            raise Invalid(f"{_label(provider)} doesn't take an address here.")
+        if given is None:
+            out[provider] = None
+            continue
+        if not isinstance(given, dict):
+            raise Invalid(f"{info.label}'s endpoint is given as its address.")
+        what = "endpoint" if info.api_version else "base URL"
+        url = str(given.get("base_url") or "").strip().rstrip("/") or None
+        if url:
+            if len(url) > 512 or any(c.isspace() for c in url):
+                raise Invalid(f"That isn't a valid {info.label} {what}.")
+            parts = urlsplit(url)
+            if parts.query or parts.fragment:
+                raise Invalid(f"The {info.label} {what} takes no query string: put the "
+                              "key in its own field.")
+            try:
+                url_guard.check_model_endpoint(url)
+            except url_guard.UnsafeURL as e:
+                raise Invalid(f"{info.label} {what}: {e}") from None
+        version = str(given.get("api_version") or "").strip() or None
+        if version and not info.api_version:
+            raise Invalid(f"{info.label} takes no API version.")
+        if version and not models.API_VERSION.match(version):
+            raise Invalid("That isn't an Azure OpenAI API version (like 2024-10-21).")
+        # Only what was given changes: an api-version alone keeps the endpoint.
+        out[provider] = {k: v for k, v in (("base_url", url), ("api_version", version))
+                         if k in given}
+    return out
+
+
+def complete(row, keys, api_keys=None, endpoints=None):
     """Why the row can't be used yet (None: it can)."""
     chat, embed = sides(row)
     used = _providers_of(row)
@@ -405,8 +497,21 @@ def complete(row, keys, api_keys=None):
         if row["auth"] == "keys" and not keys:
             return "Paste the access key id and secret access key."
     for p in used:
-        if models.REGISTRY[p].api_key_env and not (api_keys or {}).get(p):
-            return f"Paste your {models.REGISTRY[p].label} API key."
+        info = models.REGISTRY[p]
+        if info.api_key_env and not info.key_optional and not (api_keys or {}).get(p):
+            return f"Paste your {info.label} API key."
+        if info.base_url and not ((endpoints or {}).get(p) or {}).get("base_url"):
+            return (f"Paste your Azure OpenAI endpoint (https://<resource>.openai.azure.com)."
+                    if info.api_version else f"Paste the {info.label} server's base URL.")
+    if chat not in ("default",) and not default_model(row)[1]:
+        info = models.REGISTRY[chat]
+        return (f"Name the {info.label} deployment that answers."
+                if info.api_version else f"Name the {info.label} model that answers.")
+    if embed != "default" and not (row.get("embed_model")
+                                   or models.REGISTRY[embed].defaults().get("embed_model")):
+        info = models.REGISTRY[embed]
+        return (f"Name the {info.label} deployment that embeds documents."
+                if info.api_version else f"Name the {info.label} embedding model.")
     if embed not in ("default", "bedrock") and row.get("embed_dims"):
         return "The embedding size can only be chosen for Bedrock's models."
     return None
@@ -414,11 +519,12 @@ def complete(row, keys, api_keys=None):
 
 def _merge(workspace, current, change):
     """The row with `change` applied (not saved) -> (row, AWS keys, API keys,
-    the access keys as typed, the API keys' change)."""
+    the access keys as typed, the API keys' change, endpoints)."""
     change = clean(change, current)
     key_id = change.pop("access_key_id", None)
     secret = change.pop("secret_access_key", None)
     api_change = change.pop("api_keys", None) or {}
+    endpoint_change = change.pop("endpoints", None) or {}
     listed = change.pop("chat_models", None)
     default = change.pop("default_model", None)
     chat, embed = sides(current)
@@ -451,15 +557,39 @@ def _merge(workspace, current, change):
     # key they'd need) go with it.
     if listed is None:
         listed = [] if chat != before[0] else _stored_models(current)
-    removed = {p for p, k in api_change.items() if not k}
+    # A null key removes the provider (its models, its address) unless the key is
+    # optional (an OpenAI-compatible server that takes none): then only the key goes.
+    removed = {p for p, k in api_change.items()
+               if not k and not models.REGISTRY[p].key_optional}
     listed = [] if chat == "default" else [(p, m) for p, m in listed if p not in removed]
     merged["chat_models"] = _dump_models(listed)
     api_keys = {**_api_keys(workspace, current), **api_change}
     # Only the providers in use keep a key: one left behind is a secret for nothing.
     used = _providers_of(merged)
+    # A key or an address typed now for a provider nothing uses would be dropped
+    # without a word (one added with no model ticked: Azure, a compatible server
+    # have no default). Refused instead, saying what's missing.
+    for p in dict.fromkeys((*api_change, *endpoint_change)):
+        if p in used:
+            continue
+        info = models.REGISTRY[p]
+        typed = (["key"] if api_change.get(p) else []) + (
+            ["endpoint" if info.api_version else "base URL"]
+            if (endpoint_change.get(p) or {}).get("base_url") else [])
+        if typed:
+            noun = "deployment" if info.api_version else "model"
+            raise Unused(f"Add at least one {info.label} {noun} people can pick (or use it "
+                         f"for search), or remove it: its {' and '.join(typed)} can't be "
+                         "saved on its own.")
     api_keys = {p: k for p, k in api_keys.items() if k and p in used}
+    # The addresses the same way: a provider's goes with it, or with its key.
+    endpoints = {**_endpoints(workspace, current)}
+    for p, typed in endpoint_change.items():
+        endpoints[p] = {**endpoints.get(p, {}), **typed} if typed else None
+    endpoints = {p: e for p, e in endpoints.items()
+                 if e and e.get("base_url") and p in used and p not in removed}
     aws = (key_id, secret) if key_id and secret else _keys(workspace, current)
-    return merged, aws, api_keys, (key_id, secret), api_change
+    return merged, aws, api_keys, (key_id, secret), api_change, endpoints
 
 
 def _dump_models(listed):
@@ -471,13 +601,13 @@ def draft(workspace, change):
     (Test connection before switching, the re-index question), or None for the
     server's. Raises Invalid."""
     current = ensure(workspace)
-    merged, aws, api_keys, _, _ = _merge(workspace, current, change)
-    problem = complete(merged, aws, api_keys)
+    merged, aws, api_keys, _, _, endpoints = _merge(workspace, current, change)
+    problem = complete(merged, aws, api_keys, endpoints)
     if problem:
         raise Invalid(problem)
     if sides(merged) == ("default", "default"):
         return None
-    return _spec_of(merged, aws, api_keys, workspace)
+    return _spec_of(merged, aws, api_keys, workspace, endpoints)
 
 
 def draft_enabled(workspace, change):
@@ -492,7 +622,7 @@ def save(workspace, change, by):
     instead of a workspace that can't answer."""
     import assistant_store
     current = ensure(workspace)
-    merged, _, api_keys, (key_id, secret), _ = _merge(workspace, current, change)
+    merged, _, api_keys, (key_id, secret), _, endpoints = _merge(workspace, current, change)
     before = models.for_workspace(workspace).embed_name
     sealed = current["access_keys"]
     if key_id or secret:
@@ -502,12 +632,12 @@ def save(workspace, change, by):
     merged["access_keys"] = sealed
     if merged["auth"] == "role":
         sealed = merged["access_keys"] = None      # a role needs no stored secret
-    problem = complete(merged, _keys(workspace, merged), api_keys)
+    problem = complete(merged, _keys(workspace, merged), api_keys, endpoints)
     if problem:
         raise Invalid(problem)
-    merged["api_keys"] = secret_box.seal(api_keys, workspace) if api_keys else None
+    merged["api_keys"] = _seal(workspace, api_keys, endpoints)
     cols = [k for k in merged if k in FIELDS and k not in (
-        "access_key_id", "secret_access_key", "api_keys", "default_model")] + [
+        "access_key_id", "secret_access_key", "api_keys", "default_model", "endpoints")] + [
         "access_keys", "api_keys"]
     values = [merged[k] for k in cols]
     with _db() as conn:

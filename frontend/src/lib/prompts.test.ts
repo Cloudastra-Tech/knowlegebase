@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { fillPrompt, slashQuery, variablesOf } from "@/lib/prompts"
+import { fillPrompt, holdsPrompt, slashQuery, variablesOf } from "@/lib/prompts"
 
 describe("saved prompts", () => {
   it("finds each variable once, in order", () => {
@@ -22,5 +22,16 @@ describe("saved prompts", () => {
     expect(slashQuery("/")).toBe("")
     expect(slashQuery("a /b")).toBeNull()
     expect(slashQuery("/a\nb")).toBeNull()
+  })
+
+  it("holds a prompt while its text is in the box whole, added to or re-spaced", () => {
+    const body = "Summarise the refund policy\nfor a customer"
+    expect(holdsPrompt(body, body)).toBe(true)
+    expect(holdsPrompt(`Context: Acme. ${body} in two lines`, body)).toBe(true)
+    expect(holdsPrompt("Summarise  the refund policy for a customer ", body)).toBe(true)
+    expect(holdsPrompt("What is the refund policy?", body)).toBe(false) // replaced
+    expect(holdsPrompt("Summarise the leave policy for a customer", body)).toBe(false) // edited into
+    expect(holdsPrompt("", body)).toBe(false)
+    expect(holdsPrompt("anything", "  ")).toBe(false)
   })
 })

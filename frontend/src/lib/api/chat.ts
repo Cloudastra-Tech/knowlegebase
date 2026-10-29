@@ -37,6 +37,7 @@ export interface StreamOptions {
   regenerateOf?: string // a new answer beside this finished one (a new branch)
   editOf?: string // the question replaces this earlier question (a new branch)
   model?: ModelRef // the answer model picked; refused (400) unless it's enabled
+  promptId?: string // the saved prompt it came from (one set not to search answers directly)
   signal?: AbortSignal // aborting stops the answer (the server saves it as stopped)
 }
 
@@ -50,7 +51,7 @@ export const chatApi = {
   async chatStream(
     question: string,
     onEvent: (e: StreamEvent) => void,
-    { conversationId, retryOf, regenerateOf, editOf, model, signal }: StreamOptions = {},
+    { conversationId, retryOf, regenerateOf, editOf, model, promptId, signal }: StreamOptions = {},
   ): Promise<ChatReply> {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
@@ -66,6 +67,7 @@ export const chatApi = {
         regenerate_of: regenerateOf,
         edit_of: editOf,
         model,
+        prompt_id: promptId,
       }),
       signal,
     })

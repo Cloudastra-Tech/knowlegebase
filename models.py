@@ -33,6 +33,25 @@ and how its models are made is its entry in REGISTRY (Provider, register()):
     local      embeddings only, on the server's CPU (fastembed, ONNX Runtime):
                LOCAL_EMBED_MODEL, downloaded on first use into LOCAL_EMBED_CACHE.
                What a chat provider without embeddings gets when none is set.
+    gemini     Google Gemini through Google's OpenAI-compatible endpoint
+               (GEMINI_BASE_URL), with langchain-openai's ChatOpenAI and
+               OpenAIEmbeddings: GEMINI_CHAT_MODEL, GEMINI_FAST_MODEL,
+               gemini-embedding-001. No temperature sent (Gemini 3 wants its own).
+    azure      Azure OpenAI: the admin's endpoint and api-version, models
+               addressed by DEPLOYMENT name (AzureChatOpenAI,
+               AzureOpenAIEmbeddings). No default deployments: they're the
+               customer's own names.
+    openai_compatible  any server speaking OpenAI's chat completions (Groq,
+               Together, OpenRouter, vLLM, Ollama...): the admin's base URL, key
+               (optional: a self-hosted server may take none) and model ids, typed
+               in. Embeddings only when a model is named for them.
+
+AN ADDRESS AN ADMIN TYPES (Azure's endpoint, a compatible server's base URL) is
+the server calling wherever it's told: url_guard refuses private and loopback
+hosts on save and on every request (url_guard.model_http()), unless listed in
+MODEL_ALLOW_PRIVATE_HOSTS. The server's own .env addresses are the operator's
+and aren't checked. Every OpenAI-family client here is given its key outright:
+the server's OPENAI_API_KEY never reaches another provider's host.
 
 CHAT AND EMBEDDINGS are chosen apart (Spec.provider, Spec.embed_provider), since
 not every provider has embeddings: "Claude for chat, OpenAI or Bedrock for the
@@ -60,10 +79,12 @@ guards' classifiers, stays the workspace's default whatever is picked, and the
 credentials are the workspace's own. release() names the answer model, so the
 answer cache never serves one model's answer as another's.
 
-TEST CONNECTION costs as little as proves it (test_connection): OpenAI and
-Anthropic list their models, for free; Bedrock answers one token on its default
-chat model and, when it embeds, makes one short embedding (a list wouldn't show
-the model access granted, and would need a permission of its own).
+TEST CONNECTION costs as little as proves it (test_connection): OpenAI,
+Anthropic, Gemini and an OpenAI-compatible server list their models, for free;
+Bedrock answers one token on its default chat model and, when it embeds, makes
+one short embedding (a list wouldn't show the model access granted, and would
+need a permission of its own); Azure OpenAI the same (its data plane lists base
+models, not the resource's deployments).
 
 FAIL CLOSED. A workspace never falls back to another provider: a model that can't
 be made (no region, a role that can't be assumed, no API key) raises
@@ -135,6 +156,28 @@ ANTHROPIC_CHAT = "claude-sonnet-5-5"
 ANTHROPIC_FAST = "claude-haiku-5-5"
 ANTHROPIC_MIN_TOKENS = 1024
 
+# Google Gemini (deploy.md, "Google Gemini"), through its OpenAI-compatible endpoint:
+# the current stable Flash answers, Flash-Lite does the small jobs. Thinking can't be
+# turned off on Gemini 3 and counts toward the output, so a small max_tokens is
+# raised to GEMINI_MIN_TOKENS (as on Anthropic), and the fast model thinks at
+# GEMINI_FAST_EFFORT (reasoning_effort: minimal / low / medium / high).
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_CHAT = "gemini-3.8-flash"
+GEMINI_FAST = "gemini-3.5-flash-lite"
+GEMINI_EMBED = "gemini-embedding-001"
+GEMINI_EMBED_DIMENSIONS = 3072      # gemini-embedding-001's default output
+GEMINI_MIN_TOKENS = 1024
+GEMINI_FAST_EFFORT = "low"
+EMBED_BATCH = 100                   # texts per embeddings request, off OpenAI
+
+# Azure OpenAI (deploy.md, "Azure OpenAI"): the latest GA data-plane api-version.
+AZURE_API_VERSION = "2024-10-21"
+API_VERSION = re.compile(r"^\d{4}-\d{2}-\d{2}(-preview)?$")
+
+# An OpenAI-compatible server (deploy.md, "OpenAI-compatible servers").
+COMPAT = "openai_compatible"
+NO_KEY = "no-key"                   # the bearer sent to a server that takes none
+
 # What a value may look like (they go into AWS endpoints and ARNs, so nothing else).
 REGION = re.compile(r"^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$")
 MODEL_ID = re.compile(r"^(arn:aws[a-z-]*:bedrock:[a-z0-9-]+:\d{0,12}:[a-z-]+/)?"
@@ -165,6 +208,11 @@ class Provider:
     in_house: bool = False            # text stays in the customer's own cloud account
     api_key_env: str | None = None    # the server's key; a workspace can bring its own
     image_format: str = "standard"    # openai: image_url data URLs; standard: LangChain's
+    base_url: bool = False            # the admin types its address (url_guard-checked)
+    api_version: bool = False         # ... and an api-version (Azure)
+    key_optional: bool = False        # its API key may be left out (a self-hosted server)
+    typed_models: bool = False        # no catalogue: model ids (deployments) are typed in
+    base_url_env: str | None = None   # the server's address for it (.env)
 
     @property
     def chat(self):
@@ -179,7 +227,9 @@ class Provider:
         return {"name": self.name, "label": self.label, "chat": self.chat,
                 "embeddings": self.embeddings, "vision": self.vision,
                 "prompt_caching": self.prompt_caching, "tool_calls": self.tool_calls,
-                "in_house": self.in_house, "api_key": self.api_key_env is not None}
+                "in_house": self.in_house, "api_key": self.api_key_env is not None,
+                "base_url": self.base_url, "api_version": self.api_version,
+                "key_optional": self.key_optional, "typed_models": self.typed_models}
 
 
 REGISTRY = {}
@@ -346,6 +396,9 @@ class Spec:
     # isn't `provider`. chat_model is then that provider's model; fast_model (the
     # guards, HyDE, titles) stays on `provider` whatever a chat picks.
     answer_provider: str | None = None
+    # ((provider, base_url, api_version), ...): the addresses the workspace typed
+    # for the providers that take one (Azure, OpenAI-compatible). Never the server's.
+    endpoints: tuple | None = None
 
     @property
     def embeddings_provider(self):
@@ -357,7 +410,7 @@ class Spec:
         secret = (hashlib.sha256(repr((self.keys, self.api_keys)).encode()).hexdigest()[:16]
                   if self.keys or self.api_keys else "")
         return (self.provider, self.embeddings_provider, self.region, self.auth,
-                self.role_arn, self.external_id, secret, self.workspace)
+                self.role_arn, self.external_id, secret, self.endpoints, self.workspace)
 
 
 _scope = contextvars.ContextVar("models_scope", default=None)
@@ -466,7 +519,14 @@ class Models:
 
     @property
     def fast_name(self):
-        return self.spec.fast_model or self._defaults(self.provider).get("fast_model")
+        """The fast model: the one set, else its provider's default, else (a provider
+        with no default fast model: Azure's deployments, a compatible server's) the
+        workspace's default answer model. Never a chat's pick: with_answer() pins it
+        to the workspace's before it replaces chat_model."""
+        d = self._defaults(self.provider)
+        return (self.spec.fast_model or d.get("fast_model")
+                or (self.spec.chat_model if self.answer_provider == self.provider else None)
+                or d.get("chat_model"))
 
     def name(self, role):
         return self.answer_name if role == "answer" else self.fast_name
@@ -500,10 +560,10 @@ class Models:
         the credentials stay the workspace's. The default itself changes nothing."""
         if provider == self.answer_provider and model == self.answer_name:
             return self
-        if provider == self.provider:
-            return Models(replace(self.spec, chat_model=model, answer_provider=None))
-        return Models(replace(self.spec, chat_model=model, answer_provider=provider,
-                              fast_model=self.fast_name))
+        # fast_name may fall back to chat_model (Azure, a compatible server: no
+        # default fast model), so it is pinned first: a pick never moves the guards.
+        return Models(replace(self.spec, chat_model=model, fast_model=self.fast_name,
+                              answer_provider=None if provider == self.provider else provider))
 
     # ---- Keys ----
     def api_key(self, provider):
@@ -513,10 +573,24 @@ class Models:
         own = dict(self.spec.api_keys or ())
         if provider in own:
             if not own[provider]:
+                if REGISTRY[provider].key_optional:
+                    return None
                 raise ProviderError(f"{REGISTRY[provider].label} is selected with the "
                                     "workspace's own API key, but none is saved.")
             return own[provider]
         return None
+
+    def owns(self, provider):
+        """The workspace brings its own credentials for `provider` (its key, its
+        address): then nothing of the server's (.env) is used for it."""
+        return provider in dict(self.spec.api_keys or ())
+
+    def endpoint(self, provider):
+        """(base_url, api_version) the workspace typed for `provider`, or (None, None)."""
+        for name, base_url, version in self.spec.endpoints or ():
+            if name == provider:
+                return base_url, version
+        return None, None
 
     def secrets(self):
         """Every secret this spec holds (to scrub from an error message)."""
@@ -770,11 +844,19 @@ def forget(workspace=None):
         for key in [k for k in _clients if workspace is None or k[1][-1] == workspace
                     or k[0][-1] == workspace]:
             del _clients[key]
+    import safety   # safety imports models: here, not at the top
+    safety.forget_moderation_clients()
 
 
 def _aws_error(e):
     """An AWS error's code and message, without anything secret in it. Another
     provider's API error (Anthropic's, OpenAI's): its class, type and message."""
+    import url_guard
+    cause, seen = e, 0
+    while cause is not None and seen < 10:   # a request url_guard refused (DNS moved since)
+        if isinstance(cause, url_guard.UnsafeURL):
+            return f"UnsafeURL: {cause}"
+        cause, seen = cause.__cause__ or cause.__context__, seen + 1
     response = getattr(e, "response", None)
     err = (response.get("Error") or {}) if isinstance(response, dict) else {}
     if err:
@@ -1056,8 +1138,39 @@ def _list_anthropic(on):
     return {m.id for m in _anthropic_client(key).models.list(limit=1000)}
 
 
+def _compatible_client(key, base_url, guarded):
+    """The OpenAI SDK's client for another provider's OpenAI-compatible API (tests
+    replace it): always its own key (never OPENAI_API_KEY) and address; guarded:
+    the address is an admin's, so every request goes through url_guard."""
+    import openai
+    http = {"http_client": _guarded_http()[0]} if guarded else {}
+    return openai.OpenAI(api_key=key, base_url=base_url, timeout=TEST_TIMEOUT, max_retries=0,
+                         **http)
+
+
+def _azure_client(key, endpoint, version, guarded):
+    """The OpenAI SDK's Azure client (tests replace it)."""
+    import openai
+    http = {"http_client": _guarded_http()[0]} if guarded else {}
+    return openai.AzureOpenAI(api_key=key, azure_endpoint=endpoint, api_version=version,
+                              timeout=TEST_TIMEOUT, max_retries=0, **http)
+
+
+def _list_gemini(on):
+    key, base_url, _, guarded = credentials(on, "gemini")
+    # Gemini's list may name a model "models/<id>"; the chat takes the id alone.
+    return {m.id.removeprefix("models/")
+            for m in _compatible_client(key, base_url, guarded).models.list()}
+
+
+def _list_compatible(on):
+    key, base_url, _, guarded = credentials(on, COMPAT)
+    return {m.id for m in _compatible_client(key, base_url, guarded).models.list()}
+
+
 # provider -> its free list of model ids (tests replace one to stand in for its API).
-LISTS = {"openai": _list_openai, "anthropic": _list_anthropic}
+LISTS = {"openai": _list_openai, "anthropic": _list_anthropic, "gemini": _list_gemini,
+         COMPAT: _list_compatible}
 
 
 def _check_bedrock(on, looked_for):
@@ -1079,14 +1192,34 @@ def _check_bedrock(on, looked_for):
     return checked
 
 
+def _check_azure(on, looked_for):
+    """Azure's test: its data plane lists base models, not the resource's
+    deployments, so one short reply from the default deployment (the workspace's
+    default when it's Azure's, else its first enabled Azure deployment), and one
+    short embedding when Azure embeds. The other deployments aren't invoked."""
+    checked = []
+    chat = (on.answer_name if on.answer_provider == "azure"
+            else next((m for m in looked_for if m), None))
+    if chat:
+        key, endpoint, version, guarded = credentials(on, "azure")
+        _azure_client(key, endpoint, version, guarded).chat.completions.create(
+            model=chat, messages=[{"role": "user", "content": TEST_PROMPT}],
+            max_completion_tokens=16)
+        checked.append(chat)
+    if on.embed_provider == "azure":
+        on.embeddings().embed_query("connection test")
+        checked.append(on.embed_model)
+    return checked
+
+
 # provider -> its minimal real check (no free list proves enough): the models reached.
-CHECKS = {"bedrock": _check_bedrock}
+CHECKS = {"bedrock": _check_bedrock, "azure": _check_azure}
 
 
 def test_connection(spec, wanted=()):
     """Test connection on the Assistant screen: each provider the spec uses lists
-    its models, for free (OpenAI, Anthropic), or makes its minimal real check
-    (Bedrock, CHECKS). wanted: ((provider, model), ...), the chat models to look
+    its models, for free (OpenAI, Anthropic, Gemini, OpenAI-compatible), or makes
+    its minimal real check (Bedrock, Azure: CHECKS). wanted: ((provider, model), ...), the chat models to look
     for, the default first (their providers are tested too). -> {"ok",
     "providers": [{"provider", "label", "ok", "models": how many it listed (None:
     no list), "missing": wanted models it didn't list, "checked"?: the models a
@@ -1166,6 +1299,15 @@ CATALOGUE = {
         ModelInfo("amazon.nova-lite-v1:0", "Amazon Nova Lite", "fast"),
         ModelInfo("amazon.nova-micro-v1:0", "Amazon Nova Micro", "fast", vision=False),
     ),
+    # The stable text models on ai.google.dev/gemini-api/docs/models (October 2026).
+    "gemini": (
+        ModelInfo("gemini-4-argon", "Gemini 4 Argon", "best"),
+        ModelInfo("gemini-3.8-flash", "Gemini 3.8 Flash", "balanced"),
+        ModelInfo("gemini-3.6-flash", "Gemini 3.6 Flash", "balanced"),
+        ModelInfo("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "fast"),
+        ModelInfo("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "fast"),
+    ),
+    # Azure (deployment names) and OpenAI-compatible servers have none: typed in.
 }
 
 
@@ -1360,4 +1502,219 @@ register(Provider(
     name="anthropic", label="Anthropic", make_chat=_anthropic_make_chat,
     defaults=_anthropic_defaults, vision=True, prompt_caching="marked", tool_calls=True,
     api_key_env="ANTHROPIC_API_KEY"))
+
+
+# ---- The OpenAI family: Gemini, Azure OpenAI, OpenAI-compatible servers ----------------------
+def _guarded_http():
+    import url_guard
+    return url_guard.model_http()
+
+
+def _env(name):
+    return (os.getenv(name) or "").strip() if name else ""
+
+
+def credentials(on, provider):
+    """(key, base_url, api_version, guarded) for an OpenAI-family provider: the
+    workspace's own when it brings this provider (its key and the address it
+    typed, never the server's instead; the address goes through url_guard), else
+    the server's .env (the operator's own, not checked). A missing key or address
+    fails closed. Gemini's address is Google's, always."""
+    p = provider_info(provider)
+    if on.owns(provider):
+        key = on.api_key(provider)
+        base_url, version = on.endpoint(provider)
+        guarded = p.base_url
+        where = "the workspace's own on the Assistant screen"
+    else:
+        key = _env(p.api_key_env)
+        base_url = _env(p.base_url_env)
+        version = _env("AZURE_OPENAI_API_VERSION") if p.api_version else None
+        guarded = False
+        where = p.api_key_env
+    if provider == "gemini":
+        base_url = GEMINI_BASE_URL
+    if not key:
+        if not p.key_optional:
+            raise ProviderError(f"{p.label} is selected but no API key is set ({where}).")
+        key = NO_KEY
+    if not base_url:
+        raise ProviderError(f"{p.label} is selected but no "
+                            f"{'endpoint' if p.api_version else 'base URL'} is set.")
+    return key, base_url, (version or AZURE_API_VERSION) if p.api_version else None, guarded
+
+
+def _http(guarded):
+    """The url_guard-checked HTTP clients, for an address an admin typed."""
+    if not guarded:
+        return {}
+    sync, async_ = _guarded_http()
+    return {"http_client": sync, "http_async_client": async_}
+
+
+def _limits(timeout, max_retries):
+    out = {}
+    if timeout is not None:
+        out["timeout"] = timeout
+    if max_retries is not None:
+        out["max_retries"] = max_retries
+    return out
+
+
+def _compatible_embed_kwargs(model, key, base_url, guarded):
+    """OpenAIEmbeddings for a server that isn't OpenAI's: plain text in (not
+    tiktoken's token ids, which they don't take), floats out (not base64),
+    EMBED_BATCH texts a request."""
+    return {"model": model, "api_key": key, "base_url": base_url,
+            "check_embedding_ctx_length": False, "chunk_size": EMBED_BATCH,
+            "model_kwargs": {"encoding_format": "float"}, **_http(guarded)}
+
+
+def _gemini_make_chat(on, model, openai=None, cache_key=None, temperature=None,
+                      max_tokens=None, timeout=None, max_retries=None):
+    """Gemini through Google's OpenAI-compatible endpoint (ChatOpenAI). No
+    temperature: Gemini 3 is meant to run at its own. Thinking counts toward the
+    output, so a small max_tokens is raised to GEMINI_MIN_TOKENS; the fast model
+    thinks at GEMINI_FAST_EFFORT."""
+    key, base_url, _, _ = credentials(on, "gemini")
+    kwargs = {"model": model, "api_key": key, "base_url": base_url,
+              "use_responses_api": False, "stream_usage": True,
+              **_limits(timeout, max_retries)}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max(max_tokens, GEMINI_MIN_TOKENS)
+    effort = (os.getenv("GEMINI_FAST_EFFORT", GEMINI_FAST_EFFORT) or "").strip().lower()
+    if effort and model == on.fast_name and model != on.answer_name:
+        kwargs["reasoning_effort"] = effort
+    return _openai_chat()(**kwargs)
+
+
+def _gemini_make_embeddings(on, model, dims, openai=None):
+    key, base_url, _, _ = credentials(on, "gemini")
+    return _openai_embeddings()(**_compatible_embed_kwargs(model, key, base_url, False))
+
+
+def _gemini_defaults():
+    embed = _env("GEMINI_EMBED_MODEL") or GEMINI_EMBED
+    return {"chat_model": _env("GEMINI_CHAT_MODEL") or GEMINI_CHAT,
+            "fast_model": _env("GEMINI_FAST_MODEL") or GEMINI_FAST,
+            "embed_model": embed,
+            "embed_dims": GEMINI_EMBED_DIMENSIONS if embed == GEMINI_EMBED else None}
+
+
+def _azure_chat():
+    from langchain_openai import AzureChatOpenAI
+    return AzureChatOpenAI
+
+
+def _azure_embeddings():
+    from langchain_openai import AzureOpenAIEmbeddings
+    return AzureOpenAIEmbeddings
+
+
+def _azure_make_chat(on, model, openai=None, cache_key=None, temperature=None,
+                     max_tokens=None, timeout=None, max_retries=None):
+    """Azure OpenAI (AzureChatOpenAI): `model` is the DEPLOYMENT name, called at
+    <endpoint>/openai/deployments/<model>/...?api-version=<version>. No temperature:
+    deployment names are the customer's own, so nothing here (nor langchain-openai)
+    can tell a GPT-5 / o-series deployment, which refuses temperature=0 with a 400,
+    from another; each runs at its own default, as Gemini and Claude do."""
+    key, endpoint, version, guarded = credentials(on, "azure")
+    kwargs = {"azure_endpoint": endpoint, "azure_deployment": model, "model": model,
+              "api_version": version, "api_key": key, "use_responses_api": False,
+              "stream_usage": True, **_limits(timeout, max_retries), **_http(guarded)}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    return _azure_chat()(**kwargs)
+
+
+def _azure_make_embeddings(on, model, dims, openai=None):
+    key, endpoint, version, guarded = credentials(on, "azure")
+    if not model:
+        raise ProviderError("Azure OpenAI embeddings are selected but no deployment is named.")
+    return _azure_embeddings()(azure_endpoint=endpoint, azure_deployment=model, model=model,
+                               api_version=version, api_key=key,
+                               check_embedding_ctx_length=False, **_http(guarded))
+
+
+def _azure_defaults():
+    return {"chat_model": _env("AZURE_OPENAI_CHAT_DEPLOYMENT") or None,
+            "fast_model": _env("AZURE_OPENAI_FAST_DEPLOYMENT") or None,
+            "embed_model": _env("AZURE_OPENAI_EMBED_DEPLOYMENT") or None,
+            "embed_dims": None, "api_version": AZURE_API_VERSION}
+
+
+def _make_compatible_chat():
+    from langchain_openai import ChatOpenAI
+
+    class CompatibleChat(ChatOpenAI):
+        """ChatOpenAI for a server that speaks OpenAI's chat completions: the reply
+        limit goes as max_tokens, which every such server takes (ChatOpenAI sends
+        OpenAI's newer max_completion_tokens)."""
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            if "max_completion_tokens" in payload:
+                payload["max_tokens"] = payload.pop("max_completion_tokens")
+            return payload
+
+    return CompatibleChat
+
+
+def _compatible_chat():
+    """CompatibleChat, made on first use (tests replace this)."""
+    if "CompatibleChat" not in _made:
+        _made["CompatibleChat"] = _make_compatible_chat()
+    return _made["CompatibleChat"]
+
+
+def _compatible_make_chat(on, model, openai=None, cache_key=None, temperature=None,
+                          max_tokens=None, timeout=None, max_retries=None):
+    """An OpenAI-compatible server (Groq, Together, OpenRouter, vLLM, Ollama...):
+    its base URL, its key (or NO_KEY), the model id as typed. The model must call
+    tools (the agent's search is one)."""
+    key, base_url, _, guarded = credentials(on, COMPAT)
+    if not model:
+        raise ProviderError("OpenAI-compatible is selected but no model is named.")
+    kwargs = {"model": model, "api_key": key, "base_url": base_url,
+              "use_responses_api": False, "stream_usage": True,
+              **_limits(timeout, max_retries), **_http(guarded)}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    return _compatible_chat()(**kwargs)
+
+
+def _compatible_make_embeddings(on, model, dims, openai=None):
+    key, base_url, _, guarded = credentials(on, COMPAT)
+    if not model:
+        raise ProviderError("OpenAI-compatible embeddings are selected but no embedding "
+                            "model is named.")
+    return _openai_embeddings()(**_compatible_embed_kwargs(model, key, base_url, guarded))
+
+
+def _compatible_defaults():
+    return {"chat_model": _env("OPENAI_COMPAT_CHAT_MODEL") or None,
+            "fast_model": _env("OPENAI_COMPAT_FAST_MODEL") or None,
+            "embed_model": _env("OPENAI_COMPAT_EMBED_MODEL") or None,
+            "embed_dims": None}
+
+
+register(Provider(
+    name="gemini", label="Google Gemini", make_chat=_gemini_make_chat,
+    make_embeddings=_gemini_make_embeddings, defaults=_gemini_defaults, vision=True,
+    prompt_caching="automatic", tool_calls=True, api_key_env="GEMINI_API_KEY",
+    image_format="openai"))
+register(Provider(
+    name="azure", label="Azure OpenAI", make_chat=_azure_make_chat,
+    make_embeddings=_azure_make_embeddings, defaults=_azure_defaults, vision=True,
+    prompt_caching="automatic", tool_calls=True, api_key_env="AZURE_OPENAI_API_KEY",
+    image_format="openai", base_url=True, api_version=True, typed_models=True,
+    base_url_env="AZURE_OPENAI_ENDPOINT"))
+register(Provider(
+    name=COMPAT, label="OpenAI-compatible", make_chat=_compatible_make_chat,
+    make_embeddings=_compatible_make_embeddings, defaults=_compatible_defaults,
+    tool_calls=True, api_key_env="OPENAI_COMPAT_API_KEY", image_format="openai",
+    base_url=True, key_optional=True, typed_models=True,
+    base_url_env="OPENAI_COMPAT_BASE_URL"))
 PROVIDERS = tuple(REGISTRY)

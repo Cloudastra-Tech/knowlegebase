@@ -54,6 +54,8 @@ class ProviderIn(BaseModel):
     chat_provider: str | None = None         # default / openai / bedrock / ...
     embed_provider: str | None = None        # default / a provider with embeddings
     api_keys: dict[str, str | None] | None = None   # {provider: key}, write-only, sealed
+    # {provider: {base_url, api_version}}: Azure's endpoint, a compatible server's URL
+    endpoints: dict[str, dict[str, str | None] | None] | None = None
     region: str | None = None
     auth: str | None = None                  # role / keys
     role_arn: str | None = None
@@ -220,6 +222,8 @@ def save_provider(body: ProviderIn, user=Depends(require_admin),
                 raise HTTPException(409, "This changes the embedding model: the workspace's "
                                          "index will be rebuilt. Confirm to go ahead.")
         view, before, after = model_providers_store.save(ws, change, user["username"])
+    except model_providers_store.Unused as e:
+        raise HTTPException(422, str(e))     # a key / address for no model: not dropped
     except (model_providers_store.Invalid, models.ProviderError) as e:
         raise HTTPException(400, str(e))
     reindex = before != after and indexing.embeddings_of(ws) is not None
@@ -238,17 +242,18 @@ def test_provider(body: ProviderIn, user=Depends(require_admin),
     """Test connection, with the settings as typed (saved or not), so a role or a
     key can be checked before switching to it. Each provider in use (chat,
     embeddings, the enabled models') lists its models for free (OpenAI,
-    Anthropic), or Bedrock answers one token and makes one short embedding
+    Anthropic, Gemini, OpenAI-compatible), or Bedrock / Azure OpenAI answers one
+    short reply and makes one short embedding
     (models.test_connection). {"ok", "providers": [{provider, label, ok, models,
     missing, checked?, error?}]}, or {"ok": false, "error"} when the
-    settings can't be tried. Without chat_provider / embed_provider it tests the
-    providers saved, or Bedrock for both when the workspace is on the server's
+    settings can't be tried. Without chat_provider / embed_provider / default_model
+    it tests the providers saved, or Bedrock for both when the workspace is on the server's
     (the Bring your own AWS form, as before)."""
     ws = ws_of(user)
     change = body.model_dump(exclude_unset=True)
     change.pop("confirm_reindex", None)
     legacy = change.pop("provider", None)
-    if "chat_provider" not in change and "embed_provider" not in change:
+    if not {"chat_provider", "embed_provider", "default_model"} & change.keys():
         saved = model_providers_store.sides(model_providers_store.ensure(ws))
         if legacy == "bedrock" or saved == ("default", "default"):
             change.update(chat_provider="bedrock", embed_provider="bedrock")
