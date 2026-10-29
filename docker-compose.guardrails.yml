@@ -1,16 +1,8 @@
-# Production add-on: passes the Guardrails Hub token to the image build as a
-# BuildKit secret, so the Dockerfile installs the toxicity validator.
-# Kept out of docker-compose.yml because Compose refuses to build when a secret's
-# file is missing, and CI and fresh clones have no token. Turn it on for every
-# compose command by adding this line to .env (deploy.md, step 4):
+# NO-OP, kept so a server whose .env still has
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml
+# keeps deploying: Compose fails when a file listed in COMPOSE_FILE is missing.
+# It used to pass the Guardrails Hub token to the image build; Guardrails AI is
+# gone (safety.py) and nothing needs a token now. Remove that COMPOSE_FILE line
+# from .env (and guardrails_token.secret, if any); this file can then be deleted.
 services:
-  knowledgebase:
-    build:
-      context: .
-      secrets:
-        - gr_token             # used only during the build
-
-secrets:
-  gr_token:
-    file: ./guardrails_token.secret   # gitignored; one line, the token from hub.guardrailsai.com/keys
+  knowledgebase: {}

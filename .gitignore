@@ -25,7 +25,7 @@ docs/connectors/
 # Answer-evaluation runs (python evaluate.py) - local comparisons, not committed
 eval/results/
 
-# Guardrails Hub token, a Docker build secret (docker-compose.guardrails.yml)
+# The old Guardrails Hub token (no longer used, deploy.md): never commit one a server still has
 guardrails_token.secret
 
 # deploy.sh state: the running and previous version, history, database copies

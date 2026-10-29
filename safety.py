@@ -1,41 +1,26 @@
 """
-safety.py  —  the SAFETY LAYER, using the open-source Guardrails AI library.
-            https://github.com/guardrails-ai/guardrails
+safety.py  —  the SAFETY LAYER: the checks every question and answer goes through.
 
-WHY this file is called safety.py and NOT guardrails.py:
-    The library is imported as `import guardrails`. A local guardrails.py would
-    shadow the real library. So we name our file safety.py.
+    check_question       empty / too long (everyone), staff-salary intent (all but HR)
+    check_answer         staff-pay leak in the answer, with one rewrite (all but HR)
+    check_prompt_injection   regex first, then one cheap classifier call
+    redact_pii           masks personal data (pii.py)
 
-ONE-TIME SETUP (run in your terminal once):
-    1. pip install guardrails-ai
-    2. guardrails configure   -> paste a FREE token from
-                                 https://hub.guardrailsai.com/keys
-    3. guardrails hub install hub://guardrails/toxic_language
-    (the length limit and the custom intent rules below need NO hub install —
-     they're our own code. Without step 3 only the toxicity check is skipped.)
+Plain Python: each rule is a function, and the classifiers are one call to the
+workspace's FAST model (models.py). Nothing here needs a download, a token or a
+hub; this used to be built on the Guardrails AI library, dropped in 2026-10 (its
+Hub, where the toxicity validator came from, is gone, and it pinned an old filelock).
 
-------------------------------------------------------------------------------
-THE 3 PIECES OF GUARDRAILS:
-    - Validator = one rule (ValidLength, ToxicLanguage, or OUR OWN BlockStaffSalary)
-    - Guard     = a bundle of validators
-    - guard.validate(text) runs them all; on_fail="exception" -> raises if one fails
-------------------------------------------------------------------------------
+There is NO toxicity check: it was the Guardrails Hub validator. guards_status()
+says so ("missing") and REQUIRE_TOXICITY_GUARD=1 refuses to start (deploy.md).
 """
 
 import logging
 import os
-import contextvars
 import threading
 import re
 
 from dotenv import load_dotenv
-from guardrails import Guard
-from guardrails.validator_base import (
-    Validator,
-    register_validator,
-    PassResult,
-    FailResult,
-)
 from langchain_openai import ChatOpenAI
 
 import models
@@ -100,32 +85,10 @@ Examples:
     return decision.startswith("BLOCK")
 
 
-def _caller():
-    """guard.validate metadata carrying the caller's context. Guardrails runs the
-    validators in its own event-loop thread, which doesn't see the caller's
-    context variables, so their model calls missed the question's token count
-    (kb/services/question_log.counting)."""
-    return {"context": contextvars.copy_context()}
-
-
-def _in_caller_context(metadata, fn, value):
-    context = (metadata or {}).get("context")
-    return context.run(fn, value) if context is not None else fn(value)
-
-
-# ----------------------------------------------------------------------------
-# OUR CUSTOM VALIDATOR  —  this is the "proper Guardrails way" to add a rule.
-# @register_validator makes it usable inside a Guard like the built-in ones.
-# ----------------------------------------------------------------------------
-@register_validator(name="block-staff-salary", data_type="string")
-class BlockStaffSalary(Validator):
-    def validate(self, value, metadata):
-        # value = the user's question. We return Pass or Fail.
-        if _in_caller_context(metadata, _is_staff_salary_intent, value):
-            return FailResult(
-                error_message="Teacher/staff salary information is restricted."
-            )
-        return PassResult()
+# The checks run in the caller's own thread, so their model calls see its context
+# variables and count toward the question's tokens (kb/services/question_log.counting).
+# (Guardrails ran its validators on its own event-loop thread, so the context had
+# to be carried across by hand.)
 
 
 def _reveals_salary(text):
@@ -164,68 +127,35 @@ Reply BLOCK or ALLOW:"""
     return decision.startswith("BLOCK")
 
 
-# OUTPUT validator — same pattern, but it guards the ANSWER instead of the question.
-@register_validator(name="block-salary-leak", data_type="string")
-class BlockSalaryLeak(Validator):
-    def validate(self, value, metadata):
-        # value = the AI's answer. Block if it leaks staff pay.
-        if _in_caller_context(metadata, _reveals_salary, value):
-            return FailResult(
-                error_message="Answer reveals confidential staff salary."
-            )
-        return PassResult()
-
-
-# LENGTH validator — our own, so the length limit works even when the Hub
-# validators (step 3/4 of the setup above) aren't installed, e.g. in Docker.
+# The question length limit, for everyone (the chat composer shows the same number).
 MAX_QUESTION_CHARS = 500
 
 
-@register_validator(name="max-length", data_type="string")
-class MaxLength(Validator):
-    def validate(self, value, metadata):
-        if len(value) > MAX_QUESTION_CHARS:
-            return FailResult(
-                error_message=f"Question is longer than {MAX_QUESTION_CHARS} characters."
-            )
-        return PassResult()
+# A check that fails CLOSED: if the classifier call itself errors (provider down,
+# bad key), the text is treated as failing the rule, as the old Guard did (its
+# exception was caught as a refusal).
+def _fails(rule, text):
+    try:
+        return bool(rule(text))
+    except Exception:
+        log.exception("[safety] %s failed; treating it as a refusal", rule.__name__)
+        return True
 
 
-# ----------------------------------------------------------------------------
-# Build TWO kinds of guard:
-#   - GENERIC guard  : length + toxicity. Applies to EVERYONE.
-#   - SALARY guards  : the confidentiality rules. Apply ONLY to users who are
-#                      NOT allowed to see restricted info (i.e. public users).
-# This is the key principle: guardrails must respect permissions — never block
-# a user who is authorized to see the data.
-# ----------------------------------------------------------------------------
-generic_validators = [MaxLength(on_fail="exception")]      # always on
+def _too_long(question):
+    return len(question) > MAX_QUESTION_CHARS
+
+
+# The generic rules apply to EVERYONE; the salary rules (_is_staff_salary_intent,
+# _reveals_salary) only to users who may NOT see restricted HR content. Guards
+# must respect permissions: never block a user who may see the data.
+GENERIC_RULES = (_too_long,)
+
+# No toxicity rule: it was the Guardrails Hub validator, and the Hub is gone. Loud
+# on purpose, so a server log says chat runs without one (deploy.md).
 toxicity_guard_active = False
-try:
-    from guardrails.hub import ToxicLanguage
-    generic_validators.append(ToxicLanguage(threshold=0.5, validation_method="sentence",
-                                            on_fail="exception"))
-    toxicity_guard_active = True
-except ImportError:
-    # Loud on purpose: in Docker this means the image was built without the
-    # Guardrails Hub token (deploy.md, step 4), and chat runs with no toxicity check.
-    log.error("[safety] Hub toxicity validator not installed — toxicity check is OFF. "
-              "Run: guardrails hub install hub://guardrails/toxic_language")
-
-generic_guard = Guard()
-for _v in generic_validators:
-    generic_guard = generic_guard.use(_v)
-
-# Salary-specific guards (used only for NON-authorized users).
-salary_input_guard = Guard().use(BlockStaffSalary(on_fail="exception"))
-output_guard = Guard().use(BlockSalaryLeak(on_fail="exception"))
-
-# Guardrails reports usage (guard / validator names and results, not the text)
-# to its own servers unless ~/.guardrailsrc says not to — and an image built
-# without the Hub token has no such file. Turn it off. Done last: every new
-# Guard() re-reads the default.
-for _g in (generic_guard, salary_input_guard, output_guard):
-    _g.configure(allow_metrics_collection=False)
+log.error("[safety] No toxicity check is installed; chat runs without one "
+          "(REQUIRE_TOXICITY_GUARD=1 refuses to start, see deploy.md).")
 
 
 def _toxicity_guard_required():
@@ -240,11 +170,11 @@ def guards_status():
 
 def require_guards():
     """Called when the server starts. REQUIRE_TOXICITY_GUARD=1 refuses to run
-    without the toxicity validator, instead of only logging that it is missing."""
+    without a toxicity check, instead of only logging that it is missing."""
     if _toxicity_guard_required() and not toxicity_guard_active:
-        raise RuntimeError("REQUIRE_TOXICITY_GUARD is set but the Guardrails Hub toxicity "
-                           "validator is not installed (build the image with the gr_token "
-                           "secret, see deploy.md)")
+        raise RuntimeError("REQUIRE_TOXICITY_GUARD is set but this build has no toxicity "
+                           "check (the Guardrails Hub validator was removed); unset it, "
+                           "see deploy.md")
 
 
 # ----------------------------------------------------------------------------
@@ -348,19 +278,14 @@ def check_question(question, allow_restricted=False):
     if not question or not question.strip():
         return False, "Please type a question."
 
-    # Generic checks (length, toxicity) apply to everyone.
-    try:
-        generic_guard.validate(question)
-    except Exception:
+    # Generic checks (length) apply to everyone.
+    if any(_fails(rule, question) for rule in GENERIC_RULES):
         return False, "Sorry, I can't help with that request."
 
     # Salary confidentiality check — only for users NOT allowed to see it.
-    if not allow_restricted:
-        try:
-            salary_input_guard.validate(question, metadata=_caller())
-        except Exception:
-            return False, ("Staff salary information is restricted to HR / Admin. "
-                           "Switch the role to HR / Admin to see it.")
+    if not allow_restricted and _fails(_is_staff_salary_intent, question):
+        return False, ("Staff salary information is restricted to HR / Admin. "
+                       "Switch the role to HR / Admin to see it.")
 
     return True, ""
 
@@ -381,11 +306,9 @@ def check_answer(answer, llm=None, allow_restricted=False):
         return answer.strip()
 
     # First pass: does the answer leak staff pay?
-    try:
-        output_guard.validate(answer, metadata=_caller())
+    if not _fails(_reveals_salary, answer):
         return answer.strip()          # clean -> return as-is
-    except Exception:
-        pass                           # leak detected -> try to fix it below
+    # leak detected -> try to fix it below
 
     # ---- REASK: ask the model to rewrite the answer WITHOUT the pay info ----
     if llm is not None:
@@ -401,11 +324,8 @@ Rewritten answer:"""
         rewritten = llm.invoke(reask_prompt).content.strip()
 
         # Check the rewrite. If it's now clean, use it; if it STILL leaks, refuse.
-        try:
-            output_guard.validate(rewritten, metadata=_caller())
+        if not _fails(_reveals_salary, rewritten):
             return rewritten
-        except Exception:
-            pass
 
     # No llm to reask with, or the rewrite still leaked -> hard refuse.
     return "Sorry, I can't share confidential staff salary information."

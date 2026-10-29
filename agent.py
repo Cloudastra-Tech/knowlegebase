@@ -1344,7 +1344,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                    for m in history or []]
         state.emit({"type": "status", "text": "Checking your question"})
         # GUARDS (input): prompt-injection / jailbreak, and the question rules
-        # (length, toxicity, staff salary for public users) that search_docs
+        # (length, staff salary for public users) that search_docs
         # applies. They run ALONGSIDE the search, not before it; the search
         # waits for them before anything it found is shown or answered from.
         retrieval = needs_retrieval(user_input)

@@ -41,26 +41,6 @@ RUN apt-get update \
 # Bring in the pre-built Python packages from the builder stage.
 COPY --from=builder /install /usr/local
 
-# Guardrails Hub toxicity validator (safety.py's generic guard). The Hub token is
-# a BUILD SECRET, never a build-arg or a file in git: put it in
-# guardrails_token.secret (gitignored) and build with docker-compose.guardrails.yml
-# (deploy.md, step 4). Without the secret (CI, fresh clones) this step is skipped
-# and no token ends up in the image; safety.py then logs an ERROR at startup.
-# With it, `guardrails configure` writes ~/.guardrailsrc, which stays in the image
-# because remote inferencing (--no-install-local-models, no torch) needs the token
-# at runtime — so an image built with the secret must never be pushed anywhere
-# public. BuildKit does not re-run this step when only the secret changes: after
-# adding or rotating the token, build with --no-cache.
-RUN --mount=type=secret,id=gr_token,required=false \
-    if [ -s /run/secrets/gr_token ]; then \
-      { guardrails configure --token "$(cat /run/secrets/gr_token)" --disable-metrics --enable-remote-inferencing \
-        && guardrails hub install hub://guardrails/toxic_language --no-install-local-models --quiet \
-        && echo "Guardrails Hub: toxicity validator installed"; } \
-      || echo "WARNING: Guardrails Hub install failed - building WITHOUT the toxicity validator"; \
-    else \
-      echo "Guardrails Hub: no gr_token build secret - skipping the toxicity validator (see deploy.md)"; \
-    fi
-
 # Copy the app (docs come along via the build context; chroma_db is gitignored
 # and gets rebuilt on first boot — see CMD).
 COPY . .

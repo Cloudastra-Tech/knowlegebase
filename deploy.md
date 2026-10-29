@@ -55,53 +55,44 @@ nano .env    # paste the real OPENAI_API_KEY (and Outline values if used)
 
 ## 4. Build and start
 
-**Guardrails Hub token (production).** The toxicity check on chat questions needs
-the Guardrails Hub `toxic_language` validator, which the image installs only when
-the build is given a Hub token (free, from https://hub.guardrailsai.com/keys). The
-token is a BuildKit build secret: it is never a build argument or part of git.
-Without it the image still builds (CI and fresh clones do), the build log says
-`no gr_token build secret - skipping the toxicity validator`, and the app starts
-without the toxicity check (see `REQUIRE_TOXICITY_GUARD` below).
-
-```bash
-printf '%s\n' 'PASTE_THE_HUB_TOKEN' > guardrails_token.secret   # gitignored and not copied into the image
-chmod 600 guardrails_token.secret
-echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml' >> .env
-```
-
-`COMPOSE_FILE` makes every `docker compose` command in this folder add
-`docker-compose.guardrails.yml`, which hands the file to the build as the
-`gr_token` secret. It is a separate file because Compose refuses to build when a
-secret's file is missing. With it on, a missing `guardrails_token.secret` fails the
-build (`failed to stat …guardrails_token.secret`) instead of silently dropping the
-check. The build writes the token into the image (`/root/.guardrailsrc`, needed at
-run time to call the Hub's hosted model), so never push an image built this way to
-a public registry. BuildKit does not notice a changed secret: after adding or
-rotating the token, rebuild with `docker compose build --no-cache`.
-
 ```bash
 docker compose up -d --build
 ```
 
-Check the guard is on: `curl -fsS http://localhost:8501/api/health` shows
-`"guards": {"toxicity": "active", …}`; `"missing"` means the image was built
-without the token (the app also logs `toxicity check is OFF` at ERROR level when it
-starts). To make a missing validator stop the app instead, add
-`REQUIRE_TOXICITY_GUARD=1` to `.env`: the server then refuses to start (and
-`restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the
-logs) until the image is rebuilt with the token. It is off by default so a build
-without the token still runs.
+No build secret or token is needed. **Toxicity check:** there is none. It was the
+Guardrails Hub `toxic_language` validator, and the Guardrails Hub is gone
+(`hub.api.guardrailsai.com` no longer resolves), so Guardrails AI was removed in
+2026-10 (`safety.py`). The other checks are unchanged: the question length limit,
+the staff-pay rules, the prompt-injection filter and PII redaction.
+`/api/health` says `"guards": {"toxicity": "missing", …}` and the app logs
+`No toxicity check is installed` at ERROR level when it starts. Leave
+`REQUIRE_TOXICITY_GUARD` unset: with `REQUIRE_TOXICITY_GUARD=1` the server refuses
+to start (and `restart: unless-stopped` keeps retrying, visible in
+`docker compose ps` and the logs), since no toxicity check exists.
 
-**Upgrading a server that has the old hand-applied patch** (local changes to
-`Dockerfile`, `docker-compose.yml` and `.gitignore` for `gr_token`): the repo now
-carries this setup, so drop the patch once and keep the token file:
+**Upgrading a server that used the Guardrails Hub token** (its `.env` has
+`COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml`, and the folder has
+`guardrails_token.secret`): nothing has to change for the deploy to work.
+`docker-compose.guardrails.yml` is now an empty override, kept so that line still
+works. To tidy up, once going back to a version from before the change is unlikely
+(those versions' builds still read the token file):
+
+```bash
+sed -i '/^COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml$/d' .env
+rm -f guardrails_token.secret
+```
+
+`docker-compose.guardrails.yml` can be deleted from the repo once no server's
+`.env` names it. If `.env` sets `REQUIRE_TOXICITY_GUARD=1`, remove it before
+deploying, or the new version won't start and the deploy goes back.
+
+A server that still has the even older hand-applied patch (local changes to
+`Dockerfile`, `docker-compose.yml` and `.gitignore` for `gr_token`) drops it first,
+or `scripts/deploy.sh` stops on it:
 
 ```bash
 git diff > ~/guardrails-patch-backup.diff                  # a copy, just in case
 git checkout -- Dockerfile docker-compose.yml .gitignore
-git pull
-echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml' >> .env
-docker compose build --no-cache && docker compose up -d
 ```
 
 First boot runs `ingest.py` to build the Chroma vector DB from `docs/` (~1 min,
@@ -207,7 +198,7 @@ sudo ufw allow 8501/tcp     # skip if your cloud uses security-groups instead
 
 ```bash
 docker compose ps           # STATUS should show "Up"
-curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "active" with the Hub token (step 4)
+curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "missing": there is no toxicity check (step 4)
 ```
 
 Open **`http://<SERVER_IP>:8501`** in a browser.
@@ -282,8 +273,7 @@ What it does, in order (the header of `scripts/deploy.sh` has every option):
    plus a quick copy of `config/app.db` into `.deploy/db/`.
 3. Checks the commit out (detached `HEAD`). If local changes to tracked files would
    be overwritten (the old Guardrails hand patch, step 4) it stops here and the old
-   version keeps running. Then `docker compose build`, with the Guardrails secret
-   from step 4's `COMPOSE_FILE`; the image is tagged
+   version keeps running. Then `docker compose build`; the image is tagged
    `cloudastra-knowledgebase:<first 12 characters of the commit>`.
 4. `docker compose up -d` with that tag, and waits (`--timeout`, default 300 s) for
    `/api/health/ready` to answer 200.
@@ -309,23 +299,18 @@ just before the current version was deployed: everything written since is lost.
 Prefer fixing forward when that is more than a few minutes of use.
 
 **First deploy with the script on an existing server**: drop the Guardrails hand
-patch first (step 4, "Upgrading a server that has the old hand-applied patch").
+patch first (step 4, "A server that still has the even older hand-applied patch").
 The running image is tagged after the current commit so the first deploy can go
 back to it. The server's checkout is on a detached `HEAD` from then on: deploy with
 `scripts/deploy.sh <branch or tag>`, not `git pull`.
 
 **Images from the registry.** A release tag also builds an image on GHCR,
 `ghcr.io/cloudastra-tech/knowlegebase:<version>` (`.github/workflows/release.yml`).
-It is built **without the Guardrails Hub token**: installing the toxicity validator
-writes the token into the image (`/root/.guardrailsrc`), and an image in a registry
-must never carry it, so the workflow checks that it doesn't. Such an image runs
-without the toxicity check (`/api/health` says `"toxicity": "missing"`); with
-`REQUIRE_TOXICITY_GUARD=1` it refuses to start, and the deploy goes back. So
-production keeps **building on the server** (`scripts/deploy.sh v0.2.0`), with the
-token, until the validator gets its token at run time instead.
+It is the same image a server builds: since the Guardrails Hub validator was
+removed (step 4) no build needs a token, so nothing secret is in it.
 `scripts/deploy.sh --image 0.2.0` runs a registry image (pulled, tagged and rolled
-back the same way, the code checked out at its tag) where the toxicity check isn't
-needed, e.g. a staging box. If the package is private (the org's Packages
+back the same way, the code checked out at its tag) instead of building one on the
+server (`scripts/deploy.sh v0.2.0`). If the package is private (the org's Packages
 settings), `docker login ghcr.io` with a token that can read packages first.
 
 **Deploying from GitHub Actions** is not wired up: deploys stay manual until the
@@ -1273,19 +1258,20 @@ It should answer 2xx quickly; anything else is retried for 24 hours, and
 - `GET /api/health` — the process is up. Always 200 while it runs; the Docker
   `HEALTHCHECK` uses it. Don't point anything that restarts the container at a
   deeper check: a restart fixes none of what it finds. Its `guards` field says
-  whether the toxicity check is running (`"toxicity": "active"` or `"missing"`,
-  step 4).
+  whether the toxicity check is running: `"toxicity": "missing"`, since there is
+  none (step 4).
 - `GET /api/health/ready` — the server can actually serve: `config/app.db` opens and
   answers a query, the Chroma index opens, and the encryption key loads **and
   decrypts a stored secret** (a changed `INTEGRATIONS_KEY` otherwise breaks every SSO
   provider and integration silently). With `REQUIRE_TOXICITY_GUARD=1` it also
-  checks the toxicity guard is loaded (`toxicity_guard`); without it, a missing
-  guard is only reported under `guards`. 503 with the failing check otherwise:
+  checks a toxicity guard is loaded (`toxicity_guard`), which fails since none
+  exists; without it, the missing guard is only reported under `guards`. 503 with
+  the failing check otherwise:
 
   ```json
   {"ok": false, "checks": {"database": "ok", "search_index": "ok",
    "integrations_key": "the encryption key doesn't decrypt the stored secrets"},
-   "guards": {"toxicity": "active", "toxicity_required": false}}
+   "guards": {"toxicity": "missing", "toxicity_required": false}}
   ```
 
   Point an external uptime monitor (Better Stack, UptimeRobot, Uptime Kuma on
@@ -2166,10 +2152,11 @@ commit them from the server or copy them back if you want them in the repo.
   Never `*`: it trusts the header from anyone. With nginx on the same host, also
   consider publishing the port on loopback only (`"127.0.0.1:8501:8501"`) so
   nothing can bypass nginx.
-- **`/api/health` shows `"toxicity": "missing"`** — the image was built without
-  the Guardrails Hub token; see step 4. With `REQUIRE_TOXICITY_GUARD=1` the
-  container instead keeps restarting and its log ends with
-  `REQUIRE_TOXICITY_GUARD is set but the Guardrails Hub toxicity validator is not installed`.
+- **`/api/health` shows `"toxicity": "missing"`** — expected: there is no toxicity
+  check since the Guardrails Hub validator was removed (step 4). With
+  `REQUIRE_TOXICITY_GUARD=1` the container instead keeps restarting and its log
+  ends with `REQUIRE_TOXICITY_GUARD is set but this build has no toxicity check`:
+  remove that line from `.env`.
 - **Someone is locked out after "Require single sign-on" was turned on** — only
   admins keep passwords. If the provider itself is broken, sign in as an admin
   with a password and turn it off under **Access → Sign-in**, or run
@@ -2178,5 +2165,5 @@ commit them from the server or copy them back if you want them in the repo.
   then `docker compose up -d --build`.
 - **Port 8501 unreachable** — firewall (step 5) or the cloud provider's
   security-group is still blocking it.
-- **Out of memory during build** — this stack (onnxruntime + guardrails) is
+- **Out of memory during build** — this stack (onnxruntime + chromadb) is
   heavy; use a VPS with **≥ 2 GB RAM**.
