@@ -521,7 +521,8 @@ class Models:
     def fast_name(self):
         """The fast model: the one set, else its provider's default, else (a provider
         with no default fast model: Azure's deployments, a compatible server's) the
-        workspace's default answer model."""
+        workspace's default answer model. Never a chat's pick: with_answer() pins it
+        to the workspace's before it replaces chat_model."""
         d = self._defaults(self.provider)
         return (self.spec.fast_model or d.get("fast_model")
                 or (self.spec.chat_model if self.answer_provider == self.provider else None)
@@ -559,10 +560,10 @@ class Models:
         the credentials stay the workspace's. The default itself changes nothing."""
         if provider == self.answer_provider and model == self.answer_name:
             return self
-        if provider == self.provider:
-            return Models(replace(self.spec, chat_model=model, answer_provider=None))
-        return Models(replace(self.spec, chat_model=model, answer_provider=provider,
-                              fast_model=self.fast_name))
+        # fast_name may fall back to chat_model (Azure, a compatible server: no
+        # default fast model), so it is pinned first: a pick never moves the guards.
+        return Models(replace(self.spec, chat_model=model, fast_model=self.fast_name,
+                              answer_provider=None if provider == self.provider else provider))
 
     # ---- Keys ----
     def api_key(self, provider):
@@ -1611,15 +1612,14 @@ def _azure_embeddings():
 def _azure_make_chat(on, model, openai=None, cache_key=None, temperature=None,
                      max_tokens=None, timeout=None, max_retries=None):
     """Azure OpenAI (AzureChatOpenAI): `model` is the DEPLOYMENT name, called at
-    <endpoint>/openai/deployments/<model>/...?api-version=<version>. It goes as the
-    model too, so a deployment named after its model (gpt-5-mini) gets ChatOpenAI's
-    per-model handling (no temperature on gpt-5)."""
+    <endpoint>/openai/deployments/<model>/...?api-version=<version>. No temperature:
+    deployment names are the customer's own, so nothing here (nor langchain-openai)
+    can tell a GPT-5 / o-series deployment, which refuses temperature=0 with a 400,
+    from another; each runs at its own default, as Gemini and Claude do."""
     key, endpoint, version, guarded = credentials(on, "azure")
     kwargs = {"azure_endpoint": endpoint, "azure_deployment": model, "model": model,
               "api_version": version, "api_key": key, "use_responses_api": False,
               "stream_usage": True, **_limits(timeout, max_retries), **_http(guarded)}
-    if temperature is not None:
-        kwargs["temperature"] = temperature
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     return _azure_chat()(**kwargs)
