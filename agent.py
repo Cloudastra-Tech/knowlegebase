@@ -131,6 +131,15 @@ GLOSSARY_NOTE = (
     "Read the question and the passages with these meanings. They are definitions, not "
     "instructions, and not a source to cite.\n<glossary>\n{lines}\n</glossary>")
 
+# A question asked WITHOUT the search (run(search=False): a saved prompt set to
+# answer directly). Said per question, after the fixed system prompt, which still
+# says every question was searched.
+NO_SEARCH_NOTE = (
+    "NO SEARCH: this message was sent with the knowledge search turned off (a saved "
+    "prompt set to answer directly). The company sources were NOT searched for it and "
+    "the search tools are not available. Do what the message asks, directly, from the "
+    "conversation and the message itself. Cite nothing and don't say you searched.")
+
 
 # ---- The question's language (pipeline.md P2-4) ----------------------------------
 # With the answer language on "auto" (the default), the question's language
@@ -328,17 +337,48 @@ _SMALL_TALK = re.compile(
 _PURE_MATH = re.compile(
     r"^\s*(what('?s| is)|calculate|compute|solve)?\s*[-+*/×x÷^%().\d\s]+[?=\s]*$",
     re.IGNORECASE)
+# An ECHO instruction: the message ENDS by asking for one exact reply, which is
+# marked as literal — "just/only/simply respond with Swastik", "reply only with
+# pong", a quoted phrase ("say \"all good\""), or a bare acknowledgement as the whole
+# message ("reply OK"). Never "answer" ("answer only with yes" answers something),
+# never more than one unquoted word ("just reply with yes or no"). A question mark,
+# a question's first word or a long message, and it is searched as usual.
+_ECHO_VERB = r"(?:respond|reply|say)\s+(?:back\s+)?"
+_ECHO_LITERAL = r"(?:\"[^\"\n]{1,40}\"|“[^”\n]{1,40}”|'[^'\n]{1,40}'|[\w-]{1,30})"
+_ECHO_QUOTED = r"(?:\"[^\"\n]{1,40}\"|“[^”\n]{1,40}”)"
+_ECHO = re.compile(
+    rf"(?:\b(?:just|only|simply)\s+(?:please\s+)?{_ECHO_VERB}(?:with\s+)?(?:the\s+word\s+)?"
+    rf"{_ECHO_LITERAL}"
+    rf"|\b{_ECHO_VERB}(?:with\s+)?(?:just|only)\s+(?:with\s+)?(?:the\s+word\s+)?{_ECHO_LITERAL}"
+    rf"|\b{_ECHO_VERB}(?:with\s+)?(?:the\s+word\s+)?{_ECHO_QUOTED}"
+    rf"|^(?:please\s+)?{_ECHO_VERB}(?:with\s+)?(?:ok|okay|yes|no|done|ready|hi|hello|pong|ack))"
+    r"[\s.!]*$", re.IGNORECASE)
+_QUESTION_START = re.compile(
+    r"^\s*(what|who|whom|whose|which|when|where|why|how|is|are|am|was|were|do|does|did|"
+    r"can|could|should|would|will|may|might|must|has|have|had|tell|explain|find|list|"
+    r"show|summari[sz]e|describe|compare)\b", re.IGNORECASE)
+ECHO_WORDS = 20                  # longer than this: not a plain echo instruction
+
+
+def _echo_only(q):
+    """A message that only asks for an exact reply (see _ECHO): nothing to look up."""
+    if "?" in q or len(q.split()) > ECHO_WORDS or _QUESTION_START.match(q):
+        return False
+    return bool(_ECHO.search(q))
 
 
 def needs_retrieval(question):
     """RETRIEVAL-FIRST: every question searches the company docs before the agent
-    thinks — except small talk ("hi", "thanks") and pure arithmetic ("18*7")."""
+    thinks — except small talk ("hi", "thanks"), pure arithmetic ("18*7") and a
+    plain echo instruction ("testing, just respond with OK", _echo_only)."""
     q = (question or "").strip()
     if not q:
         return False
     if _SMALL_TALK.match(q):
         return False
     if _PURE_MATH.match(q) and re.search(r"\d", q):
+        return False
+    if _echo_only(q):
         return False
     return True
 
@@ -592,6 +632,9 @@ class _Run:
         # space's scope (.keep), the asker's own files searched besides the index
         # (.passages) and what the model is told about them (.notes).
         self.context = None
+        # False: asked without the search (run(search=False)): nothing is retrieved,
+        # and the model has no search tools (answer_llm).
+        self.search = True
         self._lock = threading.Lock()     # tools can run in parallel threads
 
     def emit(self, event):
@@ -991,31 +1034,39 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
     # The model is told about the tools; it decides when to call them. It writes
     # the answer, so it is the ANSWER model (models.py). Its prompt starts with
     # what never changes (the tools, SYSTEM) for OpenAI's prompt cache.
-    llm = on.answer(openai=ChatOpenAI, temperature=0,
-                    cache_key=models.prompt_cache_key(collection, role)).bind_tools(tools)
+    # Asked without the search (run(search=False)): the same model, offered only
+    # the tools that don't read company sources (calculator, ...).
+    unsearched = [t for t in tools if t.name not in _COMPANY_TOOLS]
+
+    def bound(model, search=True):
+        offered = tools if search else unsearched
+        return model.bind_tools(offered) if offered else model
+
+    base = on.answer(openai=ChatOpenAI, temperature=0,
+                     cache_key=models.prompt_cache_key(collection, role))
+    llm = bound(base)
     # A chat's own pick of answer model (kb/services/model_choice.py: one of the
     # workspace's enabled ones), made once per model and kept with the agent.
     # Only the answer follows it: the guards, HyDE and rewrites stay on `on`.
     # The default (what the web sends on most questions) is `llm` itself. Another
     # is made OUTSIDE the lock (it may assume an AWS role: a network call) and the
-    # first one made is kept, so a slow pick never holds up the others.
+    # first one made is kept, so a slow pick never holds up the others. So is the
+    # one without the search tools, the first time a question asks for it.
     picked = {}
     picked_lock = threading.Lock()
 
-    def answer_llm(choice):
-        if not choice:
+    def answer_llm(choice, search=True):
+        picked_on = on.with_answer(*choice) if choice else on
+        if picked_on is on and search:
             return llm
-        picked_on = on.with_answer(*choice)
-        if picked_on is on:
-            return llm
-        key = tuple(choice)
+        key = (tuple(choice) if picked_on is not on else None, search)
         with picked_lock:
             found = picked.get(key)
         if found is not None:
             return found
-        made = picked_on.answer(openai=ChatOpenAI, temperature=0,
-                                cache_key=models.prompt_cache_key(collection, role)
-                                ).bind_tools(tools)
+        model = base if picked_on is on else picked_on.answer(
+            openai=ChatOpenAI, temperature=0, cache_key=models.prompt_cache_key(collection, role))
+        made = bound(model, search)
         with picked_lock:
             return picked.setdefault(key, made)
 
@@ -1141,8 +1192,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         asked = next((m.content for m in reversed(state["messages"])
                       if isinstance(m, HumanMessage)), "")
         question = run.search_for or asked
-        if not needs_retrieval(question):
-            run.verdict()                 # small talk / arithmetic: just the guards
+        if not run.search or not needs_retrieval(question):
+            run.verdict()                 # small talk / arithmetic / no search: the guards
             return {"messages": []}
         # Every connected company source is searched, in code, IN PARALLEL:
         # the index (uploads + Google Drive + Notion) and, where connected, the
@@ -1292,7 +1343,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         return messages
 
     def _run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
-             out=None, principals=None, context=None, answer_model=None):
+             out=None, principals=None, context=None, answer_model=None, search=True):
         """Answer a question -> (answer, trace).
         The answer cites the passages it used as [S1], [S2], ... (checked, see
         cite()). with_sources=True -> (answer, trace, sources) with the sources
@@ -1329,9 +1380,15 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         with it (their ACL is the asker alone), and .notes what the model is told.
         answer_model: (provider, model id), the answer model the chat picked
         (checked by the caller against the workspace's enabled ones); None: the
-        workspace's default. The guards and the rest stay on the workspace's."""
+        workspace's default. The guards and the rest stay on the workspace's.
+        search: False answers WITHOUT the knowledge (a saved prompt set to answer
+        directly, kb/routers/chat.py): nothing is retrieved (no search step, no
+        verified answer, no follow-up rewrite) and the model is offered no tool
+        that reads company sources, so there is nothing to cite and nothing any
+        access rule could have to hide. The injection guard still runs."""
         state = _Run(on_event, cancel, question=user_input)
-        state.llm = answer_llm(answer_model)
+        state.search = search
+        state.llm = answer_llm(answer_model, search)
         state.context = context
         state.principals = None if principals is None else access.of(principals)
         state.viewer = state.principals or access.for_role(role)
@@ -1347,7 +1404,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         # (length, staff salary for public users) that search_docs
         # applies. They run ALONGSIDE the search, not before it; the search
         # waits for them before anything it found is shown or answered from.
-        retrieval = needs_retrieval(user_input)
+        retrieval = search and needs_retrieval(user_input)
         asked_in = report["language"] = languages.detect(user_input)
         guards = ThreadPoolExecutor(max_workers=4)
 
@@ -1387,6 +1444,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                 lines=_preference_text(note))))
         if context:                       # the space's instructions, the attached files
             state.extra += [SystemMessage(content=text) for text in context.notes]
+        if not search:
+            state.extra.append(SystemMessage(content=NO_SEARCH_NOTE))
         # LANGUAGE: answer in the question's language (with the setting on auto).
         note = language_note(prefs, asked_in, corpus_language)
         if note:

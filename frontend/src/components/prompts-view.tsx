@@ -1,7 +1,16 @@
 import { useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Building2, CornerDownLeft, MessageSquareText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import {
+  Building2,
+  CornerDownLeft,
+  MessageSquareText,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  SearchX,
+  Trash2,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -198,8 +207,13 @@ function PromptRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{prompt.title}</p>
         <p className="line-clamp-2 text-sm text-pretty text-muted-foreground">{prompt.body}</p>
-        {prompt.variables.length > 0 && (
+        {(prompt.variables.length > 0 || !prompt.search) && (
           <div className="mt-1.5 flex flex-wrap gap-1">
+            {!prompt.search && (
+              <Badge variant="outline" className="font-normal text-muted-foreground">
+                <SearchX /> No search
+              </Badge>
+            )}
             {prompt.variables.map((v) => (
               <Badge key={v} variant="secondary" className="font-mono font-normal">
                 {v}
@@ -259,6 +273,7 @@ function PromptDialog({
   const [title, setTitle] = useState("")
   const [body, setBody] = useState("")
   const [shared, setShared] = useState(false)
+  const [search, setSearch] = useState(true)
   const [busy, setBusy] = useState(false)
   const key = prompt === null ? null : existing ? existing.id : "new"
   if (key !== shown) {
@@ -266,6 +281,7 @@ function PromptDialog({
     setTitle(existing?.title ?? "")
     setBody(existing?.body ?? "")
     setShared(existing?.workspace ?? false)
+    setSearch(existing?.search ?? true)
   }
   const variables = variablesOf(body)
 
@@ -273,8 +289,8 @@ function PromptDialog({
     e.preventDefault()
     setBusy(true)
     try {
-      if (existing) await spacesApi.editPrompt(existing.id, { title, body })
-      else await spacesApi.createPrompt({ title, body, workspace: shared })
+      if (existing) await spacesApi.editPrompt(existing.id, { title, body, search })
+      else await spacesApi.createPrompt({ title, body, workspace: shared, search })
       queryClient.invalidateQueries({ queryKey: ["prompts"] })
       onOpenChange(false)
     } catch (err) {
@@ -322,6 +338,16 @@ function PromptDialog({
                   ? `Asks for: ${variables.join(", ")}.`
                   : "No {{variables}}: it goes in as written."}
               </FieldDescription>
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="prompt-search">Search knowledge</FieldLabel>
+                <FieldDescription>
+                  Answer from the workspace's documents, with sources. Turn off for prompts that
+                  don't need them, like rewriting text.
+                </FieldDescription>
+              </FieldContent>
+              <Switch id="prompt-search" checked={search} onCheckedChange={setSearch} />
             </Field>
             {canShare && !existing && (
               <Field orientation="horizontal">
