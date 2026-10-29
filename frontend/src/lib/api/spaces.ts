@@ -65,6 +65,7 @@ export interface SavedPrompt {
   title: string
   body: string
   variables: string[]
+  search: boolean // false: answered directly, without searching the knowledge
   workspace: boolean // the workspace's, kept by its admins
   editable: boolean
   updated_at: number
@@ -112,9 +113,9 @@ export const spacesApi = {
     request<{ ok: true }>(`/conversations/${seg(conversationId)}/attachments/${seg(id)}`, json("DELETE")),
 
   prompts: () => request<{ prompts: SavedPrompt[]; can_manage_workspace: boolean }>("/prompts"),
-  createPrompt: (body: { title: string; body: string; workspace: boolean }) =>
+  createPrompt: (body: { title: string; body: string; workspace: boolean; search: boolean }) =>
     request<SavedPrompt>("/prompts", json("POST", body)),
-  editPrompt: (id: string, body: { title: string; body: string }) =>
+  editPrompt: (id: string, body: { title: string; body: string; search: boolean }) =>
     request<SavedPrompt>(`/prompts/${seg(id)}`, json("PUT", body)),
   deletePrompt: (id: string) => request<{ ok: true }>(`/prompts/${seg(id)}`, json("DELETE")),
 }

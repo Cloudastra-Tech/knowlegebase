@@ -32,6 +32,7 @@ def workspace(client):
         token = client.post("/api/auth/login", json={"username": f"{name}@{ws}.example",
                                                       "password": PASSWORD}).json()["token"]
         out[name] = {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+    out["ws"] = ws
     return out
 
 
@@ -87,6 +88,34 @@ def test_workspace_prompts_are_kept_by_admins(client):
     assert client.get("/api/prompts", headers=other["pat"]).json()["prompts"] == []
     assert client.delete(f"/api/prompts/{shared['id']}", headers=other["admin"]).status_code == 404
     assert client.delete(f"/api/prompts/{shared['id']}", headers=h["admin"]).status_code == 200
+
+
+def test_a_prompt_can_be_set_to_answer_without_searching(client):
+    h = workspace(client)
+    plain = client.post("/api/prompts", headers=h["pat"],
+                        json={"title": "Ask", "body": "Explain {{policy}}."}).json()
+    assert plain["search"] is True                              # as every prompt before
+    direct = client.post("/api/prompts", headers=h["pat"],
+                         json={"title": "Echo", "body": "Just reply with OK.",
+                               "search": False}).json()
+    assert direct["search"] is False
+    # Edited without saying: left as it was. Said: changed.
+    r = client.put(f"/api/prompts/{direct['id']}", headers=h["pat"],
+                   json={"title": "Echo", "body": "Just reply with pong."})
+    assert r.json()["search"] is False and r.json()["body"] == "Just reply with pong."
+    r = client.put(f"/api/prompts/{direct['id']}", headers=h["pat"],
+                   json={"title": "Echo", "body": "Just reply with pong.", "search": True})
+    assert r.json()["search"] is True
+    client.put(f"/api/prompts/{direct['id']}", headers=h["pat"],
+               json={"title": "Echo", "body": "Just reply with pong.", "search": False})
+    # The chat asks the store: only for a prompt the asker may use is the search off.
+    ws = h["ws"]
+    pat, sam = f"pat@{ws}.example", f"sam@{ws}.example"
+    assert prompts_store.searches(ws, pat, direct["id"]) is False
+    assert prompts_store.searches(ws, pat, plain["id"]) is True
+    assert prompts_store.searches(ws, sam, direct["id"]) is True          # not sam's
+    assert prompts_store.searches(ws, pat, None) is True
+    assert prompts_store.searches("elsewhere", pat, direct["id"]) is True
 
 
 @pytest.mark.parametrize("body, problem", [
