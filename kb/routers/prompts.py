@@ -1,7 +1,9 @@
 """Saved prompts and templates (chat.md C22): a person's own, and the workspace's,
 which its admins keep. A body may hold {{variables}}: the composer asks for each
 before the prompt goes in (prompts_store.variables / fill). Typing "/" at the
-start of the composer, or the command palette, lists them."""
+start of the composer, or the command palette, lists them. One with `search` off
+is answered without searching the knowledge: the chat sends its id with the
+question (kb/routers/chat.py, prompts_store.searches)."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -17,11 +19,13 @@ class PromptIn(BaseModel):
     title: str
     body: str
     workspace: bool = False          # a workspace prompt (admins)
+    search: bool = True              # False: answered directly, nothing searched
 
 
 class PromptEdit(BaseModel):
     title: str
     body: str
+    search: bool | None = None       # None: as it is
 
 
 def _admin(user, role):
@@ -31,7 +35,7 @@ def _admin(user, role):
 def view(p, user, role):
     shared = p["owner"] is None
     return {"id": p["id"], "title": p["title"], "body": p["body"], "variables": p["variables"],
-            "workspace": shared, "editable": _admin(user, role) if shared else True,
+            "search": p["search"], "workspace": shared, "editable": _admin(user, role) if shared else True,
             "updated_at": p["updated_at"]}
 
 
@@ -77,8 +81,9 @@ def create_prompt(body: PromptIn, user=Depends(current_user), role=Depends(curre
     if store.count(ws, owner) >= store.MAX_PER_OWNER:
         raise HTTPException(409, f"There can be up to {store.MAX_PER_OWNER} prompts here.")
     title, text = _checked(body.title, body.body)
-    p = store.create(ws, owner, title, text, user["username"])
-    audit.record("prompt", p["id"], {"workspace": body.workspace}, user=user)
+    p = store.create(ws, owner, title, text, user["username"], search=body.search)
+    audit.record("prompt", p["id"], {"workspace": body.workspace, "search": p["search"]},
+                 user=user)
     return view(p, user, role)
 
 
@@ -87,8 +92,9 @@ def update_prompt(prompt_id: str, body: PromptEdit, user=Depends(current_user),
                   role=Depends(current_role), audit=audited("prompt.update")):
     p = _editable(user, role, prompt_id)
     title, text = _checked(body.title, body.body)
-    p = store.update(ws_of(user), prompt_id, title, text)
-    audit.record("prompt", prompt_id, {"workspace": p["owner"] is None}, user=user)
+    p = store.update(ws_of(user), prompt_id, title, text, search=body.search)
+    audit.record("prompt", prompt_id, {"workspace": p["owner"] is None, "search": p["search"]},
+                 user=user)
     return view(p, user, role)
 
 

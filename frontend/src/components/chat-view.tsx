@@ -494,7 +494,9 @@ export function ChatView({ role }: { role: Role }) {
 
   // Ask a question. Or ask again (see Again): the answer, or the edited question,
   // and everything after it make way for the new branch.
-  async function ask(text: string, again: Again = {}) {
+  // promptId: the saved prompt the text came from (sent with it: one set not to
+  // search is answered without).
+  async function ask(text: string, again: Again = {}, promptId?: string) {
     const target = again.retry ?? again.regenerate
     const q = (target ? (target.question ?? "") : text).trim()
     if (!q || loading) return
@@ -626,6 +628,7 @@ export function ChatView({ role }: { role: Role }) {
         regenerateOf: again.regenerate?.id,
         editOf: again.edit?.id,
         model: asking ?? undefined,
+        promptId,
         signal: controller.signal,
       })
       ended = reply.state
@@ -1004,7 +1007,7 @@ export function ChatView({ role }: { role: Role }) {
           <Composer
             value={input}
             onChange={setInput}
-            onSend={() => ask(input)}
+            onSend={() => ask(input, {}, picker.prompt?.id)}
             onStop={() => abort.current?.abort()}
             onEditLast={lastUser?.id && !loading ? () => setEditing(lastUser.key) : undefined}
             busy={loading}
@@ -1019,6 +1022,7 @@ export function ChatView({ role }: { role: Role }) {
                   disabled={loading}
                 />
                 <AttachmentChips files={files} uploading={uploading} onRemove={detach} />
+                {picker.chip}
               </>
             }
             leading={

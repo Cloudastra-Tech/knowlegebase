@@ -22,7 +22,8 @@ import time
 import pytest
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import (AIMessage, AIMessageChunk, HumanMessage, SystemMessage,
+                                     ToolMessage)
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 import agent
@@ -127,13 +128,14 @@ class FakeAgentModel(BaseChatModel):
     citing it as [S#], streamed in pieces over delays['agent'] seconds."""
 
     fakes: object = None
+    tools: tuple = ()                 # the names of the tools it was offered
 
     @property
     def _llm_type(self):
         return "fake-agent"
 
     def bind_tools(self, tools, **kwargs):
-        return self
+        return self.model_copy(update={"tools": tuple(t.name for t in tools)})
 
     def _reply(self, messages):
         question = next(m.content for m in messages if isinstance(m, HumanMessage))
@@ -156,6 +158,8 @@ class FakeAgentModel(BaseChatModel):
 
     def _stream(self, messages, stop=None, run_manager=None, **kwargs):
         question, text = self._reply(messages)
+        self.fakes.offered.append((question, self.tools, [m.content for m in messages
+                                                          if isinstance(m, SystemMessage)]))
         pieces = re.findall(r"\S+\s*", text)
         start, sent = time.monotonic(), 0
         try:
@@ -176,6 +180,7 @@ class Fakes:
     def __init__(self):
         self.calls = Calls()
         self.streamed = []            # (question, pieces sent, pieces in the answer)
+        self.offered = []             # (question, tools offered, system messages) per answer
         self.delays = {"guard": 0.2, "retrieve": 0.1, "helper": 0.05, "agent": 0.4}
         self.barriers = {}            # call kind -> the threading.Barrier it waits at
 
@@ -316,6 +321,58 @@ def test_small_talk_is_still_checked_for_injection(fakes):
     assert fakes.calls.of("injection_check") and not fakes.calls.of("retrieve")
 
 
+# ---- Without the search (a saved prompt set to answer directly) -------------------
+def test_a_question_asked_without_the_search_reads_nothing(fakes):
+    run = build_agent("public", outline=False)
+    out = {}
+    reply = ask(run, "What is the refund policy?", search=False, out=out)
+
+    assert not fakes.calls.of("retrieve") and not fakes.calls.of("salary_check")
+    assert fakes.calls.of("injection_check")                     # still guarded
+    assert reply["sources"] == [] and reply["trace"] == []
+    assert [e["type"] for e in reply["events"] if e["type"].startswith("step")] == []
+    assert "thirty days" not in reply["answer"]
+    assert out["access"] == set() and out["acls"] == set()        # nothing was read
+    ((_, tools, system),) = fakes.offered
+    assert "search_docs" not in tools and "calculator" in tools
+    assert any(text == agent.NO_SEARCH_NOTE for text in system)
+
+
+def test_the_same_question_with_the_search_still_searches(fakes):
+    run = build_agent("public", outline=False)
+    reply = ask(run, "What is the refund policy?")
+    assert fakes.calls.of("retrieve") and "thirty days" in reply["answer"]
+    ((_, tools, system),) = fakes.offered
+    assert "search_docs" in tools and agent.NO_SEARCH_NOTE not in system
+
+
+@pytest.mark.parametrize("message", [
+    "testing the test prompt just respond with Swastik",
+    "just respond with Swastik",
+    "respond only with pong.",
+    'Reply with "all good"',
+    "reply OK",
+    "Please reply ok!",
+])
+def test_a_plain_echo_instruction_is_not_searched(message):
+    assert not agent.needs_retrieval(message)
+
+
+@pytest.mark.parametrize("message", [
+    "just reply with yes or no",                       # more than one word
+    "Is remote work allowed? just say yes",            # a question
+    "Do we allow remote work, just reply with yes",
+    "answer only with yes",                            # "answer" answers something
+    "Reply with our refund policy",
+    "respond with pricing",                            # not marked as literal
+    "Summarise the leave policy and just reply with bullets",
+    "rewrite this text: our refund window is thirty days",
+    "What is the refund policy?",
+])
+def test_anything_more_than_an_echo_is_still_searched(message):
+    assert agent.needs_retrieval(message)
+
+
 def wait_for_the_stream(fakes, seconds=30):
     """Until the agent's model has stopped (or finished) streaming."""
     deadline = time.monotonic() + seconds
@@ -385,6 +442,36 @@ def test_two_people_in_one_workspace_and_role_are_answered_at_once(client, fakes
         assert events[-1]["type"] == "done"
         assert [s["title"] for s in events[-1]["sources"]] == [title]
         assert events[-1]["steps"][0]["tool"] == "search_docs"
+
+
+def test_a_prompt_set_not_to_search_is_answered_without_it(client, fakes):
+    import prompts_store
+    direct = prompts_store.create("default", "asker-one", "Direct", "What is the refund policy?",
+                                  "asker-one", search=False)
+    searching = prompts_store.create("default", "asker-one", "Search",
+                                     "What is the refund policy?", "asker-one")
+    try:
+        def run(token, prompt_id):
+            r = client.post("/api/chat/stream", json={"question": "What is the refund policy?",
+                                                      "prompt_id": prompt_id},
+                            headers={"Authorization": f"Bearer {token}", "X-Role": "public"})
+            assert r.status_code == 200
+            return json.loads(r.text.strip().split("\n\n")[-1][len("data: "):])
+
+        done = run(client.tokens[0], direct["id"])
+        assert done["sources"] == [] and done["steps"] == []
+        assert not fakes.calls.of("retrieve")
+        # A prompt that searches, and someone else's prompt, search as any question.
+        for token, prompt_id in ((client.tokens[0], searching["id"]),
+                                 (client.tokens[1], direct["id"]),
+                                 (client.tokens[0], "no-such-prompt")):
+            done = run(token, prompt_id)
+            assert [s["title"] for s in done["sources"]] == ["refund.md"]
+        # Now that the question's answer is cached: still not served without the search.
+        assert run(client.tokens[0], direct["id"])["sources"] == []
+    finally:
+        for p in (direct, searching):
+            prompts_store.delete("default", p["id"])
 
 
 def test_the_api_still_refuses_a_salary_question(client):

@@ -18,6 +18,7 @@ import assistant_store
 import conversations_store
 import members_store
 import models
+import prompts_store
 from kb.deps import current_role, current_user, current_viewer, ws_of
 from kb.rate_limit import user_limit
 from kb.services import (answering, attachments, conversations, indexing, model_choice, passages,
@@ -46,6 +47,8 @@ class StreamIn(ChatIn):
     retry_of: str | None = None          # ask the question of this failed answer again
     regenerate_of: str | None = None     # a new answer beside this finished one
     edit_of: str | None = None           # `question` replaces this earlier question
+    prompt_id: str | None = None         # the saved prompt the question came from: one
+                                         # set not to search is answered without (prompts.py)
 
 
 @router.post("/api/chat")
@@ -120,7 +123,9 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
          error       {"message", "message_id"}
     With a conversation_id the question and its answer are saved there, and the
     conversation so far is the history it's answered with. retry_of, regenerate_of
-    and edit_of ask again in a new branch (conversations.start_turn). If the
+    and edit_of ask again in a new branch (conversations.start_turn). prompt_id: the
+    saved prompt run; one with search off (that the asker may use) is answered
+    directly, without searching the knowledge (agent.run(search=False)). If the
     browser goes away mid-answer (or the Stop button), the agent is told to stop
     and what was written so far is saved as a stopped answer."""
     question = body.question.strip()
@@ -164,6 +169,11 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         answer_model = await run_in_threadpool(model_choice.resolve, ws, None, None, owner)
     history_access = turn["history_access"] if turn else "public"
     history_acl = turn["history_acl"] if turn else []
+    # A saved prompt set to answer directly: nothing is searched for it. Only a new
+    # question: asked again, it searches as any question does.
+    search = True
+    if body.prompt_id and not again:
+        search = await run_in_threadpool(prompts_store.searches, ws, owner, body.prompt_id)
     # A new chat's title, written beside the answer (one small model call at most).
     title = {}
     titling = None
@@ -236,7 +246,7 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
         try:
             done = answering.ask(ws, user, viewer, question, surface="web", turn=turn,
                                  on_event=on_event, cancel=stop, out=out, cache=not again,
-                                 model=answer_model)
+                                 model=answer_model, search=search)
             with models.scope_for(ws):
                 followups = suggestions.followups(question, done.answer, done.state,
                                                   done.sources)
