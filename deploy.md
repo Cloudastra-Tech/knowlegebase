@@ -673,7 +673,7 @@ articles and GitHub, which also refreshes captured permissions), to find deletio
   members and its Microsoft 365 group; a private or shared channel: its own
   members). Threads (root + replies) of the last eight months sync through the
   channel delta query; chats are never read.
-- **Gmail and Google Calendar** are **each member's own** (*My connections*, in the
+- **Gmail and Google Calendar** are **each member's own** (*Settings › Connections*, from the
   account menu), never a workspace connection: what a member syncs is searchable
   by them alone (`user:<them>` on every chunk), never listed, counted, digested or
   sent to webhooks for anyone else, admins included; removing or erasing the
@@ -960,7 +960,7 @@ was available. `PUBLIC_URL` must be reachable by the vendor for the sign-ins.
 
 **Gmail and Google Calendar** (a Google Cloud project in Testing with the test user
 added, or after verification and CASA)
-1. With `GMAIL_SYNC=on`: account menu → *My connections* → *Connect your Gmail*;
+1. With `GMAIL_SYNC=on`: account menu → *Settings* → *Connections* → *Connect your Gmail*;
    untick the Gmail permission on Google's screen: it says the permission is
    missing. Connect again with it: choose labels; threads with them sync.
 2. Ask about an email as that member: it's cited. Sign in as an admin viewing as

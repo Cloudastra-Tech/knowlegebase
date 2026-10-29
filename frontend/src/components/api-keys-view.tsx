@@ -1,11 +1,17 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Copy, KeyRound, Plus, TriangleAlert } from "lucide-react"
+import { Ban, Check, Copy, KeyRound, MoreHorizontal, Plus, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
-import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
 import { Panel } from "@/components/glass/panel"
-import { ScreenHeader } from "@/components/screen-header"
+import {
+  SettingsEmpty,
+  SettingsError,
+  SettingsExample,
+  SettingsList,
+  SettingsSection,
+  SettingsSkeleton,
+} from "@/components/settings/settings-section"
 import { CopyField } from "@/components/sign-in-provider-dialog"
 import {
   AlertDialog,
@@ -39,6 +45,12 @@ import {
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -47,13 +59,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { apiKeys, type ApiKey, type ApiScope, type NewApiKey } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { cn, timeAgo } from "@/lib/utils"
 
-// The personal "API keys" page, and the pieces the admins' "API & MCP" tab shares
+// Settings › API keys, and the pieces the admins' "API & MCP" tab shares
 // (api-access-view.tsx): the new-key dialog, the copy-once dialog, a key's row and
 // the MCP connection snippets.
 
@@ -85,7 +96,8 @@ const STATUS = {
 const WARNING_ALERT =
   "border-warning/40 bg-warning/10 text-warning *:data-[slot=alert-title]:text-foreground *:data-[slot=alert-description]:text-foreground/90"
 
-// One key: its name and hint, what it may do, when it was used, and Revoke.
+// One key: its name and state, its hint, what it may do and when it was used; Revoke
+// in its menu (after a confirm). A revoked or expired key is dimmed and has no menu.
 export function KeyRow({
   apiKey,
   showOwner = false,
@@ -99,11 +111,18 @@ export function KeyRow({
   const active = apiKey.status === "active"
   const status = STATUS[apiKey.status]
   return (
-    <div className={cn("flex flex-wrap items-center gap-3 px-4 py-3", !active && "opacity-60")}>
-      <KeyRound className="size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1 basis-56">
+    <div className="flex items-start gap-3 px-4 py-3">
+      <span
+        className={cn(
+          "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground",
+          !active && "opacity-60",
+        )}
+      >
+        <KeyRound className="size-4" />
+      </span>
+      <div className={cn("min-w-0 flex-1", !active && "opacity-60")}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-medium">{apiKey.name}</span>
+          <span className="truncate text-sm font-medium">{apiKey.name}</span>
           <Badge className={cn("font-normal", status.className)}>{status.label}</Badge>
           {apiKey.kind === "service" && (
             <Badge variant="secondary" className="font-normal">
@@ -112,7 +131,7 @@ export function KeyRow({
           )}
         </div>
         <p className="truncate font-mono text-xs text-muted-foreground">{apiKey.hint}</p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-pretty text-muted-foreground">
           {apiKey.scopes.map((s) => SCOPES[s]?.label ?? s).join(", ")}
           {showOwner && ` · by ${apiKey.created_by}`} ·{" "}
           {apiKey.last_used_at ? `used ${timeAgo(apiKey.last_used_at)}` : "never used"}
@@ -120,9 +139,18 @@ export function KeyRow({
         </p>
       </div>
       {active && (
-        <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirm(true)}>
-          Revoke
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label={`${apiKey.name}: actions`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
+              <Ban /> Revoke
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>
@@ -135,7 +163,9 @@ export function KeyRow({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onRevoke}>Revoke</AlertDialogAction>
+            <AlertDialogAction variant="destructive" onClick={onRevoke}>
+              Revoke
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -427,10 +457,13 @@ export function KeyCreatedDialog({
   )
 }
 
-// /api-keys: everyone's own keys, for scripts and agents that act as them.
+// Settings › API keys: everyone's own keys, for scripts and agents that act as them.
+// With none, one empty state and New key; with some, the keys, then how to use one
+// (the MCP server, the REST API). Off in the workspace: just that, and what to do.
 export function ApiKeysView() {
   const queryClient = useQueryClient()
-  const data = useQuery(queries.myApiKeys()).data
+  const query = useQuery(queries.myApiKeys())
+  const data = query.data
   const [creating, setCreating] = useState(false)
   const [made, setMade] = useState<(ApiKey & { key: string }) | null>(null)
 
@@ -447,90 +480,82 @@ export function ApiKeysView() {
   }
 
   const active = data?.keys.filter((k) => k.status === "active").length ?? 0
-  const off = data && !data.settings.api_enabled && !data.settings.mcp_enabled
+  const off = !!data && !data.settings.api_enabled && !data.settings.mcp_enabled
+  const full = !!data && active >= data.max_keys
+  const newKey = (
+    <Button size="sm" onClick={() => setCreating(true)} disabled={full}>
+      <Plus data-icon="inline-start" /> New key
+    </Button>
+  )
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <ScreenHeader
-        icon={KeyRound}
-        title="API keys"
-        description="Ask the knowledge base from your own scripts, or from Claude, Cursor and other agents, as you."
-        actions={
-          <Button
-            size="sm"
-            onClick={() => setCreating(true)}
-            disabled={!data || !!off || active >= (data?.max_keys ?? 0)}
-          >
-            <Plus data-icon="inline-start" /> New key
-          </Button>
-        }
-      />
-
-      {!data ? (
-        <Skeleton className="mt-6 h-48 rounded-2xl" />
+    <SettingsSection
+      title="API keys"
+      description="Ask the knowledge base from your own scripts, or from Claude, Cursor and other agents, as you."
+      action={data && !off && data.keys.length > 0 ? newKey : undefined}
+    >
+      {query.isPending ? (
+        <SettingsSkeleton rows={2} label="Loading your API keys" />
+      ) : !data ? (
+        <SettingsError what="your API keys" onRetry={() => void query.refetch()} />
+      ) : off ? (
+        <SettingsEmpty
+          icon={KeyRound}
+          title="API access is off"
+          description="Your workspace's admins have turned off the API and the MCP server. Ask one of them if you need a key."
+        />
+      ) : data.keys.length === 0 ? (
+        <SettingsEmpty
+          icon={KeyRound}
+          title="No API keys yet"
+          description="A key lets a script or an AI agent ask the knowledge base as you, seeing only what your role sees."
+          action={newKey}
+          example={
+            <SettingsExample>
+              <p className="font-medium">My laptop's Claude Code</p>
+              <p className="mt-0.5 text-muted-foreground">Ask questions, Search · expires in 90 days</p>
+            </SettingsExample>
+          }
+        />
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-6">
-          {off && (
-            <Alert className={WARNING_ALERT}>
-              <TriangleAlert />
-              <AlertTitle>Turned off in this workspace</AlertTitle>
-              <AlertDescription>
-                Your admins have turned off the API and the MCP server, so keys don't work.
-              </AlertDescription>
-            </Alert>
+        <>
+          <SettingsList label="Your API keys">
+            {data.keys.map((k) => (
+              <li key={k.id}>
+                <KeyRow apiKey={k} onRevoke={() => revoke(k)} />
+              </li>
+            ))}
+          </SettingsList>
+          {full && (
+            <p className="text-sm text-muted-foreground">
+              That's the most keys you can have at once ({data.max_keys}). Revoke one to make another.
+            </p>
           )}
-          {/* The keys: a list to act on, so opaque. */}
-          <Panel tone="solid" className="overflow-hidden p-0">
-            {data.keys.length ? (
-              <div className="divide-y">
-                {data.keys.map((k) => (
-                  <KeyRow key={k.id} apiKey={k} onRevoke={() => revoke(k)} />
-                ))}
-              </div>
-            ) : (
-              <AsciiEmptyState
-                art="key"
-                title="No keys yet."
-                description="A key acts as you: it sees what your role sees, at each call, so if your role changes, so does what it can do."
-                className="px-5"
-              />
-            )}
-          </Panel>
 
-          <Panel
-            title="Connect an agent (MCP)"
-            description={
-              data.settings.mcp_enabled
-                ? "Give Claude, Cursor or another MCP client your key, and it can search and ask the knowledge base with your permissions."
-                : "Your admins have turned the MCP server off."
-            }
-            className="min-w-0"
-          >
-            {data.settings.mcp_enabled && (
+          {data.settings.mcp_enabled && (
+            <Panel tone="solid" title="Connect an agent (MCP)" titleAs="h4" className="min-w-0">
               <div className="grid min-w-0 grid-cols-1 gap-4">
                 <CopyField label="MCP server URL" value={data.mcp_url} />
                 <McpSnippets mcpUrl={data.mcp_url} />
               </div>
-            )}
-          </Panel>
+            </Panel>
+          )}
 
-          <Panel
-            title="REST API"
-            description={
-              data.settings.api_enabled
-                ? "Version 1: ask, search, sources, documents and (admins) the audit log."
-                : "Your admins have turned the API off."
-            }
-            className="min-w-0"
-          >
-            {data.settings.api_enabled && (
+          {data.settings.api_enabled && (
+            <Panel
+              tone="solid"
+              title="REST API"
+              titleAs="h4"
+              description="Version 1: ask, search, sources, documents and (admins) the audit log."
+              className="min-w-0"
+            >
               <div className="grid min-w-0 grid-cols-1 gap-3">
                 <CopyField label="Base URL" value={data.api_url} />
                 <CopyField label="OpenAPI description" value={data.openapi_url} />
               </div>
-            )}
-          </Panel>
-        </div>
+            </Panel>
+          )}
+        </>
       )}
 
       {data && (
@@ -553,6 +578,6 @@ export function ApiKeysView() {
         mcpUrl={data?.settings.mcp_enabled ? data.mcp_url : undefined}
         onClose={() => setMade(null)}
       />
-    </div>
+    </SettingsSection>
   )
 }

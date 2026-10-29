@@ -46,6 +46,36 @@ test("with reduced motion the app's field holds still, and moves again when it's
   await expect.poll(() => fieldPixels(page), { timeout: 5_000 }).not.toBe(still)
 })
 
+// Every section of the landing shows its finished state with reduced motion, and none
+// of its ASCII moves: the hero's answer with its citations, the passages cited, the
+// route, the network, the closing heading.
+test("with reduced motion the landing's scenes show their end state, still", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await page.goto("/")
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
+  await page.evaluate("document.fonts.ready")
+  const hero = page.locator("[data-slot=hero-loop]")
+  await expect(hero).toContainText("who approves expenses over $500?")
+  await expect(hero).toContainText("Your manager, then Finance [1], within 5 working days [2].")
+  await expect(hero).not.toContainText("▪")
+
+  await page.locator("#answer [role=tablist]").scrollIntoViewIfNeeded()
+  await expect(page.locator("#answer [data-state=cited]")).toHaveCount(3)
+  await expect(page.locator("#answer")).toContainText("Your manager approves first, then Finance")
+
+  await page.locator("#start h2").scrollIntoViewIfNeeded()
+  await expect(page.locator("#start [data-ch]:not([data-state=read])")).toHaveCount(0)
+
+  const canvases = () =>
+    page.evaluate(`[...document.querySelectorAll("[data-slot=model-route] canvas, #sources canvas, main > section canvas")]
+      .map((c) => c.width ? c.toDataURL() : "")`) as Promise<string[]>
+  for (const id of ["privacy", "sources"]) await page.locator(`#${id}`).scrollIntoViewIfNeeded()
+  const before = await canvases()
+  expect(before.every(Boolean)).toBe(true)
+  await page.waitForTimeout(1200)
+  expect(await canvases()).toEqual(before)
+})
+
 test("dark is the default, and a Light choice is kept after a reload", async ({ page }) => {
   await signIn(page, ADMIN)
   expect((await htmlClass(page)).split(" ")).toContain("dark")
@@ -64,11 +94,11 @@ test("the sign-in page and an overlay on it are dark with a Light choice", async
   await pickTheme(page, "Light")
   await expect.poll(() => htmlClass(page)).toContain("light")
 
-  // Signing out everywhere lands on the landing page with a toast (an overlay, in
-  // <body> outside the page). The pointer rests on it, which holds it up, while the
-  // keyboard opens the sign-in page.
-  await page.getByRole("button", { name: /^Account, / }).click()
-  await page.getByRole("menuitem", { name: "Sign out everywhere" }).click()
+  // Signing out everywhere (Settings › Security) lands on the landing page with a toast
+  // (an overlay, in <body> outside the page). The pointer rests on it, which holds it
+  // up, while the keyboard opens the sign-in page.
+  await page.goto("/settings/security")
+  await page.getByRole("button", { name: "Sign out everywhere" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Sign out everywhere" }).click()
   const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Signed out on every device." })
   await toast.hover()

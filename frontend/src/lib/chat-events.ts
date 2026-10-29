@@ -6,6 +6,8 @@ export const FOCUS_COMPOSER = "kb:focus-composer"
 export const TOGGLE_SIDEBAR = "kb:toggle-sidebar"
 // The sidebar's Search chats: the command palette, with chats alone.
 export const OPEN_SEARCH = "kb:open-search"
+// The account menu's Keyboard shortcuts: the palette's list of them (⌘/).
+export const OPEN_SHORTCUTS = "kb:open-shortcuts"
 // Put a saved prompt in the composer (detail: its id), asking for its variables.
 export const INSERT_PROMPT = "kb:insert-prompt"
 // New chats ask in this space (detail: its id, or null for all company).

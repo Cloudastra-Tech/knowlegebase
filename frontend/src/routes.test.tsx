@@ -96,7 +96,7 @@ describe("old hash addresses", () => {
     mockApi({})
     const router = renderApp("/#integrations")
 
-    expect(await screen.findAllByText(/one question away/)).not.toHaveLength(0)
+    expect(await screen.findAllByText(/from your own documents/)).not.toHaveLength(0)
     expect(router.state.location.pathname).toBe("/")
     expect(router.state.location.hash).toBe("#integrations")
   })

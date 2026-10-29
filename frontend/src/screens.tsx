@@ -19,9 +19,11 @@ import type { AccessTab } from "@/components/sign-in-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, drafts, type User } from "@/lib/api"
 import { useActiveRole, useAuth, useUser } from "@/lib/auth-context"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { isInstant } from "@/lib/instant-nav"
 import { legacyRedirect, type SsoReturn } from "@/lib/legacy-hash"
 import { queries } from "@/lib/queries"
+import { settingsSectionsFor } from "@/lib/settings-sections"
 
 // What each URL shows (routes.tsx has the list of them).
 
@@ -34,14 +36,8 @@ const IntegrationsView = lazy(() =>
 const InsightsView = lazy(() =>
   import("@/components/insights-view").then((m) => ({ default: m.InsightsView })),
 )
-const ApiKeysView = lazy(() =>
-  import("@/components/api-keys-view").then((m) => ({ default: m.ApiKeysView })),
-)
 const SpacesView = lazy(() =>
   import("@/components/spaces-view").then((m) => ({ default: m.SpacesView })),
-)
-const PromptsView = lazy(() =>
-  import("@/components/prompts-view").then((m) => ({ default: m.PromptsView })),
 )
 const VerifiedView = lazy(() =>
   import("@/components/verified-view").then((m) => ({ default: m.VerifiedView })),
@@ -80,17 +76,11 @@ const JoinRequested = lazy(() =>
 const ClaimWorkspace = lazy(() =>
   import("@/components/claim-workspace").then((m) => ({ default: m.ClaimWorkspace })),
 )
-const MyConnectionsView = lazy(() =>
-  import("@/components/my-connections-view").then((m) => ({ default: m.MyConnectionsView })),
-)
-const DigestsView = lazy(() =>
-  import("@/components/digests-view").then((m) => ({ default: m.DigestsView })),
-)
 const DigestUnsubscribe = lazy(() =>
   import("@/components/digest-unsubscribe").then((m) => ({ default: m.DigestUnsubscribe })),
 )
-const BillingView = lazy(() =>
-  import("@/components/billing-view").then((m) => ({ default: m.BillingView })),
+const SettingsView = lazy(() =>
+  import("@/components/settings/settings-view").then((m) => ({ default: m.SettingsView })),
 )
 const OperatorView = lazy(() =>
   import("@/components/operator-view").then((m) => ({ default: m.OperatorView })),
@@ -291,17 +281,6 @@ export function Screen({ children }: { children: ReactNode }) {
   )
 }
 
-// /billing: Plan & billing, only with BILLING=on, for admins and billing owners.
-export function BillingScreen() {
-  const user = useUser()
-  if (!user.billing?.can_view) return <Navigate to="/chat" replace />
-  return (
-    <Screen>
-      <BillingView />
-    </Screen>
-  )
-}
-
 export function DocsScreen() {
   const user = useUser()
   return (
@@ -329,23 +308,6 @@ export function AssistantScreen() {
   )
 }
 
-// /digests: everyone's own digests of what changed.
-export function DigestsScreen() {
-  return (
-    <Screen>
-      <DigestsView />
-    </Screen>
-  )
-}
-
-export function ApiKeysScreen() {
-  return (
-    <Screen>
-      <ApiKeysView />
-    </Screen>
-  )
-}
-
 // /spaces, /spaces/:spaceId: your own space and your team spaces.
 export function SpacesScreen() {
   const { spaceId } = useParams()
@@ -353,15 +315,6 @@ export function SpacesScreen() {
   return (
     <Screen>
       <SpacesView key={`${activeRole}-${spaceId ?? ""}`} spaceId={spaceId} />
-    </Screen>
-  )
-}
-
-// /prompts: saved prompts, yours and the workspace's.
-export function PromptsScreen() {
-  return (
-    <Screen>
-      <PromptsView />
     </Screen>
   )
 }
@@ -514,13 +467,32 @@ export function IntegrationsScreen() {
   )
 }
 
-// /connections: a member's own Gmail and Calendar, and back from Google's consent screen
-// (/connections?connected=gmail&choose=1 or ?error=...).
-export function MyConnectionsScreen() {
-  const [params, setParams] = useSearchParams()
+// /settings, /settings/:section (lib/settings-sections.ts). On a desktop /settings is
+// General; on a phone it's the list of sections. Back from Google's consent screen for a
+// member's own Gmail or Calendar: /settings/connections?connected=gmail&choose=1 or
+// ?error=... (the old /connections redirects here with its query).
+export function SettingsScreen() {
+  const { section } = useParams()
+  const user = useUser()
+  const isMobile = useIsMobile()
+  const [params] = useSearchParams()
   const [openPickerFor] = useState(() =>
     params.get("choose") === "1" ? params.get("connected") : null,
   )
+  const known = settingsSectionsFor(user).find((s) => s.id === section)
+  if (section && !known) return <Navigate to="/settings" replace />
+  if (!section && !isMobile) return <Navigate to="/settings/general" replace />
+  return (
+    <Screen>
+      {known?.id === "connections" && <ConnectReturn />}
+      <SettingsView section={known?.id} openPickerFor={openPickerFor} />
+    </Screen>
+  )
+}
+
+// A toast for how connecting went, once, and the query cleared.
+function ConnectReturn() {
+  const [params, setParams] = useSearchParams()
   const shown = useRef(false)
   useEffect(() => {
     if (shown.current) return
@@ -539,12 +511,14 @@ export function MyConnectionsScreen() {
     if (error) toast.error(CONNECT_ERRORS[error] ?? "It was not connected.")
     setParams({}, { replace: true })
   }, [params, setParams])
+  return null
+}
 
-  return (
-    <Screen>
-      <MyConnectionsView openPickerFor={openPickerFor} />
-    </Screen>
-  )
+// The personal screens' old addresses (lib/settings-sections.ts): to their section,
+// keeping the query (?checkout=done from Stripe, ?connected= from Google).
+export function MovedTo({ to }: { to: string }) {
+  const { search, hash } = useLocation()
+  return <Navigate to={{ pathname: to, search, hash }} replace />
 }
 
 export function AccessScreen({ tab }: { tab: AccessTab }) {

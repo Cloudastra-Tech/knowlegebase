@@ -91,7 +91,7 @@ const BRANCHED = (second: boolean) => ({
 })
 
 describe("the history sidebar", () => {
-  it("lists pinned chats, folders and the rest by date; the retention is in the account menu", async () => {
+  it("lists pinned chats, folders and the rest by date; the retention isn't in the sidebar", async () => {
     session.setToken("tok")
     mockApi(BASE)
     renderApp("/chat")
@@ -105,9 +105,11 @@ describe("the history sidebar", () => {
     expect(s.getByText("Older")).toBeInTheDocument()
     expect(screen.queryByText(/Chats are kept/)).not.toBeInTheDocument()
 
+    // Nor in the account menu: it's Settings › Chats now.
     await userEvent.setup().click(screen.getByRole("button", { name: /^Account,\s*Pat Public/ }))
-    expect(await screen.findByText(/Chats are kept for 1 year .*\(set by your admin\)/)).toBeInTheDocument()
-    expect(screen.queryByRole("menuitem", { name: "Chat settings" })).not.toBeInTheDocument() // not an admin
+    expect(await screen.findByRole("menuitem", { name: "Settings" })).toHaveAttribute("href", "/settings")
+    expect(screen.queryByText(/Chats are kept/)).not.toBeInTheDocument()
+    expect(screen.queryByRole("menuitem", { name: "Chat settings" })).not.toBeInTheDocument()
   })
 
   it("has every screen the account sees in its nav, and the open one marked", async () => {

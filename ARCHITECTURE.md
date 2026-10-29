@@ -439,7 +439,7 @@ teams / extension / email; Insights shows where questions come from).
 - **Settings** (`api_settings`): the API and the MCP server on or off per
   workspace, and which MCP tools agents get (`read_document` is off by default:
   it returns whole documents). Admins set them on Access → API & MCP; everyone
-  manages their own keys on the API keys page (account menu).
+  manages their own keys under Settings › API keys (`/settings/api-keys`).
 - **Limits and audit**: every key call is rate-limited per key and per workspace
   (`RATE_LIMIT_API_KEY`, 60 / minute; `RATE_LIMIT_API_WORKSPACE`, 600), a
   question also counts as one of its person's chat questions, and every call is

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 
+import type { BrainOverlay } from "@/components/ascii/brain-overlay"
 import { FIELD_RAMP, fieldValue, rampIndex } from "@/components/ascii/field"
 import { measureCell, subscribe, whenFontsReady } from "@/lib/ascii-loop"
 import { cn } from "@/lib/utils"
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils"
 // Per point: position, normal, part (0 cortex, 1 cerebellum, 2 stem), and crease
 // (1 in a sulcus or a fissure, drawn dark).
 const STRIDE = 8
+const STILL = 2.4 // the moment drawn as the still frame
 let brainCache: Float32Array | null = null
 
 type Lobe = { c: [number, number, number]; r: [number, number, number]; n: number; part: number }
@@ -105,13 +107,20 @@ const LIGHT = (() => {
 
 // Every glyph the brain draws, as a code per cell (0 is empty): the field's ramp in
 // the dim field ink, the brain's ramp in the brain ink, and the spark in the signal.
+// Then what an overlay may add where the brain isn't (BrainOverlay): a document's
+// redaction (▪ ░ ·) in a half ink, or in the signal.
 const FIELD_CODE = 0 // + the field ramp's index (its index 0 is a space: empty)
 const INK_CODE = FIELD_RAMP.length // + the brain ramp's index
 const SPARK_CODE = INK_CODE + RAMP.length
-const GLYPHS: [string, "field" | "ink" | "signal"][] = [
-  ...[...FIELD_RAMP].map((ch) => [ch, "field"] as [string, "field"]),
-  ...[...RAMP].map((ch) => [ch, "ink"] as [string, "ink"]),
+const FRAG_GLYPHS = "▪░·"
+const FRAG_CODE = SPARK_CODE + 1 // + the glyph's index; + 3 more for the signal
+type Tone = "field" | "ink" | "signal" | "frag"
+const GLYPHS: [string, Tone][] = [
+  ...[...FIELD_RAMP].map((ch) => [ch, "field"] as [string, Tone]),
+  ...[...RAMP].map((ch) => [ch, "ink"] as [string, Tone]),
   ["*", "signal"],
+  ...[...FRAG_GLYPHS].map((ch) => [ch, "frag"] as [string, Tone]),
+  ...[...FRAG_GLYPHS].map((ch) => [ch, "signal"] as [string, Tone]),
 ]
 
 // "hero" puts the brain right of the headline on wide screens and above it on
@@ -126,10 +135,12 @@ export function AsciiBrain({
   className,
   framing = "hero",
   fps = 30,
+  overlay,
 }: {
   className?: string
   framing?: "hero" | "panel"
   fps?: number
+  overlay?: BrainOverlay
 }) {
   const box = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -166,7 +177,9 @@ export function AsciiBrain({
         probe.style.color = `var(--ascii-${token})`
         return getComputedStyle(probe).color
       }
-      const colours = { field: ink("field"), ink: ink("ink"), signal: ink("signal") }
+      probe.style.color = "color-mix(in oklab, var(--foreground) 42%, transparent)"
+      const frag = getComputedStyle(probe).color
+      const colours = { field: ink("field"), ink: ink("ink"), signal: ink("signal"), frag }
       probe.remove()
       atlas.width = aw * GLYPHS.length
       atlas.height = ah
@@ -277,6 +290,25 @@ export function AsciiBrain({
           else next[k] = INK_CODE + Math.floor(Math.min(0.999, shade[k]) * RAMP.length)
         }
       }
+      if (overlay?.active && t !== STILL) {
+        overlay.draw({
+          cols,
+          rows,
+          cx: centerX / cell.w,
+          cy: centerY / cell.h,
+          rx: radius / cell.w,
+          ry: radius / cell.h,
+          wide,
+          brain: (c, r) => c >= 0 && r >= 0 && c < cols && r < rows && zbuf[r * cols + c] > 0,
+          put: (c, r, glyph, signal) => {
+            if (c < 0 || r < 0 || c >= cols || r >= rows) return
+            const k = r * cols + c
+            if (zbuf[k]) return
+            const g = FRAG_GLYPHS.indexOf(glyph)
+            if (g >= 0) next[k] = FRAG_CODE + g + (signal ? FRAG_GLYPHS.length : 0)
+          },
+        })
+      }
       for (let k = 0; k < next.length; k++) {
         const code = next[k]
         if (code === shown[k]) continue
@@ -290,7 +322,7 @@ export function AsciiBrain({
       }
     }
 
-    const loop = subscribe(el, draw, { fps, still: 2.4 })
+    const loop = subscribe(el, draw, { fps, still: STILL })
     const ro = new ResizeObserver(() => {
       resize()
       loop.redraw()
@@ -316,7 +348,7 @@ export function AsciiBrain({
       mo.disconnect()
       window.removeEventListener("pointermove", onMove)
     }
-  }, [framing, fps])
+  }, [framing, fps, overlay])
 
   return (
     <div
