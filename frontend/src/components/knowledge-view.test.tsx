@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
+import { MemoryRouter } from "react-router"
 
 import { KnowledgeView } from "@/components/knowledge-view"
 import { session } from "@/lib/api"
@@ -33,7 +34,13 @@ describe("KnowledgeView", () => {
     const fetch = mockApi({
       "GET /api/knowledge": { workspace: "acme", items: ITEMS, outline: true },
     })
-    render(withProviders(<KnowledgeView />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
 
     expect(await screen.findByText("Leave policy.pdf")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Salaries\.xlsx/ })).toHaveAttribute(
@@ -55,10 +62,57 @@ describe("KnowledgeView", () => {
 
   it("says so when the server refuses", async () => {
     mockApi({ "GET /api/knowledge": json({ detail: "Not allowed" }, 403) })
-    render(withProviders(<KnowledgeView />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
 
     // No retry for a 4xx, and the list stays a skeleton (the toast says why).
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1))
     expect(screen.queryByText("No documents yet.", { exact: false })).not.toBeInTheDocument()
+  })
+
+  it("flags, for HR, an item the scan found instructions to an AI in", async () => {
+    mockApi({
+      "GET /api/knowledge": {
+        workspace: "acme",
+        outline: false,
+        rules: [],
+        items: [
+          { ...ITEMS[0], doc_key: "a", provider: "uploads", folder: null, who: [], injection: { chunks: 2, kinds: ["override"] } },
+          { ...ITEMS[1], doc_key: "b", provider: "gdrive", folder: null, who: [], injection: null },
+        ],
+      },
+    })
+    render(
+      withProviders(
+        <MemoryRouter>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
+
+    const flag = await screen.findByText("Instructions to an AI found in 2 chunks")
+    expect(flag).toHaveClass("sr-only")
+    expect(flag.closest('[data-slot="badge"]')).toHaveAttribute("data-variant", "warning")
+    expect(screen.getAllByText("!")).toHaveLength(1)
+  })
+
+  it("titles the screen, and says what to do when there's nothing in it", async () => {
+    mockApi({ "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })
+    render(
+      withProviders(
+        <MemoryRouter initialEntries={["/knowledge"]}>
+          <KnowledgeView />
+        </MemoryRouter>,
+      ),
+    )
+
+    expect(screen.getByRole("heading", { level: 2, name: "Knowledge base" })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: "No documents yet." })).toBeInTheDocument()
+    expect(screen.getByText("Upload files or connect Google Drive or Notion.")).toBeInTheDocument()
   })
 })

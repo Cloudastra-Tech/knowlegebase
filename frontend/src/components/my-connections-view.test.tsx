@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router"
 
 import { MyConnectionsView } from "@/components/my-connections-view"
 import type { Integration } from "@/lib/api"
@@ -40,7 +41,13 @@ const MINE: Integration[] = [
 describe("MyConnectionsView", () => {
   it("shows the member's own connections, theirs alone", async () => {
     mockApi({ "GET /api/me/integrations": { integrations: MINE } })
-    render(withProviders(<MyConnectionsView />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <MyConnectionsView />
+        </MemoryRouter>,
+      ),
+    )
     expect(await screen.findByText("Gmail")).toBeInTheDocument()
     expect(screen.getByText("HR")).toBeInTheDocument()
     expect(screen.getByText(/Only you can ask about these threads/)).toBeInTheDocument()
@@ -64,7 +71,13 @@ describe("MyConnectionsView", () => {
         return { containers: [] }
       },
     })
-    render(withProviders(<MyConnectionsView />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <MyConnectionsView />
+        </MemoryRouter>,
+      ),
+    )
     await userEvent.click(await screen.findByRole("button", { name: "Edit selection" }))
     await userEvent.click(await screen.findByRole("checkbox", { name: "Sync Inbox" }))
     await userEvent.click(screen.getByRole("button", { name: "Save and sync" }))

@@ -51,6 +51,20 @@ one for embeddings, an API key per provider sealed under the workspace's key
 AssumeRole with the ExternalId this app generated for them; credentials kept
 until they expire) or access keys, sealed too.
 
+A CHAT'S PICK. A workspace's admin can enable several answer models, across the
+chat providers it has credentials for (model_providers_store.enabled; the curated
+list per provider is CATALOGUE), and members pick one per chat
+(kb/services/model_choice.py). Models.with_answer() swaps the ANSWER model only
+(Spec.answer_provider when it's another provider's): the fast model, so the
+guards' classifiers, stays the workspace's default whatever is picked, and the
+credentials are the workspace's own. release() names the answer model, so the
+answer cache never serves one model's answer as another's.
+
+TEST CONNECTION costs as little as proves it (test_connection): OpenAI and
+Anthropic list their models, for free; Bedrock answers one token on its default
+chat model and, when it embeds, makes one short embedding (a list wouldn't show
+the model access granted, and would need a permission of its own).
+
 FAIL CLOSED. A workspace never falls back to another provider: a model that can't
 be made (no region, a role that can't be assumed, no API key) raises
 ProviderError, and the caller fails as it would with OpenAI down. The code that
@@ -309,7 +323,8 @@ class Spec:
     same). auth (bedrock): default = the server's AWS credentials; role = assume
     role_arn with external_id; keys = (access key id, secret access key).
     api_keys: ((provider, key), ...) for the providers the workspace brings its
-    own key for; a provider listed with no key fails closed (never the server's)."""
+    own key for; a provider listed with no key fails closed (never the server's).
+    answer_provider: a chat's pick from another enabled provider (with_answer)."""
     provider: str = "openai"
     region: str | None = None
     auth: str = "default"
@@ -327,6 +342,10 @@ class Spec:
     error: str | None = None          # why it can't be used: every model call says so
     embed_provider: str | None = None
     api_keys: tuple | None = field(default=None, repr=False)
+    # The chat's own choice of answer model (with_answer): its provider, when it
+    # isn't `provider`. chat_model is then that provider's model; fast_model (the
+    # guards, HyDE, titles) stays on `provider` whatever a chat picks.
+    answer_provider: str | None = None
 
     @property
     def embeddings_provider(self):
@@ -405,6 +424,11 @@ class Models:
         return self.spec.provider
 
     @property
+    def answer_provider(self):
+        """Who writes the answer: the chat's pick (with_answer), else `provider`."""
+        return self.spec.answer_provider or self.spec.provider
+
+    @property
     def embed_provider(self):
         return self.spec.embeddings_provider
 
@@ -413,16 +437,23 @@ class Models:
         """The chat models are Bedrock's."""
         return self.spec.provider == "bedrock"
 
+    @property
+    def providers(self):
+        """Every provider this work sends text to: the chat (fast) provider, the
+        answer provider (a chat's pick, with_answer) and the embeddings provider."""
+        return tuple(dict.fromkeys((self.provider, self.answer_provider, self.embed_provider)))
+
     def uses(self, name):
-        """Either the chat or the embeddings provider is `name`."""
-        return name in (self.provider, self.embed_provider)
+        """The chat, answer or embeddings provider is `name`. The answer provider
+        counts: a chat answered on its Bedrock pick reranks with the workspace's
+        own AWS (rerankers.BedrockReranker), never the server's."""
+        return name in self.providers
 
     @property
     def in_house(self):
         """Some of the workspace's text stays in its own cloud account (Bedrock):
         then nothing else (an API reranker) may see it either."""
-        return any(REGISTRY[p].in_house for p in (self.provider, self.embed_provider)
-                   if p in REGISTRY)
+        return any(REGISTRY[p].in_house for p in self.providers if p in REGISTRY)
 
     def _defaults(self, name):
         p = REGISTRY.get(name)
@@ -431,7 +462,7 @@ class Models:
     # ---- Names ----
     @property
     def answer_name(self):
-        return self.spec.chat_model or self._defaults(self.provider).get("chat_model")
+        return self.spec.chat_model or self._defaults(self.answer_provider).get("chat_model")
 
     @property
     def fast_name(self):
@@ -457,8 +488,22 @@ class Models:
         return embed_name(self.embed_provider, self.embed_model, self.embed_dims)
 
     def release(self):
-        """What changes this workspace's answers on the model side (the answer cache)."""
-        return f"{self.provider}|{self.answer_name}|{self.fast_name}"
+        """What changes this workspace's answers on the model side (the answer cache):
+        the answer model a chat picked is part of it, so an answer written by one
+        model is never served as another's. The same as before for the default."""
+        out = f"{self.answer_provider}|{self.answer_name}|{self.fast_name}"
+        return out if self.answer_provider == self.provider else f"{out}|{self.provider}"
+
+    def with_answer(self, provider, model):
+        """These Models with a chat's pick as the ANSWER model (an enabled one:
+        kb/services/model_choice.py checks it). The fast model, the embeddings and
+        the credentials stay the workspace's. The default itself changes nothing."""
+        if provider == self.answer_provider and model == self.answer_name:
+            return self
+        if provider == self.provider:
+            return Models(replace(self.spec, chat_model=model, answer_provider=None))
+        return Models(replace(self.spec, chat_model=model, answer_provider=provider,
+                              fast_model=self.fast_name))
 
     # ---- Keys ----
     def api_key(self, provider):
@@ -485,7 +530,7 @@ class Models:
         kwargs: temperature, max_tokens, timeout, max_retries."""
         if self.spec.error:
             raise ProviderError(self.spec.error)
-        p = provider_info(self.provider, "chat")
+        p = provider_info(self.answer_provider if role == "answer" else self.provider, "chat")
         return p.make_chat(self, self.name(role), openai=openai, cache_key=cache_key, **kwargs)
 
     def answer(self, openai=None, cache_key=None, **kwargs):
@@ -499,8 +544,8 @@ class Models:
         model elsewhere (it must be a multimodal one: Nova Lite / Pro, Claude)."""
         if self.spec.error:
             raise ProviderError(self.spec.error)
-        p = provider_info(self.provider, "chat")
-        if self.provider == "openai":
+        p = provider_info(self.answer_provider, "chat")
+        if self.answer_provider == "openai":
             return p.make_chat(self, model, openai=openai, **kwargs)
         if not p.vision:
             raise ProviderError(f"{p.label}'s models don't read images.")
@@ -508,7 +553,7 @@ class Models:
 
     def image_block(self, mime, data_b64):
         """An image as this chat provider takes it in a message's content."""
-        if provider_info(self.provider).image_format == "openai":
+        if provider_info(self.answer_provider).image_format == "openai":
             return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_b64}"}}
         return {"type": "image", "source_type": "base64", "mime_type": mime, "data": data_b64}
 
@@ -931,10 +976,12 @@ def model_arns(model, region):
     return [f"arn:aws:bedrock:{region}::foundation-model/{model}"]
 
 
-def permissions_policy(spec):
-    """The IAM policy the workspace's role (or user) needs, for its models."""
+def permissions_policy(spec, enabled=()):
+    """The IAM policy the workspace's role (or user) needs, for its models (and the
+    other Bedrock chat models it enables, `enabled`). Test connection invokes
+    them too (test_connection), so it needs nothing more."""
     region = spec.region or "REGION"
-    chat = sorted({a for m in {spec.chat_model, spec.fast_model} if m
+    chat = sorted({a for m in {spec.chat_model, spec.fast_model, *enabled} if m
                    for a in model_arns(m, region)})
     embed = model_arns(spec.embed_model, region) if spec.embed_model else []
     return {"Version": "2012-10-17", "Statement": [
@@ -958,40 +1005,179 @@ def trust_policy(external_id):
         "Condition": {"StringEquals": {"sts:ExternalId": external_id}}}]}
 
 
-TEST_PROMPT = "Reply with the single word OK."
-
-
-TEST_PROMPT = "Reply with the single word OK."
+TEST_PROMPT = "Reply with the single word OK."     # Bedrock's test (test_connection)
 _KEYLIKE = re.compile(r"\b(sk|key)-[A-Za-z0-9_\-]{6,}")
 
 
 def describe_error(e, secrets=()):
     """A provider's error as the admin is shown it: AWS's code and message, or
     the client's own, with any key in it blanked out."""
-    text = _aws_error(e)
+    return scrub(_aws_error(e), secrets)
+
+
+def scrub(text, secrets=()):
+    """`text` with each secret, and anything shaped like an API key, blanked out."""
     for secret in secrets:
         if secret:
             text = text.replace(secret, "***")
     return _KEYLIKE.sub(lambda m: m.group(1) + "-***", text)
 
 
-def test_connection(spec):
-    """One tiny call to the chat model and one embedding: what Test connection on
-    the Assistant screen shows. Raises ProviderError with the provider's reason."""
-    from langchain_core.messages import HumanMessage
+# ---- Test connection: as little paid usage as proves it ---------------------------------
+# OpenAI and Anthropic: listing the models is free and proves the key (and which
+# enabled models it reaches). Bedrock: listing proves neither the role's right to
+# invoke nor the model access granted in the account (ListFoundationModels lists
+# models with no access), and needs a permission of its own. So one Converse of a
+# single token on its default chat model and, when it embeds, one short embedding:
+# a fraction of a cent, with only the InvokeModel the policy already grants.
+TEST_TIMEOUT = 20
+
+
+def _openai_client(key):
+    """The OpenAI SDK's client (tests replace it): the workspace's key, else the
+    server's OPENAI_API_KEY (the client reads it)."""
+    import openai
+    return openai.OpenAI(api_key=key or None, timeout=TEST_TIMEOUT, max_retries=0)
+
+
+def _anthropic_client(key):
+    import anthropic
+    return anthropic.Client(api_key=key, timeout=TEST_TIMEOUT, max_retries=0)
+
+
+def _list_openai(on):
+    return {m.id for m in _openai_client(on.api_key("openai")).models.list()}
+
+
+def _list_anthropic(on):
+    key = on.api_key("anthropic") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        raise ProviderError("Anthropic is selected but no API key is set.")
+    return {m.id for m in _anthropic_client(key).models.list(limit=1000)}
+
+
+# provider -> its free list of model ids (tests replace one to stand in for its API).
+LISTS = {"openai": _list_openai, "anthropic": _list_anthropic}
+
+
+def _check_bedrock(on, looked_for):
+    """Bedrock's test: one Converse of a single token on its default chat model
+    (the workspace's default when that's Bedrock's, else its first enabled Bedrock
+    model), and one short embedding when Bedrock embeds. -> the model ids it
+    reached. The other enabled Bedrock models aren't invoked: each would be paid."""
+    checked = []
+    chat = (on.answer_name if on.answer_provider == "bedrock"
+            else next((m for m in looked_for if m), None))
+    if chat:
+        runtime_client(on.spec, timeout=TEST_TIMEOUT, retries=0).converse(
+            modelId=chat, messages=[{"role": "user", "content": [{"text": TEST_PROMPT}]}],
+            inferenceConfig={"maxTokens": 1, "temperature": 0})
+        checked.append(chat)
+    if on.embed_provider == "bedrock":
+        on.embeddings().embed_query("connection test")
+        checked.append(on.embed_model)
+    return checked
+
+
+# provider -> its minimal real check (no free list proves enough): the models reached.
+CHECKS = {"bedrock": _check_bedrock}
+
+
+def test_connection(spec, wanted=()):
+    """Test connection on the Assistant screen: each provider the spec uses lists
+    its models, for free (OpenAI, Anthropic), or makes its minimal real check
+    (Bedrock, CHECKS). wanted: ((provider, model), ...), the chat models to look
+    for, the default first (their providers are tested too). -> {"ok",
+    "providers": [{"provider", "label", "ok", "models": how many it listed (None:
+    no list), "missing": wanted models it didn't list, "checked"?: the models a
+    real call reached, "error"?}]}. A provider listing its models without one of
+    the wanted ones fails, saying which: an id mistyped, or a model the key
+    can't use. A provider with neither (local) is ok without a call. A
+    provider's own failure is its row's error, the key blanked out."""
+    if spec.error:
+        raise ProviderError(spec.error)
     on = Models(spec)
-    try:
-        reply = on.chat("answer", temperature=0, max_tokens=10, timeout=30,
-                        max_retries=0).invoke([HumanMessage(content=TEST_PROMPT)])
-        vector = on.embeddings().embed_query("connection test")
-    except ProviderError:
-        raise
-    except Exception as e:
-        raise ProviderError(describe_error(e, on.secrets())) from e
-    usage = getattr(reply, "usage_metadata", None) or {}
-    return {"chat_model": on.answer_name, "reply": text_of(reply.content).strip()[:40],
-            "tokens": (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0),
-            "embed_model": on.embed_model, "dimensions": len(vector)}
+    by = {}
+    for provider, model in wanted:
+        by.setdefault(provider, []).append(model)
+    for name in (spec.provider, spec.embeddings_provider):
+        by.setdefault(name, [])
+    rows = []
+    for name, looked_for in by.items():
+        row = {"provider": name, "label": provider_info(name).label, "ok": True,
+               "models": None, "missing": []}
+        lister, check = LISTS.get(name), CHECKS.get(name)
+        try:
+            if lister is not None:
+                ids = lister(on)
+                row["models"] = len(ids)
+                row["missing"] = [m for m in dict.fromkeys(looked_for)
+                                  if m and m not in ids]
+                if row["missing"]:
+                    row.update(ok=False, error=(
+                        f"It lists {len(ids):,} models, but not {', '.join(row['missing'])}: "
+                        "check the model id and that this key can use it."))
+            elif check is not None:
+                row["checked"] = check(on, looked_for)
+        except Exception as e:
+            text = (scrub(str(e), on.secrets()) if isinstance(e, ProviderError)
+                    else describe_error(e, on.secrets()))
+            row.update(ok=False, error=text[:500])
+        rows.append(row)
+    return {"ok": all(r["ok"] for r in rows), "providers": rows}
+
+
+# ---- The catalogue: the chat models an admin can enable, per provider -----------------------
+@dataclass(frozen=True)
+class ModelInfo:
+    """One chat model the settings screen offers. tier: fast / balanced / best;
+    vision: it reads images; tool_calls: it can call the agent's tools."""
+    id: str
+    label: str
+    tier: str = "balanced"
+    vision: bool = True
+    tool_calls: bool = True
+
+    def describe(self):
+        return {"id": self.id, "label": self.label, "tier": self.tier, "vision": self.vision,
+                "tool_calls": self.tool_calls}
+
+
+TIERS = ("fast", "balanced", "best")
+# Curated: what's current and supports tool calls. An admin can add any other id
+# (a custom model); Test connection says whether the provider lists it.
+CATALOGUE = {
+    "openai": (
+        ModelInfo("gpt-5", "GPT-5", "best"),
+        ModelInfo("gpt-5-mini", "GPT-5 mini", "balanced"),
+        ModelInfo("gpt-4.1", "GPT-4.1", "balanced"),
+        ModelInfo("gpt-4o", "GPT-4o", "balanced"),
+        ModelInfo("gpt-4o-mini", "GPT-4o mini", "fast"),
+        ModelInfo("gpt-4.1-mini", "GPT-4.1 mini", "fast"),
+        ModelInfo("gpt-5-nano", "GPT-5 nano", "fast"),
+    ),
+    "anthropic": (
+        ModelInfo("claude-opus-5-5", "Claude Opus 5.5", "best"),
+        ModelInfo("claude-sonnet-5-5", "Claude Sonnet 5.5", "balanced"),
+        ModelInfo("claude-haiku-5-5", "Claude Haiku 5.5", "fast"),
+    ),
+    "bedrock": (
+        ModelInfo("amazon.nova-pro-v1:0", "Amazon Nova Pro", "balanced"),
+        ModelInfo("amazon.nova-lite-v1:0", "Amazon Nova Lite", "fast"),
+        ModelInfo("amazon.nova-micro-v1:0", "Amazon Nova Micro", "fast", vision=False),
+    ),
+}
+
+
+def model_info(provider, model):
+    """The catalogue's entry for a model, or one for a custom id: its id as its
+    label, balanced, with what its provider can do."""
+    for m in CATALOGUE.get(provider, ()):
+        if m.id == model:
+            return m
+    p = REGISTRY.get(provider)
+    return ModelInfo(model, model, "balanced", vision=bool(p and p.vision),
+                     tool_calls=bool(p and p.tool_calls))
 
 
 # ---- The providers ---------------------------------------------------------------------------

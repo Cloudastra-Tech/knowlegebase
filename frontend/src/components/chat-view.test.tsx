@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
@@ -92,7 +92,13 @@ describe("the chat", () => {
     expect(
       await screen.findByRole("button", { name: "What does “Travel policy” cover?" }),
     ).toBeInTheDocument()
-    expect(screen.getByText(/Answers come from your company's documents, with/)).toBeInTheDocument()
+    // One heading; how answers work is behind the (i), who you search as is the line
+    // at the foot of the page.
+    expect(screen.getByRole("heading", { level: 2, name: "Ask your company docs" })).toBeInTheDocument()
+    expect(screen.getByText(/Searching as/)).toHaveTextContent("Searching as Public user")
+    expect(screen.queryByText(/Answers come from/)).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole("button", { name: "How answers work" }))
+    expect(await screen.findByText(/Answers come from your company's documents, with/)).toBeInTheDocument()
     expect(screen.queryByText(/Outline/)).not.toBeInTheDocument()
     expect(screen.queryByText(/AI Delivery Intelligence Platform/)).not.toBeInTheDocument()
   })
@@ -101,6 +107,7 @@ describe("the chat", () => {
     session.setToken("tok")
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: true } })
     renderApp("/chat")
+    await userEvent.setup().click(await screen.findByRole("button", { name: "How answers work" }))
     expect(await screen.findByText(/and the Outline wiki/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: GENERIC_STARTERS[0] })).toBeInTheDocument()
   })
@@ -136,6 +143,78 @@ describe("the chat", () => {
     expect(await screen.findByText("Twenty days a year.")).toBeInTheDocument()
     expect(router.state.location.pathname).toBe("/chat/c9")
     expect(asked).toEqual([{ question: "How many leave days?", conversation_id: "c9" }])
+  })
+
+  it("draws the empty chat's art on the empty state only, and the chat's field once asked", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "POST /api/conversations": {
+        id: "c9",
+        title: "New chat",
+        role_used: "public",
+        role_changed: false,
+        created_at: 1,
+        updated_at: 1,
+      },
+      "POST /api/chat/stream": () =>
+        sse(
+          { type: "conversation", id: "c9", title: "Hi", user_message_id: "q9", message_id: "a9", new_conversation: false },
+          { type: "done", answer: "Twenty days a year.", sources: [], steps: [], state: "answered", message_id: "a9" },
+        ),
+    })
+    renderApp("/chat")
+    const fields = () => [...document.querySelectorAll('[data-slot="chat-backdrop"] [data-slot="ascii-field"]')]
+    const box = await screen.findByRole("textbox", { name: "Your question" })
+    // One field on screen: the art, in the chat field's place.
+    expect(fields().map((f) => f.getAttribute("data-mode"))).toEqual(["drift"])
+
+    await userEvent.setup().type(box, "How many leave days?{Enter}")
+    expect(await screen.findByText("Twenty days a year.")).toBeInTheDocument()
+    // It fades out (400ms) and the chat's own field takes over.
+    await waitFor(() => expect(fields().map((f) => f.getAttribute("data-mode"))).toEqual(["ambient"]))
+    expect(screen.queryByText(/Searching as/)).not.toBeInTheDocument()
+  })
+
+  it("lists recent chats under the composer and opens one in place", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations": {
+        conversations: [{ ...SAVED, pinned: false, folder_id: null, messages: undefined }],
+        folders: [],
+      },
+      "GET /api/conversations/c1": SAVED,
+    })
+    const router = renderApp("/chat")
+    const recent = await screen.findByRole("region", { name: "Recent chats" })
+    // The heading and the composer come first, the recent chats after them.
+    const heading = screen.getByRole("heading", { level: 2, name: "Ask your company docs" })
+    const box = screen.getByRole("textbox", { name: "Your question" })
+    expect(heading.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(box.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await userEvent.setup().click(
+      (await screen.findAllByRole("button", { name: /What is the refund policy\?/ })).find((b) => recent.contains(b))!,
+    )
+    expect(await screen.findByText("Refunds are paid within thirty days.")).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe("/chat/c1")
+    expect(screen.queryByRole("region", { name: "Recent chats" })).not.toBeInTheDocument()
+  })
+
+  it("draws no art on a saved conversation", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": SAVED,
+    })
+    renderApp("/chat/c1")
+    expect(await screen.findByText("Refunds are paid within thirty days.")).toBeInTheDocument()
+    expect(document.querySelector('[data-mode="drift"]')).toBeNull()
+    expect(document.querySelectorAll('[data-slot="chat-backdrop"] [data-slot="ascii-field"]')).toHaveLength(1)
   })
 
   it("shows a saved conversation again at its address, and asks follow-ups in it", async () => {
@@ -236,10 +315,216 @@ describe("the chat", () => {
     await waitFor(() => expect(print).toHaveBeenCalled())
   })
 
+  it("pins the question just asked: it is the scroller's one anchor", async () => {
+    session.setToken("tok")
+    let asked = false
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": () =>
+        asked
+          ? {
+              ...SAVED,
+              messages: [
+                ...SAVED.messages,
+                { ...SAVED.messages[0], id: "q2", parent_id: "a1", content: "How long?" },
+                { ...SAVED.messages[1], id: "a2", parent_id: "q2", content: "Thirty days.", sources: [] },
+              ],
+            }
+          : SAVED,
+      "POST /api/chat/stream": () => {
+        asked = true
+        return sse(
+          { type: "conversation", id: "c1", title: SAVED.title, user_message_id: "q2", message_id: "a2", new_conversation: false },
+          { type: "done", answer: "Thirty days.", sources: [], steps: [], state: "answered", message_id: "a2" },
+        )
+      },
+    })
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+    // A saved chat opens at its last question.
+    const anchors = () => [...document.querySelectorAll('[data-scroll-anchor="true"]')]
+    expect(anchors().map((a) => a.textContent)).toEqual(["What is the refund policy?"])
+
+    const user = userEvent.setup()
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "How long?{Enter}")
+    expect(await screen.findByText("Thirty days.")).toBeInTheDocument()
+    expect(anchors().map((a) => a.textContent)).toEqual(["How long?"])
+    expect(screen.getByRole("region", { name: "Chat messages" })).toContainElement(
+      screen.getByRole("log", { name: "Conversation" }),
+    )
+  })
+
+  it("marks a step still running when an answer is stopped as stopped, not done", async () => {
+    session.setToken("tok")
+    const encode = (e: object) => new TextEncoder().encode(`data: ${JSON.stringify(e)}\n\n`)
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": SAVED,
+      // Streams a step, then waits until the request is aborted (Stop).
+      "POST /api/chat/stream": (_body: unknown, init: RequestInit) =>
+        new Response(
+          new ReadableStream({
+            start(stream) {
+              stream.enqueue(encode({ type: "conversation", id: "c1", title: SAVED.title, user_message_id: "q2", message_id: "a2", new_conversation: false }))
+              stream.enqueue(encode({ type: "step_start", id: "s9", tool: "search_docs", label: "Searching company docs" }))
+              init.signal?.addEventListener("abort", () =>
+                stream.error(new DOMException("Aborted", "AbortError")),
+              )
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+    })
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+    const user = userEvent.setup()
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "How long?{Enter}")
+    expect(await screen.findByText("Running:")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Stop answering" }))
+    // The trace's summary line and the step itself.
+    expect(await screen.findAllByText("Stopped:")).toHaveLength(2)
+    expect(screen.queryByText("Running:")).not.toBeInTheDocument()
+    // Said once, in the one polite status line; the focus goes to the stopped answer.
+    expect(screen.getByRole("status")).toHaveTextContent("Answer stopped.")
+    await waitFor(() => expect(document.activeElement).toHaveTextContent("Stopped"))
+  })
+
+  it("marks a step still running when an answer fails as failed, not done", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "POST /api/conversations": { id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1 },
+      "POST /api/chat/stream": () =>
+        sse(
+          { type: "conversation", id: "c9", title: "Hi", user_message_id: "q9", message_id: "a9", new_conversation: false },
+          { type: "step_start", id: "s1", tool: "search_docs", label: "Searching company docs" },
+          { type: "error", message: "The model is unavailable." },
+        ),
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    await user.type(await screen.findByRole("textbox", { name: "Your question" }), "How many leave days?{Enter}")
+    expect(await screen.findByText("The model is unavailable.")).toBeInTheDocument()
+    expect(screen.getByText("Failed:")).toBeInTheDocument()
+    expect(screen.queryByText("Done:")).not.toBeInTheDocument()
+    expect(screen.getByRole("status")).toHaveTextContent("Couldn't answer.")
+  })
+
+  it("shows a saved stopped answer's unfinished step as stopped", async () => {
+    session.setToken("tok")
+    const stopped = {
+      ...SAVED.messages[1],
+      state: "stopped",
+      steps: [
+        { id: "s1", label: "Searching company docs", result: "found 1 relevant document" },
+        { id: "s2", label: "Reading a wiki page" },
+      ],
+    }
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/conversations/c1": { ...SAVED, messages: [SAVED.messages[0], stopped] },
+    })
+    renderApp("/chat/c1")
+    await screen.findByText("Refunds are paid within thirty days.")
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: /Stopped/ }))
+    expect(screen.getByText("Stopped while reading a wiki page")).toBeInTheDocument()
+    expect(screen.getByText("Done:")).toBeInTheDocument()
+    expect(screen.getAllByText("Stopped:")).toHaveLength(2) // the summary, and the step
+  })
+
   it("goes back to a new chat when the conversation isn't there", async () => {
     session.setToken("tok")
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })
     const router = renderApp("/chat/gone")
     await waitFor(() => expect(router.state.location.pathname).toBe("/chat"))
+  })
+})
+
+describe("the model picker", () => {
+  const model = (provider: string, provider_label: string, id: string, label: string, tier: string) => ({
+    provider,
+    provider_label,
+    model: id,
+    label,
+    tier,
+    vision: true,
+    tool_calls: true,
+  })
+  const MINI = model("openai", "OpenAI", "gpt-4o-mini", "GPT-4o mini", "fast")
+  const OPUS = model("anthropic", "Anthropic", "claude-opus-5-5", "Claude Opus 5.5", "best")
+  const MODELS = {
+    models: [MINI, OPUS],
+    default: { provider: "openai", model: "gpt-4o-mini" },
+    last: null,
+  }
+  const NEW = { id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1 }
+
+  it("sits beside the space chip, grouped by provider, and the chat keeps the pick", async () => {
+    session.setToken("tok")
+    const asked: Record<string, unknown>[] = []
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/models": MODELS,
+      "POST /api/conversations": NEW,
+      "POST /api/chat/stream": (body: Record<string, unknown>) => {
+        asked.push(body)
+        return sse(
+          { type: "conversation", id: "c9", title: "Hi", user_message_id: `q${asked.length}`, message_id: `a${asked.length}`, new_conversation: false },
+          { type: "done", answer: `Answer ${asked.length}.`, sources: [], steps: [], state: "answered", message_id: `a${asked.length}` },
+        )
+      },
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    const chip = await screen.findByRole("button", { name: "Model: GPT-4o mini. Change model" })
+    await user.click(chip)
+    const menu = await screen.findByRole("menu")
+    // Portalled out of the composer's glass, one group per provider, the tier beside each.
+    expect(chip.closest("form")?.contains(menu)).toBe(false)
+    expect(within(menu).getByText("OpenAI")).toBeInTheDocument()
+    expect(within(menu).getByText("Anthropic")).toBeInTheDocument()
+    expect(within(menu).getByRole("menuitem", { name: /Claude Opus 5.5\s*Best/ })).toBeInTheDocument()
+    await user.click(within(menu).getByRole("menuitem", { name: /Claude Opus 5.5/ }))
+    expect(screen.getByRole("button", { name: "Model: Claude Opus 5.5. Change model" })).toBeInTheDocument()
+
+    const box = screen.getByRole("textbox", { name: "Your question" })
+    await user.type(box, "First?{Enter}")
+    expect(await screen.findByText("Answer 1.")).toBeInTheDocument()
+    await user.type(box, "Second?{Enter}")
+    expect(await screen.findByText("Answer 2.")).toBeInTheDocument()
+    const opus = { provider: "anthropic", model: "claude-opus-5-5" }
+    expect(asked.map((a) => a.model)).toEqual([opus, opus])
+    expect(screen.getByRole("button", { name: "Model: Claude Opus 5.5. Change model" })).toBeInTheDocument()
+  }, 15_000) // two questions typed and answered
+
+  it("opens a saved chat on its own model", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/models": MODELS,
+      "GET /api/conversations/c1": { ...SAVED, model: { provider: "anthropic", model: "claude-opus-5-5" } },
+    })
+    renderApp("/chat/c1")
+    expect(await screen.findByRole("button", { name: "Model: Claude Opus 5.5. Change model" })).toBeInTheDocument()
+  })
+
+  it("isn't there when the workspace offers one model", async () => {
+    session.setToken("tok")
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/models": { ...MODELS, models: [MINI] },
+    })
+    renderApp("/chat")
+    await screen.findByRole("textbox", { name: "Your question" })
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Model:/ })).not.toBeInTheDocument())
   })
 })

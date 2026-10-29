@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from "react"
-import { Loader2 } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
 import { siGoogle } from "simple-icons"
 
@@ -92,10 +91,8 @@ export function ClaimWorkspace() {
           </FieldDescription>
           {error && <FieldError>{error}</FieldError>}
         </Field>
-        <Button type="submit" className={pill} disabled={checking || !code.trim()}>
-          {checking ? (
-            <Loader2 className="animate-spin" data-icon="inline-start" />
-          ) : (
+        <Button type="submit" className={pill} loading={checking} disabled={!code.trim()}>
+          {!checking && (
             <svg viewBox="0 0 24 24" className="fill-current" aria-hidden data-icon="inline-start">
               <path d={siGoogle.path} />
             </svg>

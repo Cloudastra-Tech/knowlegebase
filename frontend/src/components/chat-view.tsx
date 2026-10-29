@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { flushSync } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useMatch, useNavigate, useSearchParams } from "react-router"
 import {
@@ -15,11 +16,22 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { PhoneMenuButton } from "@/components/app-sidebar"
 import { AttachButton, AttachmentChips } from "@/components/attachment-chips"
-import { AssistantMessage, BranchNav, type AnswerActions, type Message } from "@/components/chat-answer"
+import {
+  AssistantMessage,
+  BranchNav,
+  type AnswerActions,
+  type LiveStep,
+  type Message,
+} from "@/components/chat-answer"
+import { composerSignal } from "@/components/ascii/composer-signal"
+import { ChatBreadcrumbs } from "@/components/breadcrumbs"
+import { ChatBackdrop } from "@/components/chat-backdrop"
 import { Composer } from "@/components/chat-composer"
-import { ChatSidebar } from "@/components/chat-sidebar"
+import { ChatHome } from "@/components/chat-home"
 import { LoggingNotice } from "@/components/logging-notice"
+import { ModelPicker } from "@/components/model-picker"
 import { SampleDocsToggle } from "@/components/onboarding-checklist"
 import { usePromptPicker } from "@/components/prompt-menu"
 import { ShareDialog } from "@/components/share-dialog"
@@ -34,6 +46,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -50,7 +63,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
+import { Message as MessageRow } from "@/components/ui/message"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
@@ -62,15 +84,22 @@ import {
   type Attachment,
   type Conversation,
   type ConversationSummary,
+  type ModelRef,
   type Role,
   type SavedMessage,
   type StreamEvent,
 } from "@/lib/api"
 import { useUser } from "@/lib/auth-context"
-import { CHOOSE_SPACE, FOCUS_COMPOSER, TOGGLE_SIDEBAR } from "@/lib/chat-events"
+import { chatCrumbs } from "@/lib/breadcrumbs"
+import { sameModel } from "@/lib/chat-models"
+import { useChatPort, type ChatActions } from "@/lib/chat-bridge"
+import { getEffects } from "@/lib/ascii-loop"
+import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking } from "@/lib/chat-events"
 import { startersFrom } from "@/lib/chat-starters"
+import { dur, ease, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
 import { spaceLabel } from "@/lib/spaces"
+import { cn } from "@/lib/utils"
 
 // A saved conversation's messages as the chat shows them. `keys`: the React keys
 // messages already on screen have, by id, so they aren't drawn anew.
@@ -97,9 +126,18 @@ function fromSaved(saved: SavedMessage[], keys: Map<string, string> = new Map())
       followups: m.followups,
       siblings: m.siblings,
       verified: m.verified,
-      steps: (m.steps ?? []).map((s) => ({ ...s, done: true })),
+      steps: endSteps(
+        (m.steps ?? []).map((s) => ({ ...s, done: s.result != null })),
+        m.state === "stopped" || m.state === "error" ? m.state : null,
+      ),
     }
   })
+}
+
+// An answer's steps once it has ended: a step still running when it was stopped or
+// failed shows that (not a done step); otherwise they're all done.
+function endSteps(steps: LiveStep[], ended: "stopped" | "error" | null): LiveStep[] {
+  return steps.map((st) => (st.done ? st : { ...st, done: true, ...(ended ? { ended } : {}) }))
 }
 
 const keysOf = (messages: Message[]) =>
@@ -153,43 +191,56 @@ const ENDED: Partial<Record<AnswerState, string>> = {
   stopped: "Answer stopped.",
 }
 
+// How much of the turn before stays in sight above a question pinned to the top (px).
+const PEEK = 64
+
+// The scroller holds a pinned question in place as its answer grows (putting it back
+// when the page above it changes), and lets go when the reader scrolls with the wheel,
+// touch or scroll keys. Scrolled another way, it would be undone on the next token, so
+// these let go too: a press on the scrollbar, and the focus moving into the transcript
+// (Tab to a link, which scrolls to it). Told as a wheel turn, the one way in it has.
+const letGo = (viewport: HTMLElement) =>
+  viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true }))
+
 const typing = (el: Element | null) =>
   el instanceof HTMLElement &&
   (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))
 
-// The palette's "Toggle sidebar" (the sidebar's own ⌘B works too).
-function SidebarEvents() {
-  const { toggleSidebar } = useSidebar()
-  useEffect(() => {
-    window.addEventListener(TOGGLE_SIDEBAR, toggleSidebar)
-    return () => window.removeEventListener(TOGGLE_SIDEBAR, toggleSidebar)
-  }, [toggleSidebar])
-  return null
-}
-
 // The chat. /chat is a new conversation; /chat/:conversationId a saved one, loaded
 // from the server (so a reload shows it again). The first question of a new one
-// saves it and moves the address to its id. The history sidebar is on its left
-// (a Sheet on phones).
+// saves it and moves the address to its id. Its history is in the app's sidebar
+// (app-sidebar.tsx), which reaches it through lib/chat-bridge.tsx.
 export function ChatView({ role }: { role: Role }) {
   const navigate = useNavigate()
   const location = useLocation()
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const urlId = useMatch("/chat/:conversationId")?.params.conversationId ?? null
+  const atId = useMatch("/chat/:conversationId")?.params.conversationId ?? null
   const onChat = location.pathname === "/chat" || location.pathname.startsWith("/chat/")
+  // On another screen (App keeps the chat mounted), it's still the conversation it was
+  // showing: the transcript and where it was scrolled to are there on the way back.
+  const [keptId, setKeptId] = useState(atId)
+  if (onChat && keptId !== atId) setKeptId(atId)
+  const urlId = onChat ? atId : keptId
   const [session, setSession] = useState<Session | null>(null)
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState<string | null>(null) // a question's key
   const [sharing, setSharing] = useState<{ messageId: string | null } | null>(null)
   const [announce, setAnnounce] = useState("")
-  const [atBottom, setAtBottom] = useState(true)
+  // The last question is the scroller's anchor (see the transcript, below), except
+  // after switching versions, which never moves the view.
+  const [pinLast, setPinLast] = useState(true)
   const abort = useRef<AbortController | null>(null)
   const nextKey = useRef(1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const lastAnswerRef = useRef<HTMLDivElement>(null)
+  // The composer's row, and where it was (its top, px) as the first question went:
+  // from the middle of the empty chat it moves down to its place (the FLIP below).
+  const composerRow = useRef<HTMLDivElement>(null)
+  const flipFrom = useRef<number | null>(null)
+  const reduced = usePrefersReducedMotion()
   const knowledge = useQuery({ ...queries.knowledge(), meta: { silent: true } })
   // Someone who hasn't asked anything yet: "ask your first question" (the server's
   // suggestions, from titles they may read), and HR the sample documents.
@@ -202,7 +253,18 @@ export function ChatView({ role }: { role: Role }) {
   const spaceList = useQuery({ ...queries.spaces(), meta: { silent: true } })
   const limits = useQuery({ ...queries.attachmentLimits(), meta: { silent: true } }).data
   const [chosenSpace, setChosenSpace] = useState<string | null>(storedSpace)
+  // The answer model picked in the composer, for the chat it was picked in (null: the
+  // new chat at /chat). The server checks it against the workspace's enabled models.
+  const chatModels = useQuery({ ...queries.chatModels(), meta: { silent: true } }).data
+  const [pick, setPick] = useState<{ chat: string | null; model: ModelRef } | null>(null)
   const [uploading, setUploading] = useState<string[]>([])
+  // The empty chat's art fading out as the first question goes (ChatBackdrop).
+  const [artLeaving, setArtLeaving] = useState(false)
+  useEffect(() => {
+    if (!artLeaving) return
+    const t = setTimeout(() => setArtLeaving(false), dur.driftExit * 1000)
+    return () => clearTimeout(t)
+  }, [artLeaving])
 
   // What's on screen: this screen's own session while it is the one at the address
   // (and the role it began under), else the saved conversation there, if any.
@@ -227,14 +289,24 @@ export function ChatView({ role }: { role: Role }) {
       : null
   const spaceId = urlId ? (listed?.space_id ?? conversation?.space_id ?? null) : chosen
   const space = spaceList.data?.spaces.find((s) => s.id === spaceId) ?? null
+  // The model the next answer is written with: the one picked here, else the chat's
+  // own (a saved one), else the asker's last pick (a new one), else the default; one
+  // that isn't enabled any more gives way to the default.
+  const enabledModel = (ref: ModelRef | null | undefined) =>
+    chatModels?.models.some((m) => sameModel(m, ref)) ? ref : null
+  const model: ModelRef | null =
+    (pick && pick.chat === urlId ? enabledModel(pick.model) : null) ??
+    enabledModel(urlId ? conversation?.model : chatModels?.last) ??
+    chatModels?.default ??
+    null
   const attached = useQuery({ ...queries.attachments(urlId ?? ""), enabled: urlId !== null })
   const files: Attachment[] = urlId ? (attached.data ?? []) : []
   const picker = usePromptPicker({ input, setInput, inputRef })
 
   // A conversation that isn't there (deleted, someone else's): back to a new chat.
   useEffect(() => {
-    if (saved.isError && !live) navigate("/chat", { replace: true })
-  }, [saved.isError, live, navigate])
+    if (saved.isError && !live && onChat) navigate("/chat", { replace: true })
+  }, [saved.isError, live, onChat, navigate])
 
   // /chat?q=...: a question to ask, filled in (a shared answer's "Ask it yourself").
   // Taken once per navigation (its location key), while rendering; then the
@@ -251,22 +323,19 @@ export function ChatView({ role }: { role: Role }) {
     inputRef.current?.focus()
   }, [prefill, setParams])
 
-  // Follow the answer down only while the reader is at the bottom; otherwise offer
-  // "Jump to latest". No smooth scrolling for people who asked for less motion.
-  const scrollToEnd = useCallback((smooth = true) => {
-    const el = scrollRef.current
-    if (!el) return
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduce ? "smooth" : "auto" })
-  }, [])
-  const lastText = messages.at(-1)?.text
-  useEffect(() => {
-    if (atBottom) scrollToEnd()
-  }, [messages.length, lastText, atBottom, scrollToEnd])
-  // Another chat opens at its end (scrolling there sets atBottom again).
-  useEffect(() => {
-    scrollToEnd(false)
-  }, [urlId, scrollToEnd])
+  // Another conversation gets a scroller of its own, so it opens at its last question
+  // (the scroller's defaultScrollPosition). A new chat that's just been saved, and so
+  // has an address now, keeps the one it has.
+  const [scroller, setScroller] = useState({ urlId, key: urlId ?? "new" })
+  if (scroller.urlId !== urlId) {
+    setScroller({ urlId, key: live && scroller.urlId === null ? scroller.key : (urlId ?? "new") })
+    setPinLast(true)
+  }
+  // A chat opened from history is drawn as it is (history never animates): until the
+  // person scrolls it or asks in it, Jump to latest appears without its entrance.
+  const [touched, setTouched] = useState<string | null>(null)
+  const quiet = !live && touched !== scroller.key
+  const touch = () => quiet && setTouched(scroller.key)
 
   // Esc stops an answer being written, wherever the focus is.
   useEffect(() => {
@@ -315,7 +384,6 @@ export function ChatView({ role }: { role: Role }) {
     abort.current?.abort()
     setSession(null)
     setEditing(null)
-    setAtBottom(true)
     navigate(to)
   }
 
@@ -342,6 +410,32 @@ export function ChatView({ role }: { role: Role }) {
     window.addEventListener(CHOOSE_SPACE, onChoose)
     return () => window.removeEventListener(CHOOSE_SPACE, onChoose)
   }, [])
+
+  // The app's sidebar: what it shows of the chat, and what it asks of it
+  // (lib/chat-bridge.ts).
+  const port = useChatPort()
+  const forSidebar: ChatActions = {
+    open: (id) => open(`/chat/${id}`),
+    newChat,
+    chooseSpace,
+    // The chat here was deleted from the sidebar: a new chat instead, without leaving
+    // the screen that's open.
+    deleted: (id) => {
+      if (id !== urlId) return
+      if (onChat) open("/chat")
+      else {
+        abort.current?.abort()
+        setSession(null)
+        setKeptId(null)
+      }
+    },
+  }
+  useLayoutEffect(() => {
+    port?.setActions(forSidebar)
+  })
+  useEffect(() => {
+    port?.setState({ conversationId: urlId, spaceId, busy: loading })
+  }, [port, urlId, spaceId, loading])
 
   // A new chat is saved (in the chosen space) before its first question or file.
   async function saveNewChat() {
@@ -404,6 +498,10 @@ export function ChatView({ role }: { role: Role }) {
     const target = again.retry ?? again.regenerate
     const q = (target ? (target.question ?? "") : text).trim()
     if (!q || loading) return
+    if (!messages.length) {
+      setArtLeaving(true)
+      flipFrom.current = composerRow.current?.getBoundingClientRect().top ?? null
+    }
     if (!target && !again.edit) setInput("")
     setEditing(null)
     const key = `draft-${nextKey.current++}`
@@ -417,24 +515,39 @@ export function ChatView({ role }: { role: Role }) {
       status: "Thinking",
       steps: [],
     }
-    const cut = (all: Message[], m: Message) => all.slice(0, all.findIndex((x) => x.key === m.key))
-    edit((all) =>
-      target
-        ? [...cut(all, target), draft]
-        : again.edit
-          ? [...cut(all, again.edit), { key: questionKey, role: "user", text: q }, draft]
-          : [...all, { key: questionKey, role: "user", text: q }, draft],
-    )
+    // The question goes in after what stays, as a new row the scroller pins to the top
+    // of the view, with the answer growing below it. Asked again, what makes way goes
+    // first (its own render), so the scroller sees the question arrive, not a swap:
+    // a retried or rewritten answer's question comes back as a new row too.
+    const at = (m: Message) => messages.findIndex((x) => x.key === m.key)
+    const before = target ? messages[at(target) - 1] : undefined
+    const reasked = before?.role === "user" ? before : undefined // the question asked again
+    const from = target
+      ? at(target) - (reasked ? 1 : 0)
+      : again.edit
+        ? at(again.edit)
+        : messages.length
+    const kept = messages.slice(0, from)
+    const asked: Message[] = target
+      ? reasked
+        ? [{ ...reasked, key: `draft-${nextKey.current++}` }]
+        : []
+      : [{ key: questionKey, role: "user", text: q }]
+    if (from < messages.length) flushSync(() => edit(() => kept))
+    edit(() => [...kept, ...asked, draft])
+    setPinLast(true)
     setLoading(true)
+    setThinking(true)
     setAnnounce("Writing an answer…")
-    setAtBottom(true)
     const change = (fn: (s: Session) => Session) => setSession((s) => (s ? fn(s) : s))
     const update = (fn: (m: Message) => Message) =>
       change((s) => ({ ...s, messages: s.messages.map((m) => (m.key === key ? fn(m) : m)) }))
-    const allDone = (m: Message) => (m.steps ?? []).map((st) => ({ ...st, done: true }))
     // The address follows the session in the same render, so it never shows another.
     const go = (id: string) => navigate(`/chat/${id}`, { flushSync: true })
     let savedIn: string | null = urlId
+    // The model goes with the question, and stays the chat's (a new one's too).
+    const asking = model
+    const keepModel = (id: string) => asking && setPick({ chat: id, model: asking })
 
     function onEvent(e: StreamEvent) {
       if (e.type === "conversation") {
@@ -450,6 +563,7 @@ export function ChatView({ role }: { role: Role }) {
         if (e.new_conversation) {
           // The role changed since this chat began: the question went to a new one.
           savedIn = e.id
+          keepModel(e.id)
           change((s) => ({
             ...s,
             id: e.id,
@@ -467,18 +581,26 @@ export function ChatView({ role }: { role: Role }) {
         change((s) => ({ ...s, conversation: s.conversation && { ...s.conversation, title: e.title } }))
         queryClient.invalidateQueries({ queryKey: ["conversations"] })
       } else if (e.type === "status") update((m) => ({ ...m, status: e.text }))
-      else if (e.type === "step_start")
+      else if (e.type === "step_start") {
+        // Timed on this screen's clock, for the trace ("0.8s"). Each step ripples the
+        // background field again.
+        const startedAt = performance.now()
         update((m) => ({
           ...m,
-          steps: [...(m.steps ?? []), { id: e.id, tool: e.tool, label: e.label, done: false }],
+          steps: [...(m.steps ?? []), { id: e.id, tool: e.tool, label: e.label, done: false, startedAt }],
         }))
-      else if (e.type === "step_end")
+        setThinking(true)
+      } else if (e.type === "step_end") {
+        const now = performance.now()
         update((m) => ({
           ...m,
           steps: (m.steps ?? []).map((st) =>
-            st.id === e.id ? { ...st, done: true, result: e.result } : st,
+            st.id === e.id
+              ? { ...st, done: true, result: e.result, ms: st.startedAt === undefined ? undefined : now - st.startedAt }
+              : st,
           ),
         }))
+      }
       else if (e.type === "answer")
         // The passages its [S#] chips cite come along whenever they change.
         update((m) => ({ ...m, text: e.text, ...(e.sources ? { sources: e.sources } : {}) }))
@@ -492,6 +614,7 @@ export function ChatView({ role }: { role: Role }) {
       if (!conversationId) {
         const created = await api.createConversation(chosen)
         conversationId = created.id
+        keepModel(created.id)
         savedIn = created.id
         change((s) => ({ ...s, id: created.id, conversation: created }))
         go(created.id)
@@ -502,6 +625,7 @@ export function ChatView({ role }: { role: Role }) {
         retryOf: again.retry?.id,
         regenerateOf: again.regenerate?.id,
         editOf: again.edit?.id,
+        model: asking ?? undefined,
         signal: controller.signal,
       })
       ended = reply.state
@@ -516,7 +640,10 @@ export function ChatView({ role }: { role: Role }) {
         followups: reply.followups,
         verified: reply.verified,
         streaming: false,
-        steps: allDone(m),
+        steps: endSteps(
+          m.steps ?? [],
+          reply.state === "stopped" || reply.state === "error" ? reply.state : null,
+        ),
       }))
       // The versions beside it ("‹ 2 / 3 ›") come from the saved conversation.
       if (savedIn) reload(savedIn).catch(() => {})
@@ -526,8 +653,13 @@ export function ChatView({ role }: { role: Role }) {
         // Stopped: keep what was written (the server saves it the same way), and
         // take the focus to it.
         ended = "stopped"
-        update((m) => ({ ...m, state: "stopped", streaming: false, steps: allDone(m) }))
-        requestAnimationFrame(() => lastAnswerRef.current?.focus())
+        update((m) => ({
+          ...m,
+          state: "stopped",
+          streaming: false,
+          steps: endSteps(m.steps ?? [], "stopped"),
+        }))
+        requestAnimationFrame(() => lastAnswerRef.current?.focus({ preventScroll: true }))
       } else if (err instanceof ApiError && (err.status === 429 || err.status === 402)) {
         // Nothing was asked: give the question back to send again in a moment (a
         // rate limit), or once the plan allows it (402: the plan's limit, BILLING=on).
@@ -545,14 +677,17 @@ export function ChatView({ role }: { role: Role }) {
           text: err instanceof Error ? err.message : "Something went wrong.",
           state: "error",
           streaming: false,
-          steps: allDone(m),
+          steps: endSteps(m.steps ?? [], "error"),
         }))
       }
     } finally {
       if (abort.current === controller) abort.current = null
       setLoading(false)
+      setThinking(false)
       setAnnounce(ended ? (ENDED[ended] ?? "Answer ready.") : "")
       queryClient.invalidateQueries({ queryKey: ["conversations"] })
+      // The asker's last pick, and what's enabled now (a refused model was turned off).
+      queryClient.invalidateQueries({ queryKey: ["chat-models"] })
     }
   }
 
@@ -562,6 +697,7 @@ export function ChatView({ role }: { role: Role }) {
     try {
       await api.updateConversation(urlId, { active_leaf_id: to })
       const fresh = await queryClient.fetchQuery({ ...queries.conversation(urlId), staleTime: 0 })
+      setPinLast(false)
       setSession({
         id: urlId,
         role,
@@ -594,6 +730,16 @@ export function ChatView({ role }: { role: Role }) {
       setInput(question)
       inputRef.current?.focus()
     },
+    // Not found in a space: the same question, ready to ask across the workspace.
+    onAskEverywhere: spaceId
+      ? (question) => {
+          chooseSpace(null)
+          requestAnimationFrame(() => {
+            setInput(question)
+            inputRef.current?.focus()
+          })
+        }
+      : undefined,
     onFeedback: (message, feedback) =>
       edit((all) => all.map((m) => (m.key === message.key ? { ...m, feedback } : m))),
     onShare: (m) => setSharing({ messageId: m.id ?? null }),
@@ -621,22 +767,34 @@ export function ChatView({ role }: { role: Role }) {
   const empty = messages.length === 0 && !opening
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
 
+  // The first question sent: the composer goes from the middle of the empty chat down
+  // to its place in one short move (FLIP: drawn there at once, then eased in from where
+  // it was), at once with reduced motion or "Reduce effects". Only then: a saved chat
+  // opened from the empty one, or New chat, changes the layout without moving anything.
+  useLayoutEffect(() => {
+    const from = flipFrom.current
+    flipFrom.current = null
+    const row = composerRow.current
+    if (from === null || empty || !row) return
+    const dy = from - row.getBoundingClientRect().top
+    if (Math.abs(dy) < 1 || reduced || getEffects() === "reduced") return
+    row.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], {
+      duration: dur.reveal * 1000,
+      easing: `cubic-bezier(${ease.out.join(", ")})`,
+    })
+  }, [empty, reduced])
+
+  // Search chats (the palette, chats alone).
+  const openSearch = () => window.dispatchEvent(new CustomEvent(OPEN_SEARCH))
+
   return (
-    <SidebarProvider className="relative h-full min-h-0" data-print="flow">
-      <SidebarEvents />
-      <ChatSidebar
-        activeId={urlId}
-        spaceId={spaceId}
-        onSpace={chooseSpace}
-        busy={loading}
-        onOpen={(id) => open(`/chat/${id}`)}
-        onNewChat={newChat}
-        onDeleted={(id) => id === urlId && open("/chat")}
-      />
-      <div className="flex min-w-0 flex-1 flex-col" data-print="flow">
+    <div className="relative flex h-full min-h-0 w-full" data-print="flow">
+      <div className="relative isolate flex min-w-0 flex-1 flex-col" data-print="flow">
+        <ChatBackdrop empty={empty} leaving={artLeaving} />
         <ChatHeader
           conversation={conversation}
           title={title}
+          space={space && { id: space.id, label: spaceLabel(space) }}
           busy={loading}
           onRenamed={(t) =>
             setSession({
@@ -651,146 +809,192 @@ export function ChatView({ role }: { role: Role }) {
           onNewChat={newChat}
           onDeleted={() => open("/chat")}
         />
-        <div
-          ref={scrollRef}
-          className="relative flex-1 overflow-y-auto"
-          data-print="flow"
-          onScroll={(e) => {
-            const el = e.currentTarget
-            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
-          }}
+        {/* The transcript. A question just asked is pinned to the top of the view and
+            its answer grows below it: nothing scrolls while it streams (no following).
+            When there's more below, "Jump to latest" goes there. The last question is
+            the anchor; a chat opens with it at the top (or at its end, if it fits). */}
+        <MessageScrollerProvider
+          key={scroller.key}
+          defaultScrollPosition="last-anchor"
+          scrollPreviousItemPeek={PEEK}
         >
-          <div
-            className="mx-auto max-w-3xl space-y-6 px-4 py-6"
-            role="log"
-            aria-label="Conversation"
-            aria-busy={loading}
-          >
-            {empty && (
-              <div className="flex flex-col items-center pt-8 text-center sm:pt-16">
-                <h2 className="text-2xl font-semibold tracking-tight text-balance">
-                  {space
-                    ? `Ask in ${spaceLabel(space)}`
-                    : firstRun
-                      ? "Ask your first question"
-                      : "Ask your company docs"}
-                </h2>
-                <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                  {space?.kind === "personal"
-                    ? "Answers come from the files you keep in your space and the sources you added to it, "
-                    : space
-                      ? "Answers come only from this space's sources that you can see, "
-                      : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
-                  with the sources cited under every answer. Attach a file to ask about it too.
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Searching as{" "}
-                  <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
-                </p>
-                <LoggingNotice />
-                <div className="mt-8 grid w-full max-w-xl gap-2" aria-label="Suggested questions">
-                  {firstRun && (
-                    <p className="text-left text-xs font-medium text-muted-foreground">
-                      Try one of these, from your workspace's documents, or type your own.
-                    </p>
-                  )}
-                  {starters.map((s) => (
-                    <Button
-                      key={s}
-                      variant="outline"
-                      onClick={() => ask(s)}
-                      className="h-auto justify-start whitespace-normal rounded-lg px-4 py-3 text-left font-normal"
-                    >
-                      {s}
-                    </Button>
-                  ))}
-                </div>
-                {offerSample && (welcome.sample.available || welcome.sample.on) && (
-                  <div className="mt-6 flex max-w-xl flex-col items-center gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {welcome.sample.on
-                        ? "The sample HR handbook is in. Remove it before colleagues ask."
-                        : "No documents yet? Try it on a made-up HR handbook first."}
-                    </p>
-                    <SampleDocsToggle sample={welcome.sample} />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {forkedFrom && (
-              <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <CornerUpLeft className="size-3.5 shrink-0" />
-                Branched from{" "}
-                <Link
-                  to={`/chat/${forkedFrom.conversation_id}`}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    open(`/chat/${forkedFrom.conversation_id}`)
-                  }}
-                  className="truncate font-medium text-foreground underline-offset-4 hover:underline"
-                >
-                  {forkedFrom.title}
-                </Link>
-              </p>
-            )}
-
-            {shown?.notice && (
-              <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Info className="size-3.5 shrink-0" />
-                {shown.notice}
-              </p>
-            )}
-
-            {messages.map((m) =>
-              m.role === "user" ? (
-                <UserMessage
-                  key={m.key}
-                  message={m}
-                  editing={editing === m.key}
-                  busy={loading}
-                  onEdit={() => setEditing(m.key)}
-                  onCancel={() => setEditing(null)}
-                  onSave={(text) => ask(text, { edit: m })}
-                  onBranch={showBranch}
-                />
-              ) : (
-                <AssistantMessage
-                  key={m.key}
-                  message={m}
-                  actions={actions}
-                  last={m === lastAnswer}
-                  ref={m === lastAnswer ? lastAnswerRef : undefined}
-                />
-              ),
-            )}
-          </div>
-          {!atBottom && messages.length > 0 && (
-            <div className="pointer-events-none sticky bottom-2 flex justify-center" data-print="hide">
-              <Button
-                variant="outline"
-                size="sm"
-                className="pointer-events-auto rounded-full shadow-sm"
-                onClick={() => {
-                  setAtBottom(true)
-                  scrollToEnd()
-                }}
+          <MessageScroller className="flex-[1_1_0%]" data-print="flow">
+            {/* No browser scroll anchoring: the scroller keeps the question in place
+                itself, and the two together nudged the view on every token. */}
+            <MessageScrollerViewport
+              ref={viewportRef}
+              aria-label="Chat messages"
+              onPointerDown={(e) => {
+                touch()
+                if (e.target === e.currentTarget) letGo(e.currentTarget)
+              }}
+              onWheel={touch}
+              onTouchMove={touch}
+              onKeyDown={touch}
+              // Not focus from a portal (the passage sheet), which React bubbles through here.
+              onFocus={(e) => e.currentTarget.contains(e.target) && letGo(e.currentTarget)}
+              // Empty, it holds nothing to read: no stop for Tab.
+              tabIndex={empty ? -1 : undefined}
+              data-print="flow"
+              className="outline-none [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+            >
+              <MessageScrollerContent
+                // Room under the last answer for "Jump to latest", so it never covers
+                // the answer's last row (Stopped · Try again, the actions).
+                className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16"
+                // The spacer under a pinned question's answer is sized to let the view
+                // reach the question and no further, and only a frame after the answer
+                // changes. An answer getting shorter as it streams (its steps folding
+                // away once the text starts) would leave the view past the end for that
+                // frame: the browser pulls it back, the question drops by as much, and
+                // the scroller puts it back. 12rem more room under the spacer (only
+                // while there is one) takes the shrinking, so nothing moves.
+                spacerClassName="box-content pb-48"
+                aria-label="Conversation"
+                aria-busy={loading}
               >
-                <ArrowDown data-icon="inline-start" />
-                Jump to latest
-              </Button>
-            </div>
-          )}
-        </div>
+                {/* The empty chat's heading, starters and recent chats sit round the
+                    composer, below. Here a row with nothing in it stands in, so the
+                    scroller sees the first question arrive as it always has: the
+                    transcript's rows replacing one (the pin-to-top logic counts them). */}
+                {empty && <MessageScrollerItem aria-hidden className="hidden" />}
+
+                {forkedFrom && (
+                  <MessageScrollerItem>
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <CornerUpLeft className="size-3.5 shrink-0" />
+                      Branched from{" "}
+                      <Link
+                        to={`/chat/${forkedFrom.conversation_id}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          open(`/chat/${forkedFrom.conversation_id}`)
+                        }}
+                        className="truncate font-medium text-foreground underline-offset-4 hover:underline"
+                      >
+                        {forkedFrom.title}
+                      </Link>
+                    </p>
+                  </MessageScrollerItem>
+                )}
+
+                {shown?.notice && (
+                  <MessageScrollerItem>
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Info className="size-3.5 shrink-0" />
+                      {shown.notice}
+                    </p>
+                  </MessageScrollerItem>
+                )}
+
+                {messages.map((m) => (
+                  <MessageScrollerItem
+                    key={m.key}
+                    messageId={m.key}
+                    scrollAnchor={pinLast && m === lastUser}
+                    // Drawn even off screen: a row skipped by content-visibility counts
+                    // as 10rem tall, so a question just asked was pinned against a
+                    // guess and the view jumped once it was drawn.
+                    className="[content-visibility:visible]"
+                  >
+                    {m.role === "user" ? (
+                      <UserMessage
+                        message={m}
+                        editing={editing === m.key}
+                        busy={loading}
+                        onEdit={() => setEditing(m.key)}
+                        onCancel={() => setEditing(null)}
+                        onSave={(text) => ask(text, { edit: m })}
+                        onBranch={showBranch}
+                      />
+                    ) : (
+                      <AssistantMessage
+                        message={m}
+                        actions={actions}
+                        last={m === lastAnswer}
+                        ref={m === lastAnswer ? lastAnswerRef : undefined}
+                      />
+                    )}
+                  </MessageScrollerItem>
+                ))}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            {/* The view moves; the focus goes to the transcript, as the button goes
+                away once there's nothing further down. */}
+            <MessageScrollerButton
+              variant="outline"
+              size="sm"
+              behavior={reduced ? "auto" : "smooth"}
+              onClick={() => viewportRef.current?.focus({ preventScroll: true })}
+              data-print="hide"
+              className={cn(
+                "rounded-full border-(--glass-border) bg-glass shadow-sm backdrop-blur-md hover:bg-muted data-[active=true]:duration-(--dur-jump) data-[active=true]:ease-out-strong data-[active=false]:duration-(--dur-jump-exit) data-[active=false]:ease-out-strong motion-reduce:data-[active=false]:translate-y-0 motion-reduce:data-[active=false]:scale-100 pointer-coarse:h-10",
+                quiet && "transition-none",
+              )}
+            >
+              <ArrowDown data-icon="inline-start" />
+              Jump to latest
+            </MessageScrollerButton>
+          </MessageScroller>
+        </MessageScrollerProvider>
+        {/* The empty new chat, centred as on Claude.ai: the heading just over the
+            composer, the two in the middle of the column, and the home's recent chats
+            (or starters) under it, then who you're searching as at the foot. The
+            space round them is the art's: a click there decodes a line
+            (redacted-drift.tsx). One short heading; how answers work is behind the
+            (i). data-drift: the art's lines run faint under these words. */}
+        {empty && (
+          <div
+            data-drift="content"
+            data-drift-blank
+            className="mx-auto flex w-full max-w-3xl shrink-0 items-center justify-center gap-1 px-4 text-center"
+          >
+            <h2 className="text-2xl font-semibold tracking-tight text-balance">
+              {space ? `Ask in ${spaceLabel(space)}` : firstRun ? "Ask your first question" : "Ask your company docs"}
+            </h2>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="How answers work" className="text-muted-foreground">
+                  <Info />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm text-muted-foreground">
+                {space?.kind === "personal"
+                  ? "Answers come from the files you keep in your space and the sources you added to it, "
+                  : space
+                    ? "Answers come only from this space's sources that you can see, "
+                    : `Answers come from your company's documents${outline ? " and the Outline wiki" : ""}, `}
+                with the sources cited under every answer. Attach a file to ask about it too.
+              </PopoverContent>
+            </Popover>
+          </div>
+        )}
         {/* Said once an answer ends, not word by word as it streams. */}
         <p className="sr-only" role="status" aria-live="polite">
           {announce}
         </p>
 
+        {/* The composer's row. Its focus and typing reach the empty chat's art through
+            composerSignal (no state, so no render per key). */}
         <div
-          className="pointer-events-none bg-gradient-to-t from-background via-background to-transparent pt-6"
+          ref={composerRow}
+          className="pointer-events-none relative pt-6"
           data-print="hide"
+          onFocus={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(true)}
+          onBlur={(e) => (e.target as Element) === inputRef.current && composerSignal.focus(false)}
+          onInput={() => composerSignal.typed()}
         >
+          {/* The fade over the field behind the composer: none on the empty chat, where
+              the art runs round it (and its own frost is behind the composer). Its own
+              layer, so no opacity sits on an ancestor of the composer's glass. */}
+          <div
+            aria-hidden
+            className={cn(
+              "absolute inset-0 -z-10 bg-gradient-to-t from-background via-background to-transparent",
+              empty && "opacity-0",
+              artLeaving && "transition-opacity duration-(--dur-drift-exit) ease-out-strong",
+            )}
+          />
           {conversation?.role_changed && !loading && (
             <p className="pointer-events-auto mx-auto mb-2 flex max-w-3xl items-center gap-2 px-4 text-xs text-muted-foreground">
               <Info className="size-3.5 shrink-0" />
@@ -808,6 +1012,12 @@ export function ChatView({ role }: { role: Role }) {
             top={
               <>
                 <SpaceChip value={spaceId} onChange={chooseSpace} disabled={loading} />
+                <ModelPicker
+                  models={chatModels?.models ?? []}
+                  value={model}
+                  onChange={(m) => setPick({ chat: urlId, model: m })}
+                  disabled={loading}
+                />
                 <AttachmentChips files={files} uploading={uploading} onRemove={detach} />
               </>
             }
@@ -824,6 +1034,53 @@ export function ChatView({ role }: { role: Role }) {
           />
           {picker.dialog}
         </div>
+        {/* Under the composer: the home's recent chats (or starters), scrolling on their
+            own if they don't fit. The scrollbar's room is kept on both sides, so they
+            stay centred under the composer and never move sideways when they start to
+            scroll. */}
+        {empty && (
+          <div
+            data-drift-blank
+            data-print="hide"
+            className="flex min-h-0 flex-[1.45_1_0%] flex-col overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges] max-sm:[scrollbar-gutter:auto]"
+          >
+            <ChatHome
+              starters={starters}
+              firstRun={firstRun}
+              onAsk={(s) => ask(s)}
+              extra={
+                offerSample &&
+                (welcome.sample.available || welcome.sample.on) && (
+                  <div className="mt-2 flex max-w-xl flex-col items-start gap-2">
+                    <p className="px-1 text-xs text-muted-foreground">
+                      {welcome.sample.on
+                        ? "The sample HR handbook is in. Remove it before colleagues ask."
+                        : "No documents yet? Try it on a made-up HR handbook first."}
+                    </p>
+                    <SampleDocsToggle sample={welcome.sample} />
+                  </div>
+                )
+              }
+              chats={list.isError ? [] : list.data?.conversations}
+              onOpen={(id) => open(`/chat/${id}`)}
+              onViewAll={() => openSearch()}
+            />
+          </div>
+        )}
+        {/* The fine print, one line at the foot of the page as on Claude.ai: who
+            you're searching as, and whether questions are logged. On the column's
+            left edge, under the art (faint there), clear of a phone's home bar. */}
+        {empty && (
+          <p
+            data-slot="chat-fine-print"
+            data-drift="quiet"
+            data-print="hide"
+            className="mx-auto w-full max-w-3xl shrink-0 px-9 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs text-pretty text-muted-foreground"
+          >
+            Searching as <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
+            <LoggingNotice inline />
+          </p>
+        )}
       </div>
       {sharing && urlId && (
         <ShareDialog
@@ -833,7 +1090,7 @@ export function ChatView({ role }: { role: Role }) {
           messageId={sharing.messageId}
         />
       )}
-    </SidebarProvider>
+    </div>
   )
 }
 
@@ -922,40 +1179,53 @@ function UserMessage({
     )
   }
   return (
-    <div className="group flex flex-col items-end gap-1">
-      <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-        {message.text}
-      </div>
+    <MessageRow align="end" className="group flex-col items-end gap-1 data-[align=end]:flex-col">
+      {/* Glass, tinted with the signal: the question, set apart from the answer's
+          opaque reading column. */}
+      <Bubble variant="outline" align="end" className="max-w-[85%]">
+        <BubbleContent className="kb-user-bubble whitespace-pre-wrap">{message.text}</BubbleContent>
+      </Bubble>
       <div className="flex items-center gap-0.5 text-muted-foreground" data-print="hide">
         <BranchNav message={message} onBranch={onBranch} disabled={busy} />
-        {message.id && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                ref={editButton}
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Edit question"
-                disabled={busy}
-                onClick={onEdit}
-                className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
-              >
-                <Pencil />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Edit (↑ in an empty box edits the last one)</TooltipContent>
-          </Tooltip>
-        )}
+        {/* Its room is kept from the start (hidden until the question is saved and has
+            an id), so the row doesn't arrive under a question just asked and push the
+            answer down. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              ref={editButton}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Edit question"
+              disabled={busy || !message.id}
+              onClick={onEdit}
+              className={cn(
+                // Disabled while an answer streams: still hidden until hover, then dimmed
+                // (the Button's own disabled opacity would otherwise show it at 50%).
+                "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100",
+                "disabled:opacity-0 group-hover:disabled:opacity-50 pointer-coarse:disabled:opacity-50",
+                !message.id && "invisible",
+              )}
+            >
+              <Pencil />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Edit (↑ in an empty box edits the last one)</TooltipContent>
+        </Tooltip>
       </div>
-    </div>
+    </MessageRow>
   )
 }
 
-// Above the chat: the history button, its title, New chat, and Share / Download / Print /
-// Rename / Delete. Printed, only the title is left (index.css, data-print).
+// Above the chat: the space it's asked in and its title, as breadcrumbs (the space
+// only from sm up), and its menu (Share / Download / Print / Rename / Delete);
+// New chat is in the app's sidebar, rail or not. On a phone, the top bar: the menu
+// (the sidebar's sheet) and New chat too. Printed, only the title is left (index.css,
+// data-print).
 function ChatHeader({
   conversation,
   title,
+  space,
   busy,
   onRenamed,
   onShare,
@@ -964,6 +1234,7 @@ function ChatHeader({
 }: {
   conversation: Conversation | ConversationSummary | null
   title: string
+  space: { id: string; label: string } | null
   busy: boolean
   onRenamed: (title: string) => void
   onShare: () => void
@@ -973,6 +1244,12 @@ function ChatHeader({
   const queryClient = useQueryClient()
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState("")
+  const spaceId = space?.id
+  const spaceName = space?.label
+  const crumbs = useMemo(
+    () => chatCrumbs(spaceId && spaceName ? { id: spaceId, label: spaceName } : null, title),
+    [spaceId, spaceName, title],
+  )
   const [deleting, setDeleting] = useState(false)
 
   async function rename() {
@@ -1011,28 +1288,21 @@ function ChatHeader({
   }
 
   return (
-    <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarTrigger
-            aria-label="Chat history"
-            data-print="hide"
-            className="text-muted-foreground pointer-coarse:size-10"
-          />
-        </TooltipTrigger>
-        <TooltipContent>Chat history</TooltipContent>
-      </Tooltip>
-      <p className="mx-auto min-w-0 max-w-3xl flex-1 truncate px-2 text-sm font-medium">{title}</p>
+    <div className="flex h-11 w-full shrink-0 items-center gap-1 px-2 sm:px-3 max-md:z-20 max-md:h-12 max-md:border-b max-md:bg-background max-md:pt-[env(safe-area-inset-top)]">
+      <PhoneMenuButton data-print="hide" />
+      <div className="mx-auto flex min-w-0 max-w-3xl flex-1 px-2">
+        <ChatBreadcrumbs crumbs={crumbs} />
+      </div>
+      {/* On a phone only: the sidebar's New chat is a tap away anywhere else. */}
       <Button
         variant="ghost"
-        size="sm"
-        className="text-muted-foreground pointer-coarse:h-10"
+        size="icon"
+        className="size-10 text-muted-foreground md:hidden"
         aria-label="New chat"
         data-print="hide"
         onClick={onNewChat}
       >
         <SquarePen />
-        <span className="hidden sm:inline">New chat</span>
       </Button>
       {conversation && (
         <DropdownMenu>

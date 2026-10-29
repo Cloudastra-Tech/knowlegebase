@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router"
 
 import { IntegrationsView } from "@/components/integrations-view"
 import type { Integration } from "@/lib/api"
@@ -51,7 +52,13 @@ const ITEMS: Integration[] = [
 describe("IntegrationsView", () => {
   it("draws every card from the registry, with errors in plain words", async () => {
     mockApi({ "GET /api/integrations": { workspace: "acme", integrations: ITEMS } })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
 
     expect(await screen.findByText("Google Drive")).toBeInTheDocument()
     expect(
@@ -64,7 +71,7 @@ describe("IntegrationsView", () => {
     expect(screen.getByRole("button", { name: "Connect Outline" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Add a website" })).toBeInTheDocument()
     // "Coming soon" comes from the same list.
-    const soon = screen.getByText("Coming soon").parentElement!
+    const soon = screen.getByRole("heading", { name: "Coming soon" }).parentElement!
     expect(within(soon).getByText("Confluence")).toBeInTheDocument()
     expect(within(soon).getByText("Slack messages")).toBeInTheDocument()
   })
@@ -81,7 +88,13 @@ describe("IntegrationsView", () => {
         })
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Connect Outline" }))
     await user.type(screen.getByLabelText("Wiki address"), "https://wiki.acme.com")
@@ -114,7 +127,13 @@ describe("IntegrationsView", () => {
         return { ok: true, account: "confluence.acme.com (Ann)", choose: true }
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     expect(await screen.findByText(/Needs a Microsoft 365 admin/)).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Connect Confluence Data Center" }))
@@ -146,7 +165,13 @@ describe("IntegrationsView", () => {
         })
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Connect Zendesk" }))
     await user.type(screen.getByLabelText("Zendesk subdomain"), "acme")
@@ -203,7 +228,13 @@ describe("IntegrationsView", () => {
         return { containers: [] }
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     expect(await screen.findByText(/Locked to HR and admins while Zendesk solved tickets/)).toBeInTheDocument()
     expect(screen.getByText("synced (HR and admins only)")).toBeInTheDocument()
@@ -261,7 +292,13 @@ describe("IntegrationsView", () => {
           : { ok: true, account: "acme-handbook (key AKIA…MPLE)", choose: false }
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     expect(await screen.findByText("Engineering (ENG)")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Connect Amazon S3" }))
@@ -309,7 +346,13 @@ describe("IntegrationsView", () => {
         picked: [],
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     expect(await screen.findByText(/no per-person sharing/)).toBeInTheDocument()
     expect(screen.queryByText(/As shared in Amazon S3/)).not.toBeInTheDocument()
 
@@ -337,7 +380,13 @@ describe("IntegrationsView", () => {
         return { ok: true, account: "HubSpot (help.acme.com)", choose: false }
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Connect Freshdesk" }))
     await user.type(screen.getByLabelText("Freshdesk subdomain"), "acme")
@@ -375,7 +424,13 @@ describe("IntegrationsView", () => {
         })
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Connect Intercom" }))
     await user.click(screen.getByRole("combobox", { name: "Region" }))
@@ -414,7 +469,13 @@ describe("IntegrationsView", () => {
         return { containers: [] }
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     expect(
       await screen.findByText(/Locked to HR and admins while Intercom closed conversations/),
@@ -443,7 +504,13 @@ describe("IntegrationsView", () => {
         })
       },
     })
-    render(withProviders(<IntegrationsView onOpenDocuments={() => {}} />))
+    render(
+      withProviders(
+        <MemoryRouter>
+          <IntegrationsView onOpenDocuments={() => {}} />
+        </MemoryRouter>,
+      ),
+    )
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "Connect Salesforce Knowledge" }))
     await user.type(screen.getByLabelText("My Domain address"), "https://acme.my.salesforce.com")

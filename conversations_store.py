@@ -242,6 +242,26 @@ def set_auto_title(cid, title):
     return bool(changed)
 
 
+def set_model(workspace, owner, cid, provider, model):
+    """The answer model the chat was last asked with (kb/services/model_choice.py).
+    Not counted as using the chat."""
+    with _lock, _db() as conn:
+        return bool(conn.execute(
+            "UPDATE conversations SET model_provider = ?, model_id = ? WHERE id = ? AND "
+            "workspace = ? AND owner = ? AND deleted_at IS NULL",
+            (provider, model, cid, workspace, owner)).rowcount)
+
+
+def last_model(workspace, owner):
+    """(provider, model) of the owner's most recently used chat with a pick, or None."""
+    with _lock, _db() as conn:
+        row = conn.execute(
+            "SELECT model_provider, model_id FROM conversations WHERE workspace = ? AND "
+            "owner = ? AND model_id IS NOT NULL AND deleted_at IS NULL "
+            "ORDER BY updated_at DESC LIMIT 1", (workspace, owner)).fetchone()
+    return (row["model_provider"], row["model_id"]) if row else None
+
+
 def organize(workspace, owner, cid, pinned=None, folder_id=False):
     """Pin or unpin (pinned=True / False), and move to a folder (folder_id: its id,
     or None for no folder; False leaves it). Not counted as using the chat, so its

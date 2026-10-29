@@ -4,7 +4,6 @@ import { useSearchParams } from "react-router"
 import {
   BadgeCheck,
   Globe,
-  Loader2,
   Lock,
   MoreHorizontal,
   Pencil,
@@ -15,6 +14,9 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import { SourcePicker } from "@/components/source-picker"
 import {
   AlertDialog,
@@ -77,8 +79,8 @@ const verifiedDate = (epoch: number) =>
 
 const STATUS: Record<VerifiedStatus, { label: string; className: string }> = {
   current: { label: "Current", className: "text-muted-foreground" },
-  due: { label: "Review due", className: "border-foreground/30 text-foreground" },
-  expired: { label: "Expired", className: "text-destructive" },
+  due: { label: "Review due", className: "border-warning/40 text-warning" },
+  expired: { label: "Expired", className: "border-destructive/40 text-destructive" },
 }
 
 // The answer's Markdown as plain words, for the one-line preview.
@@ -318,8 +320,7 @@ function Editor({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="verified-form" disabled={save.isPending}>
-            {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button type="submit" form="verified-form" loading={save.isPending}>
             {editing?.id ? "Save and verify" : "Add verified answer"}
           </Button>
         </SheetFooter>
@@ -378,8 +379,8 @@ function AnswerRow({
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {answer.status !== "current" && (
-          <Button variant="outline" size="sm" disabled={review.isPending} onClick={() => review.mutate()}>
-            {review.isPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <RotateCcw data-icon="inline-start" />}
+          <Button variant="outline" size="sm" loading={review.isPending} onClick={() => review.mutate()}>
+            {!review.isPending && <RotateCcw data-icon="inline-start" />}
             <span className="hidden sm:inline">Mark reviewed</span>
             <span className="sm:hidden">Reviewed</span>
           </Button>
@@ -483,32 +484,34 @@ export function VerifiedView() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-2xl font-semibold tracking-tight">Verified answers</h2>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Approved answers to the questions everyone asks. A question that matches one gets it,
-            marked “Verified by” with the date, instead of a written answer. Past its review date
-            it isn't used until it's reviewed.
-          </p>
-        </div>
-        <Button
-          onClick={() =>
-            setEditing({ id: null, form: blank(list), minAccess: "public", known: [] })
-          }
-        >
-          <Plus data-icon="inline-start" /> New verified answer
-        </Button>
-      </div>
+      <ScreenHeader
+        icon={BadgeCheck}
+        title="Verified answers"
+        description="Approved answers to the questions everyone asks. A question that matches one gets it, marked “Verified by” with the date, instead of a written answer. Past its review date it isn't used until it's reviewed."
+        actions={
+          <Button
+            onClick={() =>
+              setEditing({ id: null, form: blank(list), minAccess: "public", known: [] })
+            }
+          >
+            <Plus data-icon="inline-start" /> New verified answer
+          </Button>
+        }
+      />
 
       <Tabs panels={false} value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mt-6">
-        <TabsList>
-          <TabsTrigger value="all">All{answers ? ` (${answers.length})` : ""}</TabsTrigger>
-          <TabsTrigger value="review">Review queue{answers ? ` (${queue.length})` : ""}</TabsTrigger>
+        <TabsList variant="glass">
+          <TabsTrigger value="all">
+            All{answers ? <span className="font-mono text-xs tabular-nums"> ({answers.length})</span> : null}
+          </TabsTrigger>
+          <TabsTrigger value="review">
+            Review queue{answers ? <span className="font-mono text-xs tabular-nums"> ({queue.length})</span> : null}
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      <div className="mt-4 overflow-hidden rounded-2xl border border-border/70">
+      {/* A list to read and act on: opaque, and the rows don't stagger in. */}
+      <Panel tone="solid" className="mt-4 overflow-hidden p-0">
         {answers === null ? (
           <div className="space-y-2 p-4">
             {[0, 1, 2].map((i) => (
@@ -516,11 +519,19 @@ export function VerifiedView() {
             ))}
           </div>
         ) : shown.length === 0 ? (
-          <p className="p-10 text-center text-sm text-muted-foreground">
-            {tab === "review"
-              ? `Nothing to review. Answers show here ${list?.notice_days ?? 7} days before their review date.`
-              : "No verified answers yet. Add one here, or from any answer in the chat (More › Save as verified answer) or a content gap on Insights."}
-          </p>
+          tab === "review" ? (
+            <AsciiEmptyState
+              art="inbox"
+              title="Nothing to review."
+              description={`Answers show here ${list?.notice_days ?? 7} days before their review date.`}
+            />
+          ) : (
+            <AsciiEmptyState
+              art="search"
+              title="No verified answers yet."
+              description="Add one here, or from any answer in the chat (More › Save as verified answer) or a content gap on Insights."
+            />
+          )
         ) : (
           <ul className="divide-y divide-border/70">
             {shown.map((a) => (
@@ -528,7 +539,7 @@ export function VerifiedView() {
             ))}
           </ul>
         )}
-      </div>
+      </Panel>
 
       {editing && <Editor key={editing.id ?? "new"} editing={editing} list={list} onClose={() => setEditing(null)} />}
 

@@ -74,7 +74,8 @@ def _space_key(ws, context):
     return json.dumps([space["id"], space.get("instructions") or "", sources])
 
 
-def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, started):
+def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, started,
+                model=None):
     """A cached answer, as ask() returns one: shown, logged (no tokens), with the
     answer_cache step first in its steps."""
     row = hit.row
@@ -87,22 +88,28 @@ def _from_cache(ws, user, role, surface, question, hit, turn, on_event, out, sta
                         acl=access.message_clauses(row),
                         latency_ms=int((time.monotonic() - started) * 1000),
                         message_id=turn["message_id"] if turn else None, cache_hit=hit.kind,
+                        # No model ran: no model logged (usage.model), as before picks.
+                        **({"provider": model[0]} if model else {}),
                         language=language.detect(question))
     return Answer(row["answer"], row["sources"], row["state"], row["max_access"], trace, None,
                   None, row["acl"], hit.kind)
 
 
 def ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None, out=None,
-        cache=True):
+        cache=True, model=None):
     """_ask() with the workspace's models (models.scope): the answer cache's
-    embeddings and every model the answer needs are its provider's."""
-    with models.scope_for(ws):
-        return _ask(ws, user, role, question, surface=surface, turn=turn, on_event=on_event,
-                    cancel=cancel, out=out, cache=cache)
+    embeddings and every model the answer needs are its provider's. model:
+    (provider, model id), the answer model the chat picked, already checked
+    against the workspace's enabled ones (kb/services/model_choice.py); None:
+    the workspace's default. It's part of the answer cache's key (release())."""
+    with models.scope_for(ws) as on:
+        with models.scope(on.with_answer(*model) if model else on):
+            return _ask(ws, user, role, question, surface=surface, turn=turn,
+                        on_event=on_event, cancel=cancel, out=out, cache=cache, model=model)
 
 
 def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=None,
-         out=None, cache=True):
+         out=None, cache=True, model=None):
     """Answer `question` in workspace `ws` for `user` (a dict with "username") as
     `role` -> Answer. role: the asker as a viewer (access.Viewer: what they may
     see), or a bare role (its own principals: "public" is everyone's content
@@ -144,11 +151,13 @@ def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=
         hit = answer_cache.lookup(scope, question)
         if hit:
             return _from_cache(ws, user, role, surface, question, hit, turn, on_event, out,
-                               started)
+                               started, model)
     try:
         # No waiting for re-indexing: it changes the index document by document, or
         # builds a new one beside it (services/indexing.py).
         run = question_log.tracked(agents.get_agent(ws, role), ws, user, role, surface, turn)
+        if model:
+            asker["answer_model"] = model
         answer, trace, sources = run(question, with_sources=True, on_event=on_event,
                                      cancel=cancel, history=turn["history"] if turn else None,
                                      out=out, **asker)

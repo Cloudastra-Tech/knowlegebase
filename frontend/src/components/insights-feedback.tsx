@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ExternalLink, FlaskConical, Loader2 } from "lucide-react"
+import { ExternalLink, FlaskConical } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -103,8 +105,11 @@ function PromoteDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!item || promote.isPending} onClick={() => item && promote.mutate(item.message_id)}>
-            {promote.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button
+            disabled={!item}
+            loading={promote.isPending}
+            onClick={() => item && promote.mutate(item.message_id)}
+          >
             Add to test set
           </Button>
         </DialogFooter>
@@ -189,8 +194,7 @@ function AnswerSheet({
           <SheetFooter className="border-t">
             {/* A case the weekly job suggested (origin feedback) is the admin's once added. */}
             {promoted && (
-              <Button variant="outline" disabled={remove.isPending} onClick={() => remove.mutate(promoted.id)}>
-                {remove.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+              <Button variant="outline" loading={remove.isPending} onClick={() => remove.mutate(promoted.id)}>
                 {promoted.origin === "admin" ? "Remove from test set" : "Dismiss the suggestion"}
               </Button>
             )}
@@ -219,16 +223,17 @@ export function InsightsFeedback({ canEdit }: { canEdit: boolean }) {
   const shown = (rated ?? []).filter((f) => reason === "all" || f.reasons.includes(reason))
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">Thumbs down</h3>
-          <p className="text-sm text-muted-foreground">
-            Answers people rated down, newest first, with their reasons. People are told an admin
-            can see the answer and their note.
-            {canEdit ? " Add one to the test set to check later releases against it." : ""}
-          </p>
-        </div>
+    <Panel
+      title="Thumbs down"
+      description={
+        <>
+          Answers people rated down, newest first, with their reasons. People are told an admin
+          can see the answer and their note.
+          {canEdit ? " Add one to the test set to check later releases against it." : ""}
+        </>
+      }
+      className="min-w-0"
+      actions={
         <Select value={reason} onValueChange={(v) => setReason(v as typeof reason)}>
           <SelectTrigger aria-label="Reason" className="w-full sm:w-56">
             <SelectValue />
@@ -242,17 +247,20 @@ export function InsightsFeedback({ canEdit }: { canEdit: boolean }) {
             ))}
           </SelectContent>
         </Select>
-      </div>
-
-      <div className="mt-4">
+      }
+    >
+      <div>
         {!rated ? (
           <Skeleton className="h-48 rounded-2xl" />
         ) : !shown.length ? (
-          <p className="rounded-xl border px-4 py-6 text-center text-sm text-muted-foreground">
-            {rated.length ? "No answers rated down for that reason." : "No answers rated down yet."}
-          </p>
+          <AsciiEmptyState
+            art="inbox"
+            size="sm"
+            headingLevel={4}
+            title={rated.length ? "No answers rated down for that reason." : "No answers rated down yet."}
+          />
         ) : (
-          <div className="divide-y rounded-xl border">
+          <div className="divide-y overflow-hidden rounded-xl border bg-card">
             {shown.map((f) => (
               <button
                 key={f.message_id}
@@ -293,6 +301,6 @@ export function InsightsFeedback({ canEdit }: { canEdit: boolean }) {
         onPromote={(item) => setPromoting(item)}
       />
       <PromoteDialog item={promoting} onClose={() => setPromoting(null)} />
-    </section>
+    </Panel>
   )
 }

@@ -1,7 +1,9 @@
-import { use, useEffect, useRef } from "react"
+import { use, useEffect, useRef, type CSSProperties } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ExternalLink, FileText, Lock, Paperclip } from "lucide-react"
 
+import "@/components/chat-motion.css"
+import { PassageMarkdown } from "@/components/passage-markdown"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -30,15 +32,17 @@ import { queries } from "@/lib/queries"
 // Hovering or focusing one previews the passage; clicking opens the source viewer
 // with the cited span highlighted. The plumbing is in lib/citations.ts.
 
+// Mono, like the rest of the answer's machinery: [S1] reads as "1" in a small pill.
 const CHIP =
-  "mx-0.5 inline-flex h-4 min-w-4 -translate-y-px items-center justify-center rounded-full bg-muted px-1 align-middle text-xs leading-none font-medium tabular-nums text-muted-foreground"
+  "mx-0.5 inline-flex h-4 min-w-4 -translate-y-px items-center justify-center rounded-full px-1 align-middle font-mono text-[0.6875rem] leading-none font-medium tabular-nums"
 
 // One [S#] marker in the answer. Until its source is known (an answer still being
-// written) it is a plain number.
+// written) it is a plain number; once known, a button in the signal mint that pops in
+// (on a live answer only, never on one loaded from history), 40ms apart by number.
 export function CitationChip({ n }: { n: number }) {
   const citations = use(CitationsContext)
   const source = citations?.byNumber.get(n)
-  if (!citations || !source) return <span className={CHIP}>{n}</span>
+  if (!citations || !source) return <span className={`${CHIP} bg-muted text-muted-foreground`}>{n}</span>
   return (
     <HoverCard openDelay={150} closeDelay={100}>
       <HoverCardTrigger asChild>
@@ -46,7 +50,8 @@ export function CitationChip({ n }: { n: number }) {
           type="button"
           aria-label={citationLabel(n, source)}
           onClick={() => citations.open(source)}
-          className={`${CHIP} cursor-pointer transition-colors outline-none hover:bg-foreground hover:text-background focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-foreground data-[state=open]:text-background`}
+          style={citations.live ? ({ "--i": Math.min(n - 1, 5) } as CSSProperties) : undefined}
+          className={`${CHIP} ${citations.live ? "kb-pop" : ""} cursor-pointer bg-signal/15 text-signal transition-colors duration-(--dur-hover) ease-(--ease-hover) outline-none hover:bg-signal hover:text-signal-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-signal data-[state=open]:text-signal-foreground`}
         >
           {n}
         </button>
@@ -97,15 +102,16 @@ function SourcePreview({ source }: { source: Source }) {
       </div>
       {place && <p className="text-xs font-medium text-muted-foreground">{place}</p>}
       {source.snippet && (
-        <p className="line-clamp-3 text-sm leading-snug">{previewOf(source.snippet)}</p>
+        <p className="line-clamp-3 text-sm leading-snug">{previewOf(source.snippet, source)}</p>
       )}
       {why && <p className="text-xs text-muted-foreground">Why this source: {why}</p>}
     </div>
   )
 }
 
-// The source viewer: the passage with the document's text around it, the cited span
-// highlighted and scrolled into view, and "Open original" when there is a link.
+// The source viewer: the passage with the document's text around it, rendered as the
+// document shows it (headings, lists, bold), the cited span highlighted and scrolled
+// into view, and "Open original" when there is a link.
 // Full screen on a phone, a side panel from `sm`.
 export function SourceSheet({
   source,
@@ -118,7 +124,7 @@ export function SourceSheet({
     <Sheet open={source !== null} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
+        className="kb-source-sheet gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
       >
         {source && <SourceSheetBody source={source} />}
       </SheetContent>
@@ -129,7 +135,7 @@ export function SourceSheet({
 function SourceSheetBody({ source }: { source: Source }) {
   const chunkId = source.chunk_id ?? ""
   const passage = useQuery({ ...queries.passage(chunkId), enabled: chunkId !== "" })
-  const mark = useRef<HTMLElement>(null)
+  const mark = useRef<HTMLDivElement>(null)
   const place = placeOf(passage.data ?? source)
   const updated = updatedOn(source.modified)
   const why = whyOf(source)
@@ -170,20 +176,22 @@ function SourceSheetBody({ source }: { source: Source }) {
             <Skeleton className="h-4 w-4/5" />
           </div>
         ) : (
-          <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+          <>
             {passage.data?.before && (
-              <span className="text-muted-foreground">{passage.data.before}</span>
+              <PassageMarkdown text={passage.data.before} className="text-muted-foreground" />
             )}
-            <mark
+            <div
               ref={mark}
-              className="rounded-sm bg-foreground/10 px-0.5 text-foreground [box-decoration-break:clone]"
+              aria-label="Cited passage"
+              role="region"
+              className="-mx-2 my-2 scroll-my-4 rounded-md bg-signal/10 px-2 py-1.5 text-foreground"
             >
-              {text}
-            </mark>
+              <PassageMarkdown text={text} />
+            </div>
             {passage.data?.after && (
-              <span className="text-muted-foreground">{passage.data.after}</span>
+              <PassageMarkdown text={passage.data.after} className="text-muted-foreground" />
             )}
-          </p>
+          </>
         )}
         {passage.isError && (
           <p className="mt-3 text-xs text-muted-foreground">

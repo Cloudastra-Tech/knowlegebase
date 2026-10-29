@@ -993,6 +993,31 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
     # what never changes (the tools, SYSTEM) for OpenAI's prompt cache.
     llm = on.answer(openai=ChatOpenAI, temperature=0,
                     cache_key=models.prompt_cache_key(collection, role)).bind_tools(tools)
+    # A chat's own pick of answer model (kb/services/model_choice.py: one of the
+    # workspace's enabled ones), made once per model and kept with the agent.
+    # Only the answer follows it: the guards, HyDE and rewrites stay on `on`.
+    # The default (what the web sends on most questions) is `llm` itself. Another
+    # is made OUTSIDE the lock (it may assume an AWS role: a network call) and the
+    # first one made is kept, so a slow pick never holds up the others.
+    picked = {}
+    picked_lock = threading.Lock()
+
+    def answer_llm(choice):
+        if not choice:
+            return llm
+        picked_on = on.with_answer(*choice)
+        if picked_on is on:
+            return llm
+        key = tuple(choice)
+        with picked_lock:
+            found = picked.get(key)
+        if found is not None:
+            return found
+        made = picked_on.answer(openai=ChatOpenAI, temperature=0,
+                                cache_key=models.prompt_cache_key(collection, role)
+                                ).bind_tools(tools)
+        with picked_lock:
+            return picked.setdefault(key, made)
 
     SYSTEM = SystemMessage(content=(
         "You are the company's internal knowledge assistant. You solve multi-step "
@@ -1096,7 +1121,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         # We prepend SYSTEM each call so the rules are always in view. Streamed,
         # so a cancelled run stops mid-answer (leaving the loop closes the stream).
         reply = None
-        for chunk in llm.stream([SYSTEM, *run.extra] + spotlighted(run, state["messages"])):
+        for chunk in run.llm.stream([SYSTEM, *run.extra] + spotlighted(run, state["messages"])):
             run.check_cancelled()
             reply = chunk if reply is None else reply + chunk
         return {"messages": [message_chunk_to_message(reply) if reply is not None
@@ -1267,7 +1292,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         return messages
 
     def _run(user_input, with_sources=False, on_event=None, cancel=None, history=None,
-             out=None, principals=None, context=None):
+             out=None, principals=None, context=None, answer_model=None):
         """Answer a question -> (answer, trace).
         The answer cites the passages it used as [S1], [S2], ... (checked, see
         cite()). with_sources=True -> (answer, trace, sources) with the sources
@@ -1301,8 +1326,12 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
         context: where it's asked (kb/services/spaces.Context), or None: a
         space's sources limit the index search (.keep(metadata), None for all of
         it), .passages(question) are the asker's own files' passages, searched
-        with it (their ACL is the asker alone), and .notes what the model is told."""
+        with it (their ACL is the asker alone), and .notes what the model is told.
+        answer_model: (provider, model id), the answer model the chat picked
+        (checked by the caller against the workspace's enabled ones); None: the
+        workspace's default. The guards and the rest stay on the workspace's."""
         state = _Run(on_event, cancel, question=user_input)
+        state.llm = answer_llm(answer_model)
         state.context = context
         state.principals = None if principals is None else access.of(principals)
         state.viewer = state.principals or access.for_role(role)
@@ -1315,7 +1344,7 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                    for m in history or []]
         state.emit({"type": "status", "text": "Checking your question"})
         # GUARDS (input): prompt-injection / jailbreak, and the question rules
-        # (length, toxicity, staff salary for public users) that search_docs
+        # (length, staff salary for public users) that search_docs
         # applies. They run ALONGSIDE the search, not before it; the search
         # waits for them before anything it found is shown or answered from.
         retrieval = needs_retrieval(user_input)
@@ -1441,7 +1470,8 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
     # thread asks it: the guards, HyDE and the rest use the same provider as the
     # answer, never the server's when the workspace has its own.
     def run(*args, **kwargs):
-        with models.scope(on):
+        choice = kwargs.get("answer_model")
+        with models.scope(on.with_answer(*choice) if choice else on):
             return _run(*args, **kwargs)
     run.__doc__ = _run.__doc__
     run.provider = on.provider

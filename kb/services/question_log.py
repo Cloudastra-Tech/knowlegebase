@@ -189,7 +189,10 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
     question the documents couldn't answer is also a question.unanswered webhook,
     with its text only as the log keeps it (none in metadata mode). acl: the
     answer's audience (access.py clauses), which Insights reads it by; None: by
-    max_access."""
+    max_access. provider: who answered, the provider of the answer model the chat
+    picked (kb/services/model_choice.py); None: the workspace's. The model is
+    always usage.model, the one that used the most tokens, as on every surface:
+    the column's meaning (and Insights' cost) never depends on a pick."""
     try:
         mode = store.settings(ws)["mode"]
         mask = assistant.pii_policy(ws).log if mode == "redacted" else None
@@ -256,8 +259,9 @@ def tracked(run, ws, user, role, surface, turn=None):
                 fields["max_access"] = conversations.max_access(levels)
                 fields["acl"] = access.clauses(found)
             unsupported = out.get("unsupported")
+            picked = kwargs.get("answer_model")
             record(ws, user, role, surface, question, outcome, usage=usage,
-                   provider=getattr(run, "provider", None),
+                   provider=picked[0] if picked else getattr(run, "provider", None),
                    latency_ms=int((time.monotonic() - started) * 1000), message_id=message_id,
                    unsupported=None if unsupported is None else len(unsupported),
                    language=out.get("language"), **fields)

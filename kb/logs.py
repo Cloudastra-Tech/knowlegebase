@@ -174,7 +174,7 @@ def configure(fmt=None, level=None):
     fmt = (fmt or os.getenv("LOG_FORMAT") or "text").strip().lower()
     level = (level or os.getenv("LOG_LEVEL") or "INFO").strip().upper()
     root = logging.getLogger()
-    # Ours from an earlier call, and plain console handlers (guardrails calls
+    # Ours from an earlier call, and plain console handlers (a library that calls
     # logging.basicConfig() on import): each line would be written twice. Other
     # handlers (pytest's, a log shipper's) stay.
     for h in [h for h in root.handlers

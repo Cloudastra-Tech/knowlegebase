@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
@@ -149,8 +148,7 @@ export function InviteAccept({
           <FieldError>Password sign-in is off on this server. Ask your admin how to join.</FieldError>
         )}
         {error && <FieldError>{error}</FieldError>}
-        <Button type="submit" className={pill} disabled={joining || invite.method === null}>
-          {joining && <Loader2 className="animate-spin" data-icon="inline-start" />}
+        <Button type="submit" className={pill} loading={joining} disabled={invite.method === null}>
           {invite.method === "sso" ? "Accept and sign in" : `Join ${invite.workspace_name}`}
         </Button>
       </FieldGroup>

@@ -1,8 +1,17 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { FolderCog, Loader2, Lock, RefreshCw, TriangleAlert, Unplug } from "lucide-react"
+import { FolderCog, Lock, MoreHorizontal, Plug, RefreshCw, TriangleAlert, Unplug } from "lucide-react"
 
+import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
+import { ConnectorIcon, StatusBadge } from "@/components/integrations-view"
+import {
+  SettingsEmpty,
+  SettingsError,
+  SettingsList,
+  SettingsSection,
+  SettingsSkeleton,
+} from "@/components/settings/settings-section"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,26 +21,30 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { ContainerIcon, ContainerPicker } from "@/components/container-picker"
-import { Card, Stat } from "@/components/integrations-view"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { api, type Integration } from "@/lib/api"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
-// /connections: a member's OWN Gmail and Google Calendar. What they sync is theirs
-// alone: searched and cited only for them, never listed or counted for anyone else,
-// admins included (kb/routers/my_integrations.py).
+// Settings › Connections: a member's OWN Gmail and Google Calendar. What they sync is
+// theirs alone: searched and cited only for them, never listed or counted for anyone
+// else, admins included (kb/routers/my_integrations.py).
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-
-function MyConnectionCard({
+// One connection, as a row: its mark, name and state, then (connected) what it syncs
+// and how much, with Sync now, Choose what to sync and Disconnect in its menu.
+function MyConnectionRow({
   item,
   onChange,
   autoOpenPicker,
@@ -42,6 +55,7 @@ function MyConnectionCard({
 }) {
   const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [confirm, setConfirm] = useState(false)
   const picks = item.containers ?? []
   const unit = item.unit ?? "items"
 
@@ -92,110 +106,128 @@ function MyConnectionCard({
 
   const connected = ["connected", "syncing", "error"].includes(item.status)
   const reconnect = item.error?.code === "auth_expired" || item.error?.code === "missing_scope"
+  const syncing = busy === "sync" || item.status === "syncing"
 
   return (
-    <Card item={item}>
-      {item.status === "not_configured" && (
-        <p className="text-sm text-muted-foreground">
-          Not turned on for this server yet. Ask your admin.
-        </p>
-      )}
-
-      {item.status === "disconnected" && (
-        <>
-          <p className="text-sm text-muted-foreground">{item.note}</p>
-          <Button className="mt-4 w-fit" onClick={connect} disabled={busy !== null}>
-            {busy === "connect" && <Loader2 className="animate-spin" />}
-            Connect your {item.name}
-          </Button>
-        </>
-      )}
-
-      {connected && (
-        <>
-          {item.error && item.status === "error" && (
-            <Alert variant="destructive" className="mb-3">
-              <TriangleAlert />
-              <AlertTitle>The last sync didn't finish</AlertTitle>
-              <AlertDescription>{item.error.message}</AlertDescription>
-            </Alert>
-          )}
-
-          {picks.length === 0 ? (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed p-3">
-              <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-                Nothing is synced yet. Choose what you want to ask about.
-              </p>
-              <Button size="sm" onClick={() => setPickerOpen(true)}>
-                <FolderCog /> Choose what to sync
+    <li className="flex flex-col gap-3 px-4 py-4">
+      <div className="flex items-start gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted [&_svg]:size-4">
+          <ConnectorIcon item={item} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">{item.name}</p>
+          <p className="text-sm text-pretty text-muted-foreground">{item.description}</p>
+        </div>
+        <StatusBadge status={item.status} />
+        {connected && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="-my-1 shrink-0"
+                aria-label={`${item.name}: actions`}
+                disabled={busy !== null}
+              >
+                <MoreHorizontal />
               </Button>
-            </div>
-          ) : (
-            <div className="mb-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">Syncing</p>
-                <Button
-                  variant="link"
-                  size="xs"
-                  className="h-auto px-0"
-                  onClick={() => setPickerOpen(true)}
-                >
-                  Edit selection
-                </Button>
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {picks.map((f) => (
-                  <span
-                    key={f.id}
-                    className="flex max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs sm:max-w-60"
-                  >
-                    <ContainerIcon item={f} className="size-3" />
-                    <span className="truncate">{f.name}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={sync} disabled={syncing || picks.length === 0}>
+                  <RefreshCw /> Sync now
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setPickerOpen(true)}>
+                  <FolderCog /> Choose what to sync
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
+                <Unplug /> Disconnect
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
 
-          <div className="grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3">
-            <Stat label="Account" value={item.account || "—"} />
-            <Stat label={capitalize(unit)} value={item.doc_count ?? 0} />
-            <Stat
-              label="Last sync"
-              value={item.status === "syncing" ? "now" : timeAgo(item.last_sync_at)}
-            />
-          </div>
-          <p className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
-            <Lock className="mt-px size-3.5 shrink-0" />
-            Only you can ask about these {unit}. They never show up for anyone else here,
-            admins included.
-          </p>
+      <div className="flex flex-col gap-3 sm:pl-11">
+        {item.status === "not_configured" && (
+          <p className="text-sm text-muted-foreground">Not turned on for this server yet. Ask your admin.</p>
+        )}
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={sync}
-              disabled={busy !== null || item.status === "syncing" || picks.length === 0}
-            >
-              {busy === "sync" || item.status === "syncing" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <RefreshCw />
-              )}
-              Sync now
+        {item.status === "disconnected" && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {item.note && <p className="min-w-0 flex-1 basis-56 text-sm text-pretty text-muted-foreground">{item.note}</p>}
+            <Button size="sm" onClick={connect} loading={busy === "connect"} disabled={busy !== null}>
+              Connect your {item.name}
             </Button>
-            {reconnect && (
-              <Button size="sm" onClick={connect} disabled={busy !== null}>
-                Reconnect
-              </Button>
+          </div>
+        )}
+
+        {connected && (
+          <>
+            {item.error && item.status === "error" && (
+              <Alert variant="destructive">
+                <TriangleAlert />
+                <AlertTitle>The last sync didn't finish</AlertTitle>
+                <AlertDescription>
+                  {item.error.message}
+                  {reconnect && (
+                    <Button size="sm" variant="outline" className="mt-2 w-fit" onClick={connect} disabled={busy !== null}>
+                      Reconnect
+                    </Button>
+                  )}
+                </AlertDescription>
+              </Alert>
             )}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="sm" variant="ghost" className="text-destructive" disabled={busy !== null}>
-                  <Unplug /> Disconnect
+
+            {picks.length === 0 ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+                  Nothing is synced yet. Choose what you want to ask about.
+                </p>
+                <Button size="sm" onClick={() => setPickerOpen(true)}>
+                  Choose what to sync
                 </Button>
-              </AlertDialogTrigger>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">Syncing</p>
+                  <Button variant="link" size="xs" className="h-auto px-0" onClick={() => setPickerOpen(true)}>
+                    Edit selection
+                  </Button>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {picks.map((f) => (
+                    <span
+                      key={f.id}
+                      className="flex max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs sm:max-w-60"
+                    >
+                      <ContainerIcon item={f} className="size-3" />
+                      <span className="truncate">{f.name}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {[
+                item.account,
+                `${(item.doc_count ?? 0).toLocaleString()} ${unit}`,
+                item.status === "syncing" ? "syncing now" : `synced ${timeAgo(item.last_sync_at)}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+            <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Lock className="mt-px size-3.5 shrink-0" />
+              Only you can ask about these {unit}. They never show up for anyone else here, admins
+              included.
+            </p>
+            <ContainerPicker item={item} open={pickerOpen} onOpenChange={setPickerOpen} onSaved={onChange} />
+            <AlertDialog open={confirm} onOpenChange={setConfirm}>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Disconnect your {item.name}?</AlertDialogTitle>
@@ -206,60 +238,57 @@ function MyConnectionCard({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={disconnect}>Disconnect</AlertDialogAction>
+                  <AlertDialogAction variant="destructive" onClick={disconnect}>
+                    Disconnect
+                  </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-          </div>
-          <ContainerPicker
-            item={item}
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            onSaved={onChange}
-          />
-        </>
-      )}
-    </Card>
+          </>
+        )}
+      </div>
+    </li>
   )
 }
 
 export function MyConnectionsView({ openPickerFor }: { openPickerFor?: string | null }) {
   const queryClient = useQueryClient()
-  const { data } = useQuery({
+  const query = useQuery({
     ...queries.myIntegrations(),
-    refetchInterval: (query) =>
-      query.state.data?.integrations.some((i) => i.status === "syncing") ? 3000 : false,
+    refetchInterval: (q) => (q.state.data?.integrations.some((i) => i.status === "syncing") ? 3000 : false),
   })
-  const items = data?.integrations ?? null
-  const load = () =>
-    void queryClient.invalidateQueries({ queryKey: queries.myIntegrations().queryKey })
+  const items = query.data?.integrations ?? null
+  // None this server offers: nothing to connect, so no list of things that can't be.
+  const none = !!items && items.every((i) => i.status === "not_configured" || i.status === "unavailable")
+  const load = () => void queryClient.invalidateQueries({ queryKey: queries.myIntegrations().queryKey })
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">My connections</h2>
-        <p className="text-sm text-muted-foreground">
-          Ask about your own email and calendar. What you connect here is yours alone: nobody
-          else in the workspace can search it, see it listed or read it in an answer.
-        </p>
-      </div>
-      {!items ? (
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <Skeleton className="h-44 rounded-2xl" />
-          <Skeleton className="h-44 rounded-2xl" />
-        </div>
+    <SettingsSection
+      title="Connections"
+      description="Ask about your own email and calendar. What you connect is yours alone: nobody else here can search it or read it in an answer."
+    >
+      {query.isPending ? (
+        <SettingsSkeleton rows={2} label="Loading your connections" />
+      ) : !items ? (
+        <SettingsError what="your connections" onRetry={() => void query.refetch()} />
+      ) : none ? (
+        <SettingsEmpty
+          icon={Plug}
+          title="Nothing to connect yet"
+          description="Connecting your own Gmail or Google Calendar isn't turned on for this workspace. Ask an admin if you'd like it."
+        />
       ) : (
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <SettingsList label="Your connections">
           {items.map((item) => (
-            <MyConnectionCard
+            <MyConnectionRow
               key={item.id}
               item={item}
               onChange={load}
               autoOpenPicker={openPickerFor === item.id}
             />
           ))}
-        </div>
+        </SettingsList>
       )}
-    </div>
+    </SettingsSection>
   )
 }

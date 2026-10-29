@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
@@ -60,7 +59,7 @@ export function DigestUnsubscribe({ token }: { token: string }) {
         <Heading title={<>This link <span className="font-serif font-light italic">doesn't work.</span></>}>
           {error} You can manage your digests after signing in.
         </Heading>
-        <Button className={pill} onClick={() => navigate("/digests")}>
+        <Button className={pill} onClick={() => navigate("/settings/digests")}>
           Manage digests
         </Button>
       </div>
@@ -87,11 +86,10 @@ export function DigestUnsubscribe({ token }: { token: string }) {
         </Heading>
       )}
       <div className="flex flex-col gap-3">
-        <Button variant="outline" className={pill} onClick={toggle} disabled={busy}>
-          {busy && <Loader2 className="animate-spin" data-icon="inline-start" />}
+        <Button variant="outline" className={pill} onClick={toggle} loading={busy}>
           {result.enabled ? "Unsubscribe" : "Subscribe again"}
         </Button>
-        <Button className={pill} onClick={() => navigate("/digests")}>
+        <Button className={pill} onClick={() => navigate("/settings/digests")}>
           Manage digests
         </Button>
       </div>

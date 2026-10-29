@@ -11,7 +11,7 @@ export function SsoTestDone() {
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-3 p-6 text-center">
-      <CheckCircle2 className="size-8 text-emerald-600" />
+      <CheckCircle2 className="size-8 text-success" />
       <h1 className="text-lg font-semibold">Test finished</h1>
       <p className="max-w-xs text-sm text-muted-foreground">
         The result is on the Sign-in screen. You can close this window.

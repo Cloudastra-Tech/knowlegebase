@@ -286,7 +286,6 @@ def test_an_image_from_the_registry_is_pulled_and_its_tag_checked_out(host):
     assert not any(e["args"][:2] == ["compose", "build"] for e in docker["log"])
     assert docker["running"] == "2.0.0"
     assert host.head() == host.new                        # v2.0.0's commit
-    assert "no toxicity validator" in r.stderr
 
 
 def test_usage_errors(host):

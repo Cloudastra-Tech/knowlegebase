@@ -1,10 +1,12 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { format, subDays } from "date-fns"
-import { Check, FilePen, Loader2, Lock, Undo2 } from "lucide-react"
+import { Check, FilePen, Lock, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
 import { DateRangePicker, type DateRange } from "@/components/date-range-picker"
+import { Panel } from "@/components/glass/panel"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -70,12 +72,10 @@ function QuestionRow({
         <Button
           variant="outline"
           size="sm"
-          disabled={toggle.isPending}
+          loading={toggle.isPending}
           onClick={() => toggle.mutate()}
         >
-          {toggle.isPending ? (
-            <Loader2 className="animate-spin" data-icon="inline-start" />
-          ) : resolved ? (
+          {toggle.isPending ? null : resolved ? (
             <Undo2 data-icon="inline-start" />
           ) : (
             <Check data-icon="inline-start" />
@@ -100,57 +100,61 @@ export function NotFoundQuestions({ onDraftDoc }: { onDraftDoc?: (questionId: nu
   const { data } = useQuery(queries.notFound(resolved, from, to))
 
   return (
-    <section className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <DateRangePicker
-          value={range}
-          onChange={setRange}
-          className="min-w-0 basis-60 grow sm:basis-72 sm:grow-0"
-        />
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          value={show}
-          onValueChange={(v) => v && setShow(v as typeof show)}
-          aria-label="Which questions"
-        >
-          <ToggleGroupItem value="open">Open</ToggleGroupItem>
-          <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
-        </ToggleGroup>
+    <Panel title="Unanswered questions" className="min-w-0">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <DateRangePicker
+            value={range}
+            onChange={setRange}
+            className="min-w-0 basis-60 grow sm:basis-72 sm:grow-0"
+          />
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={show}
+            onValueChange={(v) => v && setShow(v as typeof show)}
+            aria-label="Which questions"
+          >
+            <ToggleGroupItem value="open">Open</ToggleGroupItem>
+            <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Questions the assistant couldn't answer from the documents, newest first. Mark one
+          resolved once the documents cover it, or have the assistant draft a doc for it.
+        </p>
+        {data && !data.text_kept && (
+          <Alert>
+            <Lock />
+            <AlertDescription>
+              Questions are logged without their text here, so only when and where they were
+              asked shows. An admin can change that under Overview, in the question log settings.
+            </AlertDescription>
+          </Alert>
+        )}
+        {!data ? (
+          <Skeleton className="h-48 rounded-2xl" />
+        ) : data.questions.length === 0 ? (
+          <AsciiEmptyState
+            art={resolved ? "inbox" : "search"}
+            title={resolved ? "Nothing marked resolved in these days." : "No unanswered questions in these days."}
+            headingLevel={4}
+          />
+        ) : (
+          <ul className="divide-y overflow-hidden rounded-xl border bg-card" aria-label="Unanswered questions">
+            {data.questions.map((q) => (
+              <QuestionRow key={q.id} q={q} resolved={resolved} onDraftDoc={onDraftDoc} />
+            ))}
+          </ul>
+        )}
+        {data && data.hidden > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {data.hidden === 1 ? "One more question" : `${data.hidden} more questions`} reached
+            documents your role can't see, so {data.hidden === 1 ? "it isn't" : "they aren't"} listed.
+          </p>
+        )}
       </div>
-      <p className="text-sm text-muted-foreground">
-        Questions the assistant couldn't answer from the documents, newest first. Mark one
-        resolved once the documents cover it, or have the assistant draft a doc for it.
-      </p>
-      {data && !data.text_kept && (
-        <Alert>
-          <Lock />
-          <AlertDescription>
-            Questions are logged without their text here, so only when and where they were
-            asked shows. An admin can change that under Overview, in the question log settings.
-          </AlertDescription>
-        </Alert>
-      )}
-      {!data ? (
-        <Skeleton className="h-48 rounded-2xl" />
-      ) : data.questions.length === 0 ? (
-        <p className="rounded-2xl border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {resolved ? "Nothing marked resolved in these days." : "No unanswered questions in these days."}
-        </p>
-      ) : (
-        <ul className="divide-y rounded-xl border" aria-label="Unanswered questions">
-          {data.questions.map((q) => (
-            <QuestionRow key={q.id} q={q} resolved={resolved} onDraftDoc={onDraftDoc} />
-          ))}
-        </ul>
-      )}
-      {data && data.hidden > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {data.hidden === 1 ? "One more question" : `${data.hidden} more questions`} reached
-          documents your role can't see, so {data.hidden === 1 ? "it isn't" : "they aren't"} listed.
-        </p>
-      )}
-    </section>
+    </Panel>
   )
 }

@@ -1,9 +1,27 @@
 import { useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
-import { Building2, Loader2, MessageSquareText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import { Building2, CornerDownLeft, MessageSquareText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  SettingsEmpty,
+  SettingsError,
+  SettingsExample,
+  SettingsList,
+  SettingsSection,
+  SettingsSkeleton,
+} from "@/components/settings/settings-section"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,7 +35,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -28,7 +48,6 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { spaces as spacesApi, type SavedPrompt } from "@/lib/api"
@@ -39,15 +58,19 @@ import { queries } from "@/lib/queries"
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong")
 const BODY_CHARS = 2000
 
-// Saved prompts (chat.md C22): your own, and the workspace's, which its admins
-// keep. Typing "/" at the start of the chat box, or ⌘K, puts one in; a
-// {{variable}} is asked for first.
+// Settings › Prompts (chat.md C22): saved prompts, your own and the workspace's, which
+// its admins keep. Typing "/" at the start of the chat box, or ⌘K, puts one in; a
+// {{variable}} is asked for first. Each is a row: what it's called and says, the parts
+// to fill in, Use, and the rest in its menu.
 export function PromptsView() {
   const queryClient = useQueryClient()
-  const data = useQuery(queries.prompts()).data
+  const query = useQuery(queries.prompts())
+  const data = query.data
   const [editing, setEditing] = useState<SavedPrompt | "new" | null>(null)
+  const [deleting, setDeleting] = useState<SavedPrompt | null>(null)
   const shared = data?.prompts.filter((p) => p.workspace) ?? []
   const mine = data?.prompts.filter((p) => !p.workspace) ?? []
+  const none = !!data && data.prompts.length === 0
 
   async function remove(p: SavedPrompt) {
     try {
@@ -59,55 +82,96 @@ export function PromptsView() {
     }
   }
 
-  const section = (title: string, list: SavedPrompt[], empty: string) => (
-    <section>
-      <h3 className="mb-2 text-sm font-medium text-muted-foreground">{title}</h3>
-      <div className="divide-y rounded-2xl border border-border/70 bg-background">
-        {list.length ? (
-          list.map((p) => (
-            <PromptRow key={p.id} prompt={p} onEdit={() => setEditing(p)} onDelete={() => remove(p)} />
-          ))
-        ) : (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">{empty}</p>
-        )}
-      </div>
-    </section>
+  const list = (label: string, prompts: SavedPrompt[]) => (
+    <div className="flex min-w-0 flex-col gap-2">
+      <h4 className="text-sm font-medium text-muted-foreground">{label}</h4>
+      <SettingsList label={label}>
+        {prompts.map((p) => (
+          <PromptRow key={p.id} prompt={p} onEdit={() => setEditing(p)} onDelete={() => setDeleting(p)} />
+        ))}
+      </SettingsList>
+    </div>
   )
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <MessageSquareText className="size-6" /> Saved prompts
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Questions you ask often. Type <kbd className="font-mono">/</kbd> in the chat box to use
-            one; write <span className="font-mono">{"{{customer}}"}</span> for a part to fill in.
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setEditing("new")} disabled={!data}>
-          <Plus data-icon="inline-start" /> New prompt
-        </Button>
-      </div>
-      {!data ? (
-        <Skeleton className="mt-6 h-48 rounded-2xl" />
+    <SettingsSection
+      title="Prompts"
+      description={
+        <>
+          Questions you ask often. Type <kbd className="font-mono">/</kbd> in the chat box to use one.
+        </>
+      }
+      action={
+        data && !none ? (
+          <Button size="sm" onClick={() => setEditing("new")}>
+            <Plus data-icon="inline-start" /> New prompt
+          </Button>
+        ) : undefined
+      }
+    >
+      {query.isPending ? (
+        <SettingsSkeleton label="Loading your prompts" />
+      ) : !data ? (
+        <SettingsError what="your prompts" onRetry={() => void query.refetch()} />
+      ) : none ? (
+        <SettingsEmpty
+          icon={MessageSquareText}
+          title="No saved prompts yet"
+          description="Save a question you ask often, with blanks to fill in, and reuse it from the chat box with /."
+          action={
+            <Button size="sm" onClick={() => setEditing("new")}>
+              <Plus data-icon="inline-start" /> New prompt
+            </Button>
+          }
+          example={
+            <SettingsExample>
+              <p className="font-medium">Summarise a policy for a new joiner</p>
+              <p className="mt-0.5 text-muted-foreground">
+                Summarise <span className="font-mono text-foreground">{"{{policy}}"}</span> for someone
+                who joined this week, in five bullets.
+              </p>
+            </SettingsExample>
+          }
+        />
       ) : (
-        <div className="mt-6 grid gap-6">
-          {section("Yours", mine, "None yet.")}
-          {section(
-            "Your workspace's",
-            shared,
-            data.can_manage_workspace ? "None yet. Add one for everyone here." : "None yet.",
-          )}
-        </div>
+        <>
+          {mine.length > 0
+            ? list("Yours", mine)
+            : (
+              <p className="text-sm text-muted-foreground">
+                You haven't saved one of your own yet.{" "}
+                <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setEditing("new")}>
+                  New prompt
+                </Button>
+              </p>
+            )}
+          {shared.length > 0 && list("For everyone in the workspace", shared)}
+        </>
       )}
       <PromptDialog
         prompt={editing}
         canShare={data?.can_manage_workspace ?? false}
         onOpenChange={(o) => !o && setEditing(null)}
       />
-    </div>
+      <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleting?.title}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting?.workspace
+                ? "It's gone for everyone in the workspace. This can't be undone."
+                : "This can't be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => deleting && remove(deleting)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </SettingsSection>
   )
 }
 
@@ -121,54 +185,62 @@ function PromptRow({
   onDelete: () => void
 }) {
   const navigate = useNavigate()
+  const use = () => {
+    navigate("/chat")
+    tellChat(INSERT_PROMPT, prompt.id)
+  }
+  const Icon = prompt.workspace ? Building2 : MessageSquareText
   return (
-    <div className="flex items-start gap-3 px-4 py-3">
-      {prompt.workspace ? (
-        <Building2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      ) : (
-        <MessageSquareText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      )}
+    <li className="flex items-start gap-3 px-4 py-3">
+      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <Icon className="size-4" />
+      </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium">{prompt.title}</p>
-        <p className="line-clamp-2 text-sm text-muted-foreground">{prompt.body}</p>
+        <p className="truncate text-sm font-medium">{prompt.title}</p>
+        <p className="line-clamp-2 text-sm text-pretty text-muted-foreground">{prompt.body}</p>
         {prompt.variables.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {prompt.variables.map((v) => (
-              <Badge key={v} variant="secondary" className="font-normal">
+              <Badge key={v} variant="secondary" className="font-mono font-normal">
                 {v}
               </Badge>
             ))}
           </div>
         )}
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          navigate("/chat")
-          tellChat(INSERT_PROMPT, prompt.id)
-        }}
-      >
-        Use
-      </Button>
-      {prompt.editable && (
+      <div className="flex shrink-0 items-center gap-1">
+        <Button variant="ghost" size="sm" onClick={use} className="max-sm:hidden">
+          Use
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-8" aria-label={`${prompt.title}: more`}>
-              <MoreHorizontal className="size-4" />
+            <Button variant="ghost" size="icon-sm" aria-label={`${prompt.title}: actions`}>
+              <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onEdit}>
-              <Pencil /> Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onDelete} className="text-destructive">
-              <Trash2 /> Delete
-            </DropdownMenuItem>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={use}>
+                <CornerDownLeft /> Use in a chat
+              </DropdownMenuItem>
+              {prompt.editable && (
+                <DropdownMenuItem onSelect={onEdit}>
+                  <Pencil /> Edit
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuGroup>
+            {prompt.editable && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  <Trash2 /> Delete
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
-      )}
-    </div>
+      </div>
+    </li>
   )
 }
 
@@ -265,8 +337,7 @@ function PromptDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !title.trim() || !body.trim()}>
-              {busy && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={busy} disabled={!title.trim() || !body.trim()}>
               Save
             </Button>
           </DialogFooter>

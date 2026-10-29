@@ -4,8 +4,7 @@
 #
 #   scripts/deploy.sh [options] REF           build REF (branch, tag or commit) here
 #   scripts/deploy.sh [options] --image TAG   run $REGISTRY_IMAGE:TAG (built by the
-#                                             release workflow, no toxicity validator:
-#                                             deploy.md, "Deploying")
+#                                             release workflow: deploy.md, "Deploying")
 #   scripts/deploy.sh [options] --rollback    back to the version before the current one
 #
 # Options:
@@ -24,8 +23,7 @@
 #      config/app.db into .deploy/db/ for an automatic rollback to put back.
 #   3. check out the commit (detached; stops if local changes would be overwritten,
 #      e.g. a hand-applied patch: the old version keeps running), then
-#      docker compose build, the image tagged cloudastra-knowledgebase:<commit>
-#      (COMPOSE_FILE in .env adds the Guardrails build secret, deploy.md step 4);
+#      docker compose build, the image tagged cloudastra-knowledgebase:<commit>;
 #      or, with --image, docker pull and tag it the same way.
 #   4. docker compose up -d with that tag.
 #   5. wait for HEALTH_URL (/api/health/ready) to answer 200.
@@ -297,7 +295,6 @@ do_deploy() {
         checkout "$commit" || die "couldn't check out $(short "$commit") (local changes in the way?); nothing was changed"
     fi
     if [[ -n "$image" ]]; then
-        warn "a registry image has no toxicity validator (deploy.md, \"Deploying\")"
         { run docker pull "$REGISTRY_IMAGE:$image" \
             && run docker tag "$REGISTRY_IMAGE:$image" "$IMAGE_NAME:$new_tag"; } \
             || not_built "couldn't pull $REGISTRY_IMAGE:$image"

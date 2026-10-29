@@ -142,6 +142,9 @@ export const queries = {
   // Its settings and glossary (admins), and the verified answers (HR and admins).
   assistantSettings: () =>
     queryOptions({ queryKey: ["assistant", "settings"], queryFn: assistant.settings }),
+  // The composer's model picker: the workspace's enabled answer models.
+  chatModels: () =>
+    queryOptions({ queryKey: ["chat-models"], queryFn: api.chatModels, staleTime: 60_000 }),
   modelProvider: () =>
     queryOptions({ queryKey: ["assistant", "models"], queryFn: assistant.modelProvider }),
   verifiedAnswers: () =>

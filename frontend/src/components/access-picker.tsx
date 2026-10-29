@@ -99,7 +99,7 @@ export function AccessPicker({
           <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{o.detail}</span>
         )}
         {o.source && o.source !== "manual" && (
-          <span className="shrink-0 text-xs text-muted-foreground">
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
             {o.source === "builtin" ? "roles" : o.source.toUpperCase()}
           </span>
         )}

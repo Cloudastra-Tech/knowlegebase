@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router"
 import { describe, expect, it } from "vitest"
 
 import { DigestsView } from "@/components/digests-view"
@@ -40,7 +41,7 @@ function settings(subscriptions: unknown[]) {
 }
 
 describe("DigestsView: folders", () => {
-  it("offers the folders of the sources a digest follows, and saves a pick", async () => {
+  it("offers the folders of the sources a digest follows, and saves a pick from Edit", async () => {
     const sent: unknown[] = []
     mockApi({
       "GET /api/digests": settings([SUB]),
@@ -50,12 +51,20 @@ describe("DigestsView: folders", () => {
         return SUB
       },
     })
-    render(withProviders(<DigestsView />))
-    const folders = await screen.findByRole("group", { name: "Folders" })
+    render(withProviders(<MemoryRouter><DigestsView /></MemoryRouter>))
+    const user = userEvent.setup()
+    // The row says what it is; Edit is in its menu.
+    await user.click(await screen.findByRole("button", { name: "Weekly by email: actions" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Edit" }))
+    const dialog = await screen.findByRole("dialog", { name: "Edit digest" })
+    const folders = await within(dialog).findByRole("group", { name: "Folders" })
     // Only Notion's: the digest follows Notion.
     expect(within(folders).getAllByRole("checkbox")).toHaveLength(1)
-    await userEvent.setup().click(within(folders).getByLabelText("Notion: folder wiki-root"))
-    expect(sent).toEqual([{ folders: ["wiki-root"] }])
+    await user.click(within(folders).getByLabelText("Notion: folder wiki-root"))
+    await user.click(within(dialog).getByRole("button", { name: "Save" }))
+    expect(sent).toEqual([
+      { frequency: "weekly", channel: "email", sources: ["notion"], folders: ["wiki-root"] },
+    ])
   })
 
   it("subscribes a new digest to the folders picked", async () => {
@@ -68,7 +77,7 @@ describe("DigestsView: folders", () => {
         return SUB
       },
     })
-    render(withProviders(<DigestsView />))
+    render(withProviders(<MemoryRouter><DigestsView /></MemoryRouter>))
     const user = userEvent.setup()
     await user.click(await screen.findByRole("button", { name: "New digest" }))
     const folders = await screen.findByRole("group", { name: "Folders" })

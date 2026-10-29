@@ -1,15 +1,19 @@
 import { useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { format, subDays } from "date-fns"
-import { BadgeCheck, BarChart3, Download, FilePen, Loader2 } from "lucide-react"
+import { BadgeCheck, BarChart3, Download, FilePen } from "lucide-react"
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 import { toast } from "sonner"
 
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import type { ArtName } from "@/components/ascii/art"
 import { DateRangePicker, type DateRange } from "@/components/date-range-picker"
+import { Panel } from "@/components/glass/panel"
 import { InsightsFeedback } from "@/components/insights-feedback"
 import { NotFoundQuestions } from "@/components/insights-not-found"
 import { QualityTrendView } from "@/components/insights-quality"
 import { QuestionLogSettings } from "@/components/question-log-settings"
+import { ScreenHeader } from "@/components/screen-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -36,10 +40,11 @@ import {
   type Surface,
   type SurfaceStat,
 } from "@/lib/api"
+import { INSIGHTS_TABS, type InsightsTab } from "@/lib/app-screens"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
-export type InsightsTab = "overview" | "not-found" | "feedback"
+export type { InsightsTab }
 
 const iso = (d: Date) => format(d, "yyyy-MM-dd")
 
@@ -54,6 +59,11 @@ function seconds(ms: number | null) {
 
 function count(n: number) {
   return n.toLocaleString()
+}
+
+// "1 question", "2 questions": a count of questions, pluralised.
+function questions(n: number) {
+  return `${count(n)} ${n === 1 ? "question" : "questions"}`
 }
 
 function day(epoch?: number | null) {
@@ -81,20 +91,22 @@ function ExportButton({ table, from, to }: { table: InsightsTable; from?: string
       variant="ghost"
       size="sm"
       className="text-muted-foreground"
-      disabled={busy}
+      loading={busy}
       onClick={async () => {
         setBusy(true)
         await save(table, from, to)
         setBusy(false)
       }}
     >
-      {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+      {!busy && <Download data-icon="inline-start" />}
       CSV
     </Button>
   )
 }
 
-function Panel({
+// One part of the report: the kit's Panel, with a line under its title saying what
+// it counts.
+function Section({
   title,
   description,
   action,
@@ -106,23 +118,15 @@ function Panel({
   children: ReactNode
 }) {
   return (
-    <section className="rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        {action}
-      </div>
-      <div className="mt-4">{children}</div>
-    </section>
+    <Panel title={title} description={description} actions={action} className="min-w-0">
+      {children}
+    </Panel>
   )
 }
 
-function Empty({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-xl border px-4 py-6 text-center text-sm text-muted-foreground">{children}</p>
-  )
+// Nothing to show in these days: a small piece of art over the words.
+function Empty({ children, note, art = "search" }: { children: string; note?: string; art?: ArtName }) {
+  return <AsciiEmptyState art={art} size="sm" title={children} description={note} headingLevel={4} />
 }
 
 // A table from `sm` up; on phones each row stacks: the first column, then the rest.
@@ -136,7 +140,7 @@ function DataTable<T>({ rows, columns, rowKey }: { rows: T[]; columns: Column<T>
   const [first, ...rest] = columns
   return (
     <>
-      <div className="divide-y rounded-xl border sm:hidden">
+      <div className="divide-y overflow-hidden rounded-xl border bg-card sm:hidden">
         {rows.map((row) => (
           <div key={rowKey(row)} className="flex flex-col gap-0.5 px-4 py-3 text-sm">
             <div className="min-w-0 font-medium">{first.cell(row)}</div>
@@ -150,7 +154,7 @@ function DataTable<T>({ rows, columns, rowKey }: { rows: T[]; columns: Column<T>
           </div>
         ))}
       </div>
-      <div className="hidden rounded-xl border sm:block">
+      <div className="hidden overflow-hidden rounded-xl border bg-card sm:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -199,22 +203,23 @@ function DocTitle({ title, url, docKey }: { title: string | null; url: string | 
 
 function Tile({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
-    <Card size="sm">
+    <Card size="sm" variant="subtle">
       <CardContent className="flex flex-col gap-1">
         <span className="text-xs text-muted-foreground">{label}</span>
-        <span className="text-2xl font-semibold tracking-tight tabular-nums">{value}</span>
+        <span className="font-mono text-2xl font-medium tracking-tight tabular-nums">{value}</span>
         {note && <span className="truncate text-xs text-muted-foreground">{note}</span>}
       </CardContent>
     </Card>
   )
 }
 
-// The palette is achromatic (DESIGN.md), so the series differ by ink AND dash.
+// The token palette (--chart-*: the signal for answered, a warm hue for not found),
+// and the series differ by dash as well, so none is told apart by colour alone.
 const chartConfig = {
-  answered: { label: "Answered", color: "var(--foreground)" },
-  not_found: { label: "Not found", color: "var(--chart-2)" },
-  general_knowledge: { label: "General knowledge", color: "var(--chart-3)" },
-  blocked: { label: "Blocked", color: "var(--chart-4)" },
+  answered: { label: "Answered", color: "var(--chart-1)" },
+  not_found: { label: "Not found", color: "var(--chart-4)" },
+  general_knowledge: { label: "General knowledge", color: "var(--chart-2)" },
+  blocked: { label: "Blocked", color: "var(--chart-3)" },
 } satisfies ChartConfig
 const DASH: Record<keyof typeof chartConfig, string | undefined> = {
   answered: undefined,
@@ -304,7 +309,7 @@ function Surfaces({ rows }: { rows: SurfaceStat[] }) {
               {SURFACE_NAMES[r.surface] ?? r.surface}
             </span>
             <span className="text-xs text-muted-foreground tabular-nums">
-              {count(r.questions)} questions
+              {questions(r.questions)}
               {r.questions > 0 && ` · ${percent(r.answered / r.questions)} answered`}
             </span>
           </div>
@@ -361,13 +366,13 @@ function Overview({
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Tile label="Questions" value={count(t.questions)} note={`${count(t.active_users)} people asked`} />
+        <Tile label="Questions" value={count(t.questions)} note={`${count(t.active_users)} ${t.active_users === 1 ? "person" : "people"} asked`} />
         <Tile
           label="Answered"
           value={percent(t.rates.answered)}
           note={t.partial ? `${count(t.partial)} only partly` : `${count(t.answered)} answers`}
         />
-        <Tile label="Not found" value={percent(t.rates.not_found)} note={`${count(t.not_found)} questions`} />
+        <Tile label="Not found" value={percent(t.rates.not_found)} note={questions(t.not_found)} />
         <Tile
           label="General knowledge"
           value={percent(t.rates.general_knowledge)}
@@ -391,7 +396,7 @@ function Overview({
         />
       </div>
 
-      <Panel
+      <Section
         title="Questions per day"
         description="By how each one ended. Partly answered questions count as answered."
         action={<ExportButton table="daily" {...range_} />}
@@ -402,22 +407,22 @@ function Overview({
             <ChartKey />
           </>
         ) : (
-          <Empty>No questions in these days yet.</Empty>
+          <Empty art="inbox">No questions in these days yet.</Empty>
         )}
-      </Panel>
+      </Section>
 
-      <Panel
+      <Section
         title="Quality trend"
         description="How often questions are answered, how people rate the answers, and answers with a figure their sources don't show."
       >
         {t.questions && report.quality ? (
           <QualityTrendView trend={report.quality} />
         ) : (
-          <Empty>No questions in these days yet.</Empty>
+          <Empty art="inbox">No questions in these days yet.</Empty>
         )}
-      </Panel>
+      </Section>
 
-      <Panel
+      <Section
         title="Where questions come from"
         description="The web chat, Slack, Teams, the browser extension, email, the API and other agents."
         action={<ExportButton table="surfaces" {...range_} />}
@@ -425,11 +430,11 @@ function Overview({
         {t.questions ? (
           <Surfaces rows={report.surfaces ?? []} />
         ) : (
-          <Empty>No questions in these days yet.</Empty>
+          <Empty art="inbox">No questions in these days yet.</Empty>
         )}
-      </Panel>
+      </Section>
 
-      <Panel
+      <Section
         title="Content gaps"
         description={
           report.logging.mode === "metadata"
@@ -439,7 +444,7 @@ function Overview({
         action={<ExportButton table="gaps" {...range_} />}
       >
         {report.gaps.length ? (
-          <div className="divide-y rounded-xl border">
+          <div className="divide-y overflow-hidden rounded-xl border bg-card">
             {report.gaps.map((g) => (
               <div key={g.id} className="flex flex-col gap-1.5 px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -447,7 +452,7 @@ function Overview({
                     {g.hidden ? "Questions about documents your role can't see" : (g.label ?? "Unnamed topic")}
                   </span>
                   <span className="text-xs text-muted-foreground tabular-nums">
-                    {g.size} questions · {g.not_found} not found · {g.general_knowledge} general knowledge
+                    {questions(g.size)} · {count(g.not_found)} not found · {g.general_knowledge} general knowledge
                   </span>
                 </div>
                 {!g.hidden && (onAddVerified || onDraftDoc) && (
@@ -478,11 +483,11 @@ function Overview({
             ))}
           </div>
         ) : (
-          <Empty>No gaps found yet. They're grouped once a week from unanswered questions.</Empty>
+          <Empty note="They're grouped once a week from unanswered questions.">No gaps found yet.</Empty>
         )}
-      </Panel>
+      </Section>
 
-      <Panel
+      <Section
         title="Most cited documents"
         description="The documents answers cited most in these days."
         action={<ExportButton table="sources" {...range_} />}
@@ -504,10 +509,10 @@ function Overview({
         ) : (
           <Empty>No answer cited a document in these days.</Empty>
         )}
-      </Panel>
+      </Section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Panel
+        <Section
           title="Never cited"
           description={`Searchable for over ${report.thresholds.never_cited_days} days and never cited: candidates to update or remove.${report.never_cited_count > report.never_cited.length ? ` Showing ${report.never_cited.length} of ${report.never_cited_count}.` : ""}`}
           action={<ExportButton table="never_cited" {...range_} />}
@@ -523,10 +528,10 @@ function Overview({
               ]}
             />
           ) : (
-            <Empty>Every document has been cited at least once.</Empty>
+            <Empty art="folder">Every document has been cited at least once.</Empty>
           )}
-        </Panel>
-        <Panel
+        </Section>
+        <Section
           title="Possibly stale"
           description={`Not changed in ${report.thresholds.stale_days} days but cited at least ${report.thresholds.stale_min_cited} times here: worth checking they're still right.`}
           action={<ExportButton table="stale" {...range_} />}
@@ -542,12 +547,12 @@ function Overview({
               ]}
             />
           ) : (
-            <Empty>No old document is cited often.</Empty>
+            <Empty art="folder">No old document is cited often.</Empty>
           )}
-        </Panel>
+        </Section>
       </div>
 
-      <Panel
+      <Section
         title="Connectors"
         description="How each connected source last synced."
         action={<ExportButton table="connectors" {...range_} />}
@@ -578,9 +583,9 @@ function Overview({
             ]}
           />
         ) : (
-          <Empty>No connectors yet. Uploaded files are counted above.</Empty>
+          <Empty art="plug" note="Uploaded files are counted above.">No connectors yet.</Empty>
         )}
-      </Panel>
+      </Section>
 
       <QuestionLogSettings
         key={`${report.logging.mode}-${report.logging.days}`}
@@ -610,24 +615,25 @@ export function InsightsView({
 }) {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <BarChart3 className="size-6" /> Insights
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Questions, answers and documents, in aggregate. No one's chats are shown here.
-          </p>
-        </div>
-        <Tabs panels={false} value={tab} onValueChange={(v) => onTabChange(v as InsightsTab)}>
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="not-found">Not found</TabsTrigger>
-            <TabsTrigger value="feedback">Feedback</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-      <div className="mt-6">
+      <ScreenHeader
+        icon={BarChart3}
+        title="Insights"
+        description="Questions, answers and documents, in aggregate. No one's chats are shown here."
+        actions={
+          <Tabs panels={false} value={tab} onValueChange={(v) => onTabChange(v as InsightsTab)}>
+            <TabsList variant="glass">
+              {INSIGHTS_TABS.map(([value, label]) => (
+                <TabsTrigger key={value} value={value}>
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        }
+      />
+      {/* A tab swap only fades (no slide); the panels inside don't blur, so this
+          wrapper's opacity can't trap a backdrop. */}
+      <div key={tab} className="mt-6 animate-in duration-(--dur-swap) fade-in-0">
         {tab === "overview" ? (
           <Overview canEdit={canEdit} onAddVerified={onAddVerified} onDraftDoc={onDraftDoc} />
         ) : tab === "not-found" ? (

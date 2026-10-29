@@ -1,8 +1,12 @@
 import { useState, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Loader2, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import { Bot, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
+import { AsciiEmptyState } from "@/components/ascii/ascii-empty-state"
+import { Panel } from "@/components/glass/panel"
+import { ScreenHeader } from "@/components/screen-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -70,6 +74,8 @@ const TONES: Record<Tone, string> = {
   detailed: "Detailed",
 }
 
+// One group of settings: the kit's Panel, with a line under its title saying what
+// the group does.
 function Section({
   title,
   description,
@@ -82,16 +88,9 @@ function Section({
   children: ReactNode
 }) {
   return (
-    <section className="min-w-0 rounded-2xl border border-border/70 bg-background p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        {action}
-      </div>
-      <div className="mt-4">{children}</div>
-    </section>
+    <Panel title={title} description={description} actions={action} className="min-w-0">
+      {children}
+    </Panel>
   )
 }
 
@@ -194,8 +193,7 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
               </FieldDescription>
             </Field>
             {changed && (
-              <Button type="submit" className="self-start" disabled={save.isPending}>
-                {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+              <Button type="submit" className="self-start" loading={save.isPending}>
                 Save
               </Button>
             )}
@@ -208,6 +206,7 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
         description="Saved as soon as you switch them."
       >
         <FieldGroup className="gap-4">
+          <AsciiDivider label="outside sources" />
           <SwitchRow
             id="as-wikipedia"
             label="Wikipedia"
@@ -232,6 +231,7 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
             disabled={!settings.allow_currency_server || save.isPending}
             onChange={(on) => save.mutate({ allow_currency: on })}
           />
+          <AsciiDivider label="answers" className="mt-2" />
           <SwitchRow
             id="as-steps"
             label="Show steps to everyone"
@@ -256,6 +256,7 @@ function SettingsForm({ settings }: { settings: AssistantSettings }) {
             disabled={save.isPending}
             onChange={(on) => save.mutate({ cross_lingual: on })}
           />
+          <AsciiDivider label="cache" className="mt-2" />
           <Field orientation="responsive">
             <FieldContent>
               <FieldLabel htmlFor="as-cache">Reuse recent answers</FieldLabel>
@@ -410,8 +411,7 @@ function TermDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="term-form" disabled={save.isPending}>
-            {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+          <Button type="submit" form="term-form" loading={save.isPending}>
             {existing ? "Save" : "Add term"}
           </Button>
         </DialogFooter>
@@ -442,9 +442,15 @@ function Glossary({ settings }: { settings: AssistantSettings }) {
       }
     >
       {settings.glossary.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No terms yet.</p>
+        <AsciiEmptyState
+          art="search"
+          size="sm"
+          headingLevel={4}
+          title="No terms yet."
+          description="Add an acronym or a product name, and the words people also use for it."
+        />
       ) : (
-        <ul className="divide-y divide-border/70 rounded-xl border border-border/70">
+        <ul className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70 bg-card">
           {settings.glossary.map((g) => (
             <li key={g.id} className="flex items-start gap-3 px-3 py-2.5 text-sm">
               <div className="min-w-0 flex-1">
@@ -495,10 +501,11 @@ export function AssistantView() {
   const { data: settings } = useQuery(queries.assistantSettings())
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
-      <h2 className="text-2xl font-semibold tracking-tight">Assistant</h2>
-      <p className="max-w-2xl text-sm text-muted-foreground">
-        How the assistant answers in this workspace. Changes apply to the next question.
-      </p>
+      <ScreenHeader
+        icon={Bot}
+        title="Assistant"
+        description="How the assistant answers in this workspace. Changes apply to the next question."
+      />
       <div className="mt-6 flex flex-col gap-6">
         {!settings ? (
           <>
@@ -511,7 +518,7 @@ export function AssistantView() {
             <Glossary settings={settings} />
             <Section
               title="Models"
-              description="Which AI provider answers, searches and checks questions in this workspace. Bring your own AWS to keep documents and questions in your own AWS account."
+              description="The providers and models that write the answers (people pick among the ones you enable, in the chat) and the one that searches your documents. Bring your own AWS to keep documents and questions in your own account, or search locally so documents never leave the server."
             >
               <ModelProviderSettings />
             </Section>

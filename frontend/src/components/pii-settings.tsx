@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AsciiDivider } from "@/components/ascii/ascii-divider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -83,7 +83,8 @@ export function PiiSettings({ settings }: { settings: AssistantSettings }) {
       }}
     >
       <FieldGroup className="gap-5">
-        <div className="overflow-hidden rounded-xl border border-border/70">
+        {/* A grid of checkboxes read like a table: opaque. */}
+        <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
           <div className="grid grid-cols-[1fr_repeat(3,3.25rem)] items-center gap-x-2 border-b border-border/70 bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground sm:grid-cols-[1fr_repeat(3,5.5rem)]">
             <span>Type</span>
             {COLUMNS.map((c) => (
@@ -94,7 +95,7 @@ export function PiiSettings({ settings }: { settings: AssistantSettings }) {
           </div>
           {Object.entries(settings.choices.pii_packs).map(([pack, entities]) => (
             <div key={pack} className="border-b border-border/70 last:border-b-0">
-              <p className="px-3 pt-2.5 text-xs text-muted-foreground">{PACKS[pack] ?? pack}</p>
+              <AsciiDivider label={PACKS[pack] ?? pack} className="px-3 pt-3 pb-1" />
               {entities.map((entity) => (
                 <div
                   key={entity}
@@ -173,8 +174,7 @@ export function PiiSettings({ settings }: { settings: AssistantSettings }) {
 
         <div className="flex flex-wrap gap-2">
           {changed && (
-            <Button type="submit" disabled={save.isPending}>
-              {save.isPending && <Loader2 className="animate-spin" data-icon="inline-start" />}
+            <Button type="submit" loading={save.isPending}>
               Save
             </Button>
           )}

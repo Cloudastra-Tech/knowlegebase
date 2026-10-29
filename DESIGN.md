@@ -2,49 +2,54 @@
 name: Knowledge assistant
 description: Cited answers from a company's own documents, behind its own sign-in.
 colors:
-  primary: "oklch(0.205 0 0)"
-  primary-foreground: "oklch(0.985 0 0)"
-  background: "oklch(1 0 0)"
-  foreground: "oklch(0.145 0 0)"
-  muted: "oklch(0.97 0 0)"
-  muted-foreground: "oklch(0.556 0 0)"
-  border: "oklch(0.922 0 0)"
-  ring: "oklch(0.708 0 0)"
-  destructive: "oklch(0.577 0.245 27.325)"
+  # dark is the default theme; light ("Paper") values follow in comments
+  background: "oklch(0.155 0.004 165)" # light: oklch(1 0 0)
+  foreground: "oklch(0.93 0.004 165)" # light: oklch(0.145 0 0)
+  card: "oklch(0.19 0.005 165)" # light: oklch(1 0 0)
+  popover: "oklch(0.205 0.005 165)" # light: oklch(1 0 0)
+  primary: "oklch(0.93 0.004 165)" # light: oklch(0.205 0 0)
+  primary-foreground: "oklch(0.17 0.005 165)" # light: oklch(0.985 0 0)
+  muted: "oklch(0.245 0.005 165)" # light: oklch(0.97 0 0)
+  muted-foreground: "oklch(0.72 0.008 165)" # light: oklch(0.556 0 0)
+  border: "oklch(1 0 0 / 9%)" # light: oklch(0.922 0 0)
+  ring: "{colors.signal}" # light: oklch(0.708 0 0)
+  signal: "oklch(0.82 0.15 160)" # light: oklch(0.52 0.12 160)
+  success: "oklch(0.8 0.14 158)" # light: oklch(0.52 0.12 158)
+  warning: "oklch(0.84 0.14 80)" # light: oklch(0.56 0.12 70)
+  destructive: "oklch(0.704 0.191 22.216)" # light: oklch(0.577 0.245 27.325)
 typography:
   display:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
     fontSize: "3.75rem"
     fontWeight: 600
     lineHeight: 1.05
     letterSpacing: "-0.025em"
-  headline:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "2.25rem"
-    fontWeight: 600
-    lineHeight: 1.11
-    letterSpacing: "-0.025em"
   title:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.5rem"
     fontWeight: 600
     lineHeight: 1.33
     letterSpacing: "-0.025em"
-  section:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1rem"
-    fontWeight: 500
-    lineHeight: 1.5
   body:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: 1.43
-  label:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+  reading:
+    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.9375rem"
+    fontWeight: 400
+    lineHeight: 1.7
+  eyebrow:
+    fontFamily: "Geist Mono, ui-monospace, monospace"
     fontSize: "0.75rem"
-    fontWeight: 500
+    fontWeight: 400
     lineHeight: 1.33
+  ascii:
+    fontFamily: "Geist Mono, ui-monospace, monospace"
+    fontSize: "0.6875rem"
+    fontWeight: 400
+    lineHeight: 1.15
 rounded:
   md: "8px"
   lg: "10px"
@@ -56,241 +61,464 @@ spacing:
   unit: "4px"
   gutter: "16px"
   panel: "20px"
-  card: "24px"
   section: "80px"
   section-lg: "112px"
-components:
-  button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.primary-foreground}"
-    typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-    padding: "0 10px"
-    height: "32px"
-  button-outline:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-    padding: "0 10px"
-    height: "32px"
-  button-outline-hover:
-    backgroundColor: "{colors.muted}"
-  button-secondary:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.primary}"
-    rounded: "{rounded.lg}"
-    height: "32px"
-  button-marketing:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.primary-foreground}"
-    rounded: "{rounded.full}"
-    padding: "0 24px"
-    height: "36px"
-  input:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-    padding: "4px 10px"
-    height: "32px"
-  tabs-list:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.muted-foreground}"
-    rounded: "{rounded.lg}"
-    padding: "3px"
-    height: "32px"
-  tabs-trigger-active:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-  panel:
-    backgroundColor: "{colors.background}"
-    rounded: "{rounded.2xl}"
-    padding: "{spacing.panel}"
-  auth-card:
-    backgroundColor: "{colors.background}"
-    rounded: "{rounded.xl}"
-    padding: "{spacing.card}"
-    width: "400px"
-  route-pass:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-  route-pass-resolved:
-    backgroundColor: "{colors.background}"
-  badge:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.primary-foreground}"
-    typography: "{typography.label}"
-    rounded: "{rounded.full}"
-    height: "20px"
+glass:
+  # dark fill; light ("Paper") in comments
+  pane: { blur: "8px", saturate: "160%", fill: "card at 30%" } # light: oklch(0.975) at 62%
+  chrome: { blur: "16px", saturate: "160%", fill: "card at 58%" } # light: white at 64%
+  floating: { blur: "12px", saturate: "160%", backdrop: "brightness(0.85)", fill: "popover at 60%" } # light: white at 62%, brightness(1.12)
+  subtle: { blur: "none", fill: "card at 72%" }
+motion:
+  ease-out-strong: "cubic-bezier(0.23, 1, 0.32, 1)"
+  ease-in-out-strong: "cubic-bezier(0.77, 0, 0.175, 1)"
+  ease-drawer: "cubic-bezier(0.32, 0.72, 0, 1)"
+  ease-hover: "cubic-bezier(0.25, 0.1, 0.25, 1)"
 ---
 
 # Design System: Knowledge assistant
 
 ## Overview
 
-**Creative North Star: "The Plain Ledger"**
+**Creative North Star: "Signal Glass"**
 
-Knowledge assistant looks like a well-kept ledger: white paper, graphite ink, hairline rules, and nothing on the page that can't account for itself. The palette is achromatic. Hierarchy comes from weight, size and the step between graphite and grey text, never from hue. That restraint is what lets the few things that carry meaning (a cited source, a resolved sign-in route, a red error) read instantly.
+A dark, quiet workbench. A slow ASCII field moves behind frosted glass chrome. One mint signal
+colour marks what is live, cited or focused. Answers are set on a calm, nearly opaque reading
+column where nothing moves. The ASCII appears where the machine is working (thinking, indexing,
+loading, empty) and stays out of where the person is reading.
 
-The system is shadcn/ui on the `radix-nova` style with a neutral base colour, set entirely in Plus Jakarta Sans. Density is moderate: 32px controls, 14px body text, 20px panel padding. Surfaces are flat and outlined by default; at most one element per screen is lifted with a soft, layered shadow, and it is always the thing you act on (the sign-in card, the chat composer, the landing page's product preview).
+The system is shadcn/ui (`radix-nova`, CSS variables) on Tailwind v4, with the tokens in
+`frontend/src/index.css`. Every shadcn variable keeps its name; Signal Glass adds `signal`,
+`success`, `warning`, the `glass-*` set, the `ascii-*` inks and the motion tokens.
 
-**The sign-in page is the one dark screen.** By the owner's choice it follows the Watermelon UI "auth-11" block: a split screen with a rounded photo panel on the left (large screens) and the form on the right, larger pill and 44px controls, a heading with one word in a light serif italic, and a staggered rise-in entrance (`motion`, honouring reduced motion). It gets there with the same tokens: the page root carries the `dark` class, so the `.dark` set in `index.css` applies there and nowhere else.
+Two registers share the tokens. The marketing register (landing, sign-in and the other auth
+pages) is always dark, with the ASCII brain, larger type, pill buttons and a serif italic accent.
+The working register (chat, knowledge, admin) uses 32px controls, 14px body text and one 24px
+title per screen.
 
-Two registers share the same tokens. The marketing register (landing page) uses larger type, pill-shaped buttons and generous 80–112px section spacing. The working register (chat, Integrations, Sign-in settings, Members, the sign-in page) uses 10px-radius controls, 24px screen titles and 16–24px rhythm.
+**Status.** Every screen is on Signal Glass: the tokens, the theme, print, the motion tokens,
+the shared ASCII loop, the primitives, the ASCII and glass kit, the shell, chat, the marketing
+and auth pages and every app screen. The values below are the ones in the code after tuning.
+The operator console and the browser extension get the tokens only.
 
-**Key Characteristics:**
-- Achromatic OKLCH neutrals; graphite primary on white.
-- One family, Plus Jakarta Sans, at weights 400 / 500 / 600; tight tracking on every heading.
-- Hairline borders at reduced opacity (`border` at 70%) do the structural work; shadows are rare and soft.
-- Rounded but not soft: 10px controls, 14px cards, 18px panels, pills reserved for marketing actions, badges and avatars.
-- Things that resolve show their answer in place (cited sources under an answer, the route pass under the email field).
+## Theme
+
+- **Dark is the default; Light ("Paper") and System are choices.** `next-themes`
+  (`main.tsx`) puts the `dark` or `light` class on `<html>`, so dialogs, menus and toasts, which
+  render into `<body>`, follow the theme. The choice is kept in `localStorage` (`theme`);
+  `public/theme-init.js` applies it before the first paint (the CSP allows no inline script).
+- **The marketing register is always dark**, whatever the choice.
+- **Reading on dark:** foreground is `oklch(0.93 …)`, never pure white; the ground is
+  `oklch(0.155 …)`, never black. Answers are 15px at line-height 1.7 and at most 68ch wide.
+- **Print is always light:** black on white. `@media print` resets the tokens and the `dark:`
+  variant never applies in print (`@custom-variant dark` sits inside `@media not print`).
+  Screen chrome carries `data-print="hide"`; scrolling boxes carry `data-print="flow"`.
+- The browser extension's side panel imports the same `index.css` and stays light. Its
+  `panel.css` lists the frontend files whose classes it needs (`@source`): `components/ui`
+  and the ASCII spinner that Button's `loading` draws.
 
 ## Colors
 
-A single graphite-and-white neutral ramp in OKLCH with zero chroma, plus one red for errors.
+One hue, **Signal mint** (`--signal`). It means *live, cited, focused or done*. It is the focus
+ring, the active marker, the citation and the ASCII accent. It is never a large fill, a primary
+button or body text. Primary stays achromatic: near-white ink on dark, graphite on light. The
+dark neutrals carry a faint 165° tint (chroma 0.004–0.006) that ties them to the mint without
+reading as colour.
 
-### Primary
-- **Graphite Ink** (`{colors.primary}`): default buttons, the user's chat bubble, the landing CTA band, avatar fallback, active-nav underline. Its hover is the same ink at 80% opacity rather than a second colour.
+| Token | Use |
+|---|---|
+| `background`, `card`, `popover` | the ground, raised surfaces, floating surfaces (dark: 0.155 / 0.19 / 0.205) |
+| `foreground`, `muted-foreground` | text; secondary text (descriptions, labels, inactive nav) |
+| `primary` / `primary-foreground` | the one strong action per area; near-white on dark |
+| `muted`, `accent`, `secondary` | rails, hovers, chips |
+| `border`, `input` | hairlines (9% and 14% white on dark) |
+| `ring` | focus; the signal on dark |
+| `signal` / `signal-foreground` | live, cited, focused, done |
+| `success`, `warning`, `destructive` | status; always with a glyph as well as the colour |
+| `chart-1` … `chart-5` | charts: signal first, then teal, grey-green, amber, grey |
+| `sidebar-*` | the app sidebar; `sidebar-primary` is the signal |
+| `ascii-ambient`, `ascii-field`, `ascii-ink`, `ascii-signal` | the app's background field (9% on dark, 5% on Paper), the landing field (16%), the brain (85%), its sparks |
 
-### Neutral
-- **Paper White** (`{colors.background}`): the page ground in the app and on the landing page; cards and panels sit on it at the same value and are separated by a border, not a fill.
-- **Near-Black Text** (`{colors.foreground}`): all primary text and headings.
-- **Fog** (`{colors.muted}`): tab rails, secondary buttons, outline-button hover, chips. At 30–50% opacity it is the sign-in page ground and the unresolved route pass.
-- **Slate Grey Text** (`{colors.muted-foreground}`): descriptions, labels, inactive nav, the muted half of the wordmark ("assistant").
-- **Hairline** (`{colors.border}`): every border and input stroke, usually drawn at 60–70% opacity (`border-border/70`, `border-border/60` on sticky headers).
-- **Focus Grey** (`{colors.ring}`): focus rings, drawn at 50% as a 3px halo.
-- **Paper Ink** (`{colors.primary-foreground}`): text on Graphite Ink.
+### Named rules
+**The One Signal Rule.** Emphasis comes from weight, size and the step between foreground and
+muted text. The signal marks state, never hierarchy. There is no second accent.
 
-### Error
-- **Signal Red** (`{colors.destructive}`): field errors, invalid input strokes and halos (at 20%), destructive buttons (as a 10% tint with red text, never a solid red fill).
+**The Status Token Rule.** Success is `success`, warning is `warning`, errors are
+`destructive`. Never raw Tailwind palette colours (`emerald-*`, `amber-*`, `blue-*`); there
+are none left in `frontend/src`.
 
-### Named Rules
-**The No-Hue Rule.** Structure, hierarchy and emphasis are carried by the neutral ramp alone. Colour enters only as a semantic signal (error) or as a third party's own mark (provider logos, integration brand colour on hover).
+**Contrast on the worst composite.** Check text contrast on glass at its lowest alpha over a field
+glyph at its highest alpha, not on the flat token.
 
-**Status colours are not yet tokens.** Success and warning states currently use raw Tailwind emerald and amber utilities in eight components. That is recorded drift, not a rule; see Do's and Don'ts.
+## Glass
 
-The `.dark` token set in `frontend/src/index.css` is defined and components carry `dark:` variants, but nothing in the app applies the `.dark` class, so the shipped product is light-only.
+Four tiers, as utilities in `index.css`. Never glass inside glass. The look is real blur over
+real content with one hairline: no glow, no coloured edge, no gradient.
+
+| Tier | Utility | Blur | Fill: dark / Paper | For |
+|---|---|---|---|---|
+| Pane | `glass-pane` | 8px, saturate 160% | card at 30% / oklch(0.975) at 62% | the app sidebar, open and as the rail; one `--glass-edge` hairline on its inner edge |
+| Chrome | `glass` | 16px, saturate 160% | card at 58% / white at 64% | the sticky screen strip (`ScreenStrip`), the phone top bar, the composer and the new chat's Recent chats card, the landing header and cards |
+| Floating | `glass-strong` | 12px, saturate 160%, what's behind dimmed to 0.85 (lifted to 1.12 on Paper) | popover at 60% / white at 62% | popovers, menus, selects, hover cards, tooltips, ⌘K, dialogs, sheets (the phone's sidebar too), toasts (no dim or lift: Sonner's own classes) |
+| Subtle | `glass-subtle` | none | card at 72% | panels and cards inside a screen |
+
+`glass-noise` adds static grain to a large glass surface; it never animates. The dialog, sheet
+and palette overlays are a plain 40% dim, so the floating glass above them frosts the screen.
+
+- **Something to frost.** The app's field (and the chat's) runs full-bleed, under the sidebar.
+  Its glyphs are dots and dashes, which a blur averages to nothing at the ambient ink, so it's
+  drawn at full ink and masked back to the ambient ink beside the sidebar (`ascii.css`): only
+  the pane sees the strong field, as a slow soft frost. The empty new chat's drift does
+  the same in its own way: it runs under the sidebar too, and its lines are drawn at full ink
+  under the pane, the composer and the Recent chats card, so all three frost a strong line
+  (`redacted-drift.tsx`, `data-drift`).
+- **Contrast** (on the worst realistic composite: blurred body text at 25% of its ink, or the
+  field at full ink): muted text is 6.0:1 or more on dark glass, foreground 12:1. On Paper the
+  muted text on glass is a step darker (`oklch(0.5)`; plain 0.556 is only 4.7:1 on white, and
+  any frost takes it under 4.5:1), which keeps it at 4.9:1 or more. A large solid patch
+  (a primary button) right under a menu's muted text can still take it under 4.5:1; "Reduce
+  effects" makes every tier solid for anyone who needs that.
+- **Fallbacks:** without `backdrop-filter`, under `prefers-reduced-transparency: reduce`, or with
+  the app's "Reduce effects" (`:root[data-effects="reduced"]`, set by `setEffects()` in
+  `lib/ascii-loop.ts`), every tier goes solid and `backdrop-filter` is `none` (not a 0px blur,
+  which is still a pass). Touch screens get 12px chrome. Print is solid.
+- **Budget, measured** (headless Chrome on the real GPU, an Intel UHD 620, 1280×800, dark; 5s of
+  wheel scrolling, 10s idle, 10s idle with the account menu open; the median of 3 runs). The
+  first pass had a 12px pane, rejected for the activity scroll:
+
+  | Screen, phase | Before (no blur on the sidebar) | Now | First pass, 12px pane |
+  |---|---|---|---|
+  | /chat, scrolling | 58 fps, p95 16.8ms, GPU 436ms/s | 59 fps, 16.7ms, 425 | 59 fps, 16.8ms, 533 |
+  | /chat, idle | 60 fps, 16.8ms, GPU 106 | 60 fps, 16.7ms, 49 | 60 fps, 16.7ms, 84 |
+  | /knowledge, idle | 60 fps, 16.8ms, GPU 153 | 60 fps, 16.7ms, 50 | 59 fps, 16.8ms, 62 |
+  | /admin/activity, scrolling (under the strip) | 60 fps, 16.7ms, GPU 813 | 60 fps, 16.8ms, 619 | **48 fps, 33.4ms**, 976 |
+  | any, a menu open 10s | 60 fps, GPU < 1 | 60 fps, GPU < 1 | 60 fps, GPU < 1 |
+  | "Reduce effects", idle | | 60 fps, GPU 0 to 0.3 | |
+
+  GPU busy time moves by half between runs on a laptop; the frame rate and p95 are the
+  steady signal.
+
+  So the cap is no longer a count of blurred surfaces: it's **one pane (the sidebar) at 8px,
+  plus the chrome pieces (16px) and one floating stack (12px)**. A pane blur over 8px over the
+  moving field, or a second large pane, is what to measure before adding. No full-viewport blur.
+  The app field runs at 12 fps and rests while scrolling and while a menu or dialog holds the
+  page, which is what keeps the glass above it cheap: with a menu open nothing re-blurs.
+- **The backdrop-root trap.** An ancestor with `opacity < 1`, `filter`, `mask`, `clip-path` or
+  `will-change` on those becomes the backdrop root, and the blur inside it stops seeing the page.
+  Never animate `opacity` on a wrapper that contains glass; animate the content inside it.
+- No `will-change: backdrop-filter` unless a trace shows the need.
+- Tables, form fields, dialog bodies and charts are never glass.
 
 ## Typography
 
-**Display Font:** Plus Jakarta Sans (with ui-sans-serif, system-ui, sans-serif)
-**Body Font:** Plus Jakarta Sans (same stack; `--font-heading` aliases `--font-sans`)
-**Label/Mono Font:** the system monospace, only for machine strings (error reference codes, IDs), with tabular numerals.
+**Sans:** Geist. **Mono:** Geist Mono. Both load from Google Fonts (`index.html`); the extension
+uses the system fonts. The light serif italic (the system serif) is marketing-only: one phrase in
+a landing, sign-in or auth heading.
 
-**Character:** A single geometric-humanist sans used at three weights. Headings get their authority from semibold weight and tight tracking, not from a second typeface.
+| Role | Spec |
+|---|---|
+| Screen title | Sans 600, 24px, tracking −0.025em, `text-balance`; one per screen, an `h2` (the e2e specs wait for it) |
+| Breadcrumbs | Sans 14px, muted, the page itself in the foreground; lucide `ChevronRight` separators (see "Breadcrumbs") |
+| Section label | Mono 12px with a rule: `── providers ─────────` |
+| Body / UI | Sans 400, 14px / 1.43 |
+| Reading (answers, passages, shared chats) | Sans 400, 15px / 1.7 (`text-reading`), at most 68ch, `text-pretty`. Never mono, never over moving ASCII |
+| Figures | `tabular-nums` for counts, timestamps, IDs, key prefixes |
+| ASCII art | Mono 11px / 1.15 (`text-ascii`), `select-none`, `aria-hidden` |
+| Kbd | Mono 12px |
 
-### Hierarchy
-- **Display** (600, 2.25rem on phones to `{typography.display}` 3.75rem at `sm`, line-height 1.05, tracking tight): the landing hero headline only. Its second clause is set in Slate Grey Text.
-- **Headline** (600, 1.875rem on phones to 2.25rem, up to 3rem for one landing section, tracking tight): landing section titles and the closing CTA band.
-- **Title** (600, 1.5rem, tracking tight): one per screen. App screen titles (Integrations, Sign-in settings, the empty chat), and the sign-in card's heading.
-- **Section** (500, 1rem): titles of bordered panels inside a screen (Members, a sign-in settings section).
-- **Body** (400, 0.875rem, line-height 1.43): the workhorse; nearly every sentence in the app. Inputs render at 1rem on phones (to stop iOS zoom) and 0.875rem from `md`. The landing hero lede is the one 1.125rem paragraph.
-- **Label** (500, 0.75rem): segment labels in the route pass, helper footnotes, the "Other ways to sign in" trigger, badge text. Usually Slate Grey Text.
+**The Tight Heading Rule.** Semibold headings use tight tracking and `text-balance`; body text
+never does. **No off-scale sizes:** `text-reading` and `text-ascii` are the only additions to
+Tailwind's scale. `cn()` (`lib/utils.ts`) knows them as font sizes, so they survive next to a
+text colour; import `cn` from there, never from the `cn` package itself (the shadcn CLI writes
+`from "cn"` into new primitives: change it).
 
-### Named Rules
-**The Tight Heading Rule.** Every semibold heading uses tight tracking (-0.025em) and `text-balance`; body text never does.
+## ASCII
 
-**The Muted Half Rule.** The wordmark and the hero headline split into a foreground half and a Slate Grey half. Emphasis by subtraction, not by colour or size.
+| Place | What | Motion |
+|---|---|---|
+| App background | one fixed field, full-bleed: under the sidebar at full ink (`--ascii-backdrop`) for its glass to frost, and beside it at `--ascii-ambient` (the mask's `--ascii-beside`), at that strength out to 36rem from the content's centre (the widest screen's edge, so the sides read as ASCII at 1280), fading to 15% by 26rem in, under the content; 15% everywhere on a phone. The chat draws its own the same way (`chat-backdrop.tsx`, 22% under the reading column, a mint glow while thinking) | 12 fps; rests while scrolling, under a dialog, offscreen, in a hidden tab; still with reduced motion or "Reduce effects" |
+| Thinking | a braille spinner plus a status line that decodes on change | 80ms frames; decode ≤ 240ms |
+| Inline loading | an ASCII spinner in place of `Loader2` | 80ms `steps()`; a static `•••` with reduced motion |
+| Empty states | 6–14 rows of hand-drawn art with real text beside it (not in Settings: there, a lucide icon) | one scan or blink, no faster than every 2s |
+| The empty new chat | "Redacted drift" (`redacted-drift.tsx`), in the chat field's place, fixed to the window (under the sidebar too, as the chat's field is), top to bottom: lines of made-up records 42–60px apart (7.5% of the height), one through the composer's middle, at three depths (8–12% of the text colour), redacted (`▪▪▪ · ░░`, word lengths kept) except in a zone round the composer, where the blocks are lighter and about every 8s one line decodes (faint mint on dark, grey on Paper), going round the lines. What sits over the art says so with `data-drift`: under words (the heading, the starters, the key hint, the fine print: `content`, `quiet`) the lines are drawn at 30%, so the words always read; under glass (`composer`, `glass`: the composer, the Recent chats card) and under the sidebar's pane at full ink (64–96% of the text colour), since a blur averages faint dashes to a flat tone: the glass, not a faded line, keeps the words on it readable. Nothing reads under either: no decode, no lens. With a mouse, a soft reading lens (about 100px round the pointer, 84px under 640px) resolves the cells inside into the line's own record through a 170ms scramble, at most 42% of the text colour (48% on Paper) with a soft rim, and closes them again (150ms) as it moves on. A click on blank space on or near a line (within 30px; a tap takes the nearest) decodes the whole line outwards from it, readable for 8s, with one faint ring that only fades (380ms). The page says one heading and the composer; who you search as and the logging notice are the one line at its foot | 30 fps on the ambient budget, 10–20 px/s; focus or typing slows it to 30% and draws near lines 4–8px in; the lens follows the pointer with a 60ms lerp, fine pointers that hover only; the pointer is read on the chat column (the canvas takes no events) into the scene, never React state, and a press on blank space keeps the focus where it is; fades out in 400ms when the first question is sent; a still frame with one line readable with reduced motion or "Reduce effects", where the lens and clicks do nothing. Only ever the made-up records. Never on a saved chat or a shared one |
+| Section headers, timelines, progress | box-drawing rules, `├─` rows, `[██████░░░░] 62%` | static |
+| Streaming cursor | `▌` in signal | 1s blink; steady with reduced motion |
+| Landing and sign-in | the brain, the field, the ticker | 30 fps |
+
+**Never** under or inside: answer and passage text, markdown tables, the draft editor, dense
+tables, form fields, dialog bodies, charts, chat-history rows, toast text, print. All art is
+`aria-hidden` with real text beside it.
+
+## Motion
+
+Tokens in `index.css` (and `lib/motion.ts` for Motion):
+
+- **Curves:** `ease-out-strong` (enter, exit, feedback), `ease-in-out-strong` (movement on
+  screen), `ease-drawer` (sheets, the sidebar), `ease-hover` (colour and background).
+- **Durations:** press 120ms, hover 150ms, tooltip 140ms, popover 180/120ms, dialog 220/150ms,
+  sheet 280/200ms, screen 200ms, swap 150ms, reveal 240ms; used as `duration-(--dur-popover)`.
+  The chat adds Jump to latest 150/100ms, a step line 180ms, the steps folding 250ms and a
+  citation chip resolving 160ms; an answer's sources stagger 30ms (`--stagger-sources`).
+- **Distances:** `--enter-y` 6px, `--enter-scale` and `--press-scale` 0.97. All zero under
+  reduced motion.
+- **Stagger:** 40ms apart, at most 6 items, first mount only: `useStaggerOnce(ready)` in
+  `lib/motion.ts` gives each item its class and delay for the first draw, then nothing, so a
+  refetch, a filter or a new item doesn't animate (the Integrations and My connections grids).
+  Never on tables or lists read closely.
+
+| Interaction | Rule |
+|---|---|
+| Anything from the keyboard (⌘K, ⌘B, shortcuts, tab arrows) | **Never animates.** Call `markInstant()` first; `:root[data-instant]` turns off transitions and animations on `[data-screen]` and `[data-slot]` for two frames |
+| Press | `scale(var(--press-scale))`, 120ms `ease-out-strong`; not on menu triggers |
+| Hover | colour and background only, 150ms; custom CSS hovers sit inside `@media (hover: hover) and (pointer: fine)` |
+| Tooltip | 140ms fade and scale from its origin; none when Radix opens it instantly |
+| Popover, menu, select | 180ms in / 120ms out, origin-aware |
+| Dialog | 220ms in / 150ms out, from the centre |
+| Sheet | full-edge slide, 280 / 200ms, `ease-drawer` |
+| Screen change | content rises `--enter-y` with a fade on non-glass children, 200ms; no exit |
+| New chat → first question | the empty chat is centred: the heading and the composer in the middle of the column, the recent chats under them. Sending moves the composer down to its place in one transform (FLIP, `reveal` 240ms, `ease-out-strong`), at once with reduced motion or "Reduce effects"; the heading and the sections go at once. Opening a saved chat or New chat changes the layout without moving anything |
+| Chat | a question just sent is pinned to the top and its answer grows below it; nothing scrolls while it streams, and "Jump to latest" is instant with reduced motion. New messages rise 6px; history never animates (a chat opened from history shows Jump to latest without its entrance until it's scrolled or asked in); citations stagger once on completion |
+| Toast | Sonner's own motion |
+
+**Reduced motion is "fewer and gentler":** movement goes, fades that help understanding stay.
+tw-animate's translate and scale are zeroed, smooth scrolling is off, sheets fade, staggers
+collapse, and every ASCII piece draws one still frame. `MotionConfig reducedMotion="user"` wraps
+the app.
+
+**Which tool:** CSS (transitions, tw-animate `data-state` classes) for every Radix primitive,
+hover, press, screen entrance, spinner and shimmer. Motion (`motion/react`) for React-state
+animation that must be interruptible or needs presence, with `transform` strings while text
+streams and no `layoutId` in the shell. `lib/ascii-loop.ts` for every ASCII frame, never CSS or
+Motion.
+
+Never: `transition-all`, `ease-in` on its own, `scale-0` or `zoom-in-0`, `animate-pulse` for
+loading, an animation that blocks a click.
+
+### The ASCII loop (`lib/ascii-loop.ts`)
+
+- **One `requestAnimationFrame`** for every subscriber (`subscribe(el, draw, { fps, still,
+  priority })`, `useAsciiLoop`, and the original `runLoop`). It is idle when nothing is visible.
+- **Caps:** landing hero 30 fps, sign-in panel 24, ticker 30, the app field 12, spinners 12.5,
+  the empty chat's drift 30 (ambient: it rests and steps down like the field).
+- **Rests** offscreen (IntersectionObserver), in a hidden tab, and, for the app field
+  (`priority: "ambient"`), while the page scrolls (150ms) and while a dialog holds the page
+  (Radix's `data-scroll-locked` on `<body>`); `pauseFor(ms)` rests it on demand.
+- **Still frame** with reduced motion or `setEffects("reduced")`, following a change live.
+- **Budget:** the app's pieces (the field, spinners, the thinking line) get 4ms of drawing per
+  frame between them. When the 95th percentile of 30 drawn frames is over, the field steps down
+  to 6 fps, then still; under 2ms it steps back up, and a still field tries moving again after
+  10s (doubling, up to 160s, each time it has to stop again). The landing's hero gets 8ms: it is
+  alone on its page, and a lower frame rate can't make a draw cheaper. Past 8ms it runs at 20
+  fps until draws are under 6ms. A piece's first 10 frames don't count. In development it warns
+  once when frames overrun three in a row.
+- **Fonts:** measure the cell with `whenFontsReady(el)`; measured earlier it is the fallback
+  font's. Re-measure on resize.
 
 ## Layout
 
-- **Base unit:** 4px (Tailwind spacing). Page gutter is 16px (`px-4`) at every width.
-- **Containers:** 1152px (`max-w-6xl`) for the sticky header and landing sections; 1024px (`max-w-5xl`) for settings screens (Integrations, Sign-in settings); 768px (`max-w-3xl`) for the chat column and composer; 400px for the sign-in card. Running prose inside a container is capped near `max-w-lg` to `max-w-2xl`.
-- **Header:** sticky, 48px in the app and 56px on the landing page, translucent white (`background/80`) with `backdrop-blur-md` and a 60% hairline underneath. The page never scrolls sideways: on phones the app's screens are one menu named after the open screen, between `sm` and `xl` the screens past Chat and Knowledge (past the first five from `lg`) go under More (`components/app-nav.tsx`), and a long row of in-content tabs (Access) becomes a Select below `sm`.
-- **Rhythm:** app screens pad 24px top and bottom (`py-6`); panels pad 20px; the sign-in card pads 24px; form fields stack at 20px (`FieldGroup`) and tighten to 12–16px inside a single form. Landing sections breathe at 80px, 112px from `sm`.
-- **Sign-in page:** a centred column on a Fog ground at 50%. Wordmark top-centre, the card at roughly 9vh below, the "By Cloudastra." sign-off pinned to the bottom.
-- **Breakpoints:** Tailwind defaults; `sm` (640px) is where most two-up and inline layouts switch on, `md` (768px) reveals the landing nav, `lg` (1024px) splits the hero into two columns.
-
-## Elevation & Depth
-
-Hybrid, flat by default. Panels, tiles and integration cards are outlined in a 70% hairline with no shadow. A soft, two-layer, low-opacity shadow lifts exactly one element per screen: the element the visitor acts on next. Menus and dialogs keep shadcn's stock `shadow-md` / `shadow-lg`, and the active tab gets `shadow-sm`.
-
-### Shadow Vocabulary
-- **Auth card** (`box-shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 12px 32px -12px rgb(0 0 0 / 0.14)`): the sign-in / create-workspace card. It has no border; the shadow alone separates it from the Fog ground.
-- **Composer rest** (`box-shadow: 0 2px 20px -6px rgba(0,0,0,0.12)`) and **Composer focus** (`box-shadow: 0 4px 28px -8px rgba(0,0,0,0.2)`): the chat input, which deepens on focus alongside its border darkening to foreground at 25%.
-- **Showcase** (`box-shadow: 0 20px 60px -24px rgba(0,0,0,0.25)`): the landing page's product preview.
-
-### Named Rules
-**The One Lifted Thing Rule.** A screen gets at most one custom shadow, and it goes on the primary interaction surface. Everything else is a bordered, flat plane.
+- **Base unit:** 4px. Page gutter 16px at every width. No sideways scrolling at 390px.
+- **Containers:** 1152px (`max-w-6xl`) for the landing; 1024px (`max-w-5xl`) for
+  settings screens; 768px (`max-w-3xl`) for the chat column; 68ch for reading text.
+- **Shell:** no top bar in the app (see "App sidebar"); a 48px top bar on a phone; the
+  landing's header is sticky, 56px.
+- **Rhythm:** screens pad 24px top and bottom; panels pad 20px; fields stack at 20px. Landing
+  sections breathe at 80px, 112px from `sm`.
 
 ## Shapes
 
-The radius scale derives from one base, `--radius: 0.625rem` (10px), multiplied: `{rounded.md}` 8px (0.8x), `{rounded.lg}` 10px, `{rounded.xl}` 14px (1.4x), `{rounded.2xl}` 18px (1.8x), `{rounded.3xl}` 22px (2.2x).
-
-- **10px** for anything you click or type into: buttons, inputs, tab rails, the route pass, inline notes and callouts.
-- **8px** for tab triggers nested inside a 10px rail (inner radius smaller than outer).
-- **14px** for the sign-in card and the dashed inner frame of the landing data-flow diagram.
-- **18px** for app panels, integration cards, landing feature tiles, chat bubbles and skeleton placeholders standing in for panels.
-- **22px** for the chat composer and the landing CTA band, the two largest single surfaces.
-- **Full pill** for badges, avatars, status dots, filter chips, the model picker and every landing-page button.
-
-Borders are 1px, drawn at reduced opacity. Dashed borders appear once, to mark a boundary ("Inside your infrastructure") rather than a container.
+`--radius` is 10px; the scale multiplies it: 8px (tab triggers in a rail), 10px (anything you
+click or type into), 14px (cards, the sign-in card), 18px (app panels, chat bubbles), 22px (the
+composer, the landing CTA band), full pill (badges, avatars, status dots, chips, landing buttons).
+Borders are 1px hairlines.
 
 ## Components
 
-### Buttons
-Quiet and solid; they darken by fading, not by changing colour.
-- **Shape:** gently rounded (10px), 32px tall by default, 28px `sm`, 36px `lg`; icon-and-label gap 6px.
-- **Primary:** Graphite Ink fill, Paper Ink text, 14px medium. Hover drops to 80% opacity.
-- **Outline:** white fill, Hairline border; hover fills Fog. Used for every "Continue with <provider>" and for secondary actions next to a primary.
-- **Secondary:** Fog fill, ink text; hover mixes 5% foreground into the fill. Used when a primary already exists above it (the password form under email-first sign-in).
-- **Focus / Active:** border turns Focus Grey with a 3px halo at 50%; pressed buttons nudge down 1px. Disabled is 50% opacity.
-- **Marketing pill:** the landing page reuses the same variants with a full pill radius and wider padding (24px at `lg`).
-- **Loading:** a spinning Lucide `Loader2` replaces the leading icon; the label stays.
+- **Controls** are the shadcn primitives in `frontend/src/components/ui` (`Button`, `Input`,
+  `Textarea`, `InputGroup`, `Select`, `Field`, `Tabs`, `Badge`) and the app's own pickers
+  (`components/date-picker`, `components/month-range-picker`). Never a raw `<input>`,
+  `<select>`, `<textarea>`, or a native date or month input. A missing primitive comes from the
+  shadcn CLI.
+- **Buttons:** 32px (28 `sm`, 36 `lg`), 10px radius. Primary is near-white ink on dark. Focus is
+  the signal ring. Variants: `default`, `outline`, `secondary`, `ghost`, `destructive`, `link`,
+  and `glass` (a secondary action sitting on glass: the subtle fill and a hairline highlight).
+  `loading` makes it busy and disabled with the ASCII spinner before the label; the label says
+  what's happening ("Saving…"). Transitions name their properties (colour, background, border,
+  shadow, transform), 120ms; press scales to `--press-scale`.
+- **Badges:** pill, 20px. `mono` (states and roles: live, soon, admin; mono on a hairline),
+  `signal` (live, cited, done: signal text on a faint signal tint) and `warning` (a flag on a
+  row, such as Knowledge's mono `!` on an item the scan found instructions to an AI in: warning
+  text on a warning hairline, with the words in an `sr-only` span and the tooltip), besides
+  shadcn's own.
+- **Cards:** `variant` `default` (opaque card, glass hairline), `glass` (the chrome tier) or
+  `subtle` (`glass-subtle`).
+- **Tabs:** `default`, `line`, and `glass` (a translucent rail with one sliding thumb, instant
+  from the keyboard). `panels={false}` for tabs used as a switch (a filter, a URL per tab).
+- **Panels:** 18px radius, hairline, 20px padding, `glass-subtle` in the redesigned screens.
+  `description` is the muted line under the title, across the panel's width; it also describes
+  the region. Don't fake it with a first child and a negative margin.
+- **Tables:** opaque (`bg-card`), solid sticky header, `tabular-nums`, no stagger, no glass;
+  `TableCell mono` for IDs and timestamps.
+- **Toasts:** Sonner on the strong glass tier, the status as a mono glyph in its token colour
+  (`✓ i ! ×`), the ASCII spinner for loading. No `richColors`.
+- **Switch, Toggle:** colour, background, border and shadow transitions only, 150ms.
+- **Route pass** (sign-in): as a work email is typed, a strip under the field resolves the
+  workspace, the sign-in method and where roles come from; `aria-live="polite"`, debounced 350ms;
+  values rise in 300ms, motion-safe only.
+- **App sidebar** (`app-sidebar.tsx`, on the shadcn `Sidebar` with `collapsible="icon"`): one
+  left sidebar on every signed-in screen, no top nav. 260px open: the wordmark and the
+  collapse button, New chat and Search chats (the palette with chats alone), the space, the
+  screens, the Admin group, the chats (scrolling on their own), the index status and the
+  account (avatar, name, workspace, role badge). The account menu is short, as ChatGPT's
+  and Claude.ai's: a head with the name, email and workspace; Settings; View as (HR and
+  admin accounts); Appearance (the theme, Reduce effects); Keyboard shortcuts (not on a
+  phone); Sign out. View as and Appearance are portalled submenus, in the menu itself on a
+  phone. It opens as every menu does, nothing more: it's opened tens of times a day.
+  Spaces is the workspace's, not the account's: the space switchers' Manage spaces goes
+  there. Collapsed, a 56px rail
+  of icons with tooltips that never goes away (kept in `localStorage` `kb.sidebar`; ⌘B at
+  once, the button slides the panel 200ms `ease-drawer` while the reserved width snaps). On a
+  phone, a sheet from the left behind a 48px top bar (menu, the screen's name, New chat).
+  The sidebar is the pane glass (`glass-pane`) over the field, open and as the rail, with one
+  hairline (`--glass-edge`) on its inner edge; the phone's sheet is the floating tier.
+  Hover is a soft background; the open screen a soft background and its icon in the signal.
+  Never an edge bar or stripe. The index progress is a 2px signal line along the top of the
+  content; the strips (trial, support, deletion) sit above the screen.
+- **New chat home** (`chat-home.tsx`, under the composer on the empty new chat, as on
+  Claude.ai): one column, the composer's width and left edge, on an 8px rhythm. Someone with
+  chats sees Recent chats, the last five (four on a phone), in one glass card (the chrome tier, as the composer): a
+  small muted label with View all (Search chats) as a quiet ghost button in its row, then
+  rows of a Lucide chat icon, the title and how long ago (muted, tabular, on the right), a
+  soft background on hover. Someone without chats sees the starter questions instead, as
+  quiet left-aligned chips (and, on a first run, where they come from and the sample
+  handbook), drawn only once the chats are in so they never show and then go. No Spaces or
+  Folders: the composer's space chip and the sidebar have them. The keys ("Enter to send…",
+  "Esc to stop") are a small line under the composer, on its inner left edge, only while it's
+  focused and empty or an answer is being written; the row keeps its height. Who you search
+  as and the logging notice are one muted line at the foot of the page, on the same left
+  edge, clear of a phone's home bar. The space under the composer is shared 1 : 1.45 with
+  the space above the heading, so the composer sits a little above the middle; at 1366 × 728
+  everything fits without scrolling, and the recent chats scroll on their own if they
+  don't.
+- **Landing** (`landing-page.tsx`, `landing-visuals.tsx`): the hero (the brain, the ticker),
+  then four sections that each show one thing only this product does: an answer with
+  its sources (`ChatDemo`), an access rule at work (`AccessDemo`), where the model runs and
+  what the question log keeps (`QuestionLog`: an email scrambles into `[REDACTED_EMAIL]`,
+  the mask `pii.py` really writes), and the connector list from `connectors/registry.py`
+  with its marks, grouped. Then one closing band. No eyebrows, no icon-tile grids, no
+  marquees; the serif phrase is in the hero only. The demos cycle only on screen, stop
+  cycling once someone picks a tab, and show their end state with reduced motion or
+  "Reduce effects".
+  Each section explains itself with one piece of ASCII motion, all on the shared loop
+  (scenes are functions of its clock; text and attributes are written only when they
+  change, never React state per frame; a finished scene `rest()`s): the hero's card types a
+  question while redacted fragments stream into the brain's own grid (`BrainOverlay`),
+  two passages decode and the answer assembles with `[1] [2]`, then rests 6.5s
+  (`landing-hero.tsx`); the chat demo's cursor reads a column of passages and the cited
+  ones lock in; the access demo decodes what each person may open character by
+  character and the answer re-forms through a scramble; the model's route is a box
+  diagram with packets (`▪` document text, `?` a question, `¶` quoted passages) whose
+  search box docks under the server when search runs there (`ascii/route.ts`); the
+  connectors are a real list joined to one index by lines that only flow inward, and
+  hovering or focusing one lights its line and an example sync line
+  (`ascii/network.ts`); the closing heading resolves out of redaction blocks once over a
+  still field. Diagrams draw through `ascii/glyph-grid.ts` (a cell-diffed canvas whose
+  atlas draws box-drawing characters as lines). Picked from the keyboard, a tab's new
+  state is instant.
+- **Settings** (`components/settings/*`, `lib/settings-sections.ts`): everything
+  personal, one URL per section, `/settings/<section>`: General (profile, appearance),
+  Chats (retention and sharing; an admin viewing as HR changes them), Connections,
+  Prompts, Digests, API keys, Billing (whoever sees Plan & billing), Security (Sign out
+  everywhere, with a confirm). From md up, a 176px column of quiet links (ghost buttons;
+  the open one `secondary`) beside the section; on a phone `/settings` is a list of rows
+  and each section a page, its name the `h2`. The old addresses (`/prompts`, `/api-keys`,
+  `/digests`, `/connections`, `/billing`) redirect with their query. A section is a head
+  (`h3`, one muted line, the one primary action) over groups of rows (`SettingsGroup`,
+  `SettingsRow`) or a list (`SettingsList`: an icon tile, the name, a muted line, the
+  actions in a `…` row menu, destructive ones after a separator and a confirm). Loading is
+  rows of `Skeleton` shaped like the rows coming; an error says what failed and offers Try
+  again. Switching sections is instant: no slide, no fade.
+- **Empty states in Settings** (`SettingsEmpty`, on shadcn's `Empty`): a lucide icon in a
+  muted tile, a short title, one sentence on what this is and why, the one action, and
+  optionally "For example" with what one looks like (a saved prompt, a digest). A dashed
+  hairline, no art, no glow. It fades in once, 150ms, opacity only.
+- **Kit:** `/__kit` (development only) shows every piece in either theme over the app's field;
+  `/__kit?view=backdrop` is the field alone behind a plain screen, for a performance trace.
+- **Screen shell:** `ScreenHeader` (breadcrumbs, the `h2`, description, actions) and `Panel`
+  (`subtle` by default; `glass` straight on the field; `solid` for reading and tables).
+  `GlassPanel` is a bare surface of one tier. `ScreenStrip` (in `Screen`, from 768px): once
+  the `h2` has scrolled under the top, a 44px chrome-glass strip with the title fades in
+  (150ms) over the content scrolling beneath it, lined up with the title; `aria-hidden`,
+  since the `h2` is the title.
+- **Breadcrumbs** (`components/breadcrumbs.tsx` on shadcn's `Breadcrumb`; the model is
+  `lib/breadcrumbs.ts`, one for every screen, from the URL plus what the screen passes:
+  a space's name, its open tab, a draft's title). Over every screen's title: the sidebar's
+  screen first (`Spaces › Marketing team › Sources`, `Access › Webhooks`, `Insights › Not
+  found`, `Documents › Drafts › Q3 handbook`), a settings section under `Settings`
+  (`Settings › API keys`; `← Settings` on a phone). `<nav aria-label="Breadcrumb">` with an `<ol>`; every
+  ancestor a router link (instant, `markInstantNav`; the chat stays as it was), the page
+  plain text with `aria-current="page"`. Hover underlines; no background, no edge. Middle
+  crumbs truncate at 12rem; past three crumbs the middle fold into a `…` menu. A tab with
+  its own URL (Access, Insights, a space's `?tab=`) is the last crumb, and the tab bar
+  stays. On a phone a detail view (a space, a draft, a shared chat) shows `← Spaces`, its
+  logical parent (never history), in their place. The chat's header is `All company ›
+  title` or the space's name, the space from `sm` up.
+- **ASCII pieces** (`components/ascii/*`): `AsciiField`, `AppBackdrop`, `AsciiSpinner` (for
+  `Loader2`), `AsciiThinking`, `ScrambleText`, `AsciiEmptyState`, `AsciiDivider`,
+  `AsciiProgress`, `AsciiLoader`, `RedactedDrift` (the empty chat; the composer's focus and
+  typing reach it through `composer-signal.ts`, not React state). New fields draw on canvas: axe weighs `aria-hidden` text on
+  contrast too, and a dim `<pre>` with nothing over it fails. Art in empty states uses the full
+  `muted-foreground` for the same reason.
+- **Glass pieces** (`components/glass/*`): `Panel`, `GlassPanel`, `StatusDot` (live, syncing,
+  warning, error, off; a ping ring only for live, motion-safe; the state in words beside it).
+- **Motion helpers** (`lib/motion.ts`): `ease`, `dur`, `spring` and `stagger` mirror the CSS
+  tokens for Motion; `useStaggerOnce`; `markInstant()` before a keyboard-driven navigation;
+  `usePrefersReducedMotion()` for what JS decides (a scroll's `behavior`).
+- **Reduce effects** is kept in `localStorage` (`effects`) and applied before the first paint
+  by `theme-init.js`.
 
-### Chips / Badges
-- **Badge:** full pill, 20px tall, 12px medium text. Default is Graphite Ink; outline variant is a hairline pill with muted text (the landing hero's claim pill).
-- **Chips:** Fog pill, 12px text, used for selected folders and filters in Integrations.
+## Checks
 
-### Cards / Containers
-- **Panel (app):** 18px radius, white, 70% hairline, 20px padding, section title at 16px medium. No shadow.
-- **Auth card:** 14px radius, white, no border, the Auth card shadow, 24px padding, 400px wide.
-- **shadcn Card:** 14px radius with a 10% foreground ring and 16px internal spacing, where the stock primitive is used.
-
-### Inputs / Fields
-- **Style:** 32px tall, 10px radius, Hairline stroke, transparent fill, 10px horizontal padding.
-- **Focus:** stroke turns Focus Grey plus a 3px halo at 50%.
-- **Error:** stroke turns Signal Red with a 20% red halo; the `FieldError` line below is 14px red. Labels sit 8px above the input; descriptions are 14px Slate Grey.
-- **Disabled:** 50% opacity on a faint input-tinted fill.
-- Fields are the shadcn `Field` / `FieldLabel` / `Input` stack. Two older screens still carry bare native controls (the chat composer's `<textarea>`, an `<input>` in the docs view); they are exceptions, not the pattern.
-
-### Navigation
-- **App header:** text-only tabs at 14px, Slate Grey at rest, foreground on hover and when active. The active tab carries a 1px foreground underline flush with the header's bottom edge. Account and model controls sit at the right as a ghost pill and a 28px avatar.
-- **Landing header:** wordmark, 24px-spaced text links in Slate Grey (hover foreground), and a pill "Sign in" button.
-- **Tabs (in-content):** a Fog rail with 3px padding; the active trigger becomes a white 8px chip with `shadow-sm`.
-
-### Route pass (signature)
-The sign-in surface's signature move: as a visitor types a work email, a strip directly under the field resolves the domain and says, before they leave the page, which **Workspace** they are entering, what they will **Sign in with**, and where their **Roles** come from.
-- **Frame:** 10px radius, Hairline border, Fog at 40% fill, 14px text.
-- **Idle:** a single muted hint line ("Type your work email to see your workspace and how you'll sign in.").
-- **Looking:** three segments, each with a 12px Slate Grey label and a Skeleton bar where the value will land.
-- **Resolved:** the frame turns white and its border darkens to foreground at 15%. Values appear in 14px medium with a 300ms fade-and-rise (motion-safe only); the method segment carries the provider's own mark at 14px. The primary button below rewrites itself to "Continue with <method>" and takes the same mark.
-- **No workspace:** the strip becomes a short sentence ("acme.com doesn't have a workspace here yet.") and, when sign-up is on, a small outline button that carries the suggested name into the Create a workspace tab.
-- **Layout:** three columns (1fr / 1.3fr / 1fr) split by hairline dividers from `sm`; on phones the segments stack as label-left, value-right rows divided horizontally. Values truncate with a title tooltip on phones and clamp to two lines from `sm`.
-- **Accessibility:** the strip is an `aria-live="polite"` region; lookup is debounced 350ms and failure degrades to "Continue still works."
-
-### Numbered steps
-Used in Create a workspace: a 24px outlined circle with a 12px medium tabular numeral in Slate Grey, beside a 14px medium step title and a 14px muted description. The first step can hold its own input inline.
+- `frontend/e2e/motion.spec.ts`: the app field's canvas doesn't change over 1s with reduced
+  motion (and moves again when it's switched off); `html.dark` is the default and a Light choice
+  survives a reload; the sign-in page and a toast on it are dark with Light chosen; a chat
+  opened from history has no running animation.
+- `frontend/e2e/empty-chat-art.spec.ts`: an empty /chat has the drift as its one field, moving,
+  and still with reduced motion; once a question is sent it's gone and the chat's field moves;
+  a saved chat opened from an empty one has no drift and no running animation.
+- `frontend/e2e/home-center.spec.ts`: the empty chat's composer is near the middle at 1280
+  and 390, with the fine print at the foot of the page on its left edge; the key hint only
+  while it's focused and empty, its row keeping its height; the art's canvas is the whole
+  column with lines from top to bottom, and the composer has a backdrop blur (`none` with
+  "Reduce effects"); recent chats are in one glass card on the composer's width and edge,
+  with no Spaces, Folders or starters, and one opens; sending moves the composer down in one
+  move of 250ms at most (none with reduced motion) and the questions pin to the top; a mouse
+  over the art reads the lines near it, above the heading and beside the recent chats, a
+  click decodes a line and keeps the composer's focus; with reduced motion neither changes a
+  pixel.
+- `frontend/e2e/ux-a11y.spec.ts`: axe on every main screen at 1280 and 390; at 390 the page fits
+  and no scrolling box inside it is pushed sideways (`overflowingScrollers`; a box meant to scroll
+  sideways carries an `overflow-x-auto` or `overflow-auto` class).
+- `frontend/e2e/owner-shots.spec.ts`: with `E2E_OWNER_SHOTS=<folder>`, every screen in both
+  themes at 1280 and 390, from the e2e server's fake data, as `<screen>-<theme>-<width>.png`.
+- Grep guards over `frontend/src`: no raw `<input`, `<select`, `<textarea`; no raw palette
+  colours; no `transition-all`; no `ease-in` on its own; no `scale-0` or `zoom-in-0`; no
+  `Loader2`, `animate-pulse` or `animate-spin` outside the kit.
 
 ## Do's and Don'ts
 
-### Do:
-- **Do** build every control from the shadcn primitives in `frontend/src/components/ui` (`Button`, `Input`, `Field`, `Tabs`, `Badge`, `Select`, `Textarea`) on the tokens in `frontend/src/index.css`.
-- **Do** keep hierarchy achromatic: Graphite Ink and Near-Black for emphasis, Slate Grey for everything secondary.
-- **Do** outline flat planes with the Hairline at 70% and reserve the soft layered shadow for the one element the visitor acts on next.
-- **Do** use 10px radius for interactive elements and 18px for app panels; pills only for badges, avatars, chips and landing-page buttons.
-- **Do** set one Title (24px semibold, tight tracking) per app screen and 16px medium for panel titles.
-- **Do** show a resolved state in place, next to the thing that caused it (the route pass, sources under an answer), with motion behind `motion-safe`.
-- **Do** use Lucide for interface icons and simple-icons paths for provider and integration marks.
+### Do
+- **Do** use the tokens: `signal`, `success`, `warning`, `destructive`, `muted-foreground`.
+- **Do** give every status a glyph as well as a colour.
+- **Do** keep one `h2` title per app screen.
+- **Do** keep reading text still, opaque behind, 15px / 1.7, at most 68ch.
+- **Do** draw ASCII through `lib/ascii-loop.ts`, `aria-hidden`, with a still frame.
+- **Do** check both themes, both widths (1280 and 390) and reduced motion.
 
-### Don't:
-- **Don't** introduce a brand hue for emphasis, links or active states; the palette has none.
-- **Don't** add new raw Tailwind palette colours (`emerald-*`, `amber-*`, etc.). Existing success and warning uses are drift awaiting tokens, not a precedent.
-- **Don't** put a shadow on every card; a screen with two lifted surfaces has lost its focal point.
+### Don't
+- **Don't** add a second accent, or use the signal for fills, primary buttons or body text.
+- **Don't** add raw Tailwind palette colours (`emerald-*`, `amber-*`, ...).
+- **Don't** nest glass, blur the full viewport, or animate opacity on a wrapper around glass.
+- **Don't** animate anything the keyboard triggers, or use `transition-all`.
+- **Don't** put moving ASCII under text, in tables, forms, dialogs, charts or print.
 - **Don't** use native `<input>`, `<select>`, `<textarea>` or date/month inputs.
-- **Don't** add off-scale font sizes (`text-[11px]`, `text-[10px]`, `text-[15px]`); use Label (12px) or Body (14px).
-- **Don't** rely on the `.dark` token set; dark mode is not switched on anywhere in the shipped app.
+- **Don't** add off-scale font sizes (`text-[11px]`, `text-[15px]`); use `text-ascii` or `text-reading`.
