@@ -413,13 +413,15 @@ def test_existing_workspaces_migrate_to_auto_and_new_ones_start_at_request(tmp_p
     path = str(tmp_path / "app.db")
     monkeypatch.setattr(db, "DB_PATH", path)
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    command.upgrade(config, "0020")
+    with db.alembic_lock:
+        command.upgrade(config, "0020")
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO workspaces (slug, name, created_at) VALUES ('old', 'Old', 1)")
         conn.execute("INSERT INTO workspace_domains (workspace, domain, verified_at) "
                      "VALUES ('old', 'old.example', 1)")
     conn.close()
-    command.upgrade(config, "head")
+    with db.alembic_lock:
+        command.upgrade(config, "head")
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO workspaces (slug, name, created_at) VALUES ('new', 'New', 2)")
         policies = dict(conn.execute("SELECT slug, join_policy FROM workspaces"))
