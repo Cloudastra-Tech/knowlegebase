@@ -229,13 +229,13 @@ def test_a_compatible_server_gets_its_base_url_and_key_never_openais(classes, mo
     on = models.for_workspace(w)
     on.answer(temperature=0, max_tokens=300)
     made = classes[-1]
-    assert (made["base_url"], made["api_key"], made["model"]) == (
-        COMPAT_URL, COMPAT_KEY, "llama-3.3-70b-versatile")
+    assert made["model"] == "llama-3.3-70b-versatile"
+    assert (made["base_url"], made["api_key"]) == (COMPAT_URL, COMPAT_KEY)
     assert made["http_client"] is url_guard.model_http()[0]
     on.embeddings()
     made = classes[-1]
-    assert (made["base_url"], made["api_key"], made["model"]) == (
-        COMPAT_URL, COMPAT_KEY, "nomic-embed-text")
+    assert made["model"] == "nomic-embed-text"
+    assert (made["base_url"], made["api_key"]) == (COMPAT_URL, COMPAT_KEY)
     assert made["check_embedding_ctx_length"] is False and "http_client" in made
     # A server that takes no key: none is sent, never the server's (OpenAI's or its own).
     w = compat_workspace(key=None)
