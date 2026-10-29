@@ -211,11 +211,13 @@ def known_workspaces():
 
 # ---- Embeddings (content gaps) ----------------------------------------------------------
 def models_used(workspace, since_day, until_day):
-    """The models that answered the workspace's questions in [since_day, until_day]."""
+    """[(model, provider)]: the models that answered the workspace's questions in
+    [since_day, until_day], and who answered (None before 0022)."""
     with _db() as conn:
-        return [r[0] for r in conn.execute(
-            "SELECT DISTINCT model FROM question_log WHERE workspace = ? AND day >= ? AND "
-            "day <= ? AND model IS NOT NULL ORDER BY model", (workspace, since_day, until_day))]
+        return [(r[0], r[1]) for r in conn.execute(
+            "SELECT DISTINCT model, provider FROM question_log WHERE workspace = ? AND "
+            "day >= ? AND day <= ? AND model IS NOT NULL ORDER BY model",
+            (workspace, since_day, until_day))]
 
 
 def clear_embeddings(workspace):

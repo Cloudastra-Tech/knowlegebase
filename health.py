@@ -13,9 +13,9 @@ a deploy gate or an uptime monitor: it touches each thing a request needs.
                        (or an old-format stored secret): a changed
                        INTEGRATIONS_KEY breaks every SSO provider and
                        integration while everything else looks fine
-    toxicity_guard     only with REQUIRE_TOXICITY_GUARD=1: a toxicity check is
-                       loaded (safety.guards_status()). None exists since the
-                       Guardrails Hub validator was removed, so this fails
+    toxicity_guard     only with REQUIRE_TOXICITY_GUARD=1: the toxicity check is
+                       on (safety.guards_status()), not turned off with
+                       TOXICITY_GUARD=off
 
 Nothing here creates or changes anything: a missing database or index is
 reported, not made. Reasons are short and safe to show to anyone (the endpoint
@@ -138,12 +138,12 @@ def check_integrations_key(db_path, key_path=None):
 
 def check_toxicity_guard(guards):
     if guards["toxicity"] != "active":
-        raise NotReady("REQUIRE_TOXICITY_GUARD is set but the toxicity guard is not installed")
+        raise NotReady("REQUIRE_TOXICITY_GUARD is set but the toxicity guard is off")
 
 
 def ready(db_path, index_folder, key_path=None, guards=None):
     """(all ok?, {check: "ok" or the reason it failed}). `guards` is
-    safety.guards_status(); a missing toxicity guard only fails when it is required."""
+    safety.guards_status(); a toxicity guard turned off only fails when it is required."""
     checks = {"database": lambda: check_database(db_path),
               "search_index": lambda: check_search_index(index_folder),
               "integrations_key": lambda: check_integrations_key(db_path, key_path)}

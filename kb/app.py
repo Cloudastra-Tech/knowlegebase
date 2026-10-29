@@ -35,7 +35,7 @@ ROUTERS = (auth, sso, signup, claim, saml, admin_sign_in, chat, conversations, s
 @contextlib.asynccontextmanager
 async def _lifespan(app):
     """Background jobs that run for the life of the server."""
-    safety.require_guards()          # REQUIRE_TOXICITY_GUARD=1: refuse to start without it
+    safety.require_guards()          # REQUIRE_TOXICITY_GUARD=1: refuse to start with it off
     secret_box.require_key()         # hosted: refuse to start without INTEGRATIONS_KEY / a KMS
     # Bring the database up to date now (db.py migrates on its first connection),
     # so a failing migration stops the start instead of the first request.

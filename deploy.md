@@ -59,16 +59,36 @@ nano .env    # paste the real OPENAI_API_KEY (and Outline values if used)
 docker compose up -d --build
 ```
 
-No build secret or token is needed. **Toxicity check:** there is none. It was the
-Guardrails Hub `toxic_language` validator, and the Guardrails Hub is gone
-(`hub.api.guardrailsai.com` no longer resolves), so Guardrails AI was removed in
-2026-10 (`safety.py`). The other checks are unchanged: the question length limit,
-the staff-pay rules, the prompt-injection filter and PII redaction.
-`/api/health` says `"guards": {"toxicity": "missing", …}` and the app logs
-`No toxicity check is installed` at ERROR level when it starts. Leave
-`REQUIRE_TOXICITY_GUARD` unset: with `REQUIRE_TOXICITY_GUARD=1` the server refuses
-to start (and `restart: unless-stopped` keeps retrying, visible in
-`docker compose ps` and the logs), since no toxicity check exists.
+No build secret or token is needed. **Toxicity check:** every question is checked
+for abuse, harassment, hate, threats, sexual content involving minors and
+self-harm encouragement, for everyone (HR and admins too), and refused with
+"Sorry, I can't help with that request." It needs no setting, download or token
+(`safety.py`; it replaces the Guardrails Hub `toxic_language` validator, gone
+with the Hub in 2026-10):
+
+- A workspace whose text goes to OpenAI already (its chat, answer or embedding
+  provider is OpenAI) is checked with OpenAI's moderation endpoint
+  (`omni-moderation-latest`, free of charge), with its own OpenAI key, else the
+  server's `OPENAI_API_KEY`. What it flags gets a second opinion from the
+  workspace's fast model, so a name, a swear word quoted from a document or an HR
+  complaint about harassment isn't refused.
+- Any other workspace (Bedrock, Anthropic with local embeddings, or no OpenAI key)
+  is checked by its own fast model alone: one short call per question. Its text is
+  never sent to OpenAI for this.
+- **It fails open.** If the moderation endpoint can't be reached, the fast model
+  decides; if that fails too, the question goes through and the log says
+  `The toxicity check failed`. The injection filter and the access rules still
+  apply. (A question moderation flagged is refused when the fast model can't give
+  its second opinion.) Nothing is called when the server starts, so an OpenAI
+  outage never stops it starting.
+
+| Setting | Effect |
+|---|---|
+| `TOXICITY_GUARD=off` | No toxicity check, for every workspace. `/api/health` says `"guards": {"toxicity": "off", …}` and the app logs `TOXICITY_GUARD=off` at WARNING when it starts. Default: on (`"toxicity": "active"`). |
+| `REQUIRE_TOXICITY_GUARD=1` | Refuse to start with `TOXICITY_GUARD=off` (and `restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the logs), so the check can't be turned off by mistake. `/api/health/ready` checks it too. |
+
+The other checks are unchanged: the question length limit, the staff-pay rules,
+the prompt-injection filter and PII redaction.
 
 **Upgrading a server that used the Guardrails Hub token** (its `.env` has
 `COMPOSE_FILE=docker-compose.yml:docker-compose.guardrails.yml`, and the folder has
@@ -83,8 +103,9 @@ rm -f guardrails_token.secret
 ```
 
 `docker-compose.guardrails.yml` can be deleted from the repo once no server's
-`.env` names it. If `.env` sets `REQUIRE_TOXICITY_GUARD=1`, remove it before
-deploying, or the new version won't start and the deploy goes back.
+`.env` names it. `REQUIRE_TOXICITY_GUARD=1` can stay in `.env` from the version
+with the moderation check on; only the versions between the Guardrails removal
+and it (no toxicity check at all) refuse to start with it.
 
 A server that still has the even older hand-applied patch (local changes to
 `Dockerfile`, `docker-compose.yml` and `.gitignore` for `gr_token`) drops it first,
@@ -198,7 +219,7 @@ sudo ufw allow 8501/tcp     # skip if your cloud uses security-groups instead
 
 ```bash
 docker compose ps           # STATUS should show "Up"
-curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "missing": there is no toxicity check (step 4)
+curl -fsS http://localhost:8501/api/health && echo OK   # "toxicity": "active" unless TOXICITY_GUARD=off (step 4)
 ```
 
 Open **`http://<SERVER_IP>:8501`** in a browser.
@@ -1258,20 +1279,19 @@ It should answer 2xx quickly; anything else is retried for 24 hours, and
 - `GET /api/health` — the process is up. Always 200 while it runs; the Docker
   `HEALTHCHECK` uses it. Don't point anything that restarts the container at a
   deeper check: a restart fixes none of what it finds. Its `guards` field says
-  whether the toxicity check is running: `"toxicity": "missing"`, since there is
-  none (step 4).
+  whether the toxicity check is running: `"toxicity": "active"`, or `"off"` with
+  `TOXICITY_GUARD=off` (step 4).
 - `GET /api/health/ready` — the server can actually serve: `config/app.db` opens and
   answers a query, the Chroma index opens, and the encryption key loads **and
   decrypts a stored secret** (a changed `INTEGRATIONS_KEY` otherwise breaks every SSO
   provider and integration silently). With `REQUIRE_TOXICITY_GUARD=1` it also
-  checks a toxicity guard is loaded (`toxicity_guard`), which fails since none
-  exists; without it, the missing guard is only reported under `guards`. 503 with
-  the failing check otherwise:
+  checks the toxicity check is on (`toxicity_guard`); without it, one turned off is
+  only reported under `guards`. 503 with the failing check otherwise:
 
   ```json
   {"ok": false, "checks": {"database": "ok", "search_index": "ok",
    "integrations_key": "the encryption key doesn't decrypt the stored secrets"},
-   "guards": {"toxicity": "missing", "toxicity_required": false}}
+   "guards": {"toxicity": "active", "toxicity_required": false}}
   ```
 
   Point an external uptime monitor (Better Stack, UptimeRobot, Uptime Kuma on
@@ -1740,6 +1760,9 @@ offers:
 | `bedrock` | yes | yes | yes (the chat model) | `cachePoint` marker | the AWS credentials below |
 | `anthropic` | yes | **no** | yes (the chat model) | `cache_control` marker | `ANTHROPIC_API_KEY` |
 | `local` | no | yes (on this server's CPU) | - | - | none |
+| `gemini` | yes | yes | yes (the chat model) | automatic (Google's) | `GEMINI_API_KEY` |
+| `azure` | yes (by deployment) | yes (by deployment) | yes (the chat deployment) | automatic | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
+| `openai_compatible` | yes | yes, when a model is named | no | the server's own | `OPENAI_COMPAT_BASE_URL` (+ `OPENAI_COMPAT_API_KEY`, optional) |
 
 The server's providers, in `.env`:
 
@@ -1755,11 +1778,32 @@ The server's providers, in `.env`:
 
 A workspace's admin can choose its own on **Assistant → Models**
 (`PUT /api/admin/assistant/models`: `chat_provider`, `embed_provider`, each `default`
-for the server's, and `api_keys: {provider: key}`). A key is sealed under the
+for the server's, `api_keys: {provider: key}`, and for Azure and an OpenAI-compatible
+server `endpoints: {provider: {base_url, api_version}}`). A key is sealed under the
 workspace's key, never returned (only `api_keys_saved`) and never in the audit log; a
 provider chosen there must have the workspace's own key, never the server's. Keys of
 providers the workspace stops using are deleted. Only an embeddings change (provider,
 model or size) rebuilds the index; moving only the chat provider doesn't.
+
+**Addresses an admin types** (Azure's endpoint, an OpenAI-compatible server's base
+URL) are the server calling wherever it's told, so they go through `url_guard.py`
+like a connector's: https only, and the host must resolve only to public IP addresses,
+checked when saved and again on every request (a host whose DNS later moves inside is
+refused then too, with `UnsafeURL` and the reason). A cloud metadata service, localhost
+and the office network are refused. To let workspaces use a server on a private
+network (a vLLM or Ollama next to this one), list its `host:port` in `.env`; a listed
+pair may also use plain http:
+
+```bash
+MODEL_ALLOW_PRIVATE_HOSTS=localhost:11434,vllm.internal:8000
+```
+
+It is its own list: `SSO_ALLOW_PRIVATE_HOSTS` and `CONNECTOR_ALLOW_PRIVATE_HOSTS` don't
+open it. The server's own addresses in `.env` (`AZURE_OPENAI_ENDPOINT`,
+`OPENAI_COMPAT_BASE_URL`) are the operator's and aren't checked. The addresses aren't
+secret: they're shown back on the screen and kept in the audit log (no query string is
+accepted, so nothing secret rides in one); they're stored in the same sealed JSON as the
+workspace's keys, so no migration was needed.
 
 ## Anthropic
 
@@ -1813,6 +1857,128 @@ CHAT_PROVIDER=anthropic EMBED_PROVIDER=openai python evaluate.py --redteam
 
 (`eval.harness` scores retrieval with offline embeddings and calls no chat model; the
 red team runs the agent and its guards on Claude.)
+
+## Google Gemini
+
+Gemini writes the answers, does the small jobs and can embed the index, through
+Google's **OpenAI-compatible endpoint**
+(`https://generativelanguage.googleapis.com/v1beta/openai/`) with the same
+langchain-openai classes as OpenAI (`ChatOpenAI`, `OpenAIEmbeddings`): no extra package.
+Streaming, tool calls and images work there ([OpenAI
+compatibility](https://ai.google.dev/gemini-api/docs/openai)); Google calls it beta.
+
+```bash
+CHAT_PROVIDER=gemini
+GEMINI_API_KEY=AIza...                # Google AI Studio's key
+# EMBED_PROVIDER=gemini               # or openai / bedrock / local; changing it rebuilds the index
+```
+
+| Job | Setting | Default | Notes |
+|---|---|---|---|
+| Chat | `GEMINI_CHAT_MODEL` | `gemini-3.8-flash` | Stable. $0.75 / $3.75 per million tokens in / out until 31 December 2026, then $1.50 / $7.50 |
+| Fast | `GEMINI_FAST_MODEL` | `gemini-3.5-flash-lite` | Stable. $0.30 / $2.50. The guards' classifiers run on it: run the eval gate before relying on it |
+| Fast thinking | `GEMINI_FAST_EFFORT` | `low` | `reasoning_effort` for the fast model: `minimal`, `low`, `medium`, `high`; empty for the model's own |
+| Embeddings | `GEMINI_EMBED_MODEL` | `gemini-embedding-001` | 3,072 numbers, 2,048 tokens in (the 200-token chunks here fit). $0.15 per million tokens |
+
+The curated list on the Models screen is the stable text models of [Gemini
+models](https://ai.google.dev/gemini-api/docs/models) as of October 2026: Gemini 4 Argon
+(best), 3.8 Flash and 3.6 Flash (balanced), 3.5 Flash-Lite and 3.1 Flash-Lite (fast).
+Gemini 2.5 is limited to past users and isn't listed; any id can still be added.
+
+How it behaves:
+
+- **No temperature.** Google recommends leaving Gemini 3 at its default; the
+  `temperature=0` the pipeline asks for isn't sent.
+- **Thinking stays on** (it can't be turned off on Gemini 3) and counts toward the
+  output, so a call asking for fewer than 1,024 tokens (a label, a classifier) is given
+  1,024, as on Anthropic.
+- **Fails closed.** No key (neither the workspace's nor `GEMINI_API_KEY`) fails every
+  model call with the reason. An API error reaches the chat as the OpenAI SDK's class
+  (`AuthenticationError`, `RateLimitError`, ...), a 502 on `POST /api/chat`; Test
+  connection lists the models (free) and shows the error with the key blanked out.
+- **Cost.** Insights prices Gemini from `GEMINI_PRICES` (`kb/services/insights.py`, paid
+  tier, prompts up to 200k tokens, October 2026). Gemini 4 Argon and 3.8 / 3.6 Flash are
+  at their introductory prices, which step up on 1 December 2026 and 1 January 2027:
+  update the table then. A Gemini model that isn't listed has an unknown cost.
+
+A workspace chooses it on **Assistant → Models** (*Add a provider → Google Gemini*, with
+its own key; for search, *Google Gemini* under Search). Moving only the answers to
+Gemini never rebuilds the index.
+
+## Azure OpenAI
+
+OpenAI's models in a company's own **Azure OpenAI** resource, called by **deployment
+name** (`AzureChatOpenAI`, `AzureOpenAIEmbeddings` from langchain-openai: no extra
+package). Chat and embeddings, with an API key (Microsoft Entra ID isn't supported here).
+
+```bash
+CHAT_PROVIDER=azure                    # and/or EMBED_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_API_VERSION=2024-10-21    # the default: the latest GA data-plane version
+AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-prod
+AZURE_OPENAI_FAST_DEPLOYMENT=          # empty: the chat deployment does the small jobs too
+AZURE_OPENAI_EMBED_DEPLOYMENT=embed-small-prod
+```
+
+Requests go to `<endpoint>/openai/deployments/<deployment>/...?api-version=<version>`.
+There are no default deployments: they're your own names. On **Assistant → Models** an
+admin adds *Azure OpenAI*, pastes the endpoint and key (and an API version, or leaves it
+for `2024-10-21`), and types each deployment people may pick; for search, an embedding
+deployment. The endpoint goes through `url_guard` (Model providers, above): a private
+endpoint (a Private Link address) needs `MODEL_ALLOW_PRIVATE_HOSTS`.
+
+- **Deployment names.** A deployment named after its model (`gpt-5-mini`) gets
+  langchain-openai's per-model handling (no temperature on GPT-5); one with another name
+  is sent the pipeline's `temperature=0`, which reasoning models refuse: name GPT-5 /
+  o-series deployments after their model.
+- **Test connection** makes one short reply (16 tokens at most) from the default
+  deployment and, when Azure embeds, one short embedding: the data plane lists base
+  models, not the resource's deployments, so a list proves nothing. A wrong name gives
+  `NotFoundError` ("The API deployment for this resource does not exist"), a wrong key
+  `AuthenticationError`, both with the key blanked out. Other enabled deployments show
+  their own access on their first question.
+- **Fails closed**: no endpoint or key fails every model call with the reason; nothing
+  falls back to OpenAI.
+- **Cost.** Insights prices the model Azure's reply names (`gpt-4o-2024-11-20`) at
+  OpenAI's list price when it's in the table (an estimate: Azure prices each
+  deployment type and region itself), else as unknown.
+
+## OpenAI-compatible servers
+
+Any server speaking OpenAI's chat completions API: Groq, Together, OpenRouter, a
+self-hosted vLLM or Ollama, LiteLLM. Its base URL, an API key (optional: a self-hosted
+server may take none) and its model ids, typed in, since there's no fixed list.
+Embeddings only when an embedding model is named.
+
+```bash
+CHAT_PROVIDER=openai_compatible
+OPENAI_COMPAT_BASE_URL=https://api.groq.com/openai/v1   # Together: https://api.together.xyz/v1
+OPENAI_COMPAT_API_KEY=gsk_...                           # empty for a server without one
+OPENAI_COMPAT_CHAT_MODEL=llama-3.3-70b-versatile
+OPENAI_COMPAT_FAST_MODEL=llama-3.1-8b-instant           # empty: the chat model
+# EMBED_PROVIDER=openai_compatible with OPENAI_COMPAT_EMBED_MODEL=nomic-embed-text
+```
+
+- **The model must call tools**: the agent's search is a tool. Models that can't fail
+  the question with the server's error; check its model card first. Images aren't sent
+  to these models (the server's abilities aren't known).
+- **What's sent**: chat completions with `max_tokens` (which every such server takes),
+  `stream_options.include_usage` for the token counts; embeddings as plain text (no
+  token ids), floats back, 100 texts a request. The key is sent as the bearer token; a
+  server without one gets the placeholder `no-key`. The server's `OPENAI_API_KEY` never
+  goes to it.
+- **The base URL is checked** (Model providers, above): a workspace's must be a public
+  https address unless `MODEL_ALLOW_PRIVATE_HOSTS` lists it, e.g.
+  `MODEL_ALLOW_PRIVATE_HOSTS=localhost:11434` for an Ollama on this machine, then
+  `http://localhost:11434/v1`.
+- **Test connection** lists the server's models (`GET /models`, free) and fails an
+  enabled id it doesn't list. A server without a model list fails the test with its
+  `NotFoundError`; the models may still answer.
+- **Cost** is unknown in Insights: the tokens are logged, not priced.
+- **Switching servers** with the same embedding model id doesn't rebuild the index (the
+  index records the provider and model, not the address): rebuild it on Documents (*Rebuild
+  index from scratch*) if the new server's model differs.
 
 ## Local embeddings
 
@@ -1881,10 +2047,12 @@ turned off since starts on the default. Only the answer follows the pick: the FA
 (the guards' classifiers, titles, HyDE) stays the default provider's, and search stays
 the workspace's one embeddings provider. The answer cache keys on the answer model;
 the question log's provider is the answer's, its model the one that used the most
-tokens. **Test connection costs as little as proves it**: OpenAI and Anthropic list
-their models (`models.list`, free), and an enabled model they don't list fails the
-test by name; Bedrock answers one token on its default chat model and, when it embeds,
-makes one short embedding (a model list wouldn't show the model access granted).
+tokens. **Test connection costs as little as proves it**: OpenAI, Anthropic, Gemini
+and an OpenAI-compatible server list their models (`models.list`, free), and an
+enabled model they don't list fails the test by name; Bedrock answers one token on its
+default chat model and, when it embeds, makes one short embedding (a model list
+wouldn't show the model access granted); Azure OpenAI the same on its default
+deployment (its data plane lists base models, not your deployments).
 
 How it calls Bedrock: chat through the **Converse API** (`ConverseStream` while an
 answer streams; langchain-aws `ChatBedrockConverse`, with tool calls), embeddings
@@ -2152,11 +2320,17 @@ commit them from the server or copy them back if you want them in the repo.
   Never `*`: it trusts the header from anyone. With nginx on the same host, also
   consider publishing the port on loopback only (`"127.0.0.1:8501:8501"`) so
   nothing can bypass nginx.
-- **`/api/health` shows `"toxicity": "missing"`** — expected: there is no toxicity
-  check since the Guardrails Hub validator was removed (step 4). With
-  `REQUIRE_TOXICITY_GUARD=1` the container instead keeps restarting and its log
-  ends with `REQUIRE_TOXICITY_GUARD is set but this build has no toxicity check`:
-  remove that line from `.env`.
+- **`/api/health` shows `"toxicity": "off"`** — `.env` sets `TOXICITY_GUARD=off`
+  (step 4); remove it to turn the check back on. With `REQUIRE_TOXICITY_GUARD=1`
+  as well, the container keeps restarting and its log ends with
+  `REQUIRE_TOXICITY_GUARD is set but TOXICITY_GUARD=off turns the toxicity check
+  off`: remove one of the two. (`"toxicity": "missing"` is a version from before
+  the moderation check, which had none.)
+- **`The moderation endpoint failed` in the logs** — OpenAI's moderation endpoint
+  couldn't be reached or refused the key; the workspace's fast model checked the
+  question instead (step 4). **`The toxicity check failed`** — that failed too, so
+  the question went through unchecked for abuse (it fails open). The same provider
+  error usually shows up in chat; fix the key or the provider, no restart needed.
 - **Someone is locked out after "Require single sign-on" was turned on** — only
   admins keep passwords. If the provider itself is broken, sign in as an admin
   with a password and turn it off under **Access → Sign-in**, or run

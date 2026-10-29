@@ -16,8 +16,8 @@ router = APIRouter()
 @router.get("/api/health")
 def health_check():
     """The process is up. Docker's HEALTHCHECK calls this: keep it cheap, always 200.
-    "guards" shows whether the toxicity check is running, since the app starts
-    without it unless REQUIRE_TOXICITY_GUARD says not to. "version" and "commit":
+    "guards" shows whether the toxicity check is running, since TOXICITY_GUARD=off
+    turns it off unless REQUIRE_TOXICITY_GUARD says not to. "version" and "commit":
     what the image was built from (Dockerfile; dev / unknown outside of one)."""
     return {"ok": True, "guards": safety.guards_status(),
             "version": os.getenv("APP_VERSION") or "dev",

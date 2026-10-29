@@ -327,7 +327,8 @@ def main(argv=None):
     # The answers come from the server's providers (models.py: CHAT_PROVIDER,
     # EMBED_PROVIDER, ...); the judge is OpenAI's (JUDGE_MODEL), the red team has none.
     import models
-    needs = {models.REGISTRY[p].api_key_env for p in models.server_providers()}
+    needs = {models.REGISTRY[p].api_key_env for p in models.server_providers()
+             if not models.REGISTRY[p].key_optional}
     needs |= set() if args.redteam else {"OPENAI_API_KEY"}
     for name in sorted(n for n in needs if n):
         key = os.getenv(name) or ""
