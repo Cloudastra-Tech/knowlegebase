@@ -24,6 +24,16 @@ test("on a desktop, the sections are tabs over the open one, which switches at o
     const b = (await nav.boundingBox())!
     return { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: Math.round(b.width), h: Math.round(b.height) }
   }
+  // Let the screen's entrance finish first (finite animations only: the drift and
+  // skeletons loop), or `before` catches it a fraction of a pixel short.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.playState === "running" && a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => {})),
+    ),
+  )
   const before = await box()
   // Where the title starts (its box is as wide as the crumbs over it, which name the section).
   const at = async () => {
