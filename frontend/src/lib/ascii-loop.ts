@@ -236,13 +236,13 @@ function frame(now: number) {
   let heroCost = 0
   let appDrew = false
   let heroDrew = false
-  let appMoving = false // a piece on the app's budget moves, past its first frames
+  let fieldMoving = false // the background field moves, past its first frames
   for (const sub of subs) {
     if (resting(sub, performance.now())) {
       sub.last = -1
       continue
     }
-    if (sub.priority !== "hero" && sub.draws >= PACE_WARMUP) appMoving = true
+    if (sub.priority === "ambient" && sub.draws >= PACE_WARMUP) fieldMoving = true
     const interval = 1000 / fpsOf(sub)
     if (sub.last < 0) sub.last = now - interval
     const since = now - sub.last
@@ -262,7 +262,7 @@ function frame(now: number) {
     }
   }
   const gap = now - lastFrame
-  if (appMoving && lastFrame > 0 && gap > 0 && gap < PACE_GAP_MS) app.gaps.push(gap)
+  if (fieldMoving && lastFrame > 0 && gap > 0 && gap < PACE_GAP_MS) app.gaps.push(gap)
   if (appDrew) account(app, appCost)
   if (heroDrew) account(hero, heroCost)
   wake()

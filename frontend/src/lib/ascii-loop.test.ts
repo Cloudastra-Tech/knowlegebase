@@ -534,6 +534,21 @@ describe("the shared ASCII loop's pacing", () => {
     expect(art.rate()).toBe(20)
   })
 
+  it("times frames only while the field moves, not a spinner's under a dialog", async () => {
+    const { subscribe } = await load()
+    const field = drift(subscribe, 12)
+    const spin = box()
+    subscribe(spin, () => {}, { still: 0, fps: 12, priority: "ui" })
+    show(spin)
+    document.body.setAttribute("data-scroll-locked", "1")
+    await Promise.resolve() // the MutationObserver: the field rests, the spinner doesn't
+    for (let i = 0; i < 600; i++) step(1, i % 4 === 3 ? 50 : 1000 / 60) // the dialog's own work
+    document.body.removeAttribute("data-scroll-locked")
+    await Promise.resolve()
+    expect(field.rate()).toBe(12)
+    expect(field.rate()).toBe(12)
+  })
+
   it("doesn't count the page's first seconds", async () => {
     const { subscribe } = await load()
     const draw = vi.fn()
