@@ -50,6 +50,13 @@ if POSTGRES:
 
     _server = os.environ["TEST_DATABASE_URL"]
     _name = f"kb_test_{uuid.uuid4().hex[:12]}"
+    # In parallel (pytest -n, pytest-xdist), every worker is a process of its own with
+    # its own databases (_name). The tenant role (row-level security,
+    # migrations/postgres.py) is the server's, not a database's: workers making the
+    # same one at once race (one finds it missing, then can't create it, and gets no
+    # row security). Each worker gets a role of its own, made the same way.
+    if os.getenv("PYTEST_XDIST_WORKER"):
+        os.environ["DB_TENANT_ROLE"] = f"kb_tenant_{os.environ['PYTEST_XDIST_WORKER']}"
     with psycopg.connect(_server, autocommit=True) as _admin:
         _admin.execute(f'CREATE DATABASE "{_name}"')
     _base, _, _query = _server.partition("?")
@@ -148,6 +155,23 @@ if os.getenv("KB_TEST_PLAN"):
                 "seats": 0, "current_period_end": None, "reminders": [],
                 "deletion_scheduled_at": None, "created_at": 0, "updated_at": 0}
         monkeypatch.setattr(billing_store, "subscription", subscription)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def a_folder_of_its_own():
+    """The app keeps some files where it runs: the search index (chroma_db/),
+    workspaces' documents and exports (data/), the default workspace's documents
+    (docs/). Tests run in a folder of their own, with a copy of docs/, so they leave
+    the checkout alone and, run in parallel (pytest -n: a process each), don't share
+    an index or a workspace's files with another process. A fixture, not done at
+    import: pytest -n starts its processes where this one is."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    work = os.path.join(_tmp, "cwd")
+    shutil.copytree(os.path.join(root, "docs"), os.path.join(work, "docs"))
+    before = os.getcwd()
+    os.chdir(work)
+    yield
+    os.chdir(before)
 
 
 @pytest.fixture(autouse=True)

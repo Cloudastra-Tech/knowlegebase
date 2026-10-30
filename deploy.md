@@ -369,7 +369,8 @@ host, user, key and `known_hosts` as environment secrets. The job then runs
 `main` is production and only moves by promotion:
 
 1. Features merge into `dev` (squash; CI runs `backend`, `frontend`, `e2e`,
-   `docker`, `scan`).
+   `docker`, `scan` on the PR, not again on the merge). CI also runs on PRs into
+   `main` and on every push to `main`.
 2. **Promote**: when the owner says so, a PR from `dev` into `main`, merged with a
    merge commit (not squash, so the two histories don't drift).
 3. **Release PR**: on every push to `main`, release-please

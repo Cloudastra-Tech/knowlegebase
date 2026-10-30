@@ -1,14 +1,16 @@
 # Runs the backend tests, the frontend lint + build, the end-to-end smoke tests, a
 # build of the production Docker image and the dependency / secret scans on every
-# PR into dev or main and every push to them. Feature work goes to dev; dev is promoted to main, which is
-# production. No secrets needed: the tests fake OpenAI and the sign-in providers.
+# PR into dev or main, and on every push to main (production). Feature work goes to
+# dev by PR, so the merge into dev is the commit its PR already tested and isn't run
+# again; dev is promoted to main, which is production. No secrets needed: the tests
+# fake OpenAI and the sign-in providers.
 name: CI
 
 on:
   pull_request:
     branches: [dev, main]
   push:
-    branches: [dev, main]
+    branches: [main]
 
 # A newer push to the same PR or branch cancels the run it replaces.
 concurrency:
@@ -46,14 +48,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: "3.12"          # same as the Docker image
-          cache: pip
-          cache-dependency-path: requirements*.txt
+      # The installed packages, not just pip's downloads: installing them takes ~40s.
+      - uses: actions/cache@v4
+        id: packages
+        with:
+          path: ${{ env.pythonLocation }}
+          key: py-dev-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements*.txt') }}
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xmlsec1   # SAML tests
       - run: pip install -r requirements-dev.txt
+        if: steps.packages.outputs.cache-hit != 'true'
+      # In parallel, a process per CPU (pytest-xdist): each has its own temp stores
+      # and, on the Postgres leg, databases of its own (tests/conftest.py).
       # -rfEs: the Postgres leg lists what failed and what it skipped, and why.
-      - run: pytest ${{ matrix.backend == 'postgres' && '-rfEs' || '' }}
+      - run: pytest -n auto ${{ matrix.backend == 'postgres' && '-rfEs' || '' }}
         env:
           OPENAI_API_KEY: sk-test-not-used
       # Retrieval regression gate and leak suite (eval/harness.py): no secrets, a
@@ -89,17 +99,30 @@ jobs:
   # and the API on one port, on throwaway stores, with a fake OpenAI
   # (tests/e2e/server.py). Sign-in, a cited answer and its passage, a follow-up,
   # history after a reload, an HR-only document hidden from a member, the audit log.
+  # Split across machines (Playwright's --shard, by spec file): the specs share their
+  # server's seeded stores and change them, so each machine runs its share one at a
+  # time on a server of its own.
   e2e:
+    name: e2e (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements*.txt
+      - uses: actions/cache@v4
+        id: packages
+        with:
+          path: ${{ env.pythonLocation }}
+          key: py-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements.txt') }}
       - run: pip install -r requirements.txt
+        if: steps.packages.outputs.cache-hit != 'true'
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -107,18 +130,32 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      - run: npx playwright install --with-deps chromium
+      # The browser, kept between runs for this Playwright version; its system
+      # packages (fonts) are installed every time, they live outside the cache.
+      - id: playwright
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+        working-directory: frontend
+      - uses: actions/cache@v4
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-shell
+      - run: npx playwright install --with-deps --only-shell chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        working-directory: frontend
+      - run: npx playwright install-deps chromium
+        if: steps.browsers.outputs.cache-hit == 'true'
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
-      - run: npm run e2e
+      - run: npm run e2e -- --shard=${{ matrix.shard }}/4
         working-directory: frontend
         env:
           E2E_PYTHON: python
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             frontend/playwright-report/
             frontend/test-results/

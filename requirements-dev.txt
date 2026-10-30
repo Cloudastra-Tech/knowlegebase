@@ -1,3 +1,5 @@
 # Only for running the tests:  pip install -r requirements-dev.txt  then  pytest
+# (pytest -n auto: in parallel, a process per CPU; CI does that)
 -r requirements.txt
 pytest==9.1.1
+pytest-xdist==3.8.0
