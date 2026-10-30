@@ -298,6 +298,7 @@ def test_the_alembic_command_line_upgrades_the_same_way(tmp_path, monkeypatch):
     path = str(tmp_path / "old.db")
     _load(path, FIXTURES[0].read_text())
     monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", {path})   # a stray thread's connect() leaves it be
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
     with db.alembic_lock:
         command.current(config)                      # looking doesn't adopt it
@@ -312,13 +313,9 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
     """0015 copies question_log into a table whose CHECK allows teams, extension
     and email: rows logged before are kept, and deleting a chat still clears its
     words from the log (the trigger is made again)."""
-    from alembic import command
-    from alembic.config import Config
+    from tests import alembic_steps
     path = str(tmp_path / "app.db")
-    monkeypatch.setattr(db, "DB_PATH", path)
-    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    with db.alembic_lock:
-        command.upgrade(config, "0013")
+    alembic_steps.upgrade(path, "0013")
     log_row = ("INSERT INTO question_log (workspace, at, day, user, surface, message_id, "
                "text_mode, question, outcome) VALUES ('w', ?, 'd', 'u', ?, ?, 'full', ?, "
                "'answered')")
@@ -331,8 +328,7 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(log_row, (2, "teams", None, None))
     conn.close()
-    with db.alembic_lock:
-        command.upgrade(config, "0015")
+    alembic_steps.upgrade(path, "0015")
     with sqlite3.connect(path) as conn:
         for surface in ("teams", "extension", "email"):
             conn.execute(log_row, (2, surface, None, None))
