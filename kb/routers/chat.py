@@ -65,7 +65,8 @@ def chat(body: ChatIn, user=Depends(current_user), viewer=Depends(current_viewer
         raise HTTPException(502, f"The assistant couldn't answer just now ({e.kind}). "
                                  "Please try again in a moment.")
     return {"answer": done.answer, "sources": done.sources, "state": done.state,
-            "steps": _steps(done.trace, user["role"] == "admin"), "verified": done.verified}
+            "steps": _steps(done.trace, user["role"] == "admin"), "verified": done.verified,
+            "support": done.support}
 
 
 @router.get("/api/passages/{chunk_id}")
@@ -115,11 +116,15 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
          answer      {"text", "sources"?}           the answer so far (PII already masked,
                                                     [S#] checked); sources when they change
          title       {"id", "title"}                a new chat's title, from its first
-                                                    question (saved conversations only)
+                                                    question (saved conversations only);
+                                                    a neutral one if the guards refused it
          done        {"answer", "sources", "steps", "state", "standalone_question",
-                      "message_id", "followups", "verified"}   the final, checked answer
+                      "message_id", "followups", "verified", "support"}
+                                                    the final, checked answer
                                                     (verified: the verified answer it
-                                                    is, {id, title, by, at}, or null)
+                                                    is, {id, title, by, at}, or null;
+                                                    support: the support reply to
+                                                    someone who may hurt themselves)
          error       {"message", "message_id"}
     With a conversation_id the question and its answer are saved there, and the
     conversation so far is the history it's answered with. retry_of, regenerate_of
@@ -227,12 +232,28 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
 
     started = time.monotonic()
 
-    def put_title():
-        """Save a new chat's title once it's written (waiting a little for it)."""
+    def put_title(out, refused=None):
+        """Save a new chat's title once the input guards have decided. The title is
+        written alongside them (from the question, before they've said anything),
+        so it's kept only for a question they let through (waiting a little for
+        it); one they refused (the support reply too) gets the neutral
+        DEFAULT_TITLE instead of its own words. Stopped or failed before they
+        decided: left as it is. refused: the answer's state says (done), else the
+        agent's report (out)."""
         if not titling:
             return
-        titling.join(TITLE_WAIT)
-        text = title.get("text")
+        if refused is None:
+            refused = bool(out.get("refused_by"))
+            passed = not refused and bool(out.get("checked"))
+        else:
+            passed = not refused
+        if refused:
+            text = conversations_store.DEFAULT_TITLE
+        elif passed:
+            titling.join(TITLE_WAIT)
+            text = title.get("text")
+        else:
+            return
         try:
             if text and conversations_store.set_auto_title(turn["conversation"]["id"], text):
                 put({"type": "title", "id": turn["conversation"]["id"], "title": text})
@@ -253,25 +274,26 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
                                                   done.sources)
             save(done.answer, done.state, out, sources=done.sources, trace=_steps(done.trace),
                  max_access=done.max_access, acl=done.acl, standalone_question=done.standalone,
-                 followups=followups, verified=done.verified)
-            put_title()
+                 followups=followups, verified=done.verified,
+                 scope=conversations_store.SUPPORT_REPLY if done.support else None)
+            put_title(out, refused=done.state == "blocked")
             put({"type": "done", "answer": done.answer, "sources": done.sources,
                  "steps": _steps(done.trace, admin) if steps_shown else [], "state": done.state,
                  "standalone_question": done.standalone, "followups": followups,
-                 "verified": done.verified,
+                 "verified": done.verified, "support": done.support,
                  "message_id": turn["message_id"] if turn else None})
         except Cancelled:                          # nobody is listening any more
             # What was shown, with the passages its markers cite so far.
             save(seen["text"], "stopped", out, sources=out.get("sources") or [],
                  standalone_question=standalone())
-            put_title()
+            put_title(out)
         except Exception as e:                     # show it in the chat, keep serving
             if not isinstance(e, answering.Failed):  # ask() logs its own failures
                 log.exception("Chat: answering failed in workspace %s (role %s, %d characters)",
                               ws, role, len(question))
             message = f"Something went wrong: {getattr(e, 'kind', type(e).__name__)}"
             save(message, "error", out)
-            put_title()
+            put_title(out)
             put({"type": "error", "message": message,
                  "message_id": turn["message_id"] if turn else None})
         finally:

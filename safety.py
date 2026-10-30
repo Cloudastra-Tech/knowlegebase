@@ -3,7 +3,8 @@ safety.py  —  the SAFETY LAYER: the checks every question and answer goes thro
 
     check_asked          a question as typed, once: empty / too long, abusive
                          (everyone); one about hurting oneself gets a
-                         supportive reply instead (support_reply)
+                         supportive reply instead (support_reply). Says why
+                         (ASKED_REASONS): how the rest tells them apart
     check_question       every search, the model's own too: empty / too long,
                          staff-salary intent (all but HR)
     check_answer         staff-pay leak in the answer, with one rewrite (all but HR)
@@ -248,8 +249,9 @@ ALLOW, BLOCK, SELF_HARM = "allow", "block", "self_harm"     # the toxicity verdi
 
 # OpenAI moderation's self-harm categories (as the API names them), and the ones
 # that mean a message is aimed at someone else: "tell him to kill himself" is abuse.
+# By prefix, so harassment/threatening, hate/threatening and violence/graphic count.
 SELF_HARM_CATEGORIES = frozenset({"self-harm", "self-harm/intent", "self-harm/instructions"})
-_AT_OTHERS = ("harassment", "hate")
+_AT_OTHERS = ("harassment", "hate", "violence")
 
 
 def _abuse_verdict(text):
@@ -343,7 +345,8 @@ def _toxicity(question):
                               ", ".join(flagged))
                 return SELF_HARM if self_harm else BLOCK
             # Moderation saw self-harm and nothing aimed at others: never a flat
-            # refusal for someone who may be in crisis.
+            # refusal for someone who may be in crisis. Violence counts as aimed at
+            # others: "tell my coworker to go kill himself" stays abuse.
             if (verdict == BLOCK and self_harm
                     and not any(c.startswith(_AT_OTHERS) for c in flagged)):
                 verdict = SELF_HARM
@@ -363,9 +366,11 @@ def _toxicity(question):
 # ----------------------------------------------------------------------------
 # The reply to someone who may hurt themselves (the SELF_HARM verdict): short,
 # warm, no judgement, and where to find someone to talk to now. Never a method,
-# and the answer model is never called. SUPPORT_RESOURCES_TEXT (deploy.md) is the
-# company's own support (its employee assistance programme, a counsellor); without
-# it, crisis lines anyone can call. Checked 2026-10-30: Tele-MANAS, 14416 and
+# and the answer model is never called. SUPPORT_RESOURCES_TEXT (deploy.md) is ONE
+# text for the whole server, every workspace on it: on a single-company install,
+# that company's own support (its employee assistance programme, a counsellor); on
+# a hosted server with many companies, something that holds for all of them.
+# Without it, crisis lines anyone can call. Checked 2026-10-30: Tele-MANAS, 14416 and
 # 1-800-891-4416 (Government of India, free, 24x7: findahelpline.com/countries/in,
 # iitk.ac.in/counsel/TeleManas.php); findahelpline.com (ThroughLine: free,
 # confidential helplines by country); 112, India's emergency number.
@@ -379,8 +384,9 @@ GENERIC_SUPPORT = (
 
 
 def support_resources():
-    """Where to find support: SUPPORT_RESOURCES_TEXT (a literal \\n in it is a
-    line break, so it fits on one .env line), else GENERIC_SUPPORT."""
+    """Where to find support: SUPPORT_RESOURCES_TEXT, the server's, the same for
+    every workspace (a literal \\n in it is a line break, so it fits on one .env
+    line), else GENERIC_SUPPORT."""
     own = (os.getenv("SUPPORT_RESOURCES_TEXT") or "").replace("\\n", "\n").strip()
     return own[:SUPPORT_RESOURCES_CHARS] or GENERIC_SUPPORT
 
@@ -393,12 +399,6 @@ def support_reply():
             "right now, whether that's a person you trust or a trained counsellor.\n\n"
             f"{resources}\n\n"
             f"If you're in immediate danger, please call your local emergency number now{india}.")
-
-
-def is_support_reply(text):
-    """Is `text` the reply support_reply() writes? (The question log's block
-    reason, the agent's steps and its PII mask tell it apart by this.)"""
-    return (text or "").startswith(SUPPORT_OPENING)
 
 
 def _toxicity_guard_required():
@@ -550,27 +550,35 @@ def may_see_restricted(who):
     return access.may_see_hr(who)
 
 
+# Why check_asked refused a question: its third value (None when it didn't).
+# SELF_HARM is the support reply: the agent shows no search step under it and
+# never masks it, the chat marks it as one, and the question log says self_harm.
+ASKED_REASONS = ("empty", "length", "toxic", SELF_HARM)
+
+
 def check_asked(question):
     """INPUT guardrail for a question as someone typed it (a chat message, a
     /search or MCP query), run ONCE per question whatever is searched for it, or
-    whether anything is: empty, too long, abusive. Returns (ok, message). From
-    someone who may hurt themselves, it is (False, support_reply()): the reply
-    they get instead of an answer.
+    whether anything is: empty, too long, abusive. Returns (ok, message, reason),
+    reason one of ASKED_REASONS (None when ok). From someone who may hurt
+    themselves, it is (False, support_reply(), SELF_HARM): the reply they get
+    instead of an answer. What comes after tells it apart by that reason, never
+    by the reply's words.
     The searches themselves (the model's own queries, a follow-up's rewrite) get
     check_question, without the abuse check: one more model call each, for words
     the model wrote."""
     if not question or not question.strip():
-        return False, "Please type a question."
+        return False, "Please type a question.", "empty"
 
     # Generic checks (length, then abuse) apply to everyone.
     if any(_fails(rule, question) for rule in GENERIC_RULES):
-        return False, CANT_HELP
+        return False, CANT_HELP, "length"
     verdict = _toxicity(question) if toxicity_guard_active() else ALLOW
     if verdict == SELF_HARM:
-        return False, support_reply()
+        return False, support_reply(), SELF_HARM
     if verdict == BLOCK:
-        return False, CANT_HELP
-    return True, ""
+        return False, CANT_HELP, "toxic"
+    return True, "", None
 
 
 def check_question(question, allow_restricted=False):

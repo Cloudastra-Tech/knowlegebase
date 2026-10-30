@@ -569,6 +569,9 @@ export interface ChatReply {
   message_id?: string | null // saved in a conversation
   followups?: string[] // up to 3 questions to ask next (kb/services/suggestions.py)
   verified?: VerifiedBadge | null // served from a verified answer (kb/services/verified.py)
+  // The support reply to someone who may hurt themselves (state "blocked", from
+  // the toxicity check's verdict): shown as a calm reply, never as a refusal.
+  support?: boolean
 }
 
 // An answer served from a verified answer: "Verified by <by> · <date>".
@@ -737,6 +740,7 @@ export interface SavedMessage {
   feedback?: Feedback | null
   followups?: string[]
   verified?: VerifiedBadge | null
+  support?: boolean // an answer: the support reply (ChatReply.support)
   // It and the other versions of it (edits of a question, answers written again),
   // oldest first: "‹ 2 / 3 ›".
   siblings?: string[]

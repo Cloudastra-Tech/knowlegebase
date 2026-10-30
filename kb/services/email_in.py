@@ -477,7 +477,8 @@ def run(job):
         turn["message_id"], done.answer, done.state, sources=done.sources,
         steps=[{"tool": t["tool"]} for t in done.trace], max_access=done.max_access,
         acl=done.acl, standalone_question=done.standalone,
-        latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified)
+        latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified,
+        scope=conversations_store.SUPPORT_REPLY if done.support else None)
     text, sources = render(done, _base_url())
     reply_id = _send(p, reply, text, sources, member, ws)
     if not reply_id:

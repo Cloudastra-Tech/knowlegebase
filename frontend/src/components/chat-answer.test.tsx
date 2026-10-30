@@ -73,6 +73,29 @@ describe("answer states", () => {
     })
   })
 
+  it("shows the support reply as a calm reply: no warning, no rating, no sources", () => {
+    show({
+      state: "blocked",
+      support: true,
+      sources: [REFUND],
+      feedback: null,
+      text:
+        "I'm really sorry you're going through this.\n\n" +
+        "- In India, Tele-MANAS is free: call 14416.\n" +
+        "- Anywhere else, findahelpline.com lists helplines.\n\n" +
+        "If you're in immediate danger, please call your local emergency number now.",
+    })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    expect(screen.queryByText("Can't answer that")).not.toBeInTheDocument()
+    // Markdown, like an answer: its list and its paragraphs stay apart.
+    expect(screen.getAllByRole("listitem")).toHaveLength(2)
+    expect(screen.getByText("I'm really sorry you're going through this.").tagName).toBe("P")
+    expect(screen.getByText(/If you're in immediate danger/).tagName).toBe("P")
+    expect(screen.queryByRole("button", { name: "Helpful" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Not helpful" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("group", { name: "Sources" })).not.toBeInTheDocument()
+  })
+
   it("shows a refusal as a notice, not an answer", () => {
     show({ state: "blocked", text: "Staff salary information is restricted to HR / Admin." })
     expect(screen.getByRole("alert")).toHaveTextContent("Can't answer that")

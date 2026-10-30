@@ -88,7 +88,7 @@ with the Hub in 2026-10):
 |---|---|
 | `TOXICITY_GUARD=off` | No toxicity check, for every workspace. `/api/health` says `"guards": {"toxicity": "off", …}` and the app logs `TOXICITY_GUARD=off` at WARNING when it starts. Default: on (`"toxicity": "active"`). |
 | `REQUIRE_TOXICITY_GUARD=1` | Refuse to start with `TOXICITY_GUARD=off` (and `restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the logs), so the check can't be turned off by mistake. `/api/health/ready` checks it too. |
-| `SUPPORT_RESOURCES_TEXT` | Optional. Your company's own support, for the reply below (your employee assistance programme, a counsellor's number or email), on one line; `\n` starts a new line. Up to 1,000 characters; never masked as personal data. Unset: the generic crisis lines. |
+| `SUPPORT_RESOURCES_TEXT` | Optional. Where the reply below points people for support, on one line; `\n` starts a new line. It is **one text for the whole server**, shown in every workspace on it (there is no per-workspace setting): on a single-company install, your company's own support (your employee assistance programme, a counsellor's number or email); on a hosted server with many companies, leave it unset or set lines that hold for all of them, never one company's. Up to 1,000 characters; never masked as personal data. Unset: the generic crisis lines. |
 
 **Someone who may hurt themselves.** A question from someone who says they want
 to hurt or kill themselves, or asks how (moderation's `self-harm` categories, and
@@ -100,9 +100,14 @@ number if they're in danger. Where to find support is `SUPPORT_RESOURCES_TEXT`,
 or without it: Tele-MANAS, India's free 24x7 mental-health line (14416 or
 1-800-891-4416), findahelpline.com for other countries, and 112 for an emergency
 in India. Asking ABOUT support ("I'm burnt out, what support do we offer?") is
-answered as any question. Such a question is logged as `blocked` (the question
+answered as any question. In the chat the reply reads as a plain answer, not a
+refusal: no warning, no sources, nothing to rate, and the chat keeps the neutral
+title "New chat" rather than the question's words (as does any chat whose first
+question a guard refused). Such a question is logged as `blocked` (the question
 log's outcomes have no value of their own for it) with the block reason
-`self_harm`, its text kept as the workspace's log mode says. With the check off
+`self_harm`, its text kept as the workspace's log mode says. A message urging
+SOMEONE ELSE to hurt themselves (moderation also flags harassment, hate or
+violence) is abuse: refused, block reason `policy`. With the check off
 (`TOXICITY_GUARD=off`), or both its models down, there is no such reply either.
 
 The other checks are unchanged: the question length limit, the staff-pay rules,

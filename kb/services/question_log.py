@@ -129,13 +129,20 @@ def text_for(mode, text, limit, mask=None):
     return mask(text) if mask else pii.redact(text)
 
 
-def block_reason(answer):
-    """Which guard refused a question, from the message it gave (safety.py).
-    self_harm: given the support reply (safety.support_reply), logged under the
-    blocked outcome, since outcome's CHECK has no value of its own for it."""
+# The log's block_reason for the reason a guard gave (agent.run's report
+# "refused_by": safety.ASKED_REASONS, or the guard's name).
+_LOGGED_AS = {safety.SELF_HARM: "self_harm", "injection": "injection", "toxic": "policy",
+              "length": "policy"}
+
+
+def block_reason(answer, refused_by=None):
+    """Which guard refused a question: by the reason it gave (refused_by), else
+    from the message it gave (safety.py). self_harm: given the support reply
+    (the SELF_HARM verdict), logged under the blocked outcome, since outcome's
+    CHECK has no value of its own for it; only ever from the verdict."""
+    if refused_by in _LOGGED_AS:
+        return _LOGGED_AS[refused_by]
     text = answer or ""
-    if safety.is_support_reply(text):
-        return "self_harm"
     if "prompt-injection" in text:
         return "injection"
     if text.startswith("Staff salary information is restricted"):
@@ -189,7 +196,8 @@ def _tools(trace):
 
 def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(), sources=(),
            max_access="restricted", latency_ms=None, usage=None, message_id=None,
-           cache_hit=None, unsupported=None, language=None, provider=None, acl=None):
+           cache_hit=None, unsupported=None, language=None, provider=None, acl=None,
+           refused_by=None):
     """Write one row. Never raises: a question is never failed by its log. A
     question the documents couldn't answer is also a question.unanswered webhook,
     with its text only as the log keeps it (none in metadata mode). acl: the
@@ -197,7 +205,8 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
     max_access. provider: who answered, the provider of the answer model the chat
     picked (kb/services/model_choice.py); None: the workspace's. The model is
     always usage.model, the one that used the most tokens, as on every surface:
-    the column's meaning (and Insights' cost) never depends on a pick."""
+    the column's meaning (and Insights' cost) never depends on a pick.
+    refused_by: the reason the guard that refused it gave (block_reason)."""
     try:
         mode = store.settings(ws)["mode"]
         mask = assistant.pii_policy(ws).log if mode == "redacted" else None
@@ -206,7 +215,7 @@ def record(ws, user, role, surface, question, outcome, *, answer=None, trace=(),
             ws, user["username"] if isinstance(user, dict) else user, surface, outcome,
             text_mode=mode, question=kept,
             answer=text_for(mode, answer, ANSWER_CHARS, mask), message_id=message_id, role=role,
-            block_reason=block_reason(answer) if outcome == "blocked" else None,
+            block_reason=block_reason(answer, refused_by) if outcome == "blocked" else None,
             sources=[] if outcome == "blocked" else _sources(sources), tools=_tools(trace),
             max_access=max_access, latency_ms=latency_ms,
             tokens_in=usage.tokens_in if usage else None,
@@ -269,7 +278,7 @@ def tracked(run, ws, user, role, surface, turn=None):
                    provider=picked[0] if picked else getattr(run, "provider", None),
                    latency_ms=int((time.monotonic() - started) * 1000), message_id=message_id,
                    unsupported=None if unsupported is None else len(unsupported),
-                   language=out.get("language"), **fields)
+                   language=out.get("language"), refused_by=out.get("refused_by"), **fields)
 
         with counting() as usage:
             try:

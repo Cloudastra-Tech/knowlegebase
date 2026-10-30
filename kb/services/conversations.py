@@ -79,6 +79,7 @@ def present(message, role, admin=False, feedback=None):
            "created_at": message["created_at"], "withheld": False}
     if message["author"] == "user":
         return {**out, "search": searched(message)}
+    out["support"] = is_support(message)
     if not visible_to(role, message):
         return {**out, "content": "", "withheld": True, "sources": [], "steps": [],
                 "standalone_question": None, "feedback": None, "followups": [],
@@ -90,6 +91,13 @@ def present(message, role, admin=False, feedback=None):
     if admin:                       # the raw tool input and output (steps panel)
         out["trace"] = message.get("trace") or []
     return out
+
+
+def is_support(answer):
+    """Is this answer the support reply to someone who may hurt themselves? Saved
+    with it from the toxicity check's verdict (conversations_store's messages.scope),
+    never told from its words."""
+    return (answer.get("scope") or {}).get("reply") == store.SUPPORT_REPLY["reply"]
 
 
 def searched(question):

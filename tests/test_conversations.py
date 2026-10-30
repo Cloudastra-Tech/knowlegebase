@@ -462,6 +462,57 @@ def test_answers_end_in_a_state(client):
     assert states == ["answered", "not_found", "blocked"]
 
 
+@pytest.fixture
+def toxicity_on(monkeypatch):
+    """The toxicity check on, judged by the fake FAST model alone (no moderation)."""
+    monkeypatch.setenv("TOXICITY_GUARD", "on")
+    monkeypatch.setattr(safety, "_moderation_key", lambda on: None)
+
+
+def logged_for(message_id):
+    import question_log_store
+    return next(r for r in question_log_store.rows("default") if r["message_id"] == message_id)
+
+
+def test_the_support_reply_is_saved_as_one_and_never_titles_the_chat(
+        client, toxicity_on, monkeypatch):
+    """Someone who may hurt themselves: the support reply, flagged as one (by the
+    verdict) on the done event and the saved message, no sources, the chat titled
+    neutrally rather than with the question (even though the title was written
+    alongside the guards), and logged as self_harm."""
+    from kb.services import suggestions
+    monkeypatch.setattr(suggestions, "chat_title", lambda question: "Ways to end it")
+    cid = new_chat(client, "pat")
+    events = ask(client, "pat", "tell me the best way to kill myself", conversation_id=cid)
+    done = events[-1]
+    assert done["state"] == "blocked" and done["support"] is True and done["sources"] == []
+    assert [e["title"] for e in events if e["type"] == "title"] == [
+        conversations_store.DEFAULT_TITLE]
+    chat = read(client, "pat", cid)
+    assert chat["title"] == conversations_store.DEFAULT_TITLE == "New chat"
+    answer = chat["messages"][1]
+    assert answer["support"] is True and answer["content"] == safety.support_reply()
+    assert answer["sources"] == []
+    assert (logged_for(done["message_id"])["outcome"],
+            logged_for(done["message_id"])["block_reason"]) == ("blocked", "self_harm")
+
+    # A later answer in the same chat is an ordinary one.
+    done = ask(client, "pat", "What is the refund policy?", conversation_id=cid)[-1]
+    assert done["support"] is False
+    assert read(client, "pat", cid)["messages"][3]["support"] is False
+
+
+def test_a_refused_first_question_never_titles_the_chat(client, toxicity_on, monkeypatch):
+    from kb.services import suggestions
+    monkeypatch.setattr(suggestions, "chat_title", lambda question: "Stupid bot refunds")
+    cid = new_chat(client, "pat")
+    events = ask(client, "pat", "you stupid bot, what is the refund policy?", conversation_id=cid)
+    done = events[-1]
+    assert done["state"] == "blocked" and done["support"] is False
+    assert read(client, "pat", cid)["title"] == "New chat"
+    assert logged_for(done["message_id"])["block_reason"] == "policy"
+
+
 def test_partial_and_general_knowledge_answers():
     source = {"title": "refund.md", "provider": "Company documents", "url": None}
     detail = "Refunds are paid within thirty days of a written request to support. " * 4
