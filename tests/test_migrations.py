@@ -366,18 +366,19 @@ def _alembic(what, config, revision):
 def at_0027(tmp_path, monkeypatch):
     """A database at 0027 under a server key of the test's own, and the Alembic
     config that moves it. secret_box seals through db.connect(), which mustn't
-    upgrade it: it is marked as done."""
+    upgrade it, nor may a thread an earlier test left running: it is marked as done
+    from the start."""
     import secret_box
     from alembic.config import Config
     from cryptography.fernet import Fernet
     path = str(tmp_path / "app.db")
     monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", {path})   # before any step: no stray connect() upgrades it
     monkeypatch.setattr(secret_box, "KEY_PATH", str(tmp_path / "integrations.key"))
     monkeypatch.setenv("INTEGRATIONS_KEY", Fernet.generate_key().decode())
     secret_box.forget()
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
     _alembic("upgrade", config, "0027")
-    monkeypatch.setattr(db, "_migrated", {path})
     yield path, config
     secret_box.forget()
 
