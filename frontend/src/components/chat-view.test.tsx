@@ -414,6 +414,28 @@ describe("the chat", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Couldn't answer.")
   })
 
+  it("says the support reply itself, never that the question can't be answered", async () => {
+    session.setToken("tok")
+    const reply = "I'm really sorry you're going through this.\n\n- In India, call 14416.\n\nIf you're in immediate danger, please call your local emergency number now."
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "POST /api/conversations": { id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1 },
+      "POST /api/chat/stream": () =>
+        sse(
+          { type: "conversation", id: "c9", title: "New chat", user_message_id: "q9", message_id: "a9", new_conversation: false },
+          { type: "done", answer: reply, sources: [], steps: [], state: "blocked", support: true, message_id: "a9" },
+        ),
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    await user.type(await screen.findByRole("textbox", { name: "Your question" }), "I want to end it all{Enter}")
+    expect(await screen.findByText("In India, call 14416.")).toBeInTheDocument()
+    expect(screen.queryByText("Can't answer that")).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("I'm really sorry you're going through this."))
+    expect(screen.getByRole("status")).not.toHaveTextContent("can't be answered")
+  })
+
   it("shows a saved stopped answer's unfinished step as stopped", async () => {
     session.setToken("tok")
     const stopped = {

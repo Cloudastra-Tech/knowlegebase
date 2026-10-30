@@ -134,6 +134,7 @@ function fromSaved(saved: SavedMessage[], keys: Map<string, string> = new Map())
       followups: m.followups,
       siblings: m.siblings,
       verified: m.verified,
+      support: m.support,
       steps: endSteps(
         (m.steps ?? []).map((s) => ({ ...s, done: s.result != null })),
         m.state === "stopped" || m.state === "error" ? m.state : null,
@@ -628,6 +629,7 @@ export function ChatView({ role }: { role: Role }) {
     const controller = new AbortController()
     abort.current = controller
     let ended: AnswerState | null = null
+    let heard: string | null = null // said instead of ENDED's line
     try {
       let conversationId = urlId
       if (!conversationId) {
@@ -649,6 +651,8 @@ export function ChatView({ role }: { role: Role }) {
         signal: controller.signal,
       })
       ended = reply.state
+      // The support reply is heard as itself, never as a refusal.
+      if (reply.support) heard = reply.answer
       update((m) => ({
         ...m,
         id: reply.message_id ?? m.id,
@@ -659,6 +663,7 @@ export function ChatView({ role }: { role: Role }) {
         standalone: reply.standalone_question,
         followups: reply.followups,
         verified: reply.verified,
+        support: reply.support,
         streaming: false,
         steps: endSteps(
           m.steps ?? [],
@@ -704,7 +709,7 @@ export function ChatView({ role }: { role: Role }) {
       if (abort.current === controller) abort.current = null
       setLoading(false)
       setThinking(false)
-      setAnnounce(ended ? (ENDED[ended] ?? "Answer ready.") : "")
+      setAnnounce(heard ?? (ended ? (ENDED[ended] ?? "Answer ready.") : ""))
       queryClient.invalidateQueries({ queryKey: ["conversations"] })
       // The asker's last pick, and what's enabled now (a refused model was turned off).
       queryClient.invalidateQueries({ queryKey: ["chat-models"] })

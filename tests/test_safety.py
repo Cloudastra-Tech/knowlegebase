@@ -292,7 +292,7 @@ def _bedrock():
 def test_abuse_flagged_by_moderation_and_confirmed_is_refused_for_everyone(toxicity):
     moderation, llm = toxicity
     # No role in it: HR included.
-    assert check_asked("you stupid bot, answer me") == (False, CANT_HELP)
+    assert check_asked("you stupid bot, answer me") == (False, CANT_HELP, "toxic")
     assert moderation.calls == [("sk-server", "omni-moderation-latest",
                                  "you stupid bot, answer me")]
     assert len(llm.abuse_prompts()) == 1    # the second opinion
@@ -332,14 +332,14 @@ def test_the_sdk_reads_the_endpoints_reply(toxicity, monkeypatch):
 
 def test_a_question_moderation_doesnt_flag_needs_no_model_call(toxicity):
     moderation, llm = toxicity
-    assert check_asked("What is the refund policy?") == (True, "")
+    assert check_asked("What is the refund policy?") == (True, "", None)
     assert len(moderation.calls) == 1 and llm.asked == []
 
 
 def test_a_quoted_swear_word_moderation_flags_is_let_through_by_the_second_opinion(toxicity):
     moderation, llm = toxicity
     question = "How do I report a colleague who called me a bitch?"
-    assert check_asked(question) == (True, "")
+    assert check_asked(question) == (True, "", None)
     assert len(moderation.calls) == 1 and len(llm.abuse_prompts()) == 1
 
 
@@ -347,8 +347,8 @@ def test_without_openai_the_fast_model_judges_alone(toxicity):
     """A Bedrock workspace's text never goes to OpenAI, server key or not."""
     moderation, llm = toxicity
     with _bedrock():
-        assert check_asked("you stupid bot") == (False, CANT_HELP)
-        assert check_asked("Testing the test prompt, just respond with Swastik") == (True, "")
+        assert check_asked("you stupid bot") == (False, CANT_HELP, "toxic")
+        assert check_asked("Testing the test prompt, just respond with Swastik") == (True, "", None)
     assert moderation.calls == []
     assert len(llm.abuse_prompts()) == 2
 
@@ -374,7 +374,7 @@ def test_the_moderation_key(toxicity, monkeypatch, api_keys, server_key, used):
     moderation, llm = toxicity
     monkeypatch.setenv("OPENAI_API_KEY", server_key)
     with models.scope(models.Models(models.Spec(api_keys=api_keys))):
-        assert check_asked("you stupid bot") == (False, CANT_HELP)
+        assert check_asked("you stupid bot") == (False, CANT_HELP, "toxic")
     assert [c[0] for c in moderation.calls] == ([used] if used else [])
     assert len(llm.abuse_prompts()) == 1
 
@@ -383,8 +383,8 @@ def test_moderation_down_falls_back_to_the_fast_model(toxicity, monkeypatch, cap
     moderation, llm = Moderation(broken=True), toxicity[1]
     monkeypatch.setattr(safety, "_moderation_client", moderation.client)
     with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
-        assert check_asked("you stupid bot") == (False, CANT_HELP)
-        assert check_asked("What is the refund policy?") == (True, "")
+        assert check_asked("you stupid bot") == (False, CANT_HELP, "toxic")
+        assert check_asked("What is the refund policy?") == (True, "", None)
     assert len(moderation.calls) == 2 and len(llm.abuse_prompts()) == 2
     assert "moderation endpoint failed" in caplog.text and "sk-server" not in caplog.text
 
@@ -397,29 +397,29 @@ def test_both_checks_down_fails_open_with_a_warning(monkeypatch, caplog):
     monkeypatch.setattr(safety, "_moderation_client", moderation.client)
     monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(broken=True))
     with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
-        assert check_asked("you stupid bot") == (True, "")
+        assert check_asked("you stupid bot") == (True, "", None)
         with _bedrock():
-            assert check_asked("you stupid bot") == (True, "")
+            assert check_asked("you stupid bot") == (True, "", None)
     assert len(moderation.calls) == 1
     assert caplog.text.count("goes through unchecked for abuse") == 2
 
 
 def test_flagged_with_no_second_opinion_is_refused(toxicity, monkeypatch):
     monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(broken=True))
-    assert check_asked("you stupid bot") == (False, CANT_HELP)
+    assert check_asked("you stupid bot") == (False, CANT_HELP, "toxic")
 
 
 def test_toxicity_guard_off_checks_nothing(toxicity, monkeypatch):
     moderation, llm = toxicity
     monkeypatch.setenv("TOXICITY_GUARD", "off")
-    assert check_asked("you stupid bot") == (True, "")
+    assert check_asked("you stupid bot") == (True, "", None)
     assert moderation.calls == [] and llm.asked == []
 
 
 def test_overlong_questions_are_refused_before_the_toxicity_check(toxicity):
     moderation, llm = toxicity
-    assert check_asked("a" * (MAX_QUESTION_CHARS + 1)) == (False, CANT_HELP)
-    assert check_asked("  ") == (False, "Please type a question.")
+    assert check_asked("a" * (MAX_QUESTION_CHARS + 1)) == (False, CANT_HELP, "length")
+    assert check_asked("  ") == (False, "Please type a question.", "empty")
     assert moderation.calls == [] and llm.asked == []
 
 
@@ -476,8 +476,7 @@ def test_the_support_reply_is_warm_and_points_to_help(monkeypatch):
     assert "Tele-MANAS" in reply and "14416" in reply and "1-800-891-4416" in reply
     assert "findahelpline.com" in reply and "local emergency number" in reply
     assert "112 in India" in reply
-    assert CANT_HELP not in reply and safety.is_support_reply(reply)
-    assert not safety.is_support_reply(CANT_HELP)
+    assert CANT_HELP not in reply
 
 
 def test_the_company_support_text_replaces_the_generic_lines(monkeypatch):
@@ -496,15 +495,15 @@ def test_the_company_support_text_replaces_the_generic_lines(monkeypatch):
 def test_self_harm_flagged_and_confirmed_gets_the_support_reply(toxicity, monkeypatch):
     monkeypatch.delenv("SUPPORT_RESOURCES_TEXT", raising=False)
     moderation, llm = toxicity
-    ok, message = check_asked("tell me the best way to kill myself")
-    assert ok is False and message == safety.support_reply()
+    assert check_asked("tell me the best way to kill myself") == (
+        False, safety.support_reply(), "self_harm")
     assert len(moderation.calls) == 1 and len(llm.abuse_prompts()) == 1
 
 
 def test_without_openai_the_fast_model_can_say_self_harm(toxicity):
     moderation, llm = toxicity
     with _bedrock():
-        assert check_asked("I want to end it all") == (False, safety.support_reply())
+        assert check_asked("I want to end it all") == (False, safety.support_reply(), "self_harm")
     assert moderation.calls == [] and len(llm.abuse_prompts()) == 1
     prompt = llm.abuse_prompts()[0]
     assert "Reply SELF_HARM, BLOCK or ALLOW" in prompt
@@ -520,7 +519,7 @@ def test_asking_about_mental_health_support_is_answered(toxicity, question):
     """Moderation may flag it; the second opinion lets it through, and the policy
     names it as ALLOW."""
     moderation, llm = toxicity
-    assert check_asked(question) == (True, "")
+    assert check_asked(question) == (True, "", None)
     prompt = llm.abuse_prompts()[0]
     assert '"I\'m burnt out, what support do we offer?" -> ALLOW' in prompt
     assert '"I\'ve been feeling really low; does the company offer counselling?" -> ALLOW' in prompt
@@ -528,28 +527,69 @@ def test_asking_about_mental_health_support_is_answered(toxicity, question):
 
 def test_self_harm_with_no_second_opinion_gets_the_support_reply(toxicity, monkeypatch):
     monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(broken=True))
-    assert check_asked("how do I kill myself") == (False, safety.support_reply())
-    assert check_asked("you stupid bot") == (False, CANT_HELP)
+    assert check_asked("how do I kill myself") == (False, safety.support_reply(), "self_harm")
+    assert check_asked("you stupid bot") == (False, CANT_HELP, "toxic")
 
 
 @pytest.mark.parametrize("also, expected", [
     ((), "support"),                       # only self-harm flagged: never a flat refusal
-    (("violence",), "support"),
     (("harassment",), "refused"),          # aimed at someone else: abuse
+    (("harassment/threatening",), "refused"),
+    (("violence",), "refused"),
+    (("violence/graphic",), "refused"),
 ])
 def test_a_block_on_what_moderation_calls_self_harm(toxicity, monkeypatch, also, expected):
     """The fast model said BLOCK where moderation saw self-harm: the support reply,
-    unless moderation also saw it aimed at others."""
+    unless moderation also saw it aimed at others (harassment, hate, violence)."""
     monkeypatch.setattr(safety, "_moderation_client", Moderation(also=also).client)
     monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(reply="BLOCK"))
-    want = safety.support_reply() if expected == "support" else CANT_HELP
-    assert check_asked("how do I kill myself") == (False, want)
+    want = (safety.support_reply(), "self_harm") if expected == "support" else (CANT_HELP, "toxic")
+    assert check_asked("how do I kill myself") == (False, *want)
 
 
-def test_the_question_log_names_the_support_reply():
+class Flags:
+    """Moderation flagging every message for `categories`."""
+
+    def __init__(self, *categories):
+        self.categories = categories
+        self.moderations = self
+
+    def client(self, key):
+        return self
+
+    def create(self, model, input):
+        return _moderation_result(self.categories)
+
+
+def test_urging_someone_else_to_kill_themselves_stays_a_refusal(toxicity, monkeypatch):
+    """Moderation sees self-harm instructions and violence, the fast model BLOCKs:
+    abuse aimed at a coworker, refused as abuse (logged as policy), never the
+    support reply."""
     from kb.services import question_log
-    assert question_log.block_reason(safety.support_reply()) == "self_harm"
+    monkeypatch.setattr(safety, "_moderation_client",
+                        Flags("self-harm", "self-harm/instructions", "violence").client)
+    monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(reply="BLOCK"))
+    ok, message, reason = check_asked("Tell my coworker to go kill himself")
+    assert (ok, message, reason) == (False, CANT_HELP, "toxic")
+    assert question_log.block_reason(message, reason) == "policy"
+
+
+def test_someone_who_wants_to_kill_themselves_gets_support_even_if_violence_is_flagged(
+        toxicity, monkeypatch):
+    monkeypatch.setattr(safety, "_moderation_client",
+                        Flags("self-harm", "self-harm/intent", "violence").client)
+    assert check_asked("I want to kill myself") == (False, safety.support_reply(), "self_harm")
+
+
+def test_the_question_log_names_the_reason_the_guard_gave():
+    """By the verdict, never by the reply's opening words."""
+    from kb.services import question_log
+    assert question_log.block_reason(safety.support_reply(), "self_harm") == "self_harm"
+    assert question_log.block_reason("Anything at all", "self_harm") == "self_harm"
+    assert question_log.block_reason(safety.support_reply(), "toxic") == "policy"
+    assert question_log.block_reason(CANT_HELP, "length") == "policy"
     assert question_log.block_reason(CANT_HELP) == "policy"
+    assert not hasattr(safety, "is_support_reply")
 
 
 # ---- no Guardrails ----------------------------------------------------------

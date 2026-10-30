@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 import access
 import language
 import models
+import safety
 import spaces_store
 from agent import Cancelled  # noqa: F401  (re-exported: a stopped run raises it)
 from kb.services import agents, answer_cache, conversations, question_log, spaces
@@ -61,6 +62,9 @@ class Answer:
     verified: dict | None = None                # served from a verified answer: {id, title, by, at}
     acl: list | None = None                     # who may read it (access.clauses); None: max_access
     cached: str | None = None                   # exact / semantic: from the answer cache
+    # The support reply (safety.support_reply): the toxicity check's SELF_HARM
+    # verdict, a blocked state shown as a calm reply, not as a refusal.
+    support: bool = False
 
 
 def _space_key(ws, context):
@@ -180,7 +184,8 @@ def _ask(ws, user, role, question, *, surface, turn=None, on_event=None, cancel=
     standalone = out.get("standalone")
     done = Answer(answer, sources, state, level, trace,
                   standalone if standalone not in (None, question) else None,
-                  out.get("verified"), acl)
+                  out.get("verified"), acl,
+                  support=out.get("refused_by") == safety.SELF_HARM)
     answer_cache.save(scope, question, done, out,
                       user.get("username") if isinstance(user, dict) else user)
     return done

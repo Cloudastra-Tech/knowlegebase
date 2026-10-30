@@ -466,6 +466,25 @@ def test_someone_who_may_hurt_themselves_gets_support_not_an_answer(
     assert "+91 9876543210" in reply["answer"] and reply["sources"] == []
     assert not [e for e in reply["events"] if e["type"].startswith("step")]
     assert not toxicity.calls.of("agent")         # the answer model is never called
+    assert out["refused_by"] == "self_harm"
+
+
+def test_the_support_reply_is_told_apart_by_the_verdict_not_its_words(toxicity, monkeypatch):
+    """Whatever the support reply says (a workspace's own text, a reworded
+    opening), the verdict is what keeps its number unmasked and the search step
+    hidden; a refusal for abuse is never taken for it."""
+    monkeypatch.setattr(safety, "support_reply",
+                        lambda: "Please talk to someone today: +91 9876543210.")
+    run = build_agent("public", outline=False)
+    out = {}
+    reply = ask(run, "tell me the best way to kill myself", out=out)
+    assert reply["answer"] == "Please talk to someone today: +91 9876543210."
+    assert not [e for e in reply["events"] if e["type"].startswith("step")]
+    assert out["refused_by"] == "self_harm"
+
+    out = {}
+    ask(run, "you stupid bot, what is the refund policy?", out=out)
+    assert out["refused_by"] == "toxic" and out["blocked"]
 
 
 def wait_for_the_stream(fakes, seconds=30):

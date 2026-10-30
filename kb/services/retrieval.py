@@ -44,7 +44,7 @@ def _search(ws, who, query, k):
     viewer = access.of(who)
     # The query is what someone typed: the rules for that (length, abuse), then
     # the search's own (staff pay), as a chat question gets.
-    ok, reason = safety.check_asked(query)
+    ok, reason, _ = safety.check_asked(query)
     if ok:
         ok, reason = safety.check_question(query, safety.may_see_restricted(viewer))
     if not ok:
