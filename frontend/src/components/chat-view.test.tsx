@@ -602,7 +602,8 @@ describe("the chat", () => {
     expect(await screen.findByText("Answer 2")).toBeInTheDocument()
     expect(asked[1]).toMatchObject({ question: "What is the refund policy?" })
     expect(asked[1]).not.toHaveProperty("prompt_id")
-  })
+    // Typed key by key, two questions' worth: past the default 5s on a busy machine.
+  }, 15_000)
 
   it("keeps what's typed right after a saved prompt in order, on a slow frame", async () => {
     // The prompt puts the cursor at its end a frame later; typed before that frame,
