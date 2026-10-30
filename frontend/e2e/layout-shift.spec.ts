@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { ADMIN, DESKTOP, PHONE, signIn } from "./helpers.ts"
+import { ADMIN, centreStep, DESKTOP, PHONE, signIn } from "./helpers.ts"
 
 // The room a screen's content gets: where its scroller starts and how wide its inside
 // is. Neither may change when the screen gains a scrollbar or a modal locks the scroll.
@@ -59,22 +59,31 @@ test("the landing page's demos don't shift the page", async ({ page }) => {
     })()`)
     // The hero's card: typing, the passages arriving and decoding, the answer citing.
     await page.waitForTimeout(6000)
+    // Each section's steps in turn (landing-steps.tsx): the scan, the passages locking
+    // in and the answer, the next team's; the lines decoding and the answer
+    // re-forming for the other person; the route re-routing for each choice.
+    for (const [section, step, wait] of [
+      ["answer", "hr", 5000],
+      ["answer", "eng", 5000],
+      ["answer", "sales", 2500],
+      ["access", "Pat", 3000],
+      ["access", "Hira", 3000],
+      ["privacy", "aws", 1500],
+      ["privacy", "key", 1500],
+      ["privacy", "local", 1500],
+    ] as const) {
+      await centreStep(page, section, step)
+      await page.waitForTimeout(wait)
+    }
     for (const [target, wait] of [
-      ["#answer [role=tablist]", 6000], // the scan, the passages locking in, the answer
-      ["#access [role=tablist]", 4000], // the lines decoding, the answer re-forming
-      ["[data-slot=model-route]", 7500], // past its first re-route (every 6.5s)
-      ["#privacy ol", 2500],
+      ["#privacy ol[aria-label]", 2500], // the log masking
       ["#sources [data-source]", 1500],
       ["#start h2", 1500], // the heading resolving
     ] as const) {
       await page.locator(target).first().scrollIntoViewIfNeeded()
       await page.waitForTimeout(wait)
     }
-    // Picked by hand: the other person, another route, a connector's sync line.
-    await page.locator("#access").getByRole("tab", { name: /Hira/ }).click()
-    await page.waitForTimeout(2500)
-    await page.locator("#privacy").getByRole("tab", { name: /This server/ }).click()
-    await page.waitForTimeout(1000)
+    // Hovered: a connector's sync line.
     await page.locator("#sources [data-source]").first().hover()
     await page.waitForTimeout(500)
     expect(await page.evaluate("window.__shift"), `layout shift at ${size.width}px`).toBeLessThan(0.01)
