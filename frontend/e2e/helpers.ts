@@ -19,6 +19,17 @@ export async function shot(page: Page, name: string) {
   if (dir) await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true })
 }
 
+// The landing's step sections (landing-steps.tsx) follow the scroll: brings a step's
+// middle to the window's middle, where it becomes the active one (from lg up; under
+// it, the step and its own visual come into view).
+export async function centreStep(page: Page, section: string, step: string) {
+  const target = JSON.stringify(`#${section} li[data-step="${step}"]`)
+  await page.evaluate(`(() => {
+    const r = document.querySelector(${target}).getBoundingClientRect()
+    window.scrollBy(0, r.top + r.height / 2 - window.innerHeight / 2)
+  })()`)
+}
+
 // Nothing on the page is wider than the screen (no sideways scrolling). A string, so
 // the e2e tsconfig needs no DOM types.
 export async function fitsWidth(page: Page) {

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { ADMIN, ask, conversation, MEMBER, signIn } from "./helpers.ts"
+import { ADMIN, ask, centreStep, conversation, MEMBER, signIn } from "./helpers.ts"
 
 // The motion and theme contracts (DESIGN.md, "Theme" and "Motion"): the app field
 // holds still with reduced motion, dark is the default and a Light choice is kept,
@@ -59,9 +59,16 @@ test("with reduced motion the landing's scenes show their end state, still", asy
   await expect(hero).toContainText("Your manager, then Finance [1], within 5 working days [2].")
   await expect(hero).not.toContainText("▪")
 
-  await page.locator("#answer [role=tablist]").scrollIntoViewIfNeeded()
+  await centreStep(page, "answer", "hr")
   await expect(page.locator("#answer [data-state=cited]")).toHaveCount(3)
   await expect(page.locator("#answer")).toContainText("Your manager approves first, then Finance")
+  // Scrolled to the next step, the next example is there finished; the one it
+  // replaced fades without a blur.
+  await centreStep(page, "answer", "eng")
+  await expect(page.locator("#answer [data-slot=step-count]")).toHaveText("2 / 3")
+  const eng = page.locator("#answer [data-current]")
+  await expect(eng.locator("[data-state=cited]")).toHaveCount(3)
+  expect(await page.evaluate(`getComputedStyle(document.querySelector("#answer [inert]")).filter`)).toBe("none")
 
   await page.locator("#start h2").scrollIntoViewIfNeeded()
   await expect(page.locator("#start [data-ch]:not([data-state=read])")).toHaveCount(0)

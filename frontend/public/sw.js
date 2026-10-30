@@ -5,8 +5,8 @@
 // carries answers or documents: those always go to the network, uncached.
 // main.tsx registers it in production builds only.
 
-const CACHE = "kb-shell-v1"
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"]
+const CACHE = "kb-shell-v2"
+const SHELL = ["/", "/manifest.webmanifest", "/icons/mark-192.png", "/icons/mark-512.png"]
 const NEVER = ["/api/", "/mcp", "/scim/", "/docs", "/redoc", "/openapi.json"]
 
 self.addEventListener("install", (event) => {
