@@ -105,21 +105,18 @@ const MODELS: ModelOption[] = [
   {
     id: "aws",
     title: "Your AWS account",
-    short: "Your AWS",
     marks: ["bedrock"],
     body: "Chat and search on Bedrock, in your account and region. The server assumes a role you create, so no AWS secret is stored, and nothing goes to OpenAI.",
   },
   {
     id: "key",
     title: "Your own key",
-    short: "Your key",
     marks: ["openai", "anthropic"],
     body: "OpenAI or Anthropic, billed to you. The key is sealed when you save it and is never shown again.",
   },
   {
     id: "local",
     title: "This server",
-    short: "This server",
     marks: [],
     icon: Server,
     body: "Search runs on the server's own CPU, so documents are indexed without leaving it. Only the question and the passages it quotes go to the model.",
@@ -268,46 +265,56 @@ export function LandingPage({
       <main>
         <Hero onGetStarted={onGetStarted} />
 
-        {/* An answer, with what it read. Full width: the demo is the section. */}
+        {/* An answer, with what it read: one team's question per step, the demo held
+            beside them as they scroll by (landing-steps.tsx). */}
         <section id="answer" className="scroll-mt-16 border-t border-border/60 py-20 sm:py-28">
           <div className="mx-auto max-w-6xl px-4">
-            <SectionTitle
-              title="Every answer shows where it came from."
-              body="It searches your documents first and answers only from what it finds. Each citation opens the passage it came from."
+            <ChatDemo
+              scenes={DEMO}
+              head={
+                <SectionTitle
+                  title="Every answer shows where it came from."
+                  body="It searches your documents first and answers only from what it finds. Each citation opens the passage it came from."
+                />
+              }
             />
-            <ChatDemo scenes={DEMO} className="mt-10" />
-            <p className="mt-4 max-w-[68ch] text-sm text-pretty text-muted-foreground">
+            <p className="mt-10 max-w-[68ch] text-sm text-pretty text-muted-foreground">
               When nothing in your documents covers a question, it says so rather than guessing, and the question shows up
               for an admin under Not found, so the gap gets written down. The documents above are examples.
             </p>
           </div>
         </section>
 
-        {/* Access: the rule beside the demo of it. */}
+        {/* Access: the rule, then the same question from each person as a step. */}
         <section id="access" className="scroll-mt-16 border-t border-border/60 py-20 sm:py-28">
-          <div className="mx-auto grid max-w-6xl gap-10 px-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
-            <div className="flex flex-col gap-6">
-              <SectionTitle
-                title="Same question. Different person, different answer."
-                body="Each document is open to everyone, to groups or to named people, or follows its sharing in Drive, SharePoint, Confluence and the other tools that have it. What someone can't open is left out before the search, so the model never reads it."
-              />
-              <p className="max-w-[60ch] text-sm text-pretty text-muted-foreground">
-                People sign in with Google Workspace, Microsoft Entra ID, Okta, or any SAML or OpenID Connect provider.
-                SCIM keeps members and groups in step with your directory.
-              </p>
-            </div>
-            <AccessDemo />
+          <div className="mx-auto max-w-6xl px-4">
+            <AccessDemo
+              head={
+                <SectionTitle
+                  title="Same question. Different person, different answer."
+                  body="Each document is open to everyone, to groups or to named people, or follows its sharing in Drive, SharePoint, Confluence and the other tools that have it. What someone can't open is left out before the search, so the model never reads it."
+                />
+              }
+            />
+            <p className="mt-10 max-w-[68ch] text-sm text-pretty text-muted-foreground">
+              People sign in with Google Workspace, Microsoft Entra ID, Okta, or any SAML or OpenID Connect provider. SCIM
+              keeps members and groups in step with your directory.
+            </p>
           </div>
         </section>
 
-        {/* Privacy: where the model runs, then what the log keeps. */}
+        {/* Privacy: where the model runs (a step per choice), then what the log keeps. */}
         <section id="privacy" className="scroll-mt-16 border-t border-border/60 py-20 sm:py-28">
           <div className="mx-auto max-w-6xl px-4">
-            <SectionTitle
-              title="You choose where the model runs."
-              body="An admin picks it for the workspace, and can change it later."
+            <ModelRoute
+              options={MODELS}
+              head={
+                <SectionTitle
+                  title="You choose where the model runs."
+                  body="An admin picks it for the workspace, and can change it later."
+                />
+              }
             />
-            <ModelRoute options={MODELS} className="mt-10" />
 
             <div className="mt-16 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] lg:items-center lg:gap-16">
               <div>

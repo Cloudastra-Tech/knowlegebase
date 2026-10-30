@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { FileText, Lock } from "lucide-react"
 
 import { redact, reveal, span } from "@/components/ascii/decode"
 import { ScrambleText } from "@/components/ascii/scramble-text"
 import { BrandMark } from "@/components/brand-mark"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Layer, ScrollSteps } from "@/components/landing-steps"
 import { subscribe } from "@/lib/ascii-loop"
-import { SEEN, still, usePickedBy, writer } from "@/components/landing-scene"
+import { SEEN, still, writer } from "@/components/landing-scene"
 import { cn } from "@/lib/utils"
 
 // The landing page's explanatory pieces: the chat demo, the access demo and the
@@ -15,8 +15,9 @@ import { cn } from "@/lib/utils"
 // function of a clock that runs only while the piece is on screen (from about a
 // third of it in view) and the tab is in front, writing the few characters and
 // attributes that change straight into the page, never React state per frame. Each
-// shows its finished state with reduced motion or "Reduce effects". The tabs stop
-// the cycling; picked from the keyboard, the new state is there at once.
+// shows its finished state with reduced motion or "Reduce effects". The chat and
+// access demos are told in steps as the page scrolls (landing-steps.tsx): the step in
+// the middle of the window picks the state, and a scene plays once, then holds.
 
 
 // ---- The chat demo ---------------------------------------------------------------
@@ -38,41 +39,38 @@ function DocGlyph({ brand, className }: { brand: string | null; className?: stri
 // steps from one to the next, a band of flicker passes over each, and the ones it
 // cites lock in (they decode, the phrase it quotes is marked, and they get their
 // [n]) while the rest stay redacted. Then the answer streams in, its chips pointing
-// at the passages they came from. Then the next team's, until someone picks a team.
-export function ChatDemo({ scenes, className }: { scenes: DemoScene[]; className?: string }) {
-  const [index, setIndex] = useState(0)
-  const [picked, setPicked] = useState<false | "pointer" | "keyboard">(false)
-  const { by, listeners } = usePickedBy()
-  const scene = scenes[index]
-
+// at the passages they came from. One team's question per step.
+export function ChatDemo({ scenes, head, className }: { scenes: DemoScene[]; head: ReactNode; className?: string }) {
   return (
-    <div className={cn("flex flex-col gap-4", className)}>
-      <Tabs
-        panels={false}
-        value={scene.id}
-        onValueChange={(id) => {
-          setPicked(by.current)
-          setIndex(scenes.findIndex((s) => s.id === id))
-        }}
-      >
-        <TabsList aria-label="Example questions" {...listeners}>
-          {scenes.map((s) => (
-            <TabsTrigger key={s.id} value={s.id} className="px-3.5">
-              {s.label}
-            </TabsTrigger>
+    <ScrollSteps
+      head={head}
+      className={className}
+      columns="lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]"
+      steps={scenes.map((s) => {
+        const cited = s.docs.filter((d) => d.cited).map((d) => d.title)
+        return {
+          id: s.id,
+          label: s.label,
+          title: s.question,
+          body: `It reads ${passagesOf(s).length} passages and answers from the ${cited.length} it cites: ${list(cited)}.`,
+        }
+      })}
+      caption={(i) => `${scenes[i].label} example`}
+      visual={(active) => (
+        <div className="grid">
+          {scenes.map((s, i) => (
+            <Layer key={s.id} on={i === active}>
+              <ChatRun scene={s} playing={i === active} className="h-full" />
+            </Layer>
           ))}
-        </TabsList>
-      </Tabs>
-      <ChatRun
-        key={scene.id}
-        scene={scene}
-        instant={picked === "keyboard"}
-        last={!!picked}
-        onDone={() => setIndex((i) => (i + 1) % scenes.length)}
-      />
-    </div>
+        </div>
+      )}
+      stepVisual={(i) => <ChatRun scene={scenes[i]} playing />}
+    />
   )
 }
+
+const list = (items: string[]) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`)
 
 // The chat run's timeline, in seconds.
 const ASKED = 0.05
@@ -80,7 +78,6 @@ const SCAN_AT = 0.55 // the cursor reaches the first passage
 const STEP = 0.42 // to the next
 const READ = 0.5 // a band passes over a passage
 const WORD = 0.055 // the answer streams a word at a time
-const CHAT_HOLD = 5 // the finished answer holds before the next team's
 
 // The passages the search reads, in the order it reads them: the cited ones and the
 // others between them.
@@ -95,7 +92,8 @@ function passagesOf(scene: DemoScene) {
   return docs
 }
 
-function ChatRun({ scene, instant, last, onDone }: { scene: DemoScene; instant: boolean; last: boolean; onDone: () => void }) {
+// Playing, it runs from the top once and holds its end; stopped, it holds its frame.
+function ChatRun({ scene, playing, className }: { scene: DemoScene; playing: boolean; className?: string }) {
   const box = useRef<HTMLDivElement>(null)
   const bubble = useRef<HTMLDivElement>(null)
   const status = useRef<HTMLSpanElement>(null)
@@ -103,24 +101,19 @@ function ChatRun({ scene, instant, last, onDone }: { scene: DemoScene; instant: 
   const cursor = useRef<HTMLSpanElement>(null)
   const rows = useRef<(HTMLDivElement | null)[]>([])
   const chips = useRef<(HTMLSpanElement | null)[]>([])
-  const done = useRef(onDone)
-  useEffect(() => {
-    done.current = onDone
-  })
   const passages = useMemo(() => passagesOf(scene), [scene])
   const cited = passages.filter((p) => p.cite)
   const words = useMemo(() => scene.answer.split(" "), [scene])
 
-  useEffect(() => {
+  // A layout effect: back on, it's at its start (or, still, its end) before it shows.
+  useLayoutEffect(() => {
     const el = box.current
-    if (!el) return
+    if (!el || !playing) return
     const w = writer()
     const scanEnd = SCAN_AT + (passages.length - 1) * STEP + READ
     const answerAt = scanEnd + 0.15
     const answerEnd = answerAt + words.length * WORD
     const end = answerEnd + 0.3
-    let rested = false
-    let finished = false
     let on = -1 // the passage the cursor is on
 
     const draw = (time: number) => {
@@ -153,30 +146,21 @@ function ChatRun({ scene, instant, last, onDone }: { scene: DemoScene; instant: 
       })
       w.text(answer.current, t < answerAt ? "" : words.slice(0, Math.ceil((t - answerAt) / WORD)).join(" "))
       chips.current.forEach((c) => w.on(c, t >= answerEnd))
-      if (time < 0) return
-      if (t >= end && !rested) {
-        rested = true
-        if (last) queueMicrotask(() => loop.stop())
-        else loop.rest(CHAT_HOLD * 1000)
-        return
-      }
-      if (rested && !finished) {
-        finished = true
-        done.current()
-      }
+      if (time >= 0 && t >= end) queueMicrotask(() => loop.stop())
     }
-    if (instant) {
-      draw(-1)
-      return
-    }
+    // Played before, it may have stopped part way, or at its end.
+    if (!still()) draw(0)
     const loop = subscribe(el, draw, { fps: 30, still: -1, priority: "hero", visibleAt: SEEN })
     return () => loop.stop()
-  }, [instant, last, passages, words])
+  }, [playing, passages, words])
 
   return (
-    <div ref={box} className="grid overflow-hidden rounded-2xl border bg-card/40 [contain:content] lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+    <div
+      ref={box}
+      className={cn("grid overflow-hidden rounded-2xl border bg-card/40 [contain:content] lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]", className)}
+    >
       {/* The conversation. */}
-      <div className="flex min-h-80 flex-col gap-5 p-5 sm:p-7">
+      <div className="flex flex-col gap-5 p-5 sm:p-7">
         <div
           ref={bubble}
           className="max-w-[85%] self-end rounded-2xl rounded-br-md bg-foreground px-4 py-2.5 text-sm text-background opacity-0 transition-opacity duration-(--dur-pop) ease-out-strong data-on:opacity-100"
@@ -302,78 +286,63 @@ const LINE_EVERY = 0.14
 const CHAR = 0.028 // character by character
 const REDACT = 0.3 // a line closes again, right to left
 const REFORM = 0.7 // the answer re-forms
-const ACCESS_HOLD = 5.5
 
-// The same question from two people. The sheet shared with HR alone is dropped
-// before the search for the person outside HR, so the model never reads it: its rows
-// stay redacted for Pat, and decode character by character for Hira. The answer
-// re-forms from one person's into the other's through a scramble.
-export function AccessDemo({ className }: { className?: string }) {
-  // Who's asking, and who asked before (null at first: every line starts redacted).
-  const [{ who, from }, setView] = useState<{ who: number; from: number | null }>({ who: 0, from: null })
-  const [picked, setPicked] = useState<false | "pointer" | "keyboard">(false)
-  const { by, listeners } = usePickedBy()
-  const person = PEOPLE[who]
+// What each person's step says (the rule at work, as the section says it).
+const ACCESS_STEPS = [
+  {
+    title: "The salary sheet is left out.",
+    body: "It's shared with HR alone, so it's dropped before the search for anyone outside HR. The model never reads it.",
+  },
+  {
+    title: "The salary sheet is read and cited.",
+    body: "HR can open it, so the search reads it and the answer quotes it, with the engineering ladder.",
+  },
+]
 
+// The same question from two people, one step each. The sheet shared with HR alone is
+// dropped before the search for the person outside HR, so the model never reads it:
+// its rows stay redacted for Pat, and decode character by character for Hira. The
+// answer re-forms from one person's into the other's through a scramble.
+export function AccessDemo({ head, className }: { head: ReactNode; className?: string }) {
   return (
-    <div className={cn("flex flex-col gap-5 rounded-2xl border bg-card/40 p-5 sm:p-7", className)}>
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm text-muted-foreground">Asked by</span>
-        <Tabs
-          panels={false}
-          value={person.name}
-          onValueChange={(name) => {
-            setPicked(by.current)
-            setView({ who: PEOPLE.findIndex((p) => p.name === name), from: who })
-          }}
-        >
-          <TabsList aria-label="Who is asking" {...listeners}>
-            {PEOPLE.map((p) => (
-              <TabsTrigger key={p.name} value={p.name} className="px-3">
-                {p.name}, {p.team}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
+    <ScrollSteps
+      head={head}
+      className={className}
+      steps={PEOPLE.map((p, i) => ({ id: p.name, label: `${p.name}, ${p.team}`, ...ACCESS_STEPS[i] }))}
+      caption={(i) => `asked by ${PEOPLE[i].name}, ${PEOPLE[i].team}`}
+      visual={(active) => <AccessSwitch who={active} />}
+      // Each person's card plays from the one before's: Hira's rows decode out of Pat's.
+      stepVisual={(i) => <AccessCard who={i} from={i ? i - 1 : null} />}
+    />
+  )
+}
+
+// One card that follows the active step, decoding from the last person to this one.
+function AccessSwitch({ who }: { who: number }) {
+  // Who's asking, and who asked before (null at first: every line starts redacted).
+  const [view, setView] = useState<{ who: number; from: number | null }>({ who, from: null })
+  if (view.who !== who) setView({ who, from: view.who })
+  return <AccessCard who={view.who} from={view.from} />
+}
+
+function AccessCard({ who, from }: { who: number; from: number | null }) {
+  return (
+    <div className="flex flex-col gap-5 rounded-2xl border bg-card/40 p-5 sm:p-7">
       <p className="text-lg font-medium text-balance">What do we pay senior engineers?</p>
-      <AccessRun
-        key={who}
-        who={who}
-        from={from}
-        instant={picked === "keyboard"}
-        last={!!picked}
-        onDone={() => setView((v) => ({ who: (v.who + 1) % PEOPLE.length, from: v.who }))}
-      />
+      <AccessRun key={`${from}-${who}`} who={who} from={from} />
     </div>
   )
 }
 
-function AccessRun({
-  who,
-  from,
-  instant,
-  last,
-  onDone,
-}: {
-  who: number
-  from: number | null
-  instant: boolean
-  last: boolean
-  onDone: () => void
-}) {
+function AccessRun({ who, from }: { who: number; from: number | null }) {
   const box = useRef<HTMLDivElement>(null)
   const lines = useRef<(HTMLSpanElement | null)[]>([])
   const answer = useRef<HTMLParagraphElement>(null)
   const chips = useRef<HTMLSpanElement>(null)
-  const done = useRef(onDone)
-  useEffect(() => {
-    done.current = onDone
-  })
   const person = PEOPLE[who]
   const before = from === null ? null : PEOPLE[from]
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = box.current
     if (!el) return
     const w = writer()
@@ -395,8 +364,6 @@ function AccessRun({
     const old = before?.answer ?? ""
     const size = Math.max(old.length, person.answer.length)
     const end = answerAt + REFORM + 0.2
-    let rested = false
-    let finished = false
 
     const draw = (time: number) => {
       const t = time < 0 ? end : time
@@ -414,25 +381,13 @@ function AccessRun({
         k >= 1 ? person.answer : reveal(person.answer.padEnd(size), k, tick, { band: 6, from: old.padEnd(size), seed: 3, spaces: false }).trimEnd()
       w.text(answer.current, text)
       w.on(chips.current, k >= 1)
-      if (time < 0) return
-      if (t >= end && !rested) {
-        rested = true
-        if (last) queueMicrotask(() => loop.stop())
-        else loop.rest(ACCESS_HOLD * 1000)
-        return
-      }
-      if (rested && !finished) {
-        finished = true
-        done.current()
-      }
+      if (time >= 0 && t >= end) queueMicrotask(() => loop.stop())
     }
-    if (instant) {
-      draw(-1)
-      return
-    }
+    // The person before's lines as they were, before the first frame shows.
+    if (!still()) draw(0)
     const loop = subscribe(el, draw, { fps: 30, still: -1, priority: "hero", visibleAt: SEEN })
     return () => loop.stop()
-  }, [person, before, instant, last])
+  }, [person, before])
 
   let line = 0
   return (
