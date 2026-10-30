@@ -1803,8 +1803,18 @@ It is its own list: `SSO_ALLOW_PRIVATE_HOSTS` and `CONNECTOR_ALLOW_PRIVATE_HOSTS
 open it. The server's own addresses in `.env` (`AZURE_OPENAI_ENDPOINT`,
 `OPENAI_COMPAT_BASE_URL`) are the operator's and aren't checked. The addresses aren't
 secret: they're shown back on the screen and kept in the audit log (no query string is
-accepted, so nothing secret rides in one); they're stored in the same sealed JSON as the
-workspace's keys, so no migration was needed.
+accepted, so nothing secret rides in one); they're stored in plain text in their own
+column, `model_providers.endpoints`, apart from the sealed keys.
+
+Before migration 0028 they were kept inside the workspace's sealed `api_keys`. 0028
+moves them out on the first start of the new version, so the server's key
+(`INTEGRATIONS_KEY` or the key file) must be there, as it always is when the app runs.
+A row it can't open (no key, the workspace's keys shredded) is left as it was and
+logged (`0028: left workspace ...`); the upgrade goes on, and that workspace's admin
+types the address again. To move such rows later, run `alembic downgrade 0027` then
+`alembic upgrade head` with the key. The downgrade puts the addresses back into the
+sealed keys and drops the column; it needs the key whenever a row has addresses and
+changes nothing without it.
 
 ## Anthropic
 

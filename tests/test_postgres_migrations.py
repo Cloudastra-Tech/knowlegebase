@@ -96,3 +96,60 @@ def test_readiness_checks_the_database_and_the_pgvector_index(fresh_db, monkeypa
         health.check_search_index(str(tmp_path / "index"))       # no table yet
     vector_store.collection_names(str(tmp_path / "index"))     # makes it
     health.check_search_index(str(tmp_path / "index"))
+
+
+def test_0028_moves_the_provider_addresses_on_postgres_and_back(fresh_db, monkeypatch):
+    """0028 on Postgres: the sealed api_keys (bytea) opened through the migration's
+    own connection, the addresses moved to their column, and back on downgrade."""
+    import json
+    import pathlib
+
+    import psycopg
+    from alembic import command
+    from alembic.config import Config
+
+    import db_pg
+    import secret_box
+    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
+    url = db.DATABASE_URL
+    monkeypatch.setattr(db, "_migrated", {url})         # (secret_box mustn't upgrade it)
+    azure = {"azure": {"base_url": "https://acme.openai.azure.com", "api_version": None}}
+    key = "sk-azure-0123456789abcdef"
+
+    def alembic(what, revision):
+        with db.alembic_lock:
+            getattr(command, what)(config, revision)
+        db_pg.database(url).catalog.forget()
+
+    def rows():
+        with psycopg.connect(url) as conn:
+            return {ws: (e, bytes(k) if k else None) for ws, e, k in conn.execute(
+                "SELECT workspace, endpoints, api_keys FROM model_providers")}
+
+    alembic("downgrade", "0027")
+    sealed = {"azure": secret_box.seal({"azure": key, "_endpoints": azure}, "azure"),
+              "keys": secret_box.seal({"openai": key}, "keys"),
+              "damaged": b"kbw1:1:not-a-fernet-token"}
+    with psycopg.connect(url) as conn:
+        for ws, blob in sealed.items():
+            conn.execute("INSERT INTO model_providers (workspace, external_id, updated_at, "
+                         "api_keys) VALUES (%s, %s, 1, %s)", (ws, f"kb-{ws}", blob))
+
+    alembic("upgrade", "0028")
+    after = rows()
+    assert json.loads(after["azure"][0]) == azure
+    assert secret_box.unseal(after["azure"][1], "azure") == {"azure": key}
+    assert after["keys"] == (None, sealed["keys"])
+    assert after["damaged"] == (None, sealed["damaged"])       # left as it was
+
+    alembic("downgrade", "0027")
+    with psycopg.connect(url) as conn:
+        down = {ws: bytes(k) for ws, k in conn.execute(
+            "SELECT workspace, api_keys FROM model_providers")}
+    assert secret_box.unseal(down["azure"], "azure") == {"azure": key, "_endpoints": azure}
+    assert down["keys"] == sealed["keys"] and down["damaged"] == sealed["damaged"]
+
+    alembic("upgrade", "head")
+    again = rows()
+    assert again["azure"][0] == after["azure"][0]
+    assert again["keys"] == after["keys"] and again["damaged"] == after["damaged"]
