@@ -94,6 +94,9 @@ for (const [name, size] of [
   test(`the main screens have no serious accessibility problems (${name})`, async ({ page }) => {
     test.setTimeout(120_000)
     await page.setViewportSize(size)
+    // Colours as they settle: the cards' motion-safe entrance fades them in, and axe
+    // reading one mid-fade reports a contrast problem the screen never has.
+    await page.emulateMedia({ reducedMotion: "reduce" })
     await signIn(page, ADMIN)
     const found: string[] = []
     const wide: string[] = []

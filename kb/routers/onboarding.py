@@ -38,9 +38,9 @@ def onboarding_view(user=Depends(current_user), role=Depends(current_role),
     return out
 
 
-def _tours_for(user):
-    """The member's tours: the admin one for admins only."""
-    tours = onboarding.tours(ws_of(user), user["username"])
+def _tours_for(user, tours=None):
+    """The member's tours (`tours`, or read now): the admin one for admins only."""
+    tours = tours if tours is not None else onboarding.tours(ws_of(user), user["username"])
     if user["role"] != "admin":
         tours.pop("admin", None)
     return tours
@@ -56,8 +56,8 @@ def tour_seen(tour: Literal["members", "admin"], body: TourIn, user=Depends(curr
     another browser."""
     if tour == "admin" and user["role"] != "admin":
         raise HTTPException(403, "The admin tour is for admins.")
-    onboarding.mark_tour(ws_of(user), user["username"], tour, body.outcome)
-    return _tours_for(user)
+    return _tours_for(user, onboarding.mark_tour(ws_of(user), user["username"], tour,
+                                                 body.outcome))
 
 
 class DismissIn(BaseModel):

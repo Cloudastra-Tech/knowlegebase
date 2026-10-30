@@ -99,6 +99,7 @@ import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking } from "@/lib/ch
 import { startersFrom } from "@/lib/chat-starters"
 import { dur, ease, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
+import { isChatPath } from "@/lib/routes"
 import { spaceLabel } from "@/lib/spaces"
 import { cn } from "@/lib/utils"
 
@@ -225,7 +226,7 @@ export function ChatView({ role }: { role: Role }) {
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
   const atId = useMatch("/chat/:conversationId")?.params.conversationId ?? null
-  const onChat = location.pathname === "/chat" || location.pathname.startsWith("/chat/")
+  const onChat = isChatPath(location.pathname)
   // On another screen (App keeps the chat mounted), it's still the conversation it was
   // showing: the transcript and where it was scrolled to are there on the way back.
   const [keptId, setKeptId] = useState(atId)

@@ -460,7 +460,8 @@ Borders are 1px hairlines.
   only fades. No beacon, no ring, no arrow. Two tours: everyone's (the composer, the
   model picker when there's a choice, sources, saved prompts, the chats, the account
   menu) and the admins' (Integrations, Models, Access, Insights). It starts by itself
-  once, on a first sign-in, on the chat, never over a dialog; the account menu's Take
+  once, on a first sign-in, on the chat, never over a dialog or an answer being written
+  (Esc only skips the tour, it never stops an answer); the account menu's Take
   the tour runs it again (one row; for admins a submenu: The basics, Admin tour). The server keeps that it was seen, per member.
 - **Empty states in Settings** (`SettingsEmpty`, on shadcn's `Empty`): a lucide icon in a
   muted tile, a short title, one sentence on what this is and why, the one action, and

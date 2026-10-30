@@ -33,7 +33,9 @@ each tour is kept per member on the server, so it doesn't start again in another
 browser: one `onboarding` row per tour and outcome ("finished", or "skipped" when
 they closed it early), named after the member, so it needs no table of its own. The
 first is kept (INSERT OR IGNORE). A member's DSAR export lists them and erasure
-deletes them (kb/services/dsar.py).
+deletes them (kb/services/dsar.py); a new username (a SCIM email change, or
+anonymisation) renames them and removing the member deletes them
+(onboarding_store.rename_tours / forget_tours), so no old address outlives them.
 """
 
 import json
@@ -148,13 +150,9 @@ TOURS = ("members", "admin")
 TOUR_OUTCOMES = ("finished", "skipped")
 
 
-def _tour_step(tour, outcome, username):
-    return f"tour:{tour}:{outcome}:{username}"
-
-
 def tour_steps(username):
     """{(tour, outcome): its onboarding step} for one member (kb/services/dsar.py too)."""
-    return {(t, o): _tour_step(t, o, username) for t in TOURS for o in TOUR_OUTCOMES}
+    return {(t, o): store.tour_step(t, o, username) for t in TOURS for o in TOUR_OUTCOMES}
 
 
 def tours(ws, username):
@@ -173,7 +171,7 @@ def mark_tour(ws, username, tour, outcome):
     """Keep that this member finished or skipped a tour. Returns their tours."""
     if tour not in TOURS or outcome not in TOUR_OUTCOMES:
         raise ValueError(f"Unknown tour or outcome: {tour}, {outcome}")
-    store.mark_done(ws, [_tour_step(tour, outcome, username)])
+    store.mark_done(ws, [store.tour_step(tour, outcome, username)])
     return tours(ws, username)
 
 

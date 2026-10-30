@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth-context"
 import { ChatBridgeProvider } from "@/components/chat-bridge-provider"
 import { IndexStatusProvider } from "@/lib/index-status"
 import { endInstantNav } from "@/lib/instant-nav"
+import { isChatPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
 // Each page is its own download (routes.tsx), so a visitor on the landing page doesn't
@@ -68,7 +69,7 @@ export default function App() {
   // The conversation the chat was last at: Chat (the sidebar, the palette) goes back to
   // it from another screen, scrolled where it was, rather than to a new chat.
   const [chatAt, setChatAt] = useState("/chat")
-  const onChat = location.pathname === "/chat" || location.pathname.startsWith("/chat/")
+  const onChat = isChatPath(location.pathname)
   if (onChat && location.pathname !== chatAt) setChatAt(location.pathname)
   // A keyboard navigation (lib/instant-nav.ts) is over once its screen has painted.
   useEffect(() => {
