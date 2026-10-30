@@ -727,6 +727,9 @@ export interface SavedMessage {
   created_at: number
   // The answer used documents the viewer's role can't see now: no content or sources.
   withheld: boolean
+  // A question: false when it was asked without searching the knowledge (a saved
+  // prompt set not to); asked again or edited, it still isn't searched.
+  search?: boolean
   sources?: Source[]
   steps?: StepLine[]
   trace?: Step[] // admins only

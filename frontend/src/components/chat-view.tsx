@@ -46,6 +46,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
@@ -109,7 +110,14 @@ function fromSaved(saved: SavedMessage[], keys: Map<string, string> = new Map())
     const key = keys.get(m.id) ?? m.id
     if (m.author === "user") {
       question = m.content
-      return { key, id: m.id, role: "user", text: m.content, siblings: m.siblings }
+      return {
+        key,
+        id: m.id,
+        role: "user",
+        text: m.content,
+        siblings: m.siblings,
+        noSearch: m.search === false,
+      }
     }
     return {
       key,
@@ -494,9 +502,9 @@ export function ChatView({ role }: { role: Role }) {
 
   // Ask a question. Or ask again (see Again): the answer, or the edited question,
   // and everything after it make way for the new branch.
-  // promptId: the saved prompt the text came from (sent with it: one set not to
-  // search is answered without).
-  async function ask(text: string, again: Again = {}, promptId?: string) {
+  // prompt: the saved prompt the text came from (its id is sent with it: one set not
+  // to search is answered without, and so is the question asked again later).
+  async function ask(text: string, again: Again = {}, prompt?: { id: string; search: boolean }) {
     const target = again.retry ?? again.regenerate
     const q = (target ? (target.question ?? "") : text).trim()
     if (!q || loading) return
@@ -530,11 +538,20 @@ export function ChatView({ role }: { role: Role }) {
         ? at(again.edit)
         : messages.length
     const kept = messages.slice(0, from)
+    // Asked without the search: a question asked again or edited keeps how it was
+    // asked (the server does too), a new one is as its prompt says.
+    const noSearch = target
+      ? reasked?.noSearch
+      : again.edit
+        ? again.edit.noSearch
+        : prompt
+          ? !prompt.search
+          : undefined
     const asked: Message[] = target
       ? reasked
         ? [{ ...reasked, key: `draft-${nextKey.current++}` }]
         : []
-      : [{ key: questionKey, role: "user", text: q }]
+      : [{ key: questionKey, role: "user", text: q, noSearch }]
     if (from < messages.length) flushSync(() => edit(() => kept))
     edit(() => [...kept, ...asked, draft])
     setPinLast(true)
@@ -573,7 +590,7 @@ export function ChatView({ role }: { role: Role }) {
             notice:
               "You're viewing the app with a different role now, so this question started a new chat.",
             messages: [
-              { key: questionKey, id: e.user_message_id, role: "user", text: q },
+              { key: questionKey, id: e.user_message_id, role: "user", text: q, noSearch },
               ...s.messages.filter((m) => m.key === key),
             ],
           }))
@@ -628,7 +645,7 @@ export function ChatView({ role }: { role: Role }) {
         regenerateOf: again.regenerate?.id,
         editOf: again.edit?.id,
         model: asking ?? undefined,
-        promptId,
+        promptId: prompt?.id,
         signal: controller.signal,
       })
       ended = reply.state
@@ -1007,7 +1024,7 @@ export function ChatView({ role }: { role: Role }) {
           <Composer
             value={input}
             onChange={setInput}
-            onSend={() => ask(input, {}, picker.prompt?.id)}
+            onSend={() => ask(input, {}, picker.prompt ?? undefined)}
             onStop={() => abort.current?.abort()}
             onEditLast={lastUser?.id && !loading ? () => setEditing(lastUser.key) : undefined}
             busy={loading}
@@ -1098,14 +1115,34 @@ export function ChatView({ role }: { role: Role }) {
   )
 }
 
+// A question asked without searching (a saved prompt set not to): asked again or
+// edited, it still isn't. A quiet label in a row that is there anyway, so it moves
+// nothing.
+function NoSearchBadge({ className }: { className?: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="mono" tabIndex={0} className={className}>
+          No search
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-60">
+        Answered without searching your documents. Asked again or edited, it still is.
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 // A question being edited: Enter (or Save) asks it in a new branch, Esc cancels.
 function EditQuestion({
   original,
+  noSearch,
   busy,
   onSave,
   onCancel,
 }: {
   original: string
+  noSearch?: boolean
   busy: boolean
   onSave: (text: string) => void
   onCancel: () => void
@@ -1138,7 +1175,8 @@ function EditQuestion({
         maxLength={500}
         className="min-h-20"
       />
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {noSearch && <NoSearchBadge className="mr-auto" />}
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>
@@ -1173,6 +1211,7 @@ function UserMessage({
     return (
       <EditQuestion
         original={message.text}
+        noSearch={message.noSearch}
         busy={busy}
         onSave={onSave}
         onCancel={() => {
@@ -1190,6 +1229,7 @@ function UserMessage({
         <BubbleContent className="kb-user-bubble whitespace-pre-wrap">{message.text}</BubbleContent>
       </Bubble>
       <div className="flex items-center gap-0.5 text-muted-foreground" data-print="hide">
+        {message.noSearch && <NoSearchBadge className="mr-1" />}
         <BranchNav message={message} onBranch={onBranch} disabled={busy} />
         {/* Its room is kept from the start (hidden until the question is saved and has
             an id), so the row doesn't arrive under a question just asked and push the

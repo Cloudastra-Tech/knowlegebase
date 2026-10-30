@@ -185,6 +185,51 @@ def test_regenerating_adds_a_new_answer_beside_the_old_one(client):
     assert read(client, "pat", cid)["messages"][1]["id"] == first["id"]
 
 
+def test_a_question_asked_without_the_search_keeps_it_off_when_asked_again(client, fakes):
+    """A saved prompt set not to search (PR #142): its question is saved as asked
+    without the search, and its retries, regenerations and edits, a forked copy's
+    too, are answered without it, with no prompt id sent again."""
+    import prompts_store
+    direct = prompts_store.create("default", "pat", "Direct", REFUND_Q, "pat", search=False)
+    try:
+        cid = new_chat(client, "pat")
+        done = ask(client, "pat", REFUND_Q, conversation_id=cid, prompt_id=direct["id"])[-1]
+        assert done["sources"] == [] and not fakes.calls.of("retrieve")
+        question, answer = read(client, "pat", cid)["messages"]
+        assert question["search"] is False
+
+        done = ask(client, "pat", conversation_id=cid, regenerate_of=answer["id"])[-1]
+        assert done["state"] == "answered" and done["sources"] == []
+        conversations_store.finish_message(done["message_id"], "", "stopped")
+        done = ask(client, "pat", conversation_id=cid, retry_of=done["message_id"])[-1]
+        assert done["sources"] == []
+        done = ask(client, "pat", "What is the refund policy, briefly?", conversation_id=cid,
+                   edit_of=question["id"])[-1]
+        assert done["sources"] == []
+        edited, last = read(client, "pat", cid)["messages"]
+        assert edited["id"] != question["id"] and edited["search"] is False
+        assert not fakes.calls.of("retrieve")
+
+        fork = client.post(f"/api/conversations/{cid}/fork", json={"message_id": last["id"]},
+                           headers=headers(client, "pat")).json()
+        copied, copied_answer = read(client, "pat", fork["id"])["messages"]
+        assert copied["search"] is False
+        done = ask(client, "pat", conversation_id=fork["id"],
+                   regenerate_of=copied_answer["id"])[-1]
+        assert done["sources"] == [] and not fakes.calls.of("retrieve")
+
+        # A question asked with the search, retried, still searches.
+        other = new_chat(client, "pat")
+        ask(client, "pat", REFUND_Q, conversation_id=other)
+        question, answer = read(client, "pat", other)["messages"]
+        assert question["search"] is True
+        done = ask(client, "pat", conversation_id=other, regenerate_of=answer["id"],
+                   prompt_id=direct["id"])[-1]      # a prompt id sent again changes nothing
+        assert [s["title"] for s in done["sources"]] == ["refund.md"]
+    finally:
+        prompts_store.delete("default", direct["id"])
+
+
 def test_edits_and_regenerations_are_checked(client):
     cid = new_chat(client, "pat")
     ask(client, "pat", REFUND_Q, conversation_id=cid)
