@@ -19,7 +19,10 @@ uses for it ("Bring your own provider" on the Assistant screen):
                      {provider: {base_url, api_version}}, 0028): Azure OpenAI's
                      endpoint and api-version, an OpenAI-compatible server's base
                      URL. Not secret: shown back, and kept in plain text (inside
-                     the sealed api_keys before 0028). Each is url_guard-checked
+                     the sealed api_keys, under "_endpoints", before 0028: a row
+                     0028 couldn't open still has them there, read from there
+                     while the column is NULL and moved to it the next time the
+                     row is saved). Each is url_guard-checked
                      (MODEL_ALLOW_PRIVATE_HOSTS) when saved, and on every request
     region           the AWS region its Bedrock runs in (us-east-1, eu-central-1, ...)
     auth             role      the server assumes role_arn, passing external_id (preferred:
@@ -72,6 +75,9 @@ MAX_MODELS = 24                 # enabled chat models per workspace
 KEY_ID = r"^[A-Z0-9]{16,128}$"
 API_KEY = re.compile(r"^[\x21-\x7e]{16,512}$")      # printable, no spaces
 SHORT_KEY = re.compile(r"^[\x21-\x7e]{1,512}$")
+# Where the addresses were inside the sealed api_keys before 0028 (a row it
+# couldn't open still has them there).
+LEGACY_ENDPOINTS = "_endpoints"
 
 
 class Invalid(ValueError):
@@ -198,7 +204,7 @@ def view(workspace):
     and the AWS access key id's last 4 characters; nothing of an API key)."""
     row = ensure(workspace)
     keys = _keys(workspace, row)
-    api_keys = _api_keys(workspace, row)
+    api_keys, endpoints = _credentials(workspace, row)
     chat, embed = sides(row)
     return {"provider": legacy_provider(chat, embed), "chat_provider": chat,
             "embed_provider": embed, "region": row["region"], "auth": row["auth"],
@@ -206,7 +212,7 @@ def view(workspace):
             "keys_saved": bool(keys), "access_key_hint": keys[0][-4:] if keys else None,
             "api_keys_saved": {p: True for p, k in api_keys.items() if k},
             # The addresses typed for Azure / an OpenAI-compatible server: not secret.
-            "endpoints": _endpoints(row),
+            "endpoints": endpoints,
             # Its last 4 characters, as the provider's own console shows them.
             "api_key_hints": {p: k[-4:] for p, k in api_keys.items() if k},
             "chat_models": [{**describe_model(p, m), "default": i == 0}
@@ -234,19 +240,27 @@ def _keys(workspace, row):
     return (value.get("id"), value.get("secret")) if value.get("id") else None
 
 
-def _api_keys(workspace, row):
-    """{provider: key}, unsealed: one decryption, so a reader calls it once."""
-    if not row or not row.get("api_keys"):
-        return {}
-    found = secret_box.unseal(row["api_keys"], workspace) or {}
-    # Only keys (a row 0028 couldn't open still holds its old addresses in here).
-    return {p: k for p, k in found.items() if isinstance(k, str)}
+def _credentials(workspace, row):
+    """({provider: key}, the row's endpoints), unsealed: one decryption, so a
+    reader calls it once. The endpoints too, as a row 0028 couldn't open still
+    keeps them in the sealed JSON (_endpoints)."""
+    found = {}
+    if row and row.get("api_keys"):
+        found = secret_box.unseal(row["api_keys"], workspace) or {}
+        if not isinstance(found, dict):
+            found = {}
+    # Only keys: never those old addresses as a provider's key.
+    return ({p: k for p, k in found.items() if isinstance(k, str)},
+            _endpoints(row, found.get(LEGACY_ENDPOINTS)))
 
 
-def _endpoints(row):
-    """{provider: {base_url, api_version}} as typed for the providers that take one."""
+def _endpoints(row, legacy=None):
+    """{provider: {base_url, api_version}} as typed for the providers that take one:
+    the endpoints column, or while it's NULL `legacy` (the sealed JSON's, from
+    before 0028)."""
+    stored = (row or {}).get("endpoints")
     try:
-        found = json.loads((row or {}).get("endpoints") or "{}")
+        found = json.loads(stored) if stored is not None else legacy or {}
     except ValueError:
         found = {}
     if not isinstance(found, dict):
@@ -265,8 +279,8 @@ def spec(workspace):
     row = get(workspace)
     if not row or sides(row) == ("default", "default"):
         return None
-    return _spec_of(row, _keys(workspace, row), _api_keys(workspace, row), workspace,
-                    _endpoints(row))
+    api_keys, endpoints = _credentials(workspace, row)
+    return _spec_of(row, _keys(workspace, row), api_keys, workspace, endpoints)
 
 
 def _spec_of(row, keys, api_keys, workspace, endpoints=None):
@@ -560,7 +574,8 @@ def _merge(workspace, current, change):
                if not k and not models.REGISTRY[p].key_optional}
     listed = [] if chat == "default" else [(p, m) for p, m in listed if p not in removed]
     merged["chat_models"] = _dump_models(listed)
-    api_keys = {**_api_keys(workspace, current), **api_change}
+    stored_keys, stored_endpoints = _credentials(workspace, current)
+    api_keys = {**stored_keys, **api_change}
     # Only the providers in use keep a key: one left behind is a secret for nothing.
     used = _providers_of(merged)
     # A key or an address typed now for a provider nothing uses would be dropped
@@ -580,7 +595,9 @@ def _merge(workspace, current, change):
                          "saved on its own.")
     api_keys = {p: k for p, k in api_keys.items() if k and p in used}
     # The addresses the same way: a provider's goes with it, or with its key.
-    endpoints = {**_endpoints(current)}
+    # (Saved to their column, and the sealed keys without them: a row 0028
+    # couldn't open moves them out the first time it's saved.)
+    endpoints = {**stored_endpoints}
     for p, typed in endpoint_change.items():
         endpoints[p] = {**endpoints.get(p, {}), **typed} if typed else None
     endpoints = {p: e for p, e in endpoints.items()

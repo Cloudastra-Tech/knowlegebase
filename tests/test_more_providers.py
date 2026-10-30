@@ -601,3 +601,35 @@ def test_the_endpoints_have_a_plain_column_and_the_sealed_json_only_keys():
     compat = compat_workspace(key=None)
     assert store.get(compat)["api_keys"] is None
     assert store.view(compat)["endpoints"][models.COMPAT]["base_url"] == COMPAT_URL
+
+
+def test_a_row_0028_couldnt_open_answers_from_its_sealed_addresses_and_saving_moves_them(
+        classes):
+    """0028 leaves a row it couldn't open (no server key then) with its addresses
+    inside the sealed api_keys and the column NULL: they're read from there, never
+    as a key, and the next save moves them to the column, the keys sealed alone."""
+    import db
+    import secret_box
+    w = azure_workspace()
+    old = {"azure": {"base_url": AZURE_URL, "api_version": None}}
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE model_providers SET endpoints = NULL, api_keys = ? "
+                     "WHERE workspace = ?",
+                     (secret_box.seal({"azure": AZURE_KEY, "_endpoints": old}, w), w))
+    conn.close()
+    models.forget(w)
+
+    models.for_workspace(w).answer(temperature=0, max_tokens=500)
+    assert (classes[-1]["azure_endpoint"], classes[-1]["api_key"]) == (AZURE_URL, AZURE_KEY)
+    view = store.view(w)
+    assert view["endpoints"] == old
+    assert set(view["api_keys_saved"]) == set(view["api_key_hints"]) == {"azure"}
+    assert {p for p, _ in models.for_workspace(w).spec.api_keys} == {"azure"}
+
+    store.save(w, {"fast_model": "gpt-4o-mini-prod"}, "admin")
+    row = store.get(w)
+    assert json.loads(row["endpoints"]) == old
+    assert secret_box.unseal(row["api_keys"], w) == {"azure": AZURE_KEY}
+    models.for_workspace(w).answer(temperature=0, max_tokens=500)
+    assert classes[-1]["azure_endpoint"] == AZURE_URL
