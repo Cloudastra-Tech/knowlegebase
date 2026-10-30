@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { ChevronsUpDown, Eye, Keyboard, LogOut, Settings, SunMoon } from "lucide-react"
+import { ChevronsUpDown, Compass, Eye, Keyboard, LogOut, Settings, SunMoon } from "lucide-react"
 import { Link } from "react-router"
 
 import { ThemeMenu } from "@/components/theme-menu"
@@ -24,6 +24,7 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/c
 import { api, type Role } from "@/lib/api"
 import { useAuth, useUser } from "@/lib/auth-context"
 import { MOD_KEY, OPEN_SHORTCUTS } from "@/lib/chat-events"
+import { startTour, type TourId } from "@/lib/tour"
 
 const initialsOf = (name: string) =>
   name
@@ -71,8 +72,9 @@ function MenuGroup({
 // and the role the app is viewed as), opening the account menu, short as ChatGPT's and
 // Claude.ai's: who you are, Settings (everything personal: settings-view.tsx), View as
 // (HR and admin accounts), Appearance (the theme and Reduce effects), the keyboard
-// shortcuts, and Sign out. It's opened many times a day, so it opens as every menu does
-// and nothing more. Only the avatar in the collapsed rail.
+// shortcuts, the product tour (and the admin one, for admins viewing as HR), and Sign
+// out. It's opened many times a day, so it opens as every menu does and nothing more.
+// Only the avatar in the collapsed rail.
 export function AccountMenu() {
   const user = useUser()
   const { role, setRole, signedOut } = useAuth()
@@ -86,6 +88,12 @@ export function AccountMenu() {
   const email = user.username.includes("@") ? user.username : `@${user.username}`
   // Settings opened from the phone's sheet closes it.
   const close = () => isMobile && setOpenMobile(false)
+  // The tours (components/product-tour.tsx): the admin one shows admin screens.
+  const adminTour = user.role === "admin" && activeRole === "hr"
+  const tour = (id: TourId) => {
+    close()
+    startTour(id)
+  }
 
   async function signOut() {
     const out = await api.logout().catch(() => null)
@@ -101,7 +109,7 @@ export function AccountMenu() {
           <DropdownMenuTrigger asChild>
             {/* Named by what it shows, after "Account," (no aria-label: the visible text
                 has to be in the name). */}
-            <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
+            <SidebarMenuButton size="lg" data-tour="account" className="data-[state=open]:bg-sidebar-accent">
               <span className="sr-only">Account, </span>
               <Avatar aria-hidden className="size-8">
                 <AvatarFallback className="bg-foreground text-xs font-medium text-background">
@@ -175,6 +183,27 @@ export function AccountMenu() {
                 <DropdownMenuItem onSelect={() => window.dispatchEvent(new CustomEvent(OPEN_SHORTCUTS))}>
                   <Keyboard /> Keyboard shortcuts
                   <DropdownMenuShortcut className="font-mono tracking-normal">{MOD_KEY}/</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+              {/* One row: an admin picks the tour in its submenu (the basics' last
+                  step offers the admin one too). */}
+              {adminTour ? (
+                <MenuGroup
+                  inline={isMobile}
+                  heading="Take the tour"
+                  className="w-44"
+                  trigger={
+                    <>
+                      <Compass /> Take the tour
+                    </>
+                  }
+                >
+                  <DropdownMenuItem onSelect={() => tour("members")}>The basics</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => tour("admin")}>Admin tour</DropdownMenuItem>
+                </MenuGroup>
+              ) : (
+                <DropdownMenuItem onSelect={() => tour("members")}>
+                  <Compass /> Take the tour
                 </DropdownMenuItem>
               )}
             </DropdownMenuGroup>

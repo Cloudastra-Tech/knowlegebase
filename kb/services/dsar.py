@@ -5,14 +5,14 @@ workspace holds about them, and erasing it.
 EXPORT: their member row (never the password hash), the questions they asked
 (the question log, text as the workspace keeps it), their chats with every
 message, the feedback they gave, their API keys, invites and requests to join, the spaces they're
-in, the files they attached or keep (names, not text), their saved prompts, and
-the audit events where they are the actor.
+in, the files they attached or keep (names, not text), their saved prompts, which
+product tours they saw, and the audit events where they are the actor.
 
 ERASE: disconnects their own Gmail and Calendar (personal connections: tokens
 revoked, synced copies and index entries deleted), deletes their questions, chats (messages, feedback on them, share
 links), folders, feedback, sign-in events, invites to them, requests to join, API keys, sessions,
 their place in access groups and team spaces, their own space, the files they
-attached or kept, their saved prompts, and the member itself. Documents shared with them
+attached or kept, their saved prompts, the product tours they saw, and the member itself. Documents shared with them
 by name keep that grant under their pseudonym (no one holds it: fails closed),
 and the search index's ACLs are re-tagged without them. Where they appear as who made or changed something
 (a provider they added, an invite they sent, a verified answer they own) the
@@ -26,6 +26,7 @@ import json
 import audit_store
 import db
 import members_store
+from kb.services import onboarding
 
 # Columns that name the member who did something, in tables with a workspace column.
 PERSON_COLUMNS = ("created_by", "updated_by", "installed_by", "connected_by", "invited_by",
@@ -99,6 +100,7 @@ def export_member(ws, username):
             out["conversations"].append(c)
     finally:
         conn.close()
+    out["tours"] = onboarding.tours(ws, u)
     out["audit_events"] = audit_store.by_actor(ws, u)
     out["personal_connections"] = _personal_connections(ws, u)
     return out
@@ -183,6 +185,9 @@ def erase_member(ws, username):
         run("join_requests", "DELETE FROM join_requests WHERE workspace = ? AND lower(email) = ?",
             ws, u)
         run("api_keys", "DELETE FROM api_keys WHERE workspace = ? AND created_by = ?", ws, u)
+        tours = list(onboarding.tour_steps(u).values())
+        run("tours", f"DELETE FROM onboarding WHERE workspace = ? AND step IN "
+                     f"({', '.join('?' for _ in tours)})", ws, *tours)
         run("sessions", "DELETE FROM sessions WHERE username = ?", u)
         run("member", "DELETE FROM members WHERE username = ? AND workspace = ?", u, ws)
         for table, columns in db.tables(conn).items():

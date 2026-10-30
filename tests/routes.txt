@@ -293,6 +293,7 @@ PUT    /api/integrations/{provider}/policy integration_policy require_hr,audited
 PUT    /api/me/integrations/{provider}/containers my_integration_set_containers current_user,audited
 PUT    /api/messages/{mid}/feedback give_feedback current_user,current_viewer,audited
 PUT    /api/onboarding/dismissed dismiss_checklist require_admin,audited
+PUT    /api/onboarding/tours/{tour} tour_seen current_user
 PUT    /api/operator/workspaces/{ws}/spend-caps operator_spend_caps require_operator,audited
 PUT    /api/prompts/{prompt_id} update_prompt current_user,current_role,audited
 PUT    /api/spaces/{space_id}/members/{username} set_space_member current_user,audited

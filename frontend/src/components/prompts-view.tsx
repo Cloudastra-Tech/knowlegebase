@@ -105,6 +105,7 @@ export function PromptsView() {
   return (
     <SettingsSection
       title="Prompts"
+      tour="prompts"
       description={
         <>
           Questions you ask often. Type <kbd className="font-mono">/</kbd> in the chat box to use one.
