@@ -52,6 +52,7 @@ export function ModelPicker({
           variant="ghost"
           size="sm"
           disabled={disabled}
+          data-tour="model-picker"
           aria-label={`Model: ${current.label}. Change model`}
           className="h-7 max-w-44 gap-1 rounded-full px-2.5 text-xs font-normal text-muted-foreground"
         >

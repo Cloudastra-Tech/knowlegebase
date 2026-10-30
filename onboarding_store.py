@@ -3,7 +3,9 @@ onboarding_store.py  —  a new workspace's first steps, and sign-ups still wait
 on DNS (config/app.db, see db.py; tables made by migrations/versions/0020_billing_onboarding.py).
 
     onboarding        when each onboarding step was first seen done; the steps
-                      themselves are worked out from the data (kb/services/onboarding.py)
+                      themselves are worked out from the data (kb/services/onboarding.py).
+                      A member's product tour is kept here too: one row per tour and
+                      outcome, named after them ("tour:members:finished:<username>")
     pending_signups   a company signing up with email and a DNS TXT record: the
                       founder's address, the domain and the record's token. No
                       workspace exists until the record checks out
@@ -40,6 +42,18 @@ def mark_done(workspace, steps, now=None):
     with _db() as conn:
         conn.executemany("INSERT OR IGNORE INTO onboarding (workspace, step, done_at) "
                          "VALUES (?, ?, ?)", [(workspace, s, now) for s in steps])
+
+
+def steps_in(workspace, steps):
+    """{step: done_at} for those of `steps` that are done."""
+    steps = list(steps)
+    if not steps:
+        return {}
+    marks = ", ".join("?" for _ in steps)
+    with _db() as conn:
+        return {r["step"]: r["done_at"] for r in conn.execute(
+            f"SELECT step, done_at FROM onboarding WHERE workspace = ? AND step IN ({marks})",
+            (workspace, *steps))}
 
 
 def forget(workspace, step):

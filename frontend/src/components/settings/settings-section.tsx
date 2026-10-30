@@ -16,17 +16,19 @@ export function SettingsSection({
   title,
   description,
   action,
+  tour,
   children,
 }: {
   title: string
   description?: ReactNode
   action?: ReactNode
+  tour?: string // the head is where the product tour points (lib/tour.ts)
   children: ReactNode
 }) {
   const id = useId()
   return (
     <section aria-labelledby={id} data-slot="settings-section" className="flex min-w-0 flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div data-tour={tour} className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 flex-1 basis-64">
           <h3 id={id} className="text-base font-semibold tracking-tight text-balance max-md:sr-only">
             {title}

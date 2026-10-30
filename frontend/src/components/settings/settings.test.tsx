@@ -62,7 +62,7 @@ afterEach(() => {
 })
 
 describe("the account menu", () => {
-  it("is short for a member: Settings, Appearance, the shortcuts and Sign out", async () => {
+  it("is short for a member: Settings, Appearance, the shortcuts, the tour and Sign out", async () => {
     signedIn(MEMBER)
     renderApp("/knowledge")
     await userEvent.setup().click(await screen.findByRole("button", { name: /^Account,\s*Pat Public/ }))
@@ -71,6 +71,7 @@ describe("the account menu", () => {
       "Settings",
       "Appearance",
       "Keyboard shortcuts",
+      "Take the tour",
       "Sign out",
     ])
     const menu = screen.getByRole("menu")
@@ -83,7 +84,7 @@ describe("the account menu", () => {
     expect(within(menu).queryByText(/Chats are kept/)).not.toBeInTheDocument()
   })
 
-  it("adds View as for an admin, and nothing else", async () => {
+  it("adds View as and the admin tour for an admin, and nothing else", async () => {
     signedIn({ ...ADMIN, billing: BILLING })
     renderApp("/knowledge")
     await userEvent.setup().click(await screen.findByRole("button", { name: /^Account,\s*Ada Admin/ }))
@@ -93,6 +94,8 @@ describe("the account menu", () => {
       "View as",
       "Appearance",
       "Keyboard shortcuts",
+      "Take the tour",
+      "Admin tour",
       "Sign out",
     ])
     expect(screen.queryByRole("menuitem", { name: /billing/i })).not.toBeInTheDocument()

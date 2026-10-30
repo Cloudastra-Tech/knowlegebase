@@ -7,6 +7,7 @@ import { AppSidebar, PhoneBar, SidebarEvents } from "@/components/app-sidebar"
 import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
+import { ProductTour } from "@/components/product-tour"
 import { ShellStrip, TrialBanner } from "@/components/trial-banner"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import type { Role } from "@/lib/api"
@@ -112,6 +113,8 @@ export default function App() {
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts; ⌘B the sidebar. */}
       <CommandPalette user={user} role={activeRole} chatAt={chatAt} />
       <SidebarEvents />
+      {/* The product tour: by itself on a first sign-in, or from the account menu. */}
+      <ProductTour chatAt={chatAt} />
       <AppSidebar chatAt={chatAt} />
 
       <div className="relative flex min-w-0 flex-1 flex-col" data-print="flow">

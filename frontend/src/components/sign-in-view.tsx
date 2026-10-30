@@ -1285,7 +1285,7 @@ function AccessTabs({
     <>
         {/* Seven tabs don't fit a phone: there it's a picker instead of a sideways scroll. */}
         <Select value={tab} onValueChange={(v) => onTabChange(v as AccessTab)}>
-          <SelectTrigger aria-label="Access section" className="w-full sm:hidden">
+          <SelectTrigger data-tour="access-tabs" aria-label="Access section" className="w-full sm:hidden">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1304,7 +1304,7 @@ function AccessTabs({
           className="hidden max-w-full sm:flex"
         >
           {/* Arrow keys switch tabs: from the keyboard, the new one lands without a fade. */}
-          <TabsList onKeyDownCapture={(e) => TAB_KEYS.has(e.key) && markInstantNav()}>
+          <TabsList data-tour="access-tabs" onKeyDownCapture={(e) => TAB_KEYS.has(e.key) && markInstantNav()}>
             {ACCESS_TABS.map(([value, label]) => (
               <TabsTrigger key={value} value={value}>
                 {label}

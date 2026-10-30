@@ -143,6 +143,8 @@
     --ascii-field: oklch(0.145 0 0 / 12%);
     --ascii-ink: oklch(0.145 0 0 / 80%);
     --ascii-signal: var(--signal);
+    /* the product tour's dim round the lit element (components/product-tour.tsx) */
+    --tour-dim: oklch(0.145 0 0 / 38%);
     /* motion: durations, and distances (zero with reduced motion, below) */
     --dur-instant: 0ms;
     --dur-press: 120ms;
@@ -230,6 +232,7 @@
     --ascii-field: oklch(0.93 0 0 / 16%); /* the landing's field */
     --ascii-ink: oklch(0.93 0 0 / 85%);
     --ascii-signal: var(--signal);
+    --tour-dim: oklch(0 0 0 / 66%);
 }
 
 /* Glass that can't, or shouldn't, be see-through: no backdrop blur in this browser, a

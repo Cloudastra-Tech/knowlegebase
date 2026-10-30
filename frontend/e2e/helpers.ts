@@ -3,6 +3,8 @@ import { expect, type Page } from "@playwright/test"
 // The accounts tests/e2e/server.py makes, in the default workspace.
 export const ADMIN = { email: "admin@e2e.example", password: "admin-password-1" }
 export const MEMBER = { email: "member@e2e.example", password: "member-password-1" }
+// A member who has not seen the product tour (tests/e2e/server.py, FRESH): e2e/tour.spec.ts.
+export const FRESH = { email: "fresh@e2e.example", password: "fresh-password-1" }
 // Workspaces made as sign-up makes them, with BILLING=on (tests/e2e/server.py, TRIALS):
 // one with 5 days of its trial left, and one whose trial has ended (read-only).
 export const TRIAL_OWNER = { email: "owner@trial.e2e.example", password: "owner-password-1" }

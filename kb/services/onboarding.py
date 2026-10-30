@@ -26,6 +26,14 @@ onboarding step (an answer citing only them isn't the first answer).
 
 FIRST RUN: someone who hasn't asked anything yet gets an "ask your first
 question" screen with questions made from the titles of documents they may read.
+
+PRODUCT TOUR (frontend/src/lib/tour.ts): a guided walk through the app, one for
+everyone ("members") and one for admins ("admin"). Whether each member has seen
+each tour is kept per member on the server, so it doesn't start again in another
+browser: one `onboarding` row per tour and outcome ("finished", or "skipped" when
+they closed it early), named after the member, so it needs no table of its own. The
+first is kept (INSERT OR IGNORE). A member's DSAR export lists them and erasure
+deletes them (kb/services/dsar.py).
 """
 
 import json
@@ -133,6 +141,40 @@ def dismiss(ws, on=True):
         store.mark_done(ws, [DISMISSED])
     else:
         store.forget(ws, DISMISSED)
+
+
+# ---- Product tour ------------------------------------------------------------------------
+TOURS = ("members", "admin")
+TOUR_OUTCOMES = ("finished", "skipped")
+
+
+def _tour_step(tour, outcome, username):
+    return f"tour:{tour}:{outcome}:{username}"
+
+
+def tour_steps(username):
+    """{(tour, outcome): its onboarding step} for one member (kb/services/dsar.py too)."""
+    return {(t, o): _tour_step(t, o, username) for t in TOURS for o in TOUR_OUTCOMES}
+
+
+def tours(ws, username):
+    """{tour: {seen, finished_at, skipped_at}} for one member."""
+    keys = tour_steps(username)
+    done = store.steps_in(ws, keys.values())
+    out = {}
+    for tour in TOURS:
+        at = {o: done.get(keys[(tour, o)]) for o in TOUR_OUTCOMES}
+        out[tour] = {"seen": any(v is not None for v in at.values()),
+                     "finished_at": at["finished"], "skipped_at": at["skipped"]}
+    return out
+
+
+def mark_tour(ws, username, tour, outcome):
+    """Keep that this member finished or skipped a tour. Returns their tours."""
+    if tour not in TOURS or outcome not in TOUR_OUTCOMES:
+        raise ValueError(f"Unknown tour or outcome: {tour}, {outcome}")
+    store.mark_done(ws, [_tour_step(tour, outcome, username)])
+    return tours(ws, username)
 
 
 # ---- First run ---------------------------------------------------------------------------

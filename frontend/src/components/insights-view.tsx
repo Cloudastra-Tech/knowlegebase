@@ -621,7 +621,7 @@ export function InsightsView({
         description="Questions, answers and documents, in aggregate. No one's chats are shown here."
         actions={
           <Tabs panels={false} value={tab} onValueChange={(v) => onTabChange(v as InsightsTab)}>
-            <TabsList variant="glass">
+            <TabsList variant="glass" data-tour="insights-tabs">
               {INSIGHTS_TABS.map(([value, label]) => (
                 <TabsTrigger key={value} value={value}>
                   {label}

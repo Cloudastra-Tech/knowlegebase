@@ -698,7 +698,10 @@ All six tables have a `workspace` column, so a workspace's purge deletes them.
   steps derived from the data (and kept once done), first-run suggestions from
   indexed titles, and the sample HR handbook (`samples/hr-handbook/`, indexed
   under `docs/sample/`); removing it deletes its chunks and empties the answer
-  cache at once.
+  cache at once. Whether each member has seen the product tour (everyone's, and
+  the admins') is kept in the same table, one row per member, tour and outcome
+  (`PUT /api/onboarding/tours/{tour}`), so it starts once and not again in another
+  browser; a data request exports and erases those rows.
 - **Sign-up** (`kb/services/signup.py`, `kb/services/m365.py`): Google Workspace,
   Microsoft 365 (Graph `organization` verified domains) or email plus a DNS TXT
   record (`pending_signups` until it checks out), behind `WORKSPACE_SIGNUP`.

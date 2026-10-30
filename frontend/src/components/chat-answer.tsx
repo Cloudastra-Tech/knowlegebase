@@ -759,7 +759,7 @@ export function AssistantMessage({
           )}
 
           {sources.length > 0 && (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Sources">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Sources" data-tour="sources">
               <span className="mr-0.5 text-xs text-muted-foreground">Sources</span>
               {groupSources(sources).map((group, i) => (
                 <div key={`${group[0].source.provider}-${group[0].source.title}`} className="min-w-0 max-w-full" {...rise(i)}>

@@ -211,6 +211,7 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
+              data-tour="search-chats"
               tooltip={`Search chats (${MOD_KEY}K)`}
               aria-haspopup="dialog"
               onClick={() => {
@@ -274,6 +275,7 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
       <SidebarContent
         role="region"
         aria-label="Chat history"
+        data-tour="chat-history"
         className="border-t border-sidebar-border group-data-[collapsible=icon]:invisible"
       >
         <ChatHistory
@@ -333,6 +335,7 @@ export function PhoneMenuButton({ className, ...props }: ComponentProps<typeof B
       variant="ghost"
       size="icon"
       aria-label="Open menu"
+      data-tour="phone-menu"
       onClick={toggleSidebar}
       className={cn("size-10 text-muted-foreground md:hidden", className)}
       {...props}

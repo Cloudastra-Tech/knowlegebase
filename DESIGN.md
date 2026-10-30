@@ -446,6 +446,20 @@ Borders are 1px hairlines.
   actions in a `…` row menu, destructive ones after a separator and a confirm). Loading is
   rows of `Skeleton` shaped like the rows coming; an error says what failed and offers Try
   again. Switching sections is instant: no slide, no fade.
+- **Product tour** (`product-tour.tsx`, the steps and their words in `lib/tour.ts`): the
+  app dims (`--tour-dim`, 66% black on dark, 38% graphite on Paper) and one element,
+  marked `data-tour="…"`, is lit through a cut-out with its own radius and 6px round it;
+  a small card on the floating glass (a modal Radix Popover anchored to the cut-out,
+  flipping to stay on screen) says what it is, with "n of N", Skip, Back and Next (Done
+  on the last). On a phone the card docks to the bottom edge, or the top when the
+  element is low. One fixed overlay, portalled: nothing in the page moves. The cut-out
+  glides between elements (220ms, `ease-out-strong`) and the card fades in from 0.97
+  toward it; with reduced motion or "Reduce effects" the cut-out jumps and the card
+  only fades. No beacon, no ring, no arrow. Two tours: everyone's (the composer, the
+  model picker when there's a choice, sources, saved prompts, the chats, the account
+  menu) and the admins' (Integrations, Models, Access, Insights). It starts by itself
+  once, on a first sign-in, on the chat, never over a dialog; the account menu's Take
+  the tour (and Admin tour) runs it again. The server keeps that it was seen, per member.
 - **Empty states in Settings** (`SettingsEmpty`, on shadcn's `Empty`): a lucide icon in a
   muted tile, a short title, one sentence on what this is and why, the one action, and
   optionally "For example" with what one looks like (a saved prompt, a digest). A dashed
@@ -507,6 +521,10 @@ Borders are 1px hairlines.
 - `frontend/e2e/ux-a11y.spec.ts`: axe on every main screen at 1280 and 390; at 390 the page fits
   and no scrolling box inside it is pushed sideways (`overflowingScrollers`; a box meant to scroll
   sideways carries an `overflow-x-auto` or `overflow-auto` class).
+- `frontend/e2e/tour.spec.ts`: the product tour starts on a fresh member's first sign-in
+  and not again in another browser; ← → and Esc, Skip, the account menu's Take the tour
+  and Admin tour; the composer doesn't move while it runs; axe at 1280 and 390, where
+  the card docks to the bottom and fits.
 - `frontend/e2e/owner-shots.spec.ts`: with `E2E_OWNER_SHOTS=<folder>`, every screen in both
   themes at 1280 and 390, from the e2e server's fake data, as `<screen>-<theme>-<width>.png`.
 - Grep guards over `frontend/src`: no raw `<input`, `<select`, `<textarea`; no raw palette
