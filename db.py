@@ -161,11 +161,13 @@ def _open(path, foreign_keys=True, rows=sqlite3.Row):
     return conn
 
 
-def migrate(path=None, url=None):
-    """Upgrade the database to the newest migration: the SQLite file at `path`, or
-    the Postgres database at `url`, else the app's database (Postgres when
-    DATABASE_URL says so, else DB_PATH). Safe to run again, and from several
-    processes at once: the first one takes the write lock (on Postgres an
+def migrate(path=None, url=None, revision="head", downgrade=False):
+    """Upgrade the database to the newest migration (or to `revision`; with
+    `downgrade`, down to it): the SQLite file at `path`, or the Postgres database
+    at `url`, else the app's database (Postgres when DATABASE_URL says so, else
+    DB_PATH). On its own connection, under alembic_lock: the one way the app, the
+    tools and the tests run Alembic in-process. Safe to run again, and from
+    several processes at once: the first one takes the write lock (on Postgres an
     advisory lock) for the whole upgrade, the others wait and then find nothing
     to do."""
     from alembic import command
@@ -179,7 +181,7 @@ def migrate(path=None, url=None):
     config.set_main_option("script_location", MIGRATIONS)
     with alembic_lock, engine(path, url).begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        (command.downgrade if downgrade else command.upgrade)(config, revision)
     if url:
         import db_pg
         db_pg.database(url).catalog.forget()

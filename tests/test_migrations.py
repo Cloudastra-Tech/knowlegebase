@@ -19,6 +19,7 @@ import pytest
 import db
 import members_store
 from migrations import legacy
+from tests import alembic_steps
 
 # All about the SQLite file: config/app.db's from before Alembic, WAL, PRAGMAs, the
 # alembic command line on APP_DB. The Postgres leg's migrations are checked by
@@ -315,7 +316,6 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
     """0015 copies question_log into a table whose CHECK allows teams, extension
     and email: rows logged before are kept, and deleting a chat still clears its
     words from the log (the trigger is made again)."""
-    from tests import alembic_steps
     path = str(tmp_path / "app.db")
     alembic_steps.upgrade(path, "0013")
     log_row = ("INSERT INTO question_log (workspace, at, day, user, surface, message_id, "
@@ -352,20 +352,13 @@ COMPAT = {"openai_compatible": {"base_url": "https://llm.acme.com/v1", "api_vers
 API_KEY = "sk-azure-0123456789abcdef"
 
 
-def _alembic(what, config, revision):
-    from alembic import command
-    with db.alembic_lock:
-        getattr(command, what)(config, revision)
-
-
 @pytest.fixture
 def at_0027(tmp_path, monkeypatch):
-    """A database at 0027 under a server key of the test's own, and the Alembic
-    config that moves it. secret_box seals through db.connect(), which mustn't
+    """A database at 0027 under a server key of the test's own, stepped on its own
+    connection (alembic_steps). secret_box seals through db.connect(), which mustn't
     upgrade it, nor may a thread an earlier test left running: it is marked as done
     from the start."""
     import secret_box
-    from alembic.config import Config
     from cryptography.fernet import Fernet
     path = str(tmp_path / "app.db")
     monkeypatch.setattr(db, "DB_PATH", path)
@@ -373,9 +366,8 @@ def at_0027(tmp_path, monkeypatch):
     monkeypatch.setattr(secret_box, "KEY_PATH", str(tmp_path / "integrations.key"))
     monkeypatch.setenv("INTEGRATIONS_KEY", Fernet.generate_key().decode())
     secret_box.forget()
-    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    _alembic("upgrade", config, "0027")
-    yield path, config
+    alembic_steps.upgrade(path, "0027")
+    yield path
     secret_box.forget()
 
 
@@ -408,7 +400,7 @@ def _opened(blob, workspace):
 def test_0028_moves_the_addresses_to_their_column_and_back(at_0027, caplog):
     import model_providers_store
     import secret_box
-    path, config = at_0027
+    path = at_0027
     _provider_row(path, "azure", secret_box.seal({"azure": API_KEY, "_endpoints": AZURE},
                                                  "azure"))
     _provider_row(path, "keys", secret_box.seal({"openai": API_KEY}, "keys"))
@@ -423,7 +415,7 @@ def test_0028_moves_the_addresses_to_their_column_and_back(at_0027, caplog):
     before = _providers(path)
 
     with caplog.at_level("WARNING", logger="migrations"):
-        _alembic("upgrade", config, "0028")
+        alembic_steps.upgrade(path, "0028")
     after = _providers(path)
     assert version(path) == ["0028"]
     assert json.loads(after["azure"][0]) == AZURE
@@ -447,7 +439,7 @@ def test_0028_moves_the_addresses_to_their_column_and_back(at_0027, caplog):
     # Down: back into the sealed JSON. A row with addresses and no keys (a
     # compatible server taking none) gets a data key to seal them with.
     _provider_row(path, "fresh", endpoints=COMPAT)
-    _alembic("downgrade", config, "0027")
+    alembic_steps.downgrade(path, "0027")
     down = _providers(path)
     assert version(path) == ["0027"]
     assert all(e is None for e, _ in down.values())                 # the column is gone
@@ -459,7 +451,7 @@ def test_0028_moves_the_addresses_to_their_column_and_back(at_0027, caplog):
         assert down[same][1] == before[same][1], same
 
     # And up again: the same as the first time.
-    _alembic("upgrade", config, "0028")
+    alembic_steps.upgrade(path, "0028")
     again = _providers(path)
     for ws in ("azure", "compat", "legacy", "keys"):
         seal_ws = None if ws == "legacy" else ws
@@ -472,12 +464,12 @@ def test_0028_moves_the_addresses_to_their_column_and_back(at_0027, caplog):
 
 def test_0028_without_the_server_key_leaves_every_row_and_makes_no_key(at_0027, monkeypatch):
     import secret_box
-    path, config = at_0027
+    path = at_0027
     sealed = secret_box.seal({"azure": API_KEY, "_endpoints": AZURE}, "w")
     _provider_row(path, "w", sealed)
     monkeypatch.delenv("INTEGRATIONS_KEY")
     secret_box.forget()
-    _alembic("upgrade", config, "0028")
+    alembic_steps.upgrade(path, "0028")
     assert _providers(path)["w"] == (None, sealed)
     assert not os.path.exists(secret_box.KEY_PATH)
 
@@ -487,5 +479,5 @@ def test_0028_without_the_server_key_leaves_every_row_and_makes_no_key(at_0027, 
                      (json.dumps(AZURE),))
     conn.close()
     with pytest.raises(Exception, match="INTEGRATIONS_KEY"):
-        _alembic("downgrade", config, "0027")
+        alembic_steps.downgrade(path, "0027")
     assert version(path) == ["0028"] and _providers(path)["w"] == (json.dumps(AZURE), sealed)

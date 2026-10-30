@@ -102,24 +102,17 @@ def test_0028_moves_the_provider_addresses_on_postgres_and_back(fresh_db, monkey
     """0028 on Postgres: the sealed api_keys (bytea) opened through the migration's
     own connection, the addresses moved to their column, and back on downgrade."""
     import json
-    import pathlib
 
     import psycopg
-    from alembic import command
-    from alembic.config import Config
 
-    import db_pg
     import secret_box
-    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
     url = db.DATABASE_URL
     monkeypatch.setattr(db, "_migrated", {url})         # (secret_box mustn't upgrade it)
     azure = {"azure": {"base_url": "https://acme.openai.azure.com", "api_version": None}}
     key = "sk-azure-0123456789abcdef"
 
     def alembic(what, revision):
-        with db.alembic_lock:
-            getattr(command, what)(config, revision)
-        db_pg.database(url).catalog.forget()
+        db.migrate(url=url, revision=revision, downgrade=what == "downgrade")
 
     def rows():
         with psycopg.connect(url) as conn:
