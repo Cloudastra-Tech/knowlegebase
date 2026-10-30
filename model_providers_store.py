@@ -1,6 +1,6 @@
 """
 model_providers_store.py  —  a workspace's own model providers (config/app.db, the
-table made by migrations/versions/0022_model_providers.py and 0025), what models.py
+table made by migrations/versions/0022_model_providers.py and later), what models.py
 uses for it ("Bring your own provider" on the Assistant screen):
 
     chat_provider    default   the server's chat provider (no row means the same)
@@ -14,13 +14,12 @@ uses for it ("Bring your own provider" on the Assistant screen):
                      own key for, SEALED under the workspace's key (secret_box);
                      never shown again, only "saved". A provider chosen here that
                      takes a key needs one: never the server's key instead (an
-                     OpenAI-compatible server may take none: key_optional).
-                     The same sealed JSON keeps, under ENDPOINTS_KEY, the
-                     addresses typed for the providers that take one: {provider:
-                     {base_url, api_version}} (Azure OpenAI's endpoint and
-                     api-version, an OpenAI-compatible server's base URL). They
-                     aren't secret and are shown back; kept here so no migration
-                     is needed, and sealed like the rest. Each is url_guard-checked
+                     OpenAI-compatible server may take none: key_optional)
+    endpoints        the addresses typed for the providers that take one (JSON:
+                     {provider: {base_url, api_version}}, 0028): Azure OpenAI's
+                     endpoint and api-version, an OpenAI-compatible server's base
+                     URL. Not secret: shown back, and kept in plain text (inside
+                     the sealed api_keys before 0028). Each is url_guard-checked
                      (MODEL_ALLOW_PRIVATE_HOSTS) when saved, and on every request
     region           the AWS region its Bedrock runs in (us-east-1, eu-central-1, ...)
     auth             role      the server assumes role_arn, passing external_id (preferred:
@@ -70,10 +69,6 @@ FIELDS = ("provider", "chat_provider", "embed_provider", "region", "auth", "role
           "chat_model", "fast_model", "embed_model", "embed_dims", "access_key_id",
           "secret_access_key", "api_keys", "chat_models", "default_model", "endpoints")
 MAX_MODELS = 24                 # enabled chat models per workspace
-# In the sealed api_keys JSON beside the keys, never a provider's name: every reader
-# goes through _api_keys() (which skips it) or _endpoints(). Known follow-up: move the
-# addresses to a column of their own (a migration), out of the sealed blob.
-ENDPOINTS_KEY = "_endpoints"
 KEY_ID = r"^[A-Z0-9]{16,128}$"
 API_KEY = re.compile(r"^[\x21-\x7e]{16,512}$")      # printable, no spaces
 SHORT_KEY = re.compile(r"^[\x21-\x7e]{1,512}$")
@@ -203,16 +198,17 @@ def view(workspace):
     and the AWS access key id's last 4 characters; nothing of an API key)."""
     row = ensure(workspace)
     keys = _keys(workspace, row)
+    api_keys = _api_keys(workspace, row)
     chat, embed = sides(row)
     return {"provider": legacy_provider(chat, embed), "chat_provider": chat,
             "embed_provider": embed, "region": row["region"], "auth": row["auth"],
             "role_arn": row["role_arn"], "external_id": row["external_id"],
             "keys_saved": bool(keys), "access_key_hint": keys[0][-4:] if keys else None,
-            "api_keys_saved": {p: True for p, k in _api_keys(workspace, row).items() if k},
+            "api_keys_saved": {p: True for p, k in api_keys.items() if k},
             # The addresses typed for Azure / an OpenAI-compatible server: not secret.
-            "endpoints": _endpoints(workspace, row),
+            "endpoints": _endpoints(row),
             # Its last 4 characters, as the provider's own console shows them.
-            "api_key_hints": {p: k[-4:] for p, k in _api_keys(workspace, row).items() if k},
+            "api_key_hints": {p: k[-4:] for p, k in api_keys.items() if k},
             "chat_models": [{**describe_model(p, m), "default": i == 0}
                             for i, (p, m) in enumerate(enabled(row))],
             "default_model": ({"provider": default_model(row)[0], "model": default_model(row)[1]}
@@ -238,28 +234,29 @@ def _keys(workspace, row):
     return (value.get("id"), value.get("secret")) if value.get("id") else None
 
 
-def _sealed(workspace, row):
+def _api_keys(workspace, row):
+    """{provider: key}, unsealed: one decryption, so a reader calls it once."""
     if not row or not row.get("api_keys"):
         return {}
-    return dict(secret_box.unseal(row["api_keys"], workspace) or {})
+    found = secret_box.unseal(row["api_keys"], workspace) or {}
+    # Only keys (a row 0028 couldn't open still holds its old addresses in here).
+    return {p: k for p, k in found.items() if isinstance(k, str)}
 
 
-def _api_keys(workspace, row):
-    """{provider: key}: the sealed JSON without the endpoints kept beside the keys."""
-    return {p: k for p, k in _sealed(workspace, row).items() if p != ENDPOINTS_KEY}
-
-
-def _endpoints(workspace, row):
+def _endpoints(row):
     """{provider: {base_url, api_version}} as typed for the providers that take one."""
-    found = _sealed(workspace, row).get(ENDPOINTS_KEY) or {}
+    try:
+        found = json.loads((row or {}).get("endpoints") or "{}")
+    except ValueError:
+        found = {}
+    if not isinstance(found, dict):
+        return {}
     return {p: {"base_url": e.get("base_url"), "api_version": e.get("api_version")}
             for p, e in found.items() if isinstance(e, dict)}
 
 
-def _seal(workspace, api_keys, endpoints):
-    # The endpoints ride in the keys' sealed JSON (ENDPOINTS_KEY): see its note.
-    value = {**api_keys, **({ENDPOINTS_KEY: endpoints} if endpoints else {})}
-    return secret_box.seal(value, workspace) if value else None
+def _seal(workspace, api_keys):
+    return secret_box.seal(api_keys, workspace) if api_keys else None
 
 
 def spec(workspace):
@@ -269,7 +266,7 @@ def spec(workspace):
     if not row or sides(row) == ("default", "default"):
         return None
     return _spec_of(row, _keys(workspace, row), _api_keys(workspace, row), workspace,
-                    _endpoints(workspace, row))
+                    _endpoints(row))
 
 
 def _spec_of(row, keys, api_keys, workspace, endpoints=None):
@@ -583,7 +580,7 @@ def _merge(workspace, current, change):
                          "saved on its own.")
     api_keys = {p: k for p, k in api_keys.items() if k and p in used}
     # The addresses the same way: a provider's goes with it, or with its key.
-    endpoints = {**_endpoints(workspace, current)}
+    endpoints = {**_endpoints(current)}
     for p, typed in endpoint_change.items():
         endpoints[p] = {**endpoints.get(p, {}), **typed} if typed else None
     endpoints = {p: e for p, e in endpoints.items()
@@ -635,9 +632,10 @@ def save(workspace, change, by):
     problem = complete(merged, _keys(workspace, merged), api_keys, endpoints)
     if problem:
         raise Invalid(problem)
-    merged["api_keys"] = _seal(workspace, api_keys, endpoints)
+    merged["api_keys"] = _seal(workspace, api_keys)
+    merged["endpoints"] = json.dumps(endpoints) if endpoints else None
     cols = [k for k in merged if k in FIELDS and k not in (
-        "access_key_id", "secret_access_key", "api_keys", "default_model", "endpoints")] + [
+        "access_key_id", "secret_access_key", "api_keys", "default_model")] + [
         "access_keys", "api_keys"]
     values = [merged[k] for k in cols]
     with _db() as conn:

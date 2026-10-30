@@ -7,6 +7,8 @@ The old databases are tests/fixtures/legacy_dbs/*.sql: each made by the stores
 as they were at one commit, with rows in every table (make_fixtures.py there).
 """
 
+import json
+import os
 import pathlib
 import re
 import sqlite3
@@ -25,7 +27,7 @@ pytestmark = pytest.mark.sqlite_only("the SQLite file's own migrations")
 
 FIXTURES = sorted((pathlib.Path(__file__).parent / "fixtures" / "legacy_dbs").glob("*.sql"))
 INTERNAL = {"sqlite_sequence", "alembic_version"}
-HEAD = "0027"                                  # the newest migration
+HEAD = "0028"                                  # the newest migration
 # The tables SQLite keeps behind an FTS5 table.
 FTS_SHADOWS = ("data", "idx", "content", "docsize", "config")
 # Made by migrations after the baseline.
@@ -298,6 +300,7 @@ def test_the_alembic_command_line_upgrades_the_same_way(tmp_path, monkeypatch):
     path = str(tmp_path / "old.db")
     _load(path, FIXTURES[0].read_text())
     monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", {path})   # a stray thread's connect() leaves it be
     config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
     with db.alembic_lock:
         command.current(config)                      # looking doesn't adopt it
@@ -312,13 +315,9 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
     """0015 copies question_log into a table whose CHECK allows teams, extension
     and email: rows logged before are kept, and deleting a chat still clears its
     words from the log (the trigger is made again)."""
-    from alembic import command
-    from alembic.config import Config
+    from tests import alembic_steps
     path = str(tmp_path / "app.db")
-    monkeypatch.setattr(db, "DB_PATH", path)
-    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    with db.alembic_lock:
-        command.upgrade(config, "0013")
+    alembic_steps.upgrade(path, "0013")
     log_row = ("INSERT INTO question_log (workspace, at, day, user, surface, message_id, "
                "text_mode, question, outcome) VALUES ('w', ?, 'd', 'u', ?, ?, 'full', ?, "
                "'answered')")
@@ -331,8 +330,7 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(log_row, (2, "teams", None, None))
     conn.close()
-    with db.alembic_lock:
-        command.upgrade(config, "0015")
+    alembic_steps.upgrade(path, "0015")
     with sqlite3.connect(path) as conn:
         for surface in ("teams", "extension", "email"):
             conn.execute(log_row, (2, surface, None, None))
@@ -346,3 +344,148 @@ def test_the_question_log_takes_the_new_surfaces_and_keeps_its_rows(tmp_path, mo
         assert {"question_log_by_day", "question_log_by_message"} <= indexes
         assert "client" in {r[1] for r in conn.execute("PRAGMA table_info(api_keys)")}
     conn.close()
+
+
+# ---- 0028: the model providers' addresses leave the sealed API keys ---------------------
+AZURE = {"azure": {"base_url": "https://acme.openai.azure.com", "api_version": "2024-10-21"}}
+COMPAT = {"openai_compatible": {"base_url": "https://llm.acme.com/v1", "api_version": None}}
+API_KEY = "sk-azure-0123456789abcdef"
+
+
+def _alembic(what, config, revision):
+    from alembic import command
+    with db.alembic_lock:
+        getattr(command, what)(config, revision)
+
+
+@pytest.fixture
+def at_0027(tmp_path, monkeypatch):
+    """A database at 0027 under a server key of the test's own, and the Alembic
+    config that moves it. secret_box seals through db.connect(), which mustn't
+    upgrade it, nor may a thread an earlier test left running: it is marked as done
+    from the start."""
+    import secret_box
+    from alembic.config import Config
+    from cryptography.fernet import Fernet
+    path = str(tmp_path / "app.db")
+    monkeypatch.setattr(db, "DB_PATH", path)
+    monkeypatch.setattr(db, "_migrated", {path})   # before any step: no stray connect() upgrades it
+    monkeypatch.setattr(secret_box, "KEY_PATH", str(tmp_path / "integrations.key"))
+    monkeypatch.setenv("INTEGRATIONS_KEY", Fernet.generate_key().decode())
+    secret_box.forget()
+    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
+    _alembic("upgrade", config, "0027")
+    yield path, config
+    secret_box.forget()
+
+
+def _provider_row(path, workspace, api_keys=None, endpoints=None):
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO model_providers (workspace, external_id, updated_at, api_keys"
+                     + (", endpoints) VALUES (?, ?, 1, ?, ?)" if endpoints else
+                        ") VALUES (?, ?, 1, ?)"),
+                     (workspace, f"kb-{workspace}", api_keys,
+                      *([json.dumps(endpoints)] if endpoints else [])))
+    conn.close()
+
+
+def _providers(path):
+    """{workspace: (its endpoints column, None without one; its api_keys blob)}"""
+    conn = _connect(path)
+    try:
+        return {r["workspace"]: (r["endpoints"] if "endpoints" in r.keys() else None,
+                                 r["api_keys"])
+                for r in conn.execute("SELECT * FROM model_providers")}
+    finally:
+        conn.close()
+
+
+def _opened(blob, workspace):
+    import secret_box
+    return secret_box.unseal(blob, workspace) if blob else None
+
+
+def test_0028_moves_the_addresses_to_their_column_and_back(at_0027, caplog):
+    import model_providers_store
+    import secret_box
+    path, config = at_0027
+    _provider_row(path, "azure", secret_box.seal({"azure": API_KEY, "_endpoints": AZURE},
+                                                 "azure"))
+    _provider_row(path, "keys", secret_box.seal({"openai": API_KEY}, "keys"))
+    _provider_row(path, "compat", secret_box.seal({"_endpoints": COMPAT}, "compat"))
+    _provider_row(path, "legacy", secret_box.seal({"azure": API_KEY, "_endpoints": AZURE}))
+    # Undecryptable: its workspace's keys shredded, or a damaged value.
+    _provider_row(path, "shredded", secret_box.seal({"_endpoints": AZURE}, "shredded"))
+    secret_box.shred("shredded")
+    secret_box.ensure_key("damaged")
+    _provider_row(path, "damaged", b"kbw1:1:not-a-fernet-token")
+    _provider_row(path, "none")
+    before = _providers(path)
+
+    with caplog.at_level("WARNING", logger="migrations"):
+        _alembic("upgrade", config, "0028")
+    after = _providers(path)
+    assert version(path) == ["0028"]
+    assert json.loads(after["azure"][0]) == AZURE
+    assert _opened(after["azure"][1], "azure") == {"azure": API_KEY}
+    assert secret_box.version_of(after["azure"][1]) == secret_box.version_of(before["azure"][1])
+    assert after["keys"] == (None, before["keys"][1])               # not rewritten
+    assert json.loads(after["compat"][0]) == COMPAT and after["compat"][1] is None
+    assert json.loads(after["legacy"][0]) == AZURE
+    assert secret_box.version_of(after["legacy"][1]) is None        # still the old format
+    assert _opened(after["legacy"][1], None) == {"azure": API_KEY}
+    for left in ("shredded", "damaged"):                            # left as they were, logged
+        assert after[left] == (None, before[left][1])
+        assert any(f"workspace {left}'s" in r.getMessage() for r in caplog.records), left
+    assert after["none"] == (None, None)
+
+    # The store reads the column, and the key stays secret.
+    view = model_providers_store.view("azure")
+    assert view["endpoints"] == AZURE and view["api_keys_saved"] == {"azure": True}
+    assert API_KEY not in json.dumps(view)
+
+    # Down: back into the sealed JSON. A row with addresses and no keys (a
+    # compatible server taking none) gets a data key to seal them with.
+    _provider_row(path, "fresh", endpoints=COMPAT)
+    _alembic("downgrade", config, "0027")
+    down = _providers(path)
+    assert version(path) == ["0027"]
+    assert all(e is None for e, _ in down.values())                 # the column is gone
+    assert _opened(down["azure"][1], "azure") == {"azure": API_KEY, "_endpoints": AZURE}
+    assert _opened(down["compat"][1], "compat") == {"_endpoints": COMPAT}
+    assert _opened(down["legacy"][1], None) == {"azure": API_KEY, "_endpoints": AZURE}
+    assert _opened(down["fresh"][1], "fresh") == {"_endpoints": COMPAT}
+    for same in ("keys", "shredded", "damaged", "none"):
+        assert down[same][1] == before[same][1], same
+
+    # And up again: the same as the first time.
+    _alembic("upgrade", config, "0028")
+    again = _providers(path)
+    for ws in ("azure", "compat", "legacy", "keys"):
+        seal_ws = None if ws == "legacy" else ws
+        assert again[ws][0] == after[ws][0], ws
+        assert _opened(again[ws][1], seal_ws) == _opened(after[ws][1], seal_ws), ws
+    assert json.loads(again["fresh"][0]) == COMPAT and again["fresh"][1] is None
+    for left in ("shredded", "damaged", "none"):
+        assert again[left] == after[left], left
+
+
+def test_0028_without_the_server_key_leaves_every_row_and_makes_no_key(at_0027, monkeypatch):
+    import secret_box
+    path, config = at_0027
+    sealed = secret_box.seal({"azure": API_KEY, "_endpoints": AZURE}, "w")
+    _provider_row(path, "w", sealed)
+    monkeypatch.delenv("INTEGRATIONS_KEY")
+    secret_box.forget()
+    _alembic("upgrade", config, "0028")
+    assert _providers(path)["w"] == (None, sealed)
+    assert not os.path.exists(secret_box.KEY_PATH)
+
+    # Down needs the key for a row with addresses: refused, nothing changed.
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE model_providers SET endpoints = ? WHERE workspace = 'w'",
+                     (json.dumps(AZURE),))
+    conn.close()
+    with pytest.raises(Exception, match="INTEGRATIONS_KEY"):
+        _alembic("downgrade", config, "0027")
+    assert version(path) == ["0028"] and _providers(path)["w"] == (json.dumps(AZURE), sealed)

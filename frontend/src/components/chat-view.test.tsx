@@ -471,17 +471,67 @@ describe("the chat", () => {
 
     expect(await screen.findByText("Swastik")).toBeInTheDocument()
     expect(asked).toEqual([{ question: "Echo body", conversation_id: "c9", prompt_id: "p1" }])
-    expect(screen.queryByText("No search")).not.toBeInTheDocument()
+    // The box's chip is gone; the question asked keeps a label saying so.
+    const chip = () => screen.queryByRole("button", { name: "Search documents for this question" })
+    expect(chip()).not.toBeInTheDocument()
+    expect(screen.getAllByText("No search")).toHaveLength(1)
 
     // One that searches: no chip. Removing the chip searches as usual.
     await user.type(box, "/Pol")
     await user.click(await screen.findByRole("option", { name: /Policy/ }))
-    expect(screen.queryByText("No search")).not.toBeInTheDocument()
+    expect(chip()).not.toBeInTheDocument()
     await user.clear(box)
     await user.type(box, "/Ech")
     await user.click(await screen.findByRole("option", { name: /Echo/ }))
     await user.click(screen.getByRole("button", { name: "Search documents for this question" }))
-    expect(screen.queryByText("No search")).not.toBeInTheDocument()
+    expect(chip()).not.toBeInTheDocument()
+    expect(screen.getAllByText("No search")).toHaveLength(1)
+  })
+
+  it("labels a saved question asked without the search, and keeps the label while it's edited", async () => {
+    session.setToken("tok")
+    const asked: unknown[] = []
+    const direct = {
+      ...SAVED,
+      messages: [{ ...SAVED.messages[0], search: false }, { ...SAVED.messages[1], sources: [], steps: [] }],
+    }
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      // Read again once the answer is done: the edited branch.
+      "GET /api/conversations/c1": () =>
+        asked.length
+          ? {
+              ...direct,
+              messages: [
+                { ...direct.messages[0], id: "q2", content: "How long do refunds take?" },
+                { ...direct.messages[1], id: "a2", parent_id: "q2", content: "Thirty days." },
+              ],
+            }
+          : direct,
+      "POST /api/chat/stream": (body: unknown) => {
+        asked.push(body)
+        return sse(
+          { type: "conversation", id: "c1", title: SAVED.title, user_message_id: "q2", message_id: "a2", new_conversation: false },
+          { type: "done", answer: "Thirty days.", sources: [], steps: [], state: "general_knowledge", message_id: "a2" },
+        )
+      },
+    })
+    renderApp("/chat/c1")
+    expect(await screen.findByText("Refunds are paid within thirty days.")).toBeInTheDocument()
+    expect(screen.getByText("No search")).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit question" }))
+    expect(screen.getByRole("textbox", { name: "Edit your question" })).toBeInTheDocument()
+    expect(screen.getByText("No search")).toBeInTheDocument()
+    const box = screen.getByRole("textbox", { name: "Edit your question" })
+    await user.clear(box)
+    await user.type(box, "How long do refunds take?{Enter}")
+    expect(await screen.findByText("Thirty days.")).toBeInTheDocument()
+    // No prompt id: the server keeps the question's own setting.
+    expect(asked).toEqual([{ question: "How long do refunds take?", conversation_id: "c1", edit_of: "q1" }])
+    expect(screen.getByText("No search")).toBeInTheDocument()
   })
 
   it("lets go of a saved prompt once its text is replaced, and keeps it while added to", async () => {
@@ -516,14 +566,16 @@ describe("the chat", () => {
     expect(await screen.findByText("Answer 1")).toBeInTheDocument()
     expect(asked[0]).toMatchObject({ question: "Echo body for Acme", prompt_id: "p1" })
 
-    // Replaced (select all, type another question): the prompt and its chip go.
+    // Replaced (select all, type another question): the prompt and its chip go
+    // (the question asked with it keeps its label).
+    const chip = () => screen.queryByRole("button", { name: "Search documents for this question" })
     await user.type(box, "/Ech")
     await user.click(await screen.findByRole("option", { name: /Echo/ }))
-    expect(screen.getByText("No search")).toBeInTheDocument()
+    expect(chip()).toBeInTheDocument()
     await user.keyboard("{Control>}a{/Control}")
     await user.keyboard("What is the refund policy?")
     expect(box).toHaveValue("What is the refund policy?")
-    expect(screen.queryByText("No search")).not.toBeInTheDocument()
+    expect(chip()).not.toBeInTheDocument()
     await user.type(box, "{Enter}")
     expect(await screen.findByText("Answer 2")).toBeInTheDocument()
     expect(asked[1]).toMatchObject({ question: "What is the refund policy?" })

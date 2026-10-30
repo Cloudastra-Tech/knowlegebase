@@ -133,7 +133,9 @@ LAYER 2 — GUARDRAILS          "the backup net"
    • Generic checks (too long, abusive) → apply to EVERYONE, once per question
      as typed, searched or not (not per search query or follow-up rewrite)
      (abuse: OpenAI moderation + a fast-model second opinion, or the fast model
-      alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4)
+      alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4).
+     Someone who may hurt THEMSELVES is no abuse: a short supportive reply
+     with where to get help (SUPPORT_RESOURCES_TEXT), never the answer model
    • Salary checks (input + output)      → apply to PUBLIC only (HR skips them)
    • If a leak slips through             → REASK rewrites it cleanly
 ```

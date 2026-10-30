@@ -151,6 +151,12 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
                                                    body.model.model_dump())
         except model_choice.Refused as e:
             raise HTTPException(400, str(e))
+    # A saved prompt set to answer directly: nothing is searched for it, now or
+    # when it's asked again (retried, regenerated, edited): the question keeps
+    # that (conversations.start_turn), so a prompt id sent then changes nothing.
+    search = True
+    if body.prompt_id and not again:
+        search = await run_in_threadpool(prompts_store.searches, ws, owner, body.prompt_id)
     turn = None
     if body.conversation_id:
         def begin():
@@ -158,22 +164,17 @@ async def chat_stream(body: StreamIn, user=Depends(current_user), role=Depends(c
             second read), kept with the chat."""
             started = conversations.start_turn(ws, owner, viewer, body.conversation_id,
                                                question, body.retry_of, body.regenerate_of,
-                                               body.edit_of)
+                                               body.edit_of, search=search)
             pick = answer_model or model_choice.resolve(ws, None, started["conversation"],
                                                         owner)
             model_choice.remember(ws, owner, started["conversation"]["id"], pick)
             return started, pick
         turn, answer_model = await run_in_threadpool(begin)
-        question = turn["question"]
+        question, search = turn["question"], turn["search"]
     elif answer_model is None:
         answer_model = await run_in_threadpool(model_choice.resolve, ws, None, None, owner)
     history_access = turn["history_access"] if turn else "public"
     history_acl = turn["history_acl"] if turn else []
-    # A saved prompt set to answer directly: nothing is searched for it. Only a new
-    # question: asked again, it searches as any question does.
-    search = True
-    if body.prompt_id and not again:
-        search = await run_in_threadpool(prompts_store.searches, ws, owner, body.prompt_id)
     # A new chat's title, written beside the answer (one small model call at most).
     title = {}
     titling = None
