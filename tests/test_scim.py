@@ -742,3 +742,43 @@ def test_scim_events_dont_push_out_sign_in_events(tenant, monkeypatch):
     assert {e["outcome"] for e in settings["events"]} == {"signed_in"}
     scim = t.client.get("/api/admin/sign-in/scim", headers=t.h).json()
     assert scim["events"][0]["reason_text"] == "Provisioned" and scim["users"] == 5
+
+
+# ---- The product tour follows the member (kb/services/onboarding.py, "PRODUCT TOUR") ---------
+def _tour_rows(ws):
+    import db
+    with db.connect() as conn:
+        return [r["step"] for r in conn.execute(
+            "SELECT step FROM onboarding WHERE workspace = ? AND step LIKE 'tour:%'", (ws,))]
+
+
+def test_a_new_email_keeps_the_product_tour_and_drops_the_old_address(tenant):
+    from kb.services import onboarding
+    t = tenant
+    alice = _user(t, "alice")
+    _user(t, "bob")
+    old, new, bob = f"alice@{t.domain}", f"alice.smith@{t.domain}", f"bob@{t.domain}"
+    onboarding.mark_tour(t.ws, old, "members", "finished")
+    onboarding.mark_tour(t.ws, bob, "members", "skipped")
+    r = t.call("PUT", f"/scim/v2/Users/{alice['id']}", {
+        "userName": new, "active": True,
+        "emails": [{"value": new, "type": "work", "primary": True}]})
+    assert r.status_code == 200, r.text
+    assert onboarding.tours(t.ws, new)["members"]["finished_at"]
+    assert not any(s.endswith(":" + old) for s in _tour_rows(t.ws))
+    assert onboarding.tours(t.ws, bob)["members"]["skipped_at"]             # theirs alone
+
+
+def test_anonymising_someone_leaves_no_email_in_their_tour_rows(tenant, monkeypatch):
+    from kb.services import onboarding, scim as service
+    t = tenant
+    alice = _user(t, "alice")
+    email = f"alice@{t.domain}"
+    onboarding.mark_tour(t.ws, email, "members", "finished")
+    onboarding.mark_tour(t.ws, email, "members", "skipped")
+    assert t.call("DELETE", f"/scim/v2/Users/{alice['id']}").status_code == 204
+    monkeypatch.setenv("SCIM_RETENTION_DAYS", "0")
+    assert service.anonymise()["anonymised"] >= 1
+    assert not any(email in s for s in _tour_rows(t.ws))
+    gone = onboarding.tours(t.ws, f"deleted-{alice['id']}")["members"]
+    assert gone["finished_at"] and gone["skipped_at"]

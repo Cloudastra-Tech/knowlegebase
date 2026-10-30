@@ -77,6 +77,7 @@ import threading
 import time
 
 import db
+import onboarding_store
 import secret_box
 import workspaces
 
@@ -544,10 +545,14 @@ def _keep_an_admin(conn, workspace, before):
 
 
 def remove(username, workspace):
-    """Returns False if `workspace` has no such member."""
+    """Returns False if `workspace` has no such member. Their product tour goes
+    with them (its rows are named after them)."""
+    username = username.strip().lower()
     with _lock, _db() as conn:
         n = conn.execute("DELETE FROM members WHERE username = ? AND workspace = ?",
-                         (username.strip().lower(), workspace)).rowcount
+                         (username, workspace)).rowcount
+        if n:
+            onboarding_store.forget_tours(conn, workspace, username)
     return n > 0
 
 

@@ -703,7 +703,9 @@ All six tables have a `workspace` column, so a workspace's purge deletes them.
   cache at once. Whether each member has seen the product tour (everyone's, and
   the admins') is kept in the same table, one row per member, tour and outcome
   (`PUT /api/onboarding/tours/{tour}`), so it starts once and not again in another
-  browser; a data request exports and erases those rows.
+  browser; a data request exports and erases those rows, a new username (a SCIM
+  email change, anonymisation) renames them, removing the member deletes them, and
+  the admin checklist never reads them.
 - **Sign-up** (`kb/services/signup.py`, `kb/services/m365.py`): Google Workspace,
   Microsoft 365 (Graph `organization` verified domains) or email plus a DNS TXT
   record (`pending_signups` until it checks out), behind `WORKSPACE_SIGNUP`.

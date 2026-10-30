@@ -119,3 +119,37 @@ def test_a_data_request_lists_the_tours_and_erasure_deletes_them():
     assert counts["tours"] == 1
     assert onboarding.tours(ws, pat)["members"]["seen"] is False
     assert onboarding.tours(ws, sam)["members"]["seen"] is True           # theirs alone
+
+
+def test_removing_a_member_forgets_their_tours(client):
+    from kb.services import onboarding
+    ws, domain = workspace()
+    pat, sam = f"pat@{domain}", f"sam@{domain}"
+    onboarding.mark_tour(ws, pat, "members", "finished")
+    onboarding.mark_tour(ws, sam, "members", "finished")
+    admin = login(client, f"admin@{domain}")
+    assert client.delete(f"/api/admin/members/{pat}", headers=admin).status_code == 200
+    assert onboarding.tours(ws, pat)["members"]["seen"] is False
+    assert onboarding.tours(ws, sam)["members"]["seen"] is True           # theirs alone
+
+
+def test_the_admin_checklist_doesnt_read_anyones_tour():
+    import onboarding_store
+    from kb.services import onboarding
+    ws, domain = workspace()
+    onboarding.mark_tour(ws, f"pat@{domain}", "members", "finished")
+    onboarding.dismiss(ws)
+    done = onboarding_store.done_steps(ws)
+    assert "dismissed" in done and not any(s.startswith("tour:") for s in done)
+
+
+def test_saving_a_tour_reads_them_once(client, monkeypatch):
+    from kb.services import onboarding
+    _, domain = workspace()
+    h = login(client, f"pat@{domain}")
+    calls = []
+    real = onboarding.tours
+    monkeypatch.setattr(onboarding, "tours", lambda *a: calls.append(a) or real(*a))
+    r = client.put("/api/onboarding/tours/members", headers=h, json={"outcome": "finished"})
+    assert r.status_code == 200 and set(r.json()) == {"members"}       # no admin tour for them
+    assert len(calls) == 1
