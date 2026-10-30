@@ -63,7 +63,8 @@ No build secret or token is needed. **Toxicity check:** every question (a chat
 message, searched or not, a `/search` or MCP query) is checked once, as typed,
 for abuse, harassment, hate, threats, sexual content involving minors and
 self-harm encouragement, for everyone (HR and admins too), and refused with
-"Sorry, I can't help with that request." It needs no setting, download or token
+"Sorry, I can't help with that request." (Someone who may hurt themselves gets a
+supportive reply instead, below.) It needs no setting, download or token
 (`safety.py`; it replaces the Guardrails Hub `toxic_language` validator, gone
 with the Hub in 2026-10):
 
@@ -87,6 +88,22 @@ with the Hub in 2026-10):
 |---|---|
 | `TOXICITY_GUARD=off` | No toxicity check, for every workspace. `/api/health` says `"guards": {"toxicity": "off", …}` and the app logs `TOXICITY_GUARD=off` at WARNING when it starts. Default: on (`"toxicity": "active"`). |
 | `REQUIRE_TOXICITY_GUARD=1` | Refuse to start with `TOXICITY_GUARD=off` (and `restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the logs), so the check can't be turned off by mistake. `/api/health/ready` checks it too. |
+| `SUPPORT_RESOURCES_TEXT` | Optional. Your company's own support, for the reply below (your employee assistance programme, a counsellor's number or email), on one line; `\n` starts a new line. Up to 1,000 characters; never masked as personal data. Unset: the generic crisis lines. |
+
+**Someone who may hurt themselves.** A question from someone who says they want
+to hurt or kill themselves, or asks how (moderation's `self-harm` categories, and
+the fast model's third verdict, `SELF_HARM`), is not refused as abuse and not
+answered: the answer model is never called, nothing is searched for it, and no
+method is ever given. They get a short, warm reply: they're not alone, it's worth
+talking to someone now, where to find support, and to call the local emergency
+number if they're in danger. Where to find support is `SUPPORT_RESOURCES_TEXT`,
+or without it: Tele-MANAS, India's free 24x7 mental-health line (14416 or
+1-800-891-4416), findahelpline.com for other countries, and 112 for an emergency
+in India. Asking ABOUT support ("I'm burnt out, what support do we offer?") is
+answered as any question. Such a question is logged as `blocked` (the question
+log's outcomes have no value of their own for it) with the block reason
+`self_harm`, its text kept as the workspace's log mode says. With the check off
+(`TOXICITY_GUARD=off`), or both its models down, there is no such reply either.
 
 The other checks are unchanged: the question length limit, the staff-pay rules,
 the prompt-injection filter and PII redaction.

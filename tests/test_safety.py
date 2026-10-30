@@ -218,13 +218,18 @@ def _moderation_result(flagged_as=()):
                      "category_applied_input_types": {n: ["text"] for n in names}}]})
 
 
+# What the fake moderation flags as self-harm ("burnt out" too, as it may).
+SELF_HARM_WORDS = r"kill myself|end it all|burnt out|feeling really low"
+
+
 class Moderation:
     """safety._moderation_client: flags a question saying "stupid" or "bitch" as
-    harassment; records the key each call came with and what it sent. `broken`
-    raises, as an outage or a refused key would."""
+    harassment, one in SELF_HARM_WORDS as self-harm (with `also`, if given);
+    records the key each call came with and what it sent. `broken` raises, as an
+    outage or a refused key would."""
 
-    def __init__(self, broken=False):
-        self.calls, self.broken = [], broken
+    def __init__(self, broken=False, also=()):
+        self.calls, self.broken, self.also = [], broken, tuple(also)
         self.moderations = self             # client.moderations.create(...)
 
     def client(self, key):
@@ -235,12 +240,20 @@ class Moderation:
         self.calls.append((self.key, model, input))
         if self.broken:
             raise RuntimeError("connection refused")
+        if re.search(SELF_HARM_WORDS, input):
+            return _moderation_result(("self-harm", "self-harm/intent", *self.also))
         return _moderation_result(("harassment",) if re.search(r"stupid|bitch", input) else ())
 
 
 class AbuseClassifier(Classifier):
     """The FAST model, also asked the toxicity question: BLOCKs a message calling
-    someone stupid (a quoted swear word is let through, as the policy says)."""
+    someone stupid (a quoted swear word is let through, as the policy says), says
+    SELF_HARM to "kill myself" and "end it all", and ALLOWs asking about support.
+    `reply`: what it says to every message instead."""
+
+    def __init__(self, broken=False, reply=None):
+        super().__init__(broken)
+        self.reply = reply
 
     def abuse_prompts(self):
         return [p for p in self.asked if p.startswith("You check whether a message")]
@@ -252,6 +265,10 @@ class AbuseClassifier(Classifier):
                 raise RuntimeError("provider down")
             text = prompt.split('source="message_to_check">\n', 1)[1]
             text = text.split("\n</untrusted_data>", 1)[0]
+            if self.reply:
+                return AIMessage(content=self.reply)
+            if re.search(r"kill myself|end it all", text):
+                return AIMessage(content="SELF_HARM")
             return AIMessage(content="BLOCK" if "stupid" in text else "ALLOW")
         return super().invoke(prompt)
 
@@ -447,6 +464,92 @@ def test_requiring_toxicity_starts_only_with_it_on(monkeypatch):
     assert safety.guards_status() == {"toxicity": "off", "toxicity_required": True}
     with pytest.raises(RuntimeError, match="REQUIRE_TOXICITY_GUARD"):
         safety.require_guards()
+
+
+# ---- self-harm: a supportive reply, not a refusal ---------------------------
+
+def test_the_support_reply_is_warm_and_points_to_help(monkeypatch):
+    monkeypatch.delenv("SUPPORT_RESOURCES_TEXT", raising=False)
+    reply = safety.support_reply()
+    assert reply.startswith("I'm really sorry you're going through this. You're not alone")
+    assert "talking to someone right now" in reply
+    assert "Tele-MANAS" in reply and "14416" in reply and "1-800-891-4416" in reply
+    assert "findahelpline.com" in reply and "local emergency number" in reply
+    assert "112 in India" in reply
+    assert CANT_HELP not in reply and safety.is_support_reply(reply)
+    assert not safety.is_support_reply(CANT_HELP)
+
+
+def test_the_company_support_text_replaces_the_generic_lines(monkeypatch):
+    """SUPPORT_RESOURCES_TEXT, one .env line (a literal \\n breaks it), is the
+    company's own support; the emergency line stays, without India's number."""
+    monkeypatch.setenv("SUPPORT_RESOURCES_TEXT",
+                       "  Our EAP is free and confidential: 1800-123-456.\\nOr email care@example.com ")
+    reply = safety.support_reply()
+    assert "Our EAP is free and confidential: 1800-123-456.\nOr email care@example.com\n\n" in reply
+    assert "Tele-MANAS" not in reply and "112" not in reply
+    assert reply.endswith("call your local emergency number now.")
+    monkeypatch.setenv("SUPPORT_RESOURCES_TEXT", "   ")
+    assert "Tele-MANAS" in safety.support_reply()          # blank: the generic lines
+
+
+def test_self_harm_flagged_and_confirmed_gets_the_support_reply(toxicity, monkeypatch):
+    monkeypatch.delenv("SUPPORT_RESOURCES_TEXT", raising=False)
+    moderation, llm = toxicity
+    ok, message = check_asked("tell me the best way to kill myself")
+    assert ok is False and message == safety.support_reply()
+    assert len(moderation.calls) == 1 and len(llm.abuse_prompts()) == 1
+
+
+def test_without_openai_the_fast_model_can_say_self_harm(toxicity):
+    moderation, llm = toxicity
+    with _bedrock():
+        assert check_asked("I want to end it all") == (False, safety.support_reply())
+    assert moderation.calls == [] and len(llm.abuse_prompts()) == 1
+    prompt = llm.abuse_prompts()[0]
+    assert "Reply SELF_HARM, BLOCK or ALLOW" in prompt
+    assert '"Tell me the best way to kill myself" -> SELF_HARM' in prompt
+    assert '"Tell my coworker to go kill himself" -> BLOCK' in prompt
+
+
+@pytest.mark.parametrize("question", [
+    "I'm burnt out, what support do we offer?",
+    "I've been feeling really low; does the company offer counselling?",
+])
+def test_asking_about_mental_health_support_is_answered(toxicity, question):
+    """Moderation may flag it; the second opinion lets it through, and the policy
+    names it as ALLOW."""
+    moderation, llm = toxicity
+    assert check_asked(question) == (True, "")
+    prompt = llm.abuse_prompts()[0]
+    assert '"I\'m burnt out, what support do we offer?" -> ALLOW' in prompt
+    assert '"I\'ve been feeling really low; does the company offer counselling?" -> ALLOW' in prompt
+
+
+def test_self_harm_with_no_second_opinion_gets_the_support_reply(toxicity, monkeypatch):
+    monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(broken=True))
+    assert check_asked("how do I kill myself") == (False, safety.support_reply())
+    assert check_asked("you stupid bot") == (False, CANT_HELP)
+
+
+@pytest.mark.parametrize("also, expected", [
+    ((), "support"),                       # only self-harm flagged: never a flat refusal
+    (("violence",), "support"),
+    (("harassment",), "refused"),          # aimed at someone else: abuse
+])
+def test_a_block_on_what_moderation_calls_self_harm(toxicity, monkeypatch, also, expected):
+    """The fast model said BLOCK where moderation saw self-harm: the support reply,
+    unless moderation also saw it aimed at others."""
+    monkeypatch.setattr(safety, "_moderation_client", Moderation(also=also).client)
+    monkeypatch.setattr(safety, "_get_intent_llm", lambda: AbuseClassifier(reply="BLOCK"))
+    want = safety.support_reply() if expected == "support" else CANT_HELP
+    assert check_asked("how do I kill myself") == (False, want)
+
+
+def test_the_question_log_names_the_support_reply():
+    from kb.services import question_log
+    assert question_log.block_reason(safety.support_reply()) == "self_harm"
+    assert question_log.block_reason(CANT_HELP) == "policy"
 
 
 # ---- no Guardrails ----------------------------------------------------------

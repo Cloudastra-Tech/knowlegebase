@@ -36,6 +36,7 @@ import access
 import models
 import pii
 import question_log_store as store
+import safety
 from agent import Cancelled
 from kb.services import agents, assistant, conversations, webhooks
 
@@ -129,8 +130,12 @@ def text_for(mode, text, limit, mask=None):
 
 
 def block_reason(answer):
-    """Which guard refused a question, from the message it gave (safety.py)."""
+    """Which guard refused a question, from the message it gave (safety.py).
+    self_harm: given the support reply (safety.support_reply), logged under the
+    blocked outcome, since outcome's CHECK has no value of its own for it."""
     text = answer or ""
+    if safety.is_support_reply(text):
+        return "self_harm"
     if "prompt-injection" in text:
         return "injection"
     if text.startswith("Staff salary information is restricted"):
