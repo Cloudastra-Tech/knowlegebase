@@ -78,7 +78,7 @@ def present(message, role, admin=False, feedback=None):
            "author": message["author"], "content": content, "state": state,
            "created_at": message["created_at"], "withheld": False}
     if message["author"] == "user":
-        return out
+        return {**out, "search": searched(message)}
     if not visible_to(role, message):
         return {**out, "content": "", "withheld": True, "sources": [], "steps": [],
                 "standalone_question": None, "feedback": None, "followups": [],
@@ -90,6 +90,13 @@ def present(message, role, admin=False, feedback=None):
     if admin:                       # the raw tool input and output (steps panel)
         out["trace"] = message.get("trace") or []
     return out
+
+
+def searched(question):
+    """Was this question asked with the search on? False: answered without it (a
+    saved prompt set not to search, conversations_store's messages.scope), and so
+    are its retries, regenerations and edits (start_turn)."""
+    return (question.get("scope") or {}).get("search") is not False
 
 
 def _feedback_view(f):
@@ -148,7 +155,7 @@ def _answer_to_ask_again(ws, owner, role, conv, mid, states, refusal):
 
 
 def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regenerate_of=None,
-               edit_of=None):
+               edit_of=None, search=True):
     """Save a question in a conversation and the empty answer to fill in. Or:
        retry_of       ask the question of a failed or stopped answer again
        regenerate_of  a new answer to the same question beside a finished one (C10)
@@ -156,15 +163,19 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
                       it, answered with the conversation before it (C10)
     The new answer (and edited question) are siblings of the old ones, which stay:
     the chat shows the new branch, and the "‹ 2 / 3 ›" controls switch back.
+    search: False for a new question asked without searching the knowledge, saved
+    with it (searched()). Retried, regenerated or edited, a question keeps its
+    own, whatever this says.
     role: the asker as a viewer (access.Viewer) or a bare role; the history is
     what they may read now.
     Returns a dict: conversation, question, user_message_id, message_id, history,
-    history_access, history_acl (the history's audience, access.clauses), and
-    new_conversation (True when a role change started a new one, see above)."""
+    history_access, history_acl (the history's audience, access.clauses),
+    new_conversation (True when a role change started a new one, see above) and
+    search (whether to search the knowledge for it)."""
     conv = store.get(ws, owner, conversation_id)
     if not conv:
         raise HTTPException(404, "That conversation doesn't exist.")
-    again, parent_id = None, conv["active_leaf_id"]
+    again, parent_id, edited = None, conv["active_leaf_id"], None
     if retry_of:
         again = _answer_to_ask_again(ws, owner, role, conv, retry_of, RETRY_STATES,
                                      "Only an answer that failed or was stopped can be retried.")
@@ -178,6 +189,8 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
         parent_id = edited["parent_id"]
     if again:
         question = again["content"]
+    if again or edited:
+        search = searched(again or edited)
     if not question:
         raise HTTPException(400, "Please type a question.")
 
@@ -191,7 +204,8 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
         user_message_id = again["id"]
     else:
         path = store.path(conv["id"], parent_id)
-        user_message_id = store.add_message(conv["id"], "user", question, parent_id=parent_id)
+        user_message_id = store.add_message(conv["id"], "user", question, parent_id=parent_id,
+                                            scope=None if search else {"search": False})
     message_id = store.add_message(conv["id"], "assistant", "", parent_id=user_message_id)
     history, used = _history(path, who)
     first = not path
@@ -200,6 +214,7 @@ def start_turn(ws, owner, role, conversation_id, question, retry_of=None, regene
             "message_id": message_id, "history": history,
             "history_access": max_access([a["max_access"] for a in used]),
             "history_acl": history_acl(used), "new_conversation": new_conversation,
+            "search": search,
             # The chat's first question, titled from it (suggestions.chat_title).
             "first_question": first and conv["title_source"] == "auto" and not again}
 

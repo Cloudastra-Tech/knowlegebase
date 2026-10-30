@@ -84,6 +84,7 @@ export interface Message {
   siblings?: string[] // its versions, with it: "‹ 2 / 3 ›" (lib/chat-history.ts branchOf)
   copy?: string | null // a shared answer's markdown, ready to copy
   verified?: VerifiedBadge | null // served from a verified answer (PL-27)
+  noSearch?: boolean // a question asked without searching (a saved prompt set not to)
 }
 
 // What an answer's buttons do. Without the optional ones (a shared chat, read only)
