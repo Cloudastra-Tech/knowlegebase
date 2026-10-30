@@ -133,7 +133,10 @@ LAYER 2 — GUARDRAILS          "the backup net"
    • Generic checks (too long, abusive) → apply to EVERYONE, once per question
      as typed, searched or not (not per search query or follow-up rewrite)
      (abuse: OpenAI moderation + a fast-model second opinion, or the fast model
-      alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4)
+      alone off OpenAI; fails open; TOXICITY_GUARD=off; deploy.md step 4).
+     Someone who may hurt THEMSELVES is no abuse: a short supportive reply
+     with where to get help (SUPPORT_RESOURCES_TEXT, one text server-wide),
+     never the answer model; told apart by the check's verdict, not its words
    • Salary checks (input + output)      → apply to PUBLIC only (HR skips them)
    • If a leak slips through             → REASK rewrites it cleanly
 ```
@@ -698,7 +701,12 @@ All six tables have a `workspace` column, so a workspace's purge deletes them.
   steps derived from the data (and kept once done), first-run suggestions from
   indexed titles, and the sample HR handbook (`samples/hr-handbook/`, indexed
   under `docs/sample/`); removing it deletes its chunks and empties the answer
-  cache at once.
+  cache at once. Whether each member has seen the product tour (everyone's, and
+  the admins') is kept in the same table, one row per member, tour and outcome
+  (`PUT /api/onboarding/tours/{tour}`), so it starts once and not again in another
+  browser; a data request exports and erases those rows, a new username (a SCIM
+  email change, anonymisation) renames them, removing the member deletes them, and
+  the admin checklist never reads them.
 - **Sign-up** (`kb/services/signup.py`, `kb/services/m365.py`): Google Workspace,
   Microsoft 365 (Graph `organization` verified domains) or email plus a DNS TXT
   record (`pending_signups` until it checks out), behind `WORKSPACE_SIGNUP`.

@@ -418,12 +418,9 @@ def test_the_answer_cache_and_release_key_on_the_answer_model(fake_aws):
 @pytest.mark.sqlite_only("the SQLite file's own migrations (Postgres: test_postgres_migrations)")
 def test_0026_turns_single_provider_rows_into_one_enabled_model_and_downgrades(
         tmp_path, monkeypatch):
-    from alembic import command
-    from alembic.config import Config
+    from tests import alembic_steps
     path = str(tmp_path / "app.db")
-    monkeypatch.setattr(db, "DB_PATH", path)
-    config = Config(str(pathlib.Path(db.__file__).with_name("alembic.ini")))
-    command.upgrade(config, "0025")
+    alembic_steps.upgrade(path, "0025")
     insert = ("INSERT INTO model_providers (workspace, provider, chat_provider, chat_model, "
               "external_id, updated_at) VALUES (?, ?, ?, ?, 'kb-x', 1)")
     with sqlite3.connect(path) as conn:
@@ -435,7 +432,7 @@ def test_0026_turns_single_provider_rows_into_one_enabled_model_and_downgrades(
         conn.execute("INSERT INTO messages (id, conversation_id, author, content, created_at) "
                      "VALUES ('m1', 'c1', 'user', 'q', 1)")
     conn.close()
-    command.upgrade(config, "0026")
+    alembic_steps.upgrade(path, "0026")
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         rows = {r["workspace"]: dict(r) for r in conn.execute("SELECT * FROM model_providers")}
@@ -450,7 +447,7 @@ def test_0026_turns_single_provider_rows_into_one_enabled_model_and_downgrades(
     assert store.enabled(rows["bedrock-ws"]) == [("bedrock", "amazon.nova-micro-v1:0")]
     assert store.enabled(rows["openai-ws"]) == [("openai", models.answer_model())]
     assert store.enabled(rows["server-ws"]) == []
-    command.downgrade(config, "0025")
+    alembic_steps.downgrade(path, "0025")
     with sqlite3.connect(path) as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(model_providers)")}
         conv_cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)")}
@@ -460,4 +457,4 @@ def test_0026_turns_single_provider_rows_into_one_enabled_model_and_downgrades(
     conn.close()
     assert "chat_models" not in cols and not {"model_provider", "model_id"} & conv_cols
     assert kept == (None, "amazon.nova-micro-v1:0") and messages == 1   # nothing else lost
-    command.upgrade(config, "head")
+    alembic_steps.upgrade(path, "head")

@@ -371,7 +371,7 @@ def test_a_search_query_is_checked_for_abuse_once(kb, monkeypatch):
 
     def check_asked(question):
         asked.append(question)
-        return (False, safety.CANT_HELP) if "stupid" in question else (True, "")
+        return (False, safety.CANT_HELP, "toxic") if "stupid" in question else (True, "", None)
     monkeypatch.setattr(safety, "check_asked", check_asked)
     r = kb.client.post("/api/v1/search", headers=bearer(key), json={"query": "you stupid bot"})
     assert r.status_code == 400 and r.json()["detail"] == safety.CANT_HELP

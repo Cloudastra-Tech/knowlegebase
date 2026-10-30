@@ -26,6 +26,7 @@ function messagesOf(shared: SharedChat): Message[] {
           sources: m.sources,
           withheld: m.withheld,
           copy: m.copy,
+          support: m.support,
           steps: (m.steps ?? []).map((s) => ({ ...s, done: true })),
         },
   )

@@ -80,15 +80,17 @@ function Section({
   title,
   description,
   action,
+  tour,
   children,
 }: {
   title: string
   description: ReactNode
   action?: ReactNode
+  tour?: string // where the product tour points (lib/tour.ts)
   children: ReactNode
 }) {
   return (
-    <Panel title={title} description={description} actions={action} className="min-w-0">
+    <Panel title={title} description={description} actions={action} data-tour={tour} className="min-w-0">
       {children}
     </Panel>
   )
@@ -518,6 +520,7 @@ export function AssistantView() {
             <Glossary settings={settings} />
             <Section
               title="Models"
+              tour="models"
               description="The providers and models that write the answers (people pick among the ones you enable, in the chat) and the one that searches your documents. Bring your own AWS to keep documents and questions in your own account, or search locally so documents never leave the server."
             >
               <ModelProviderSettings />

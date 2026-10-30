@@ -54,6 +54,10 @@ RLS = os.getenv("DB_RLS", "on").strip().lower() not in ("off", "0", "false", "no
 log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _migrated = set()                  # databases brought up to date, this process
+# Alembic keeps its `context` and `op` in module globals, so two Alembic commands at
+# once in one process (a job's first connect() on its database while a test or a
+# tool upgrades another) clobber each other's. Every one of them runs under this.
+alembic_lock = threading.RLock()
 # The current request's / job's tenant: a one-item list, shared by the threads
 # its work runs in (a copied context keeps the same list), so a dependency that
 # runs in a worker thread can still name the workspace for the endpoint.
@@ -157,11 +161,13 @@ def _open(path, foreign_keys=True, rows=sqlite3.Row):
     return conn
 
 
-def migrate(path=None, url=None):
-    """Upgrade the database to the newest migration: the SQLite file at `path`, or
-    the Postgres database at `url`, else the app's database (Postgres when
-    DATABASE_URL says so, else DB_PATH). Safe to run again, and from several
-    processes at once: the first one takes the write lock (on Postgres an
+def migrate(path=None, url=None, revision="head", downgrade=False):
+    """Upgrade the database to the newest migration (or to `revision`; with
+    `downgrade`, down to it): the SQLite file at `path`, or the Postgres database
+    at `url`, else the app's database (Postgres when DATABASE_URL says so, else
+    DB_PATH). On its own connection, under alembic_lock: the one way the app, the
+    tools and the tests run Alembic in-process. Safe to run again, and from
+    several processes at once: the first one takes the write lock (on Postgres an
     advisory lock) for the whole upgrade, the others wait and then find nothing
     to do."""
     from alembic import command
@@ -173,9 +179,9 @@ def migrate(path=None, url=None):
         use_wal(path)
     config = Config()
     config.set_main_option("script_location", MIGRATIONS)
-    with engine(path, url).begin() as connection:
+    with alembic_lock, engine(path, url).begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        (command.downgrade if downgrade else command.upgrade)(config, revision)
     if url:
         import db_pg
         db_pg.database(url).catalog.forget()

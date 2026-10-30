@@ -44,6 +44,7 @@ import time
 import uuid
 
 import members_store
+import onboarding_store
 from members_store import SCIM_SOURCE, NoAdminLeft  # noqa: F401  (re-exported for callers)
 
 MAX_TOKENS = 3                     # active tokens per workspace (two while rotating)
@@ -311,6 +312,7 @@ def _rename(conn, workspace, old, new):
                  (new, old, workspace))
     conn.execute("UPDATE message_feedback SET user = ? WHERE user = ? AND workspace = ?",
                  (new, old, workspace))
+    onboarding_store.rename_tours(conn, workspace, old, new)   # the step names hold it
     conn.execute("DELETE FROM sessions WHERE username = ?", (old,))
 
 

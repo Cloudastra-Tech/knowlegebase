@@ -725,7 +725,7 @@ export function IntegrationsView({
               description="Ask your admin which tools can be connected here."
             />
           )}
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div data-tour="integrations" className="mt-6 grid gap-4 md:grid-cols-2">
             {live.map((item, i) => (
               <ConnectorCard
                 key={item.id}

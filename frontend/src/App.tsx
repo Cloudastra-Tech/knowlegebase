@@ -7,6 +7,7 @@ import { AppSidebar, PhoneBar, SidebarEvents } from "@/components/app-sidebar"
 import { CommandPalette } from "@/components/command-palette"
 import { IndexProgressBar } from "@/components/index-progress"
 import { LazyPage } from "@/components/lazy-page"
+import { ProductTour } from "@/components/product-tour"
 import { ShellStrip, TrialBanner } from "@/components/trial-banner"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import type { Role } from "@/lib/api"
@@ -14,6 +15,7 @@ import { useAuth } from "@/lib/auth-context"
 import { ChatBridgeProvider } from "@/components/chat-bridge-provider"
 import { IndexStatusProvider } from "@/lib/index-status"
 import { endInstantNav } from "@/lib/instant-nav"
+import { isChatPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
 // Each page is its own download (routes.tsx), so a visitor on the landing page doesn't
@@ -67,7 +69,7 @@ export default function App() {
   // The conversation the chat was last at: Chat (the sidebar, the palette) goes back to
   // it from another screen, scrolled where it was, rather than to a new chat.
   const [chatAt, setChatAt] = useState("/chat")
-  const onChat = location.pathname === "/chat" || location.pathname.startsWith("/chat/")
+  const onChat = isChatPath(location.pathname)
   if (onChat && location.pathname !== chatAt) setChatAt(location.pathname)
   // A keyboard navigation (lib/instant-nav.ts) is over once its screen has painted.
   useEffect(() => {
@@ -112,6 +114,8 @@ export default function App() {
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts; ⌘B the sidebar. */}
       <CommandPalette user={user} role={activeRole} chatAt={chatAt} />
       <SidebarEvents />
+      {/* The product tour: by itself on a first sign-in, or from the account menu. */}
+      <ProductTour chatAt={chatAt} />
       <AppSidebar chatAt={chatAt} />
 
       <div className="relative flex min-w-0 flex-1 flex-col" data-print="flow">

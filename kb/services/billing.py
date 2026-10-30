@@ -143,8 +143,10 @@ def require(ws, feature):
 
 
 # Paths that still take changes while a workspace is read-only: signing in and
-# out, billing itself, and exporting or deleting the workspace.
-WHILE_READ_ONLY = ("/api/auth/", "/api/billing/", "/api/admin/workspace")
+# out, billing itself, exporting or deleting the workspace, and a member putting the
+# product tour away (their own, it changes nothing of the workspace's).
+WHILE_READ_ONLY = ("/api/auth/", "/api/billing/", "/api/admin/workspace",
+                   "/api/onboarding/tours/")
 
 
 def check_writable(ws, method, path):

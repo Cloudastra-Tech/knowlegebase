@@ -84,6 +84,10 @@ export interface Message {
   siblings?: string[] // its versions, with it: "‹ 2 / 3 ›" (lib/chat-history.ts branchOf)
   copy?: string | null // a shared answer's markdown, ready to copy
   verified?: VerifiedBadge | null // served from a verified answer (PL-27)
+  noSearch?: boolean // a question asked without searching (a saved prompt set not to)
+  // The support reply to someone who may hurt themselves (state "blocked", from the
+  // server's verdict): a calm reply, never a refusal, with nothing to rate or cite.
+  support?: boolean
 }
 
 // What an answer's buttons do. Without the optional ones (a shared chat, read only)
@@ -412,6 +416,15 @@ function AnswerBody({ message, actions, live }: { message: Message; actions: Ans
       </Alert>
     )
   }
+  if (message.support) {
+    // Someone who may hurt themselves: where to find help, as a plain reply in the
+    // reading column. Not a refusal, so nothing that looks like one.
+    return (
+      <ReadingColumn>
+        <Markdown text={text} />
+      </ReadingColumn>
+    )
+  }
   if (state === "blocked") {
     // A guard refused: a warning edge, not an error.
     return (
@@ -633,6 +646,14 @@ async function copyAnswer(message: Message) {
 // Under a finished answer: Copy, thumbs, Regenerate, Share, More, and its versions.
 function ActionRow({ message, actions, className }: { message: Message; actions: AnswerActions; className?: string }) {
   const state = message.state
+  if (message.support) {
+    // The support reply: nothing to rate, share or write again; only its versions.
+    return (
+      <MessageFooter className={cn("flex-wrap gap-0.5 px-0 font-normal empty:hidden", className)} data-print="hide">
+        <BranchNav message={message} onBranch={actions.onBranch} disabled={actions.busy} />
+      </MessageFooter>
+    )
+  }
   const shareable = !!state && SHAREABLE.includes(state) && !message.withheld
   const rateable = !!state && RATEABLE.includes(state) && !message.withheld
   return (
@@ -698,8 +719,8 @@ export function AssistantMessage({
   ref?: Ref<HTMLDivElement>
 }) {
   const sources = useMemo(
-    () => (message.withheld ? [] : (message.sources ?? [])),
-    [message.withheld, message.sources],
+    () => (message.withheld || message.support ? [] : (message.sources ?? [])),
+    [message.withheld, message.support, message.sources],
   )
   const finished = !message.streaming && !message.limited
   const [opened, setOpened] = useState<Source | null>(null)
@@ -759,7 +780,7 @@ export function AssistantMessage({
           )}
 
           {sources.length > 0 && (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Sources">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Sources" data-tour="sources">
               <span className="mr-0.5 text-xs text-muted-foreground">Sources</span>
               {groupSources(sources).map((group, i) => (
                 <div key={`${group[0].source.provider}-${group[0].source.title}`} className="min-w-0 max-w-full" {...rise(i)}>

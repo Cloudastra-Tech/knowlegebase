@@ -569,6 +569,9 @@ export interface ChatReply {
   message_id?: string | null // saved in a conversation
   followups?: string[] // up to 3 questions to ask next (kb/services/suggestions.py)
   verified?: VerifiedBadge | null // served from a verified answer (kb/services/verified.py)
+  // The support reply to someone who may hurt themselves (state "blocked", from
+  // the toxicity check's verdict): shown as a calm reply, never as a refusal.
+  support?: boolean
 }
 
 // An answer served from a verified answer: "Verified by <by> · <date>".
@@ -727,6 +730,9 @@ export interface SavedMessage {
   created_at: number
   // The answer used documents the viewer's role can't see now: no content or sources.
   withheld: boolean
+  // A question: false when it was asked without searching the knowledge (a saved
+  // prompt set not to); asked again or edited, it still isn't searched.
+  search?: boolean
   sources?: Source[]
   steps?: StepLine[]
   trace?: Step[] // admins only
@@ -734,6 +740,7 @@ export interface SavedMessage {
   feedback?: Feedback | null
   followups?: string[]
   verified?: VerifiedBadge | null
+  support?: boolean // an answer: the support reply (ChatReply.support)
   // It and the other versions of it (edits of a question, answers written again),
   // oldest first: "‹ 2 / 3 ›".
   siblings?: string[]

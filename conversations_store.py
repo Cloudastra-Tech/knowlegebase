@@ -9,6 +9,12 @@ answered with, and an answer's state are decided in kb/services/conversations.py
 
 Every read and write of a conversation names its workspace AND owner, so one
 person can never reach another's chat by guessing an id.
+
+messages.scope (JSON, NULL for most): how a question was asked, so asking it again
+(retry, regenerate, edit) asks it the same way. {"search": false}: answered
+without searching the knowledge (a saved prompt set not to search). On an answer,
+what kind of reply it is: {"reply": "support"}: the support reply to someone who
+may hurt themselves (safety.support_reply), shown as a calm reply, not a refusal.
 """
 
 import hashlib
@@ -27,6 +33,8 @@ _lock = threading.Lock()
 STATES = ("answered", "partial", "not_found", "blocked", "general_knowledge", "error",
           "stopped")
 TITLE_CHARS = 80
+DEFAULT_TITLE = "New chat"          # a chat with no title of its own words (yet)
+SUPPORT_REPLY = {"reply": "support"}   # messages.scope of the support reply
 FOLDER_CHARS = 60
 FORK_PREFIX = "↳ "
 _JSON_FIELDS = ("sources", "steps", "trace", "followups")
@@ -52,7 +60,17 @@ def _message(r):
         m[key] = json.loads(m.get(key) or "[]")
     m["verified"] = json.loads(m["verified"]) if m.get("verified") else None
     m["acl"] = json.loads(m["acl"]) if m.get("acl") else None
+    m["scope"] = _scope(m.get("scope"))
     return m
+
+
+def _scope(raw):
+    """messages.scope as a dict ({} when NULL or unreadable)."""
+    try:
+        found = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return found if isinstance(found, dict) else {}
 
 
 def title_for(question):
@@ -316,17 +334,18 @@ def delete(workspace, owner, cid):
 
 # ---- Messages -------------------------------------------------------------------------
 def add_message(cid, author, content, parent_id=None, state=None, max_access="public",
-                standalone_question=None):
+                standalone_question=None, scope=None):
     """Add a message after `parent_id` and make it the one the chat shows. A first
-    question with no title yet becomes the title."""
+    question with no title yet becomes the title. scope: how a question was asked
+    (see the top of this file); None or {} stores NULL."""
     now = time.time()
     mid = _new_id()
     with _lock, _db() as conn:
         conn.execute("INSERT INTO messages (id, conversation_id, parent_id, author, content, "
-                     "state, max_access, standalone_question, created_at) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "state, max_access, standalone_question, scope, created_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (mid, cid, parent_id, author, content, state, max_access,
-                      standalone_question, now))
+                      standalone_question, json.dumps(scope) if scope else None, now))
         conn.execute("UPDATE conversations SET active_leaf_id = ?, updated_at = ? WHERE id = ?",
                      (mid, now, cid))
         if author == "user":
@@ -350,22 +369,25 @@ def audience(max_access, acl=None):
 
 def finish_message(mid, content, state, sources=(), steps=(), trace=(), max_access="public",
                    standalone_question=None, latency_ms=None, model=None, followups=(),
-                   verified=None, acl=None):
+                   verified=None, acl=None, scope=None):
     """An answer is done (or stopped, or failed): its text, state and what it read.
     verified: the verified answer it was served from ({id, title, by, at}), if any.
     acl: who may read it (access.clauses of every chunk the model read); None:
-    max_access says (see audience())."""
+    max_access says (see audience()). scope: what kind of reply it is
+    (SUPPORT_REPLY, see the top of this file); None stores NULL."""
     if state not in STATES:
         raise ValueError(f"unknown answer state {state!r}")
     max_access, acl = audience(max_access, acl)
     with _lock, _db() as conn:
         conn.execute("UPDATE messages SET content = ?, state = ?, sources = ?, steps = ?, "
                      "trace = ?, max_access = ?, acl = ?, standalone_question = ?, "
-                     "latency_ms = ?, model = ?, followups = ?, verified = ? WHERE id = ?",
+                     "latency_ms = ?, model = ?, followups = ?, verified = ?, scope = ? "
+                     "WHERE id = ?",
                      (content, state, json.dumps(list(sources)), json.dumps(list(steps)),
                       json.dumps(list(trace)), max_access, json.dumps(acl), standalone_question,
                       latency_ms, model, json.dumps(list(followups)),
-                      json.dumps(verified) if verified else None, mid))
+                      json.dumps(verified) if verified else None,
+                      json.dumps(scope) if scope else None, mid))
         row = conn.execute("SELECT conversation_id FROM messages WHERE id = ?", (mid,)).fetchone()
         if row:
             conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -416,7 +438,7 @@ def siblings(messages):
 
 _COPIED = ("author", "content", "standalone_question", "state", "sources", "max_access",
            "acl", "steps", "trace", "followups", "model", "latency_ms", "index_version",
-           "verified", "created_at")
+           "verified", "scope", "created_at")
 
 
 def fork(workspace, owner, cid, message_id):
@@ -429,7 +451,7 @@ def fork(workspace, owner, cid, message_id):
     copied = path(cid, message_id) if conv else []
     if not copied or copied[-1]["id"] != message_id:
         return None
-    title = (FORK_PREFIX + (conv["title"] or "New chat"))[:TITLE_CHARS]
+    title = (FORK_PREFIX + (conv["title"] or DEFAULT_TITLE))[:TITLE_CHARS]
     return copy_into_new(workspace, owner, conv["role_used"], title, copied,
                          forked_from=message_id)
 
@@ -451,6 +473,7 @@ def copy_into_new(workspace, owner, role_used, title, copied, forked_from=None, 
                 row[key] = json.dumps(row.get(key) or [])
             for key in ("acl", "verified"):
                 row[key] = json.dumps(row[key]) if row.get(key) is not None else None
+            row["scope"] = json.dumps(row["scope"]) if row.get("scope") else None
             conn.execute(f"INSERT INTO messages (id, conversation_id, parent_id, "
                          f"{', '.join(_COPIED)}) VALUES (?, ?, ?, {', '.join('?' * len(_COPIED))})",
                          (mid, new["id"], parent, *[row[k] for k in _COPIED]))

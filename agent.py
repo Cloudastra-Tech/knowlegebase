@@ -54,8 +54,8 @@ import faithfulness
 import language as languages
 import models
 from rag import FRESHNESS_RULE, load_chain, passage_of, passage_text, retrieve, tokenize
-from safety import (MAX_QUESTION_CHARS, check_answer, check_asked, check_prompt_injection,
-                    check_question, redact_pii)
+from safety import (MAX_QUESTION_CHARS, SELF_HARM, check_answer, check_asked,
+                    check_prompt_injection, check_question, redact_pii)
 from untrusted import (RULE, known_urls, neutralise, quotes_retrieved, spotlight,
                        strip_unknown_links)
 
@@ -706,14 +706,19 @@ class _Run:
     def verdict(self):
         """(ok, message) of the input guards, waiting for them to finish. They are
         read in the order they used to run in, so the same message wins. Called
-        before anything found is shown or given to a model."""
+        before anything found is shown or given to a model. A refusal sets
+        refused_by (and the report's): the reason the guard gave (check_asked's
+        ASKED_REASONS), else the guard's name ("injection", "question"). Passed,
+        the report's "checked" is True."""
         for name, job in self.guards:
-            ok, message = job.result()
+            ok, message, *why = job.result()
             if not ok:
-                self.refused_by = name
+                self.refused_by = self.report["refused_by"] = (why[0] if why and why[0]
+                                                               else name)
                 self.block(message)
                 return False, message
         self.check_cancelled()
+        self.report["checked"] = True
         return True, ""
 
 
@@ -1232,8 +1237,11 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
             pool.shutdown(wait=False)     # a refused question doesn't wait for them
         if not ok:
             steps.drop()
-            if run.refused_by == "injection":
-                return {"messages": []}   # as before: refused before any search
+            # As before: refused before any search. So is a question from someone
+            # who may hurt themselves (by the verdict): no "blocked" search under
+            # the support reply.
+            if run.refused_by in ("injection", SELF_HARM):
+                return {"messages": []}
             # An access rule refused it: show the blocked search, as before.
             run.emit({"type": "step_start", "id": "retrieve_docs", "tool": "search_docs",
                       "label": step_label("search_docs", {})})
@@ -1542,7 +1550,10 @@ def build_agent(role="public", collection=None, outline=True, prefs=None, glossa
                       coverage="full" if blocked_reply or not search
                       else coverage(answer, sources))
         # GUARD (output): scrub any PII (emails, phones, cards) from the answer.
-        answer = mask(answer)
+        # Not from the support reply (the SELF_HARM verdict): it is the server's own
+        # text, and the phone number or email of the company's support is its point.
+        if state.refused_by != SELF_HARM:
+            answer = mask(answer)
         if with_sources:
             return answer, trace, sources
         return answer + format_sources(sources), trace

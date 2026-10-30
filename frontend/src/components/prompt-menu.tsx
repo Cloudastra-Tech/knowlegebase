@@ -47,15 +47,19 @@ export function usePromptPicker({
   // Its text gone from the box (sent, cleared, replaced, edited): no longer that prompt.
   if (inBox && !holdsPrompt(input, inBox.text)) setInBox(null)
 
-  // Put a prompt's text in the box, the cursor at its end.
+  // Put a prompt's text in the box, the cursor at its end. The cursor moves a frame
+  // later (once the text is drawn), and only if nothing was typed meanwhile: typed
+  // already, the cursor is where the typing left it, and moving it back to the end of
+  // the prompt's text would put the rest of what's typed before the first keys.
   const put = useCallback(
     (text: string, from: SavedPrompt) => {
       setInput(text)
       setInBox({ prompt: from, text })
       requestAnimationFrame(() => {
         const el = inputRef.current
-        el?.focus()
-        el?.setSelectionRange(text.length, text.length)
+        if (!el) return
+        if (document.activeElement !== el) el.focus()
+        if (el.value === text) el.setSelectionRange(text.length, text.length)
       })
     },
     [setInput, inputRef, setInBox],

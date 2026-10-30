@@ -34,10 +34,24 @@ export interface Checklist {
   sample: SampleDocs
 }
 
+// Whether this member has seen a product tour (lib/tour.ts): kept on the server, so
+// it's the same in every browser. Finished, or closed early ("skipped"): either is seen.
+export interface TourProgress {
+  seen: boolean
+  finished_at: number | null
+  skipped_at: number | null
+}
+
+export interface Tours {
+  members: TourProgress
+  admin?: TourProgress // admins only
+}
+
 export interface Onboarding {
   first_run: boolean // they haven't asked anything yet
   suggestions: string[] // questions from titles they may read (only on the first run)
   sample: SampleDocs
+  tours?: Tours
   checklist?: Checklist // admins viewing as HR
 }
 
@@ -47,4 +61,6 @@ export const onboardingApi = {
     request<Checklist>("/onboarding/dismissed", json("PUT", { dismissed })),
   addSample: () => request<SampleDocs>("/onboarding/sample", json("POST")),
   removeSample: () => request<SampleDocs>("/onboarding/sample", json("DELETE")),
+  tourSeen: (tour: "members" | "admin", outcome: "finished" | "skipped") =>
+    request<Tours>(`/onboarding/tours/${tour}`, json("PUT", { outcome })),
 }

@@ -122,7 +122,8 @@ class FakeClassifier:
             text = prompt.split('source="message_to_check">\n', 1)[1]
             text = text.split("\n</untrusted_data>", 1)[0]
             self.fakes.calls.add("toxicity_check", text, start)
-            verdict = "BLOCK" if "stupid" in text else "ALLOW"
+            verdict = ("SELF_HARM" if "kill myself" in text
+                       else "BLOCK" if "stupid" in text else "ALLOW")
         else:                                    # the answer check: nothing leaks here
             verdict = "ALLOW"
         return AIMessage(content=verdict)
@@ -450,6 +451,40 @@ def test_abuse_is_checked_once_per_question_not_per_search(toxicity):
     assert [c[1] for c in toxicity.calls.of("toxicity_check")] == ["And for annual plans?"]
     assert {c[1] for c in toxicity.calls.of("salary_check")} == {
         "And for annual plans?", "a guess", "refund policy for teachers"}
+
+
+@pytest.mark.parametrize("search", [True, False])
+def test_someone_who_may_hurt_themselves_gets_support_not_an_answer(
+        toxicity, monkeypatch, search):
+    """The support reply (safety.support_reply), with no search step under it,
+    no answer-model call, and the company's support number left unmasked."""
+    monkeypatch.setenv("SUPPORT_RESOURCES_TEXT", "Call our EAP on +91 9876543210, any time.")
+    run = build_agent("public", outline=False)
+    out = {}
+    reply = ask(run, "tell me the best way to kill myself", search=search, out=out)
+    assert reply["answer"] == safety.support_reply() and out["blocked"]
+    assert "+91 9876543210" in reply["answer"] and reply["sources"] == []
+    assert not [e for e in reply["events"] if e["type"].startswith("step")]
+    assert not toxicity.calls.of("agent")         # the answer model is never called
+    assert out["refused_by"] == "self_harm"
+
+
+def test_the_support_reply_is_told_apart_by_the_verdict_not_its_words(toxicity, monkeypatch):
+    """Whatever the support reply says (a workspace's own text, a reworded
+    opening), the verdict is what keeps its number unmasked and the search step
+    hidden; a refusal for abuse is never taken for it."""
+    monkeypatch.setattr(safety, "support_reply",
+                        lambda: "Please talk to someone today: +91 9876543210.")
+    run = build_agent("public", outline=False)
+    out = {}
+    reply = ask(run, "tell me the best way to kill myself", out=out)
+    assert reply["answer"] == "Please talk to someone today: +91 9876543210."
+    assert not [e for e in reply["events"] if e["type"].startswith("step")]
+    assert out["refused_by"] == "self_harm"
+
+    out = {}
+    ask(run, "you stupid bot, what is the refund policy?", out=out)
+    assert out["refused_by"] == "toxic" and out["blocked"]
 
 
 def wait_for_the_stream(fakes, seconds=30):

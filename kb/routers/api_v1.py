@@ -226,6 +226,7 @@ async def ask(body: AskIn, p=api_key("ask"), audit=audited("api.ask")):
                 max_access=done.max_access if done else "restricted",
                 acl=done.acl if done else None,
                 standalone_question=done.standalone if done else None,
+                scope=conversations_store.SUPPORT_REPLY if done and done.support else None,
                 latency_ms=int((time.monotonic() - started) * 1000))
         p.record(audit, "question", ids["message_id"],
                  {"chars": len(question), "state": state,

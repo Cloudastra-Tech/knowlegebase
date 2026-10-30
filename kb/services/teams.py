@@ -631,7 +631,8 @@ def _ask(ws, asker, role, question, key=None):
         turn["message_id"], done.answer, done.state, sources=done.sources,
         steps=[{"tool": t["tool"]} for t in done.trace], max_access=done.max_access,
         acl=done.acl, standalone_question=done.standalone,
-        latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified)
+        latency_ms=int((time.monotonic() - started) * 1000), verified=done.verified,
+        scope=conversations_store.SUPPORT_REPLY if done.support else None)
     return done, turn
 
 

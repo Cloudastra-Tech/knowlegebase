@@ -63,7 +63,8 @@ No build secret or token is needed. **Toxicity check:** every question (a chat
 message, searched or not, a `/search` or MCP query) is checked once, as typed,
 for abuse, harassment, hate, threats, sexual content involving minors and
 self-harm encouragement, for everyone (HR and admins too), and refused with
-"Sorry, I can't help with that request." It needs no setting, download or token
+"Sorry, I can't help with that request." (Someone who may hurt themselves gets a
+supportive reply instead, below.) It needs no setting, download or token
 (`safety.py`; it replaces the Guardrails Hub `toxic_language` validator, gone
 with the Hub in 2026-10):
 
@@ -87,6 +88,27 @@ with the Hub in 2026-10):
 |---|---|
 | `TOXICITY_GUARD=off` | No toxicity check, for every workspace. `/api/health` says `"guards": {"toxicity": "off", …}` and the app logs `TOXICITY_GUARD=off` at WARNING when it starts. Default: on (`"toxicity": "active"`). |
 | `REQUIRE_TOXICITY_GUARD=1` | Refuse to start with `TOXICITY_GUARD=off` (and `restart: unless-stopped` keeps retrying, visible in `docker compose ps` and the logs), so the check can't be turned off by mistake. `/api/health/ready` checks it too. |
+| `SUPPORT_RESOURCES_TEXT` | Optional. Where the reply below points people for support, on one line; `\n` starts a new line. It is **one text for the whole server**, shown in every workspace on it (there is no per-workspace setting): on a single-company install, your company's own support (your employee assistance programme, a counsellor's number or email); on a hosted server with many companies, leave it unset or set lines that hold for all of them, never one company's. Up to 1,000 characters; never masked as personal data. Unset: the generic crisis lines. |
+
+**Someone who may hurt themselves.** A question from someone who says they want
+to hurt or kill themselves, or asks how (moderation's `self-harm` categories, and
+the fast model's third verdict, `SELF_HARM`), is not refused as abuse and not
+answered: the answer model is never called, nothing is searched for it, and no
+method is ever given. They get a short, warm reply: they're not alone, it's worth
+talking to someone now, where to find support, and to call the local emergency
+number if they're in danger. Where to find support is `SUPPORT_RESOURCES_TEXT`,
+or without it: Tele-MANAS, India's free 24x7 mental-health line (14416 or
+1-800-891-4416), findahelpline.com for other countries, and 112 for an emergency
+in India. Asking ABOUT support ("I'm burnt out, what support do we offer?") is
+answered as any question. In the chat the reply reads as a plain answer, not a
+refusal: no warning, no sources, nothing to rate, and the chat keeps the neutral
+title "New chat" rather than the question's words (as does any chat whose first
+question a guard refused). Such a question is logged as `blocked` (the question
+log's outcomes have no value of their own for it) with the block reason
+`self_harm`, its text kept as the workspace's log mode says. A message urging
+SOMEONE ELSE to hurt themselves (moderation also flags harassment, hate or
+violence) is abuse: refused, block reason `policy`. With the check off
+(`TOXICITY_GUARD=off`), or both its models down, there is no such reply either.
 
 The other checks are unchanged: the question length limit, the staff-pay rules,
 the prompt-injection filter and PII redaction.
@@ -1803,8 +1825,18 @@ It is its own list: `SSO_ALLOW_PRIVATE_HOSTS` and `CONNECTOR_ALLOW_PRIVATE_HOSTS
 open it. The server's own addresses in `.env` (`AZURE_OPENAI_ENDPOINT`,
 `OPENAI_COMPAT_BASE_URL`) are the operator's and aren't checked. The addresses aren't
 secret: they're shown back on the screen and kept in the audit log (no query string is
-accepted, so nothing secret rides in one); they're stored in the same sealed JSON as the
-workspace's keys, so no migration was needed.
+accepted, so nothing secret rides in one); they're stored in plain text in their own
+column, `model_providers.endpoints`, apart from the sealed keys.
+
+Before migration 0028 they were kept inside the workspace's sealed `api_keys`. 0028
+moves them out on the first start of the new version, so the server's key
+(`INTEGRATIONS_KEY` or the key file) must be there, as it always is when the app runs.
+A row it can't open (no key, the workspace's keys shredded) is left as it was and
+logged (`0028: left workspace ...`); the upgrade goes on, and that workspace's admin
+types the address again. To move such rows later, run `alembic downgrade 0027` then
+`alembic upgrade head` with the key. The downgrade puts the addresses back into the
+sealed keys and drops the column; it needs the key whenever a row has addresses and
+changes nothing without it.
 
 ## Anthropic
 

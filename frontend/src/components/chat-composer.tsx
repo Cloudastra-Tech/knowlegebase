@@ -119,6 +119,7 @@ export function Composer({
         onDragOver={(e) => onFiles && e.preventDefault()}
         onDrop={onDrop}
         data-drift="composer"
+        data-tour="composer"
         data-over={over || undefined}
         className={cn(
           "kb-composer glass glass-noise h-auto cursor-text flex-wrap items-end gap-x-2 rounded-3xl py-2 pr-2 transition-none",
