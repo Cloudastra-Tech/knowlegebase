@@ -25,7 +25,17 @@ test("on a desktop, the sections are tabs over the open one, which switches at o
     return { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: Math.round(b.width), h: Math.round(b.height) }
   }
   // Let the screen's entrance finish first, or `before` catches it a fraction of a
-  // pixel short: the tabs hold still across two reads 100ms apart.
+  // pixel short. The rise (index.css, "Screens arriving") is an animation on the tabs'
+  // own boxes: wait for those to end (theirs only: the page has looping ones, the
+  // art's and the skeletons', that never do). Then the tabs hold still across two reads
+  // 100ms apart, which alone a busy machine can pass mid-rise, drawing no frame between.
+  await page.evaluate(`(() => {
+    const boxes = []
+    for (let el = document.querySelector('[role="tablist"][aria-label="Settings"]'); el; el = el.parentElement) boxes.push(el)
+    return Promise.all(boxes.flatMap((el) => el.getAnimations())
+      .filter((a) => a.effect.getComputedTiming().endTime !== Infinity)
+      .map((a) => a.finished.catch(() => {}))).then(() => 0)
+  })()`)
   let last = await box()
   await expect
     .poll(async () => {
