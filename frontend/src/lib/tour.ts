@@ -10,6 +10,7 @@
 // PUT /api/onboarding/tours/{tour}), so it doesn't start again in another browser.
 
 import { MOD_KEY } from "@/lib/chat-events"
+import { isChatPath } from "@/lib/routes"
 
 export type TourId = "members" | "admin"
 export type TourOutcome = "finished" | "skipped"
@@ -174,7 +175,7 @@ export function nextIndex(
 export function pageFor(step: TourStep, path: string, chatAt: string): string | null {
   if (!step.page) return null
   if (step.page === "chat") {
-    return path === "/chat" || path.startsWith("/chat/") ? null : chatAt
+    return isChatPath(path) ? null : chatAt
   }
   return path === step.page ? null : step.page
 }
@@ -192,6 +193,6 @@ export function shouldAutoStart(opts: {
     opts.seen === false &&
     opts.firstRun === true &&
     !opts.impersonating &&
-    (opts.path === "/chat" || opts.path.startsWith("/chat/"))
+    isChatPath(opts.path)
   )
 }

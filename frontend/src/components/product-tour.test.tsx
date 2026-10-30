@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { useEffect, useState, type ReactNode } from "react"
 import { createMemoryRouter, Outlet, useLocation } from "react-router"
 import { RouterProvider } from "react-router/dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -9,6 +10,7 @@ import { ProductTour } from "@/components/product-tour"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import type { AccountRole, Onboarding, Role, User } from "@/lib/api"
 import { AuthContext } from "@/lib/auth-context"
+import { ChatStateContext, INITIAL_CHAT_STATE } from "@/lib/chat-bridge"
 import { startTour } from "@/lib/tour"
 import { mockApi, withProviders } from "@/test/render"
 
@@ -18,11 +20,26 @@ import { mockApi, withProviders } from "@/test/render"
 
 const TOURS_UNSEEN = { members: { seen: false, finished_at: null, skipped_at: null } }
 
-function Page({ picker }: { picker: boolean }) {
+// An answer being written (the chat tells the app through the chat bridge).
+let setAnswering: (busy: boolean) => void = () => {}
+function Answering({ initial, children }: { initial: boolean; children: ReactNode }) {
+  const [busy, setBusy] = useState(initial)
+  useEffect(() => {
+    setAnswering = (b) => act(() => setBusy(b))
+  }, [])
+  return <ChatStateContext value={{ ...INITIAL_CHAT_STATE, busy }}>{children}</ChatStateContext>
+}
+
+function Page({ picker, dialog }: { picker: boolean; dialog: boolean }) {
   const { pathname } = useLocation()
   return (
     <main>
       <p data-testid="path">{pathname}</p>
+      {dialog && (
+        <div role="dialog" data-state="open">
+          Something open
+        </div>
+      )}
       {pathname.startsWith("/chat") && (
         <>
           <div data-tour="composer">
@@ -49,11 +66,17 @@ function setup({
   welcome = { first_run: true, tours: TOURS_UNSEEN },
   picker = false,
   path = "/chat",
+  history = [],
+  answering = false,
+  dialog = false,
 }: {
   role?: AccountRole
   welcome?: Partial<Onboarding>
   picker?: boolean
   path?: string
+  history?: string[] // pages before it, for Back
+  answering?: boolean
+  dialog?: boolean // a dialog open over the page
 } = {}) {
   const user: User = { username: "pat@example.com", name: "Pat", workspace: "acme", role }
   const saved: { tour: string; outcome: string }[] = []
@@ -78,19 +101,22 @@ function setup({
   }
   const Shell = () => (
     <AuthContext value={auth}>
-      <SidebarProvider>
-        <ProductTour chatAt="/chat" />
-        <aside>
-          <div data-tour="chat-history">Your chats</div>
-          <AccountMenu />
-        </aside>
-        <Outlet />
-      </SidebarProvider>
+      <Answering initial={answering}>
+        <SidebarProvider>
+          <ProductTour chatAt="/chat" />
+          <aside>
+            <div data-tour="chat-history">Your chats</div>
+            <AccountMenu />
+          </aside>
+          <Outlet />
+        </SidebarProvider>
+      </Answering>
     </AuthContext>
   )
-  const router = createMemoryRouter([{ Component: Shell, children: [{ path: "*", element: <Page picker={picker} /> }] }], {
-    initialEntries: [path],
-  })
+  const router = createMemoryRouter(
+    [{ Component: Shell, children: [{ path: "*", element: <Page picker={picker} dialog={dialog} /> }] }],
+    { initialEntries: [...history, path] },
+  )
   render(withProviders(<RouterProvider router={router} />))
   return { saved, router }
 }
@@ -222,5 +248,62 @@ describe("ProductTour", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
     expect(saved).toEqual([{ tour: "members", outcome: "skipped" }])
     expect(screen.getByTestId("path")).toHaveTextContent("/knowledge") // left where they went
+  }, 15_000)
+
+  it("ends, as skipped, on Back in the browser", async () => {
+    const { saved, router } = setup({ history: ["/knowledge"] })
+    await step("Ask in plain words")
+    await act(() => router.navigate(-1))
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(saved).toEqual([{ tour: "members", outcome: "skipped" }])
+    expect(screen.getByTestId("path")).toHaveTextContent("/knowledge")
+  }, 15_000)
+
+  it("keeps going when the app redirects (a chat that failed to load), and ends where it went", async () => {
+    const user = userEvent.setup()
+    const { saved, router } = setup({ path: "/chat/abc" })
+    await step("Ask in plain words")
+    await act(() => router.navigate("/chat", { replace: true })) // ChatView: no such chat
+    await act(() => new Promise((r) => setTimeout(r, 400)))
+    const dialog = await step("Ask in plain words") // found again on the new page
+    expect(saved).toEqual([])
+    await user.click(within(dialog).getByRole("button", { name: "Skip" }))
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(saved).toEqual([{ tour: "members", outcome: "skipped" }])
+    expect(screen.getByTestId("path")).toHaveTextContent(/^\/chat$/) // not back to the failed one
+  }, 15_000)
+
+  it("closes on Esc without stopping an answer being written", async () => {
+    const user = userEvent.setup()
+    const keys: string[] = []
+    const onKey = (e: KeyboardEvent) => keys.push(e.key) // chat-view's "Esc stops an answer"
+    window.addEventListener("keydown", onKey)
+    try {
+      const { saved } = setup({ welcome: { first_run: false, tours: TOURS_UNSEEN }, answering: true })
+      act(() => startTour("members"))
+      await step("Ask in plain words")
+      await user.keyboard("{Escape}")
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+      expect(saved).toEqual([{ tour: "members", outcome: "skipped" }])
+      expect(keys).not.toContain("Escape")
+    } finally {
+      window.removeEventListener("keydown", onKey)
+    }
+  }, 15_000)
+
+  it("doesn't start by itself while an answer is being written", async () => {
+    setup({ answering: true })
+    await act(() => new Promise((r) => setTimeout(r, 1500)))
+    expect(screen.queryByRole("dialog")).toBeNull()
+    setAnswering(false)
+    await step("Ask in plain words")
+  }, 15_000)
+
+  it("starts from the menu while starting by itself still waits", async () => {
+    setup({ dialog: true }) // starting by itself waits for it to close
+    await act(() => new Promise((r) => setTimeout(r, 1200)))
+    expect(screen.queryByRole("dialog", { name: "Ask in plain words" })).toBeNull()
+    act(() => startTour("members"))
+    await step("Ask in plain words")
   }, 15_000)
 })

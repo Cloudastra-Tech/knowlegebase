@@ -3,14 +3,16 @@ import { createPortal } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { animate } from "motion/react"
 import { Popover as PopoverPrimitive } from "radix-ui"
-import { useLocation, useNavigate } from "react-router"
+import { useLocation, useNavigate, useNavigationType } from "react-router"
 
 import { Button } from "@/components/ui/button"
 import { useSidebar } from "@/components/ui/sidebar"
 import { onboarding, type Onboarding, type Tours } from "@/lib/api"
 import { useActiveRole, useUser } from "@/lib/auth-context"
+import { useChatState } from "@/lib/chat-bridge"
 import { ease } from "@/lib/motion"
 import { queries } from "@/lib/queries"
+import { isChatPath } from "@/lib/routes"
 import {
   bodyOf,
   nextIndex,
@@ -35,17 +37,20 @@ import { cn } from "@/lib/utils"
 //   resizing (a ResizeObserver and scroll listeners, one measure per frame).
 // - The card is a modal Radix Popover anchored to that rect (a virtual anchor), so
 //   it flips to stay on screen: a labelled dialog that holds the focus and gives it
-//   back on close. ← and → are Back and Next, Esc skips. The dim takes every click.
+//   back on close. ← and → are Back and Next, Esc skips (and does nothing else: an
+//   answer being written keeps going). The dim takes every click.
 //   On a phone it docks to the bottom (or the top, when the element is low) as a
 //   sheet-like panel.
 // - Motion: the cut-out glides to the next element (220ms, ease-out-strong) and the
 //   card fades in from 0.97 toward it. With reduced motion or "Reduce effects", the
 //   cut-out jumps and the card only fades.
 // - It starts by itself once, on a member's first sign-in (shouldAutoStart), after
-//   the first paint has settled and never over a dialog; the account menu's Take the
-//   tour and Admin tour start it again (START_TOUR). Finished or skipped, the server
-//   keeps that they saw it. Going to another page in the middle (Back in the browser,
-//   a shortcut) ends it, as skipped.
+//   the first paint has settled, never over a dialog or an answer being written; the
+//   account menu's Take the tour and Admin tour start it again (START_TOUR), at once,
+//   even while starting by itself still waits. Finished or skipped, the server keeps
+//   that they saw it. The person going to another page in the middle (Back in the
+//   browser, a link) ends it, as skipped; the app's own redirect (a replace: a chat
+//   that failed to load) doesn't: the step is looked for again on the new page.
 
 const PAD = 6 // round the lit element
 const EDGE = 4 // the cut-out stays this far inside the window
@@ -96,12 +101,14 @@ async function waitForTarget(step: TourStep, ms: number, alive: () => boolean) {
   return null
 }
 
-// No dialog, sheet or menu open, twice in a row (one closing may still be there).
-async function waitForCalm(ms: number, alive: () => boolean) {
+// No dialog, sheet or menu open, twice in a row (one closing may still be there), and
+// nothing else `busy` says (an answer being written).
+async function waitForCalm(ms: number, alive: () => boolean, busyToo: () => boolean = () => false) {
   const until = performance.now() + ms
   let calm = 0
   while (alive() && performance.now() < until) {
-    const busy = document.querySelector(BUSY) || document.body.hasAttribute("data-scroll-locked")
+    const busy =
+      document.querySelector(BUSY) || document.body.hasAttribute("data-scroll-locked") || busyToo()
     calm = busy ? 0 : calm + 1
     if (calm >= 2) return true
     await sleep(100)
@@ -179,7 +186,9 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
   const role = useActiveRole()
   const { isMobile, setOpenMobile } = useSidebar()
   const location = useLocation()
+  const navigationType = useNavigationType()
   const navigate = useNavigate()
+  const answering = useChatState().busy
   const queryClient = useQueryClient()
   const welcome = useQuery(queries.onboarding()).data
   const titleId = useId()
@@ -192,12 +201,14 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
 
   const ctx: TourContext = { admin: user.role === "admin" && role === "hr", phone: isMobile }
   // What the async steps below read, kept current.
-  const live = useRef({ ctx, chatAt, path: location.pathname, view })
+  const live = useRef({ ctx, chatAt, path: location.pathname, view, answering })
   useLayoutEffect(() => {
-    live.current = { ctx, chatAt, path: location.pathname, view }
+    live.current = { ctx, chatAt, path: location.pathname, view, answering }
   })
   const active = useRef(false)
+  const waiting = useRef(false) // started by itself, still waiting for the page to be calm
   const seek = useRef(0) // the latest move; an older one stops where it is
+  const toward = useRef<{ steps: TourStep[]; index: number; dir: 1 | -1 } | null>(null) // the step it's at, or going to
   const expected = useRef<string | null>(null) // the page the tour is on, or went to
   const startedAt = useRef("/chat") // where it started, to go back to
   const returnFocus = useRef<HTMLElement | null>(null)
@@ -236,6 +247,7 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
       active.current = false
       seek.current++
       expected.current = null
+      toward.current = null
       setView(null)
       setSpot(null)
       setMoving(false)
@@ -247,25 +259,29 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
 
   // Show step i of `steps`, going in direction dir: to its page first, if it needs
   // another, then to its element, once it's there. An element that never comes skips
-  // the step (it's dropped from the count), or shows it without a light.
+  // the step (it's dropped from the count), or shows it without a light. `here`: look
+  // for the first one on the page the app just redirected to, without going anywhere.
   const go = useCallback(
-    async (from: TourStep[], first: number, firstDir: 1 | -1) => {
+    async (from: TourStep[], first: number, firstDir: 1 | -1, here = false) => {
       const id = ++seek.current
       const alive = () => active.current && seek.current === id
       let steps = from
       let i = first
       let dir = firstDir
+      let stay = here
       setView((v) => v && { ...v, seeking: true })
       for (;;) {
         const step = steps[i]
-        const page = pageFor(step, live.current.path, live.current.chatAt)
+        toward.current = { steps, index: i, dir }
+        const page = stay ? null : pageFor(step, live.current.path, live.current.chatAt)
         if (page) {
           expected.current = page.split("?")[0]
           navigate(page)
         }
         const target = step.target
-          ? await waitForTarget(step, page ? WAIT_NEW_PAGE : WAIT_SAME_PAGE, alive)
+          ? await waitForTarget(step, page || stay ? WAIT_NEW_PAGE : WAIT_SAME_PAGE, alive)
           : null
+        stay = false
         if (!alive()) return
         if (target || step.missing !== "skip") {
           if (target) await bringIntoView(target, alive)
@@ -294,19 +310,25 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
 
   const start = useCallback(
     async (tour: TourId, auto = false) => {
-      if (active.current) return
+      // Running already; but asked for from the menu, it takes over from starting by
+      // itself while that still waits (which stops: its move is no longer the latest).
+      if (active.current && (auto || !waiting.current)) return
       const all = stepsFor(tour, live.current.ctx)
       if (!all.length) return
       active.current = true
+      waiting.current = auto
       const id = ++seek.current
+      const alive = () => active.current && seek.current === id
       if (live.current.ctx.phone) setOpenMobile(false)
       // Over nothing: the account menu (or the phone's sheet) it was started from
-      // closes first; started by itself, it waits for whatever is open to close.
-      const calm = await waitForCalm(auto ? 60_000 : 3000, () => active.current && seek.current === id)
-      if (!active.current || seek.current !== id) return
+      // closes first; started by itself, it waits for whatever is open to close and
+      // for an answer being written to end (Esc would stop it).
+      const calm = await waitForCalm(auto ? 60_000 : 3000, alive, () => auto && live.current.answering)
+      if (!alive()) return
+      waiting.current = false
       const path = live.current.path
       // By itself, only over nothing and still on the chat; it tries no more this visit.
-      if (auto && (!calm || !(path === "/chat" || path.startsWith("/chat/")))) {
+      if (auto && (!calm || !isChatPath(path))) {
         active.current = false
         return
       }
@@ -363,12 +385,23 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
     return () => clearTimeout(t)
   }, [auto, start])
 
-  // Somewhere else in the middle (Back in the browser, a shortcut): it ends there.
+  // Somewhere else in the middle. The person went there (Back or Forward in the
+  // browser, a link): it ends there, as skipped. The app redirected (a replace, as a
+  // chat that failed to load does): the step it's at, or going to, is looked for on
+  // the new page, which is now the one to go back to if it started on the old one.
   useEffect(() => {
-    if (active.current && expected.current !== null && location.pathname !== expected.current) {
+    if (!active.current || expected.current === null || location.pathname === expected.current) return
+    const at = toward.current
+    if (navigationType !== "REPLACE" || !at) {
       end("skipped", false)
+      return
     }
-  }, [location.pathname, end])
+    if (startedAt.current.split("?")[0] === expected.current) {
+      startedAt.current = `${location.pathname}${window.location.search}`
+    }
+    expected.current = location.pathname
+    void go(at.steps, at.index, at.dir, true)
+  }, [location.pathname, navigationType, end, go])
 
   // The cut-out follows its element: scrolling, resizing, the element changing size.
   const target = view?.target ?? null
@@ -468,7 +501,7 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
       e.preventDefault()
       move(-1)
     }
-    // The app's own shortcuts (⌘K, ⌘B...) wait until the tour is over.
+    // The app's own shortcuts (⌘K, ⌘B...) wait until the tour is over (Esc: below).
     if (e.key !== "Tab" && e.key !== "Escape") e.stopPropagation()
   }
 
@@ -521,6 +554,14 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
               if (back?.isConnected) back.focus({ preventScroll: true })
             }}
             onInteractOutside={(e) => e.preventDefault()}
+            // Esc skips the tour and that's all: it goes no further (in the capture
+            // phase, before the page sees it), so chat-view's "Esc stops an answer
+            // wherever the focus is" doesn't stop one being written.
+            onEscapeKeyDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              end("skipped")
+            }}
             onKeyDown={onKeyDown}
             className="z-61 outline-none"
           >
