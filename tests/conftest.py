@@ -164,13 +164,27 @@ def a_folder_of_its_own():
     (docs/). Tests run in a folder of their own, with a copy of docs/, so they leave
     the checkout alone and, run in parallel (pytest -n: a process each), don't share
     an index or a workspace's files with another process. A fixture, not done at
-    import: pytest -n starts its processes where this one is."""
+    import: pytest -n starts its processes where this one is.
+
+    Tests that move to a folder of their own (monkeypatch.chdir) mean "chroma_db"
+    there. Chroma keeps one client per folder name as given, so "chroma_db" would be
+    whichever folder the process opened first under that name, and a connection it
+    opens later looks for it wherever the process is then ("unable to open database
+    file"). Here a folder is the one it names when the client is made, as it is for
+    the server, which never changes folder."""
+    import chromadb
+
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     work = os.path.join(_tmp, "cwd")
     shutil.copytree(os.path.join(root, "docs"), os.path.join(work, "docs"))
     before = os.getcwd()
     os.chdir(work)
+    client = chromadb.PersistentClient
+    patch = pytest.MonkeyPatch()
+    patch.setattr(chromadb, "PersistentClient",
+                  lambda path="./chroma", *args, **kwargs: client(os.path.abspath(path), *args, **kwargs))
     yield
+    patch.undo()
     os.chdir(before)
 
 
