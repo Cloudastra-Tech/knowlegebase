@@ -492,7 +492,8 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
               width: shown.w,
               height: shown.h,
               borderRadius: shown.r,
-              boxShadow: "0 0 0 200vmax var(--tour-dim)",
+              background: "var(--tour-lift)",
+              boxShadow: "inset 0 0 0 1px var(--tour-edge), 0 0 0 200vmax var(--tour-dim)",
             }}
           />
         </div>,

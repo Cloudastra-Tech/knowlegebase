@@ -582,6 +582,47 @@ describe("the chat", () => {
     expect(asked[1]).not.toHaveProperty("prompt_id")
   })
 
+  it("keeps what's typed right after a saved prompt in order, on a slow frame", async () => {
+    // The prompt puts the cursor at its end a frame later; typed before that frame,
+    // the cursor stays where the typing left it (it once moved back, and " for Acme"
+    // was sent as "Echo bodyfor Acme").
+    const frames: FrameRequestCallback[] = []
+    session.setToken("tok")
+    const asked: unknown[] = []
+    mockApi({
+      ...SIGNED_IN,
+      "GET /api/knowledge": { workspace: "acme", items: [], outline: false },
+      "GET /api/prompts": {
+        prompts: [{ id: "p1", title: "Echo", body: "Echo body", variables: [], search: true,
+                    workspace: false, editable: true, updated_at: 1 }],
+        can_manage_workspace: false,
+      },
+      "POST /api/conversations": {
+        id: "c9", title: "New chat", role_used: "public", role_changed: false, created_at: 1, updated_at: 1,
+      },
+      "POST /api/chat/stream": (body: unknown) => {
+        asked.push(body)
+        return sse({ type: "done", answer: "Answer", sources: [], steps: [], state: "answered", message_id: "a1" })
+      },
+    })
+    renderApp("/chat")
+    const user = userEvent.setup()
+    const box = await screen.findByRole("textbox", { name: "Your question" })
+    await user.type(box, "/Ech")
+    const option = await screen.findByRole("option", { name: /Echo/ })
+    // From here, the next frame comes only after the first key typed.
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => frames.push(cb))
+    await user.click(option)
+    await user.type(box, " ")
+    raf.mockRestore()
+    for (const cb of frames.splice(0)) cb(performance.now())
+    await user.keyboard("for Acme")
+    expect(box).toHaveValue("Echo body for Acme")
+    await user.type(box, "{Enter}")
+    expect(await screen.findByText("Answer")).toBeInTheDocument()
+    expect(asked[0]).toMatchObject({ question: "Echo body for Acme", prompt_id: "p1" })
+  })
+
   it("goes back to a new chat when the conversation isn't there", async () => {
     session.setToken("tok")
     mockApi({ ...SIGNED_IN, "GET /api/knowledge": { workspace: "acme", items: [], outline: false } })

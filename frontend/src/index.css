@@ -145,6 +145,10 @@
     --ascii-signal: var(--signal);
     /* the product tour's dim round the lit element (components/product-tour.tsx) */
     --tour-dim: oklch(0.145 0 0 / 38%);
+    /* on Paper the dim alone sets the lit element apart; on dark it reads as raised:
+       a faint lift over it and a neutral hairline round the cut-out (no glow) */
+    --tour-lift: transparent;
+    --tour-edge: transparent;
     /* motion: durations, and distances (zero with reduced motion, below) */
     --dur-instant: 0ms;
     --dur-press: 120ms;
@@ -233,6 +237,8 @@
     --ascii-ink: oklch(0.93 0 0 / 85%);
     --ascii-signal: var(--signal);
     --tour-dim: oklch(0 0 0 / 66%);
+    --tour-lift: oklch(1 0 0 / 4%);
+    --tour-edge: oklch(0.93 0.004 165 / 22%);
 }
 
 /* Glass that can't, or shouldn't, be see-through: no backdrop blur in this browser, a

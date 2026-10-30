@@ -184,7 +184,8 @@ describe("ProductTour", () => {
     const user = userEvent.setup()
     const { saved } = setup({ role: "admin", welcome: { first_run: false, tours: { ...TOURS_UNSEEN, admin: TOURS_UNSEEN.members } } })
     await user.click(screen.getByRole("button", { name: /^Account,/ }))
-    await user.click(screen.getByRole("menuitem", { name: "Admin tour" }))
+    await user.click(screen.getByRole("menuitem", { name: "Take the tour" }))
+    await user.keyboard("{ArrowRight}{ArrowDown}{Enter}") // into its submenu: The basics, then Admin tour
     let dialog = await step("Connect your sources")
     expect(screen.getByTestId("path")).toHaveTextContent("/integrations")
     for (const [title, path] of [

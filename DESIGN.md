@@ -448,7 +448,9 @@ Borders are 1px hairlines.
   again. Switching sections is instant: no slide, no fade.
 - **Product tour** (`product-tour.tsx`, the steps and their words in `lib/tour.ts`): the
   app dims (`--tour-dim`, 66% black on dark, 38% graphite on Paper) and one element,
-  marked `data-tour="…"`, is lit through a cut-out with its own radius and 6px round it;
+  marked `data-tour="…"`, is lit through a cut-out with its own radius and 6px round it
+  (on dark, where a dim barely shows on the near-black app, the cut-out also reads as
+  raised: a 4% white lift and a 1px hairline of the foreground at 22%, no glow);
   a small card on the floating glass (a modal Radix Popover anchored to the cut-out,
   flipping to stay on screen) says what it is, with "n of N", Skip, Back and Next (Done
   on the last). On a phone the card docks to the bottom edge, or the top when the
@@ -459,7 +461,7 @@ Borders are 1px hairlines.
   model picker when there's a choice, sources, saved prompts, the chats, the account
   menu) and the admins' (Integrations, Models, Access, Insights). It starts by itself
   once, on a first sign-in, on the chat, never over a dialog; the account menu's Take
-  the tour (and Admin tour) runs it again. The server keeps that it was seen, per member.
+  the tour runs it again (one row; for admins a submenu: The basics, Admin tour). The server keeps that it was seen, per member.
 - **Empty states in Settings** (`SettingsEmpty`, on shadcn's `Empty`): a lucide icon in a
   muted tile, a short title, one sentence on what this is and why, the one action, and
   optionally "For example" with what one looks like (a saved prompt, a digest). A dashed

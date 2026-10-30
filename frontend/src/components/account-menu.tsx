@@ -185,12 +185,25 @@ export function AccountMenu() {
                   <DropdownMenuShortcut className="font-mono tracking-normal">{MOD_KEY}/</DropdownMenuShortcut>
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onSelect={() => tour("members")}>
-                <Compass /> Take the tour
-              </DropdownMenuItem>
-              {adminTour && (
-                <DropdownMenuItem onSelect={() => tour("admin")}>
-                  <Compass /> Admin tour
+              {/* One row: an admin picks the tour in its submenu (the basics' last
+                  step offers the admin one too). */}
+              {adminTour ? (
+                <MenuGroup
+                  inline={isMobile}
+                  heading="Take the tour"
+                  className="w-44"
+                  trigger={
+                    <>
+                      <Compass /> Take the tour
+                    </>
+                  }
+                >
+                  <DropdownMenuItem onSelect={() => tour("members")}>The basics</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => tour("admin")}>Admin tour</DropdownMenuItem>
+                </MenuGroup>
+              ) : (
+                <DropdownMenuItem onSelect={() => tour("members")}>
+                  <Compass /> Take the tour
                 </DropdownMenuItem>
               )}
             </DropdownMenuGroup>

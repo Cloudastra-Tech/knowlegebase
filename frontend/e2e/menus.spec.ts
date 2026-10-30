@@ -82,14 +82,15 @@ test("an admin's account menu fits a short window, with View as and Appearance b
   }
 })
 
-// Short, as ChatGPT's and Claude.ai's: everything personal is in Settings.
-test("the account menu is short: who you are, Settings, View as for an admin, Appearance, Sign out", async ({
+// Short, as ChatGPT's and Claude.ai's: everything personal is in Settings. The tour is
+// one row (an admin picks theirs in its submenu).
+test("the account menu is short: who you are, Settings, View as for an admin, Appearance, the tour, Sign out", async ({
   page,
 }) => {
   await page.setViewportSize(DESKTOP)
   for (const [account, expected] of [
-    [MEMBER, ["Settings", "Appearance", "Keyboard shortcuts", "Sign out"]],
-    [ADMIN, ["Settings", "View as", "Appearance", "Keyboard shortcuts", "Sign out"]],
+    [MEMBER, ["Settings", "Appearance", "Keyboard shortcuts", "Take the tour", "Sign out"]],
+    [ADMIN, ["Settings", "View as", "Appearance", "Keyboard shortcuts", "Take the tour", "Sign out"]],
   ] as const) {
     await page.context().clearCookies()
     await page.goto("/login")

@@ -123,6 +123,7 @@ test("the admin tour goes through the admin screens, from the account menu", asy
   await signIn(page, ADMIN)
   await expect(page.getByRole("textbox", { name: "Your question" })).toBeVisible()
   await openAccountMenu(page)
+  await page.getByRole("menuitem", { name: "Take the tour" }).hover()
   await page.getByRole("menuitem", { name: "Admin tour" }).click()
   for (const [title, url] of [
     ["Connect your sources", /\/integrations$/],

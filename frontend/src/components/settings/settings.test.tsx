@@ -84,7 +84,7 @@ describe("the account menu", () => {
     expect(within(menu).queryByText(/Chats are kept/)).not.toBeInTheDocument()
   })
 
-  it("adds View as and the admin tour for an admin, and nothing else", async () => {
+  it("adds View as for an admin (the admin tour is in Take the tour), and nothing else", async () => {
     signedIn({ ...ADMIN, billing: BILLING })
     renderApp("/knowledge")
     await userEvent.setup().click(await screen.findByRole("button", { name: /^Account,\s*Ada Admin/ }))
@@ -95,7 +95,6 @@ describe("the account menu", () => {
       "Appearance",
       "Keyboard shortcuts",
       "Take the tour",
-      "Admin tour",
       "Sign out",
     ])
     expect(screen.queryByRole("menuitem", { name: /billing/i })).not.toBeInTheDocument()
