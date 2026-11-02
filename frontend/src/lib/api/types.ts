@@ -2,7 +2,7 @@
 
 import type { BillingSummary } from "@/lib/api/billing"
 
-// The role the app is VIEWED as. An admin views it as "hr" (or "public").
+// What someone may read: "hr" for an HR or admin account, else "public".
 export type Role = "public" | "hr"
 // What an account may do: admin is hr, plus who may sign in.
 export type AccountRole = Role | "admin"
@@ -12,7 +12,7 @@ export interface User {
   username: string
   name: string
   workspace: string
-  // What the ACCOUNT may do. An HR or admin account can still view the app as "public".
+  // What the account may do. Only an admin changes it (Members, SCIM, group rules).
   role: AccountRole
   provider?: string                   // "google", "microsoft", or an OIDC id such as "okta"
   // Cloudastra support opened the workspace (the operator's email): every request is audited.
@@ -605,7 +605,7 @@ export interface ConversationSummary {
   id: string
   title: string
   role_used: Role
-  role_changed: boolean // viewed as another role now: the next question starts a new chat
+  role_changed: boolean // the account's role changed since: the next question starts a new chat
   pinned: boolean
   folder_id: string | null
   space_id?: string | null // asked in this space (its sources only)

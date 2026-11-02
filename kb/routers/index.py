@@ -20,8 +20,8 @@ ERROR_CHARS = 500
 
 
 def _status(user, role):
-    """The index status. The raw error (an exception's text) is only for an admin
-    viewing the app as HR / Admin; everyone gets its `reason` code."""
+    """The index status. The raw error (an exception's text) is only for an admin;
+    everyone gets its `reason` code."""
     status = indexing.index_status(ws_of(user))
     if not (user["role"] == "admin" and role == "hr"):
         status["error"] = None

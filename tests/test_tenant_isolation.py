@@ -1,6 +1,6 @@
 """
-Tenant isolation through the routes: an admin of workspace B, signed in and
-viewing as HR, can never see or change workspace A's documents, search index,
+Tenant isolation through the routes: an admin of workspace B, signed in, can
+never see or change workspace A's documents, search index,
 index status, knowledge listing, connections, conversations or answers, even
 knowing their names and ids. (Members admin: test_member_isolation.py; a
 passage by id: test_citations.py; search itself: eval/harness.py's leak suite.)

@@ -22,8 +22,8 @@ export interface NavItem {
   icon: ComponentType
 }
 
-// The screens this account sees, as viewed now: everyone has Chat (back to the
-// conversation it was at) and Knowledge; viewing as HR, Documents and Integrations,
+// The screens this account sees: everyone has Chat (back to the conversation it
+// was at) and Knowledge; HR and admins, Documents and Integrations,
 // and the admin group: Insights and Verified, then Assistant and Access for admins
 // alone (HR manages documents, not access).
 export function screensFor(user: User, role: Role, chatAt: string) {

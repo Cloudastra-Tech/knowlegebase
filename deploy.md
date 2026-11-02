@@ -993,8 +993,8 @@ added, or after verification and CASA)
 1. With `GMAIL_SYNC=on`: account menu → *Settings* → *Connections* → *Connect your Gmail*;
    untick the Gmail permission on Google's screen: it says the permission is
    missing. Connect again with it: choose labels; threads with them sync.
-2. Ask about an email as that member: it's cited. Sign in as an admin viewing as
-   HR: the same question finds nothing; Knowledge, Integrations, Insights and the
+2. Ask about an email as that member: it's cited. Sign in as an admin: the
+   same question finds nothing; Knowledge, Integrations, Insights and the
    audit log show no mailbox, no label names, no subjects.
 3. Remove the label from a thread, sync: it's deleted. Leave the connection for
    over a week: the history id is too old and a full listing runs.

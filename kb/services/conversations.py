@@ -14,8 +14,7 @@ Saved chats around the agent (conversations_store.py holds the rows):
                  highest access level of everything the model read for it.
 
 Role rule (decision D5): a conversation keeps the role it was started under. When
-the asker's effective role has changed since (HR switched to "view as public", or
-an admin changed their role), their next question starts a NEW conversation, so
+the asker's role has changed since (an admin changed it), their next question starts a NEW conversation, so
 answers built under one role never become context for another.
 """
 

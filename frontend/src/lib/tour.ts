@@ -2,7 +2,7 @@
 // each one points, and the rules for moving between them. No DOM here but the
 // lookups the caller passes in, so the rules can be tested on their own.
 //
-// Two tours: "members" (everyone) and "admin" (admins viewing as HR). A step points
+// Two tours: "members" (everyone) and "admin" (admins). A step points
 // at an element marked data-tour="…" on a page; a step whose element isn't on
 // screen (the model picker with one model, an answer's sources before any answer)
 // is either skipped or shown in the middle without a light, as the step says.
@@ -24,7 +24,7 @@ export function startTour(tour: TourId) {
 
 // What a step's words and choices may depend on.
 export interface TourContext {
-  admin: boolean // an admin account, viewing the app as HR
+  admin: boolean // an admin account
   phone: boolean // the sidebar is a sheet behind the menu button
 }
 

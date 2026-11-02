@@ -88,26 +88,26 @@ def client(fakes):
         members_store.set_role(name, role, "default")
 
 
-def headers(client, who, role="hr"):
-    return {"Authorization": f"Bearer {client.tokens[who]}", "X-Role": role}
+def headers(client, who):
+    return {"Authorization": f"Bearer {client.tokens[who]}"}
 
 
-def new_chat(client, who, role="hr"):
-    r = client.post("/api/conversations", json={}, headers=headers(client, who, role))
+def new_chat(client, who):
+    r = client.post("/api/conversations", json={}, headers=headers(client, who))
     assert r.status_code == 200
     return r.json()["id"]
 
 
-def ask(client, who, question="", role="hr", **body):
+def ask(client, who, question="", **body):
     """Stream one question; returns the events (as test_chat.stream does)."""
     r = client.post("/api/chat/stream", json={"question": question, **body},
-                    headers=headers(client, who, role))
+                    headers=headers(client, who))
     assert r.status_code == 200, r.text
     return [json.loads(c[len("data: "):]) for c in r.text.split("\n\n") if c]
 
 
-def read(client, who, cid, role="hr"):
-    r = client.get(f"/api/conversations/{cid}", headers=headers(client, who, role))
+def read(client, who, cid):
+    r = client.get(f"/api/conversations/{cid}", headers=headers(client, who))
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -169,9 +169,9 @@ def test_conversations_can_be_renamed_and_deleted_by_their_owner_only(client):
     assert conversations_store.feedback_of("pat", [message_id]) == {}   # gone with it
 
 
-def ask_status(client, who, question, role="hr", **body):
+def ask_status(client, who, question, **body):
     return client.post("/api/chat/stream", json={"question": question, **body},
-                       headers=headers(client, who, role)).status_code
+                       headers=headers(client, who)).status_code
 
 
 def test_a_question_without_a_conversation_is_still_a_one_off(client):
@@ -235,11 +235,13 @@ def test_an_owner_demoted_from_hr_no_longer_sees_restricted_answers(client):
     assert r.status_code == 403
 
 
-def test_hr_viewing_as_public_sees_its_restricted_answers_withheld(client):
+def test_restricted_answers_come_back_when_the_role_does(client):
     cid = new_chat(client, "hana")
     ask(client, "hana", "When is the bonus announced?", conversation_id=cid)
-    chat = read(client, "hana", cid, role="public")
+    members_store.set_role("hana", "public", "default")
+    chat = read(client, "hana", cid)
     assert chat["role_changed"] and chat["messages"][1]["withheld"]
+    members_store.set_role("hana", "hr", "default")
     assert not read(client, "hana", cid)["messages"][1]["withheld"]
 
 
@@ -335,15 +337,17 @@ def test_history_is_bounded_by_turns_and_size():
 def test_a_role_change_starts_a_new_conversation(client, fakes):
     cid = new_chat(client, "hana")
     ask(client, "hana", "When is the bonus announced?", conversation_id=cid)
-    events = ask(client, "hana", "What is the refund policy?", role="public", conversation_id=cid)
+    members_store.set_role("hana", "public", "default")
+    events = ask(client, "hana", "What is the refund policy?", conversation_id=cid)
 
     start = events[0]
     assert start["type"] == "conversation" and start["new_conversation"]
     assert start["id"] != cid
     assert fakes.calls.of("rewrite") == []                  # no HR history came along
-    new = read(client, "hana", start["id"], role="public")
+    new = read(client, "hana", start["id"])
     assert new["role_used"] == "public" and not new["role_changed"]
     assert [m["content"] for m in new["messages"]][:1] == ["What is the refund policy?"]
+    members_store.set_role("hana", "hr", "default")
     assert len(read(client, "hana", cid)["messages"]) == 2  # the old one is unchanged
 
 
@@ -375,8 +379,7 @@ def drop_after_first_words(client, who, body):
                  "query_string": b"", "root_path": "", "client": ("127.0.0.1", 5000),
                  "server": ("testserver", 80),
                  "headers": [(b"host", b"testserver"), (b"content-type", b"application/json"),
-                             (b"authorization", f"Bearer {client.tokens[who]}".encode()),
-                             (b"x-role", b"hr")]}
+                             (b"authorization", f"Bearer {client.tokens[who]}".encode())]}
         await api.app(scope, receive, send)
 
     asyncio.run(drive())
@@ -602,7 +605,5 @@ def test_feedback_is_checked(client):
     assert put(answer["id"], {"rating": -1, "reasons": ["rude"]}).status_code == 400
     assert put(question["id"], {"rating": 1}).status_code == 404           # not an answer
     assert put(answer["id"], {"rating": 1}, who="sam").status_code == 404  # not their chat
-    # Public users and HR viewing as public don't get the listing.
+    # Public users don't get the listing.
     assert client.get("/api/admin/feedback", headers=headers(client, "pat")).status_code == 403
-    assert client.get("/api/admin/feedback",
-                      headers=headers(client, "hana", role="public")).status_code == 403

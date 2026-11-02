@@ -15,7 +15,6 @@ async function backToDefault(page: Page) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${localStorage.getItem("kb_token")}`,
-        "X-Role": "hr",
       },
       body: JSON.stringify({ chat_provider: "default", api_keys: { openai: null } }),
     })
@@ -56,7 +55,7 @@ test("a picked model answers, and the chat keeps it", async ({ page }) => {
     const id = page.url().split("/").pop()
     const saved = await page.evaluate(async (cid) => {
       const r = await fetch(`/api/conversations/${cid}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("kb_token")}`, "X-Role": "hr" },
+        headers: { Authorization: `Bearer ${localStorage.getItem("kb_token")}` },
       })
       return ((await r.json()) as { model: unknown }).model
     }, id)

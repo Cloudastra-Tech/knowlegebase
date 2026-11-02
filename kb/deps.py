@@ -2,8 +2,8 @@
 Who is asking: the FastAPI dependencies every guarded endpoint uses.
 
 ROLES come from the account (members_store.py): public, hr or admin. Admin
-counts as HR everywhere here. An HR / Admin account can send "X-Role: public" to
-see the app as a public user would; the header can never raise anyone TO HR.
+counts as HR everywhere here. Only an admin changes a role (Members, SCIM or the
+sign-in group rules); nothing a request sends changes it.
 """
 
 import logging
@@ -72,32 +72,28 @@ def public_user(user):
     return {k: v for k, v in user.items() if k not in PRIVATE_USER_KEYS}
 
 
-def current_role(user=Depends(current_user), x_role: str = Header(default="hr")):
-    """HR only if the ACCOUNT is HR or admin; X-Role can only lower it ("view as public")."""
-    return "hr" if user["role"] in members_store.STAFF_ROLES and x_role == "hr" else "public"
+def current_role(user=Depends(current_user)):
+    """The account's access: "hr" for an HR or admin account, else "public"."""
+    return "hr" if user["role"] in members_store.STAFF_ROLES else "public"
 
 
 def current_viewer(user=Depends(current_user), role=Depends(current_role)):
     """Who is asking, to the CONTENT (access.py): their principals now (themselves,
-    their groups, the built-in hr group while viewing the app as HR / Admin),
+    their groups, the built-in hr group for an HR or admin account),
     with the role. Roles gate screens; this gates what they may read."""
     return groups_store.principals_for(ws_of(user), user["username"], role)
 
 
 def require_hr(user=Depends(current_user), role=Depends(current_role)):
     if role != "hr":
-        raise HTTPException(403, "Switch to HR / Admin to manage documents and integrations."
-                            if user["role"] in members_store.STAFF_ROLES else
-                            "Only HR / Admin accounts can manage documents and integrations.")
+        raise HTTPException(403, "Only HR / Admin accounts can manage documents and integrations.")
     return user
 
 
 def require_admin(user=Depends(current_user), role=Depends(current_role)):
-    """Admins only, and not while viewing the app as a public user."""
+    """Admins only."""
     if user["role"] != "admin" or role != "hr":
-        raise HTTPException(403, "Switch to HR / Admin to change sign-in settings."
-                            if user["role"] == "admin" else
-                            "Only admins can change sign-in settings.")
+        raise HTTPException(403, "Only admins can change sign-in settings.")
     return user
 
 

@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { currentSection, isUnder, screensFor, screenTitle, type NavItem } from "@/lib/app-screens"
-import { useActiveRole, useUser } from "@/lib/auth-context"
+import { useRole, useUser } from "@/lib/auth-context"
 import { useChatPort, useChatState } from "@/lib/chat-bridge"
 import { FOCUS_COMPOSER, MOD_KEY, OPEN_SEARCH, tellChat, TOGGLE_SIDEBAR } from "@/lib/chat-events"
 import { spaceLabel } from "@/lib/spaces"
@@ -170,7 +170,7 @@ function SpaceRow() {
 // chatAt: the conversation the chat was last at (Chat goes back to it).
 export function AppSidebar({ chatAt }: { chatAt: string }) {
   const user = useUser()
-  const role = useActiveRole()
+  const role = useRole()
   const location = useLocation()
   const chat = useChatState()
   const port = useChatPort()
@@ -294,7 +294,7 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
       <SidebarFooter className="gap-1 border-t border-sidebar-border group-data-[collapsible=icon]:px-3">
         {/* Indexing, in words; the glyph alone in the rail. */}
         <div className="flex min-w-0 items-center px-2 empty:hidden group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <IndexStatusText admin={user.role === "admin" && role === "hr"} compact={rail} />
+          <IndexStatusText admin={user.role === "admin"} compact={rail} />
         </div>
         <AccountMenu />
       </SidebarFooter>
@@ -307,7 +307,7 @@ export function AppSidebar({ chatAt }: { chatAt: string }) {
 // scrolls under it, so there'd be nothing to frost.
 export function PhoneBar({ chatAt }: { chatAt: string }) {
   const user = useUser()
-  const role = useActiveRole()
+  const role = useRole()
   const location = useLocation()
   const newChat = useNewChat()
   const { main, admin } = screensFor(user, role, chatAt)

@@ -94,7 +94,7 @@ def test_a_members_mail_is_searched_and_cited_for_them_alone(env, citing, monkey
     mine = [s for s in done["sources"] if s["title"] == "Offer letter for Bob"]
     assert mine, done["sources"]
 
-    # The admin, viewing as HR: not searched, not cited, not the passage.
+    # The admin: not searched, not cited, not the passage.
     done = ask(env.client, admin, "What is Bob's salary in the offer letter?",
                new_chat(env.client, admin))
     assert not [s for s in done["sources"] if "Offer letter" in (s.get("title") or "")]

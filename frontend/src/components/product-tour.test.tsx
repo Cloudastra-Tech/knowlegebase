@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { AccountMenu } from "@/components/account-menu"
 import { ProductTour } from "@/components/product-tour"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import type { AccountRole, Onboarding, Role, User } from "@/lib/api"
+import type { AccountRole, Onboarding, User } from "@/lib/api"
 import { AuthContext } from "@/lib/auth-context"
 import { ChatStateContext, INITIAL_CHAT_STATE } from "@/lib/chat-bridge"
 import { startTour } from "@/lib/tour"
@@ -93,8 +93,6 @@ function setup({
   })
   const auth = {
     user,
-    role: (role === "public" ? "public" : "hr") as Role,
-    setRole: () => {},
     signedIn: () => {},
     signedOut: () => {},
     leftOnPurpose: false,

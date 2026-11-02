@@ -37,7 +37,7 @@ def workspace():
 def login(client, email):
     r = client.post("/api/auth/login", json={"username": email, "password": PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def tours(client, h):

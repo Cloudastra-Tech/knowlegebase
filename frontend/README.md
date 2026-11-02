@@ -52,8 +52,7 @@ links and reloads work. CI runs lint, tests and build on every PR.
 - Use the shadcn components in `src/components/ui/` for every control
   (`Input`, `Select`, `Textarea`, …), never raw `<input>` / `<select>`.
 - The UI hides what a role can't use, but never enforces it: the API checks the
-  account's role on every request. An HR account's **View as** menu only lowers
-  what's shown.
+  account's role on every request.
 - Every screen has a URL (`/chat`, `/documents`, `/admin/members`, …; list in
   `src/routes.tsx`). The server still sends people back to the old hash
   addresses (`/#login?error=…`, `/#sso?code=…`, `/#integrations?connected=…`);

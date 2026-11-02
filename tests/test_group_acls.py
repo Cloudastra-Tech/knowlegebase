@@ -114,8 +114,7 @@ def org(env, monkeypatch):  # noqa: F811
             r = env.client.post("/api/auth/login", json={"username": f"{name}@{domain}",
                                                           "password": "correct-horse"})
             assert r.status_code == 200, r.text
-            return {"Authorization": f"Bearer {r.json()['token']}",
-                    "X-Role": "hr" if name == "hr" else "public"}
+            return {"Authorization": f"Bearer {r.json()['token']}"}
 
         def viewer(self, name, role="public"):
             return groups_store.principals_for(w, f"{name}@{domain}", role)

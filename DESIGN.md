@@ -378,10 +378,9 @@ Borders are 1px hairlines.
   collapse button, New chat and Search chats (the palette with chats alone), the space, the
   screens, the Admin group, the chats (scrolling on their own), the index status and the
   account (avatar, name, workspace, role badge). The account menu is short, as ChatGPT's
-  and Claude.ai's: a head with the name, email and workspace; Settings; View as (HR and
-  admin accounts); Appearance (the theme, Reduce effects); Keyboard shortcuts (not on a
-  phone); Sign out. View as and Appearance are portalled submenus, in the menu itself on a
-  phone. It opens as every menu does, nothing more: it's opened tens of times a day.
+  and Claude.ai's: a head with the name, email and workspace; Settings; Appearance (the
+  theme, Reduce effects); Keyboard shortcuts (not on a phone); the tour; Sign out.
+  Appearance is a portalled submenu, in the menu itself on a phone. It opens as every menu does, nothing more: it's opened tens of times a day.
   Spaces is the workspace's, not the account's: the space switchers' Manage spaces goes
   there. Collapsed, a 56px rail
   of icons with tooltips that never goes away (kept in `localStorage` `kb.sidebar`; ⌘B at
@@ -449,7 +448,7 @@ Borders are 1px hairlines.
   atlas draws box-drawing characters as lines).
 - **Settings** (`components/settings/*`, `lib/settings-sections.ts`): everything
   personal, one URL per section, `/settings/<section>`: General (profile, appearance),
-  Chats (retention and sharing; an admin viewing as HR changes them), Connections,
+  Chats (retention and sharing; an admin changes them), Connections,
   Prompts, Digests, API keys, Billing (whoever sees Plan & billing), Security (Sign out
   everywhere, with a confirm). From md up, a 176px column of quiet links (ghost buttons;
   the open one `secondary`) beside the section; on a phone `/settings` is a list of rows

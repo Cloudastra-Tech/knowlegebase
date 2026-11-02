@@ -51,7 +51,7 @@ def client():
 def login(client, username):
     r = client.post("/api/auth/login", json={"username": username, "password": PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def test_an_admin_of_one_workspace_cant_touch_anothers_members(client):

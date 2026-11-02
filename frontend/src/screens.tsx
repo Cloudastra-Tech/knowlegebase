@@ -18,7 +18,7 @@ import { ScreenStrip } from "@/components/screen-strip"
 import type { AccessTab } from "@/components/sign-in-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, drafts, type User } from "@/lib/api"
-import { useActiveRole, useAuth, useUser } from "@/lib/auth-context"
+import { useRole, useAuth, useUser } from "@/lib/auth-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { isInstant } from "@/lib/instant-nav"
 import { legacyRedirect, type SsoReturn } from "@/lib/legacy-hash"
@@ -186,7 +186,7 @@ export function ClaimPage() {
 // /signup/verify?token=: the link an email sign-up sent, then the domain's DNS record.
 // The new workspace's admin goes on to its Access screen, as after any sign-up.
 export function SignupVerifyPage() {
-  const { signedIn, setRole } = useAuth()
+  const { signedIn } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
   return (
@@ -194,10 +194,7 @@ export function SignupVerifyPage() {
       <LoginPage onBack={() => navigate("/")}>
         <SignupVerify
           token={params.get("token") ?? ""}
-          onCreated={(u, t) => {
-            signedIn(u, t)
-            setRole("hr")
-          }}
+          onCreated={signedIn}
         />
       </LoginPage>
     </LazyPage>
@@ -220,7 +217,7 @@ export function UnsubscribePage() {
 // Back from Google / Microsoft / a workspace's provider: swap the one-time code for a
 // session. A new workspace's admin goes on to its Access screen.
 export function SsoReturnPage() {
-  const { signedIn, setRole } = useAuth()
+  const { signedIn } = useAuth()
   const navigate = useNavigate()
   const sso = useLocation().state as SsoReturn | null
   // One exchange, even when StrictMode runs the effect twice: the code works once.
@@ -234,7 +231,6 @@ export function SsoReturnPage() {
         if (stopped) return
         signedIn(user, token)
         const welcome = !!sso?.welcome && user.role === "admin"
-        if (welcome) setRole("hr")
         navigate(welcome ? "/admin/sign-in" : "/chat", { replace: true })
       })
       .catch(() => {
@@ -243,7 +239,7 @@ export function SsoReturnPage() {
     return () => {
       stopped = true
     }
-  }, [sso, signedIn, setRole, navigate])
+  }, [sso, signedIn, navigate])
 
   return (
     <div className="flex min-h-svh items-center justify-center">
@@ -252,11 +248,11 @@ export function SsoReturnPage() {
   )
 }
 
-// Screens a role can't see send it to the chat (e.g. after "View as: Public").
+// Screens a role can't see send it to the chat (e.g. after an admin changes it).
 export function HrOnly({ admin = false }: { admin?: boolean }) {
   const user = useUser()
-  const activeRole = useActiveRole()
-  if (activeRole !== "hr" || (admin && user.role !== "admin")) return <Navigate to="/chat" replace />
+  const role = useRole()
+  if (role !== "hr" || (admin && user.role !== "admin")) return <Navigate to="/chat" replace />
   return <Outlet />
 }
 
@@ -311,21 +307,21 @@ export function AssistantScreen() {
 // /spaces, /spaces/:spaceId: your own space and your team spaces.
 export function SpacesScreen() {
   const { spaceId } = useParams()
-  const activeRole = useActiveRole()
+  const role = useRole()
   return (
     <Screen>
-      <SpacesView key={`${activeRole}-${spaceId ?? ""}`} spaceId={spaceId} />
+      <SpacesView key={`${role}-${spaceId ?? ""}`} spaceId={spaceId} />
     </Screen>
   )
 }
 
 export function KnowledgeScreen() {
-  const activeRole = useActiveRole()
+  const role = useRole()
   const navigate = useNavigate()
   return (
     <Screen>
       <KnowledgeView
-        key={activeRole}
+        key={role}
         onOpenDraft={(id) => navigate(`/documents?draft=${id}`)}
       />
     </Screen>
@@ -346,10 +342,10 @@ export function ExtensionConnectScreen() {
 // /s/:token: a shared chat or answer, as the viewer's role may see it.
 export function SharedScreen() {
   const { token = "" } = useParams()
-  const activeRole = useActiveRole()
+  const role = useRole()
   return (
     <Screen>
-      <SharedView key={`${activeRole}-${token}`} token={token} />
+      <SharedView key={`${role}-${token}`} token={token} />
     </Screen>
   )
 }

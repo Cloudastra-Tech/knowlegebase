@@ -1,7 +1,7 @@
 """Admin insights (kb/services/insights.py), the question log's settings, and the
 test-set candidates promoted from answer feedback.
 
-HR and admins (viewing the app as HR) read insights and feedback; only admins
+HR and admins read insights and feedback; only admins
 change the logging settings or the test set. Everyone signed in may read how
 their questions are logged (the chat says so). What each reader is shown of
 questions, documents and test cases follows their groups (access.py), as the

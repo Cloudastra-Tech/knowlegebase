@@ -74,10 +74,10 @@ def client():
     return TestClient(api.app, follow_redirects=False)
 
 
-def as_user(client, username, role="hr"):
+def as_user(client, username):
     r = client.post("/api/auth/login", json={"username": username, "password": "correct-horse"})
     assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": role}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 @pytest.fixture(scope="module")
@@ -144,8 +144,6 @@ def test_only_admins_change_sign_in_settings(client, acme):
     assert client.get("/api/admin/sign-in", headers=acme).status_code == 200
     hr = as_user(client, "acme-hr")
     assert client.get("/api/admin/sign-in", headers=hr).status_code == 403
-    viewing_as_public = {**acme, "X-Role": "public"}
-    assert client.get("/api/admin/sign-in", headers=viewing_as_public).status_code == 403
     assert client.get("/api/admin/sign-in").status_code == 401
 
 
@@ -296,7 +294,7 @@ def session_for(client, idp, conn, claims):
     location = callback(client, idp, conn, claims)
     assert location.startswith("/#sso?code="), location
     r = client.post("/api/auth/sso/exchange", json={"code": location.split("code=")[1]})
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def test_the_login_page_finds_the_provider_from_the_email(client, acme_sso):
@@ -755,7 +753,7 @@ def test_an_admin_cant_lock_themselves_or_everyone_out(client, monkeypatch):
     done = client.get(f"/api/auth/sso/c/{conn['id']}/callback?code=x&state={state_of(location)}")
     token = client.post("/api/auth/sso/exchange",
                         json={"code": done.headers["location"].split("code=")[1]}).json()["token"]
-    boss = {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+    boss = {"Authorization": f"Bearer {token}"}
     # Signed in through it, or with an email on it: refused, with the reason.
     for r in (client.delete(f"/api/admin/sign-in/connections/{conn['id']}", headers=boss),
               client.patch(f"/api/admin/sign-in/connections/{conn['id']}", headers=boss,

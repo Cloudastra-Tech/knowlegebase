@@ -231,7 +231,7 @@ def admin(fake):
     client = TestClient(api.app)
     r = client.post("/api/auth/login", json={"username": f"admin@{fake.ws}.example",
                                              "password": "correct-horse"})
-    return client, {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return client, {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def card(client, headers, provider="fake"):
@@ -482,7 +482,7 @@ def test_synced_text_is_searchable_under_its_title(monkeypatch, tmp_path):
     client = TestClient(api.app)
     token = client.post("/api/auth/login", json={"username": f"admin@{ws}.example",
                                                  "password": "correct-horse"}).json()["token"]
-    headers = {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+    headers = {"Authorization": f"Bearer {token}"}
     assert client.post("/api/integrations/fake/sync", headers=headers).status_code == 200
 
     deadline = time.time() + 60

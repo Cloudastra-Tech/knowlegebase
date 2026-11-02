@@ -176,8 +176,7 @@ def login(client, w, name="admin"):
     r = client.post("/api/auth/login", json={"username": f"{name}@{w}.example",
                                              "password": PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}",
-            "X-Role": "hr" if name == "admin" else "public"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def on_bedrock(w, **extra):

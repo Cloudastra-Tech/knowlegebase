@@ -12,7 +12,6 @@ import {
   groups,
   insights,
   onboarding,
-  session,
   signIn,
   slack,
   spaces,
@@ -27,12 +26,11 @@ export const queries = {
   // Polled by IndexStatusProvider (lib/index-status.tsx).
   indexStatus: () =>
     queryOptions({ queryKey: ["index-status"], queryFn: api.indexStatus, meta: { silent: true } }),
-  // What's searchable depends on the role the app is viewed as (the X-Role header).
-  knowledge: () => queryOptions({ queryKey: ["knowledge", session.role], queryFn: api.knowledge }),
+  // What's searchable depends on the account's role.
+  knowledge: () => queryOptions({ queryKey: ["knowledge"], queryFn: api.knowledge }),
   docs: () => queryOptions({ queryKey: ["docs"], queryFn: api.listDocs }),
-  // The first run's suggestions and the checklist depend on the role viewed as.
-  onboarding: () =>
-    queryOptions({ queryKey: ["onboarding", session.role], queryFn: onboarding.get }),
+  // The first run's suggestions and the checklist depend on the role.
+  onboarding: () => queryOptions({ queryKey: ["onboarding"], queryFn: onboarding.get }),
   // Plan & billing (BILLING=on): { on: false } with it off.
   billing: () => queryOptions({ queryKey: ["billing"], queryFn: billing.get }),
   // Drafts the assistant wrote (HR).
@@ -48,16 +46,16 @@ export const queries = {
       queryFn: () => webhooks.deliveries(id),
     }),
   // The signed-in person's saved chats. An answer's visibility depends on the role
-  // the app is viewed as, so it's part of the key.
+  // (AuthRoot reloads everything when an admin changes it).
   conversations: () =>
     queryOptions({
-      queryKey: ["conversations", session.role],
+      queryKey: ["conversations"],
       queryFn: () => api.conversations(),
     }),
   // Searching them: an answer the role can't read now never matches.
   conversationSearch: (q: string) =>
     queryOptions({
-      queryKey: ["conversations", session.role, "search", q],
+      queryKey: ["conversations", "search", q],
       queryFn: () => api.searchConversations(q),
       enabled: q.trim().length > 0,
       meta: { silent: true },
@@ -73,14 +71,14 @@ export const queries = {
   // A share link as the viewer may see it; a dead link is shown on the page itself.
   sharedChat: (token: string) =>
     queryOptions({
-      queryKey: ["shared", session.role, token],
+      queryKey: ["shared", token],
       queryFn: () => api.openShare(token),
       retry: false,
       meta: { silent: true },
     }),
   conversation: (id: string) =>
     queryOptions({
-      queryKey: ["conversations", session.role, id],
+      queryKey: ["conversations", id],
       queryFn: () => api.conversation(id),
       retry: false,
     }),
@@ -88,7 +86,7 @@ export const queries = {
   // 404 (gone from the index, or not for this role) falls back to the saved snippet.
   passage: (chunkId: string) =>
     queryOptions({
-      queryKey: ["passage", session.role, chunkId],
+      queryKey: ["passage", chunkId],
       queryFn: () => api.passage(chunkId),
       retry: false,
       meta: { silent: true },
@@ -114,19 +112,19 @@ export const queries = {
   // How questions are logged here (the chat's disclosure, the Insights settings).
   logSettings: () =>
     queryOptions({ queryKey: ["log-settings"], queryFn: insights.logSettings, meta: { silent: true } }),
-  // HR sees only what its role may: part of the key.
+  // HR sees only what its role may.
   insights: (from?: string, to?: string) =>
     queryOptions({
-      queryKey: ["insights", session.role, from ?? "", to ?? ""],
+      queryKey: ["insights", from ?? "", to ?? ""],
       queryFn: () => insights.insights(from, to),
     }),
   ratedAnswers: () =>
-    queryOptions({ queryKey: ["rated-answers", session.role], queryFn: () => insights.ratedAnswers(-1) }),
+    queryOptions({ queryKey: ["rated-answers"], queryFn: () => insights.ratedAnswers(-1) }),
   evalCases: () => queryOptions({ queryKey: ["eval-cases"], queryFn: insights.evalCases }),
   // Unanswered questions, open or resolved (the Not found tab).
   notFound: (resolved: boolean, from?: string, to?: string) =>
     queryOptions({
-      queryKey: ["not-found", session.role, resolved, from ?? "", to ?? ""],
+      queryKey: ["not-found", resolved, from ?? "", to ?? ""],
       queryFn: () => insights.notFound(resolved, from, to),
     }),
   // The workspace's background jobs (admins).
@@ -154,12 +152,12 @@ export const queries = {
   emailIn: () => queryOptions({ queryKey: ["email-in"], queryFn: emailIn.get }),
   extension: () => queryOptions({ queryKey: ["extension"], queryFn: extension.get }),
   // Your own space and the team spaces you're in; one of them; what a space can
-  // search (depends on what the app is viewed as).
+  // search (depends on the role).
   spaces: () => queryOptions({ queryKey: ["spaces"], queryFn: spaces.spaces }),
   space: (id: string) =>
-    queryOptions({ queryKey: ["spaces", session.role, id], queryFn: () => spaces.space(id) }),
+    queryOptions({ queryKey: ["spaces", id], queryFn: () => spaces.space(id) }),
   sourceOptions: () =>
-    queryOptions({ queryKey: ["source-options", session.role], queryFn: spaces.sourceOptions }),
+    queryOptions({ queryKey: ["source-options"], queryFn: spaces.sourceOptions }),
   // Files attached to a chat, and what may be attached.
   attachments: (conversationId: string) =>
     queryOptions({
@@ -170,7 +168,7 @@ export const queries = {
   attachmentLimits: () =>
     queryOptions({ queryKey: ["attachment-limits"], queryFn: spaces.attachmentLimits, staleTime: Infinity }),
   // Saved prompts: the workspace's and your own.
-  prompts: () => queryOptions({ queryKey: ["prompts", session.role], queryFn: spaces.prompts }),
+  prompts: () => queryOptions({ queryKey: ["prompts"], queryFn: spaces.prompts }),
   // The sign-in page's options; a failure shows on the page itself, not as a toast.
   authOptions: () =>
     queryOptions({

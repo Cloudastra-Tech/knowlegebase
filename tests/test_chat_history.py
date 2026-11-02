@@ -42,8 +42,8 @@ def person(client, role="public", ws="default"):
     return name
 
 
-def search(client, who, q, role="hr"):
-    r = client.get("/api/conversations/search", params={"q": q}, headers=headers(client, who, role))
+def search(client, who, q):
+    r = client.get("/api/conversations/search", params={"q": q}, headers=headers(client, who))
     assert r.status_code == 200, r.text
     return r.json()["results"]
 
@@ -74,9 +74,7 @@ def test_search_never_matches_an_answer_the_searchers_role_cant_read(client):
     ask(client, hr, BONUS_Q, conversation_id=cid)
     assert [r["conversation_id"] for r in search(client, hr, "March")] == [cid]
 
-    # Viewing the app as public: the restricted answer's words don't match ...
-    assert search(client, hr, "March", role="public") == []
-    # ... and once demoted, they don't either, though the question still does.
+    # Once demoted, the restricted answer's words don't match, though the question still does.
     members_store.set_role(hr, "public", "default")
     assert search(client, hr, "March") == []
     assert search(client, hr, "pool") == []
@@ -304,7 +302,8 @@ def test_a_forked_restricted_answer_is_still_withheld_from_a_lower_role(client):
     answer = read(client, "hana", cid)["messages"][1]
     fork = client.post(f"/api/conversations/{cid}/fork", json={"message_id": answer["id"]},
                        headers=headers(client, "hana")).json()
-    copied = read(client, "hana", fork["id"], role="public")["messages"][1]
+    members_store.set_role("hana", "public", "default")
+    copied = read(client, "hana", fork["id"])["messages"][1]
     assert copied["withheld"] and copied["content"] == ""
 
 
@@ -334,11 +333,12 @@ def test_copy_is_only_for_an_answer_you_may_read(client):
         "The annual bonus pool is announced in March.[^1]")
     assert "[^1]: bonus.md" in r.json()["markdown"]
     assert client.get(f"/api/messages/{answer['id']}/markdown",
-                      headers=headers(client, "hana", "public")).status_code == 403
-    assert client.get(f"/api/messages/{answer['id']}/markdown",
                       headers=headers(client, "sam")).status_code == 404
     assert client.get(f"/api/messages/{question['id']}/markdown",
                       headers=headers(client, "hana")).status_code == 404
+    members_store.set_role("hana", "public", "default")             # demoted: not any more
+    assert client.get(f"/api/messages/{answer['id']}/markdown",
+                      headers=headers(client, "hana")).status_code == 403
 
 
 # ---- C12: retention -----------------------------------------------------------------------
@@ -372,8 +372,6 @@ def test_chat_settings_default_to_a_year_and_only_admins_change_them(client, wor
     for person in (who["hr"], who["staff"]):
         assert client.put("/api/admin/chat-settings", json={"retention_days": 30},
                           headers=headers(client, person)).status_code == 403
-    assert client.put("/api/admin/chat-settings", json={"retention_days": 30},
-                      headers=headers(client, who["admin"], "public")).status_code == 403
     assert client.put("/api/admin/chat-settings", json={"retention_days": 45},
                       headers=headers(client, who["admin"])).status_code == 400
 
@@ -440,15 +438,15 @@ def test_the_purge_is_a_nightly_job():
 
 
 # ---- C16: share links ---------------------------------------------------------------------
-def share(client, who, cid, role="hr", **body):
+def share(client, who, cid, **body):
     r = client.post("/api/shares", json={"conversation_id": cid, **body},
-                    headers=headers(client, who, role))
+                    headers=headers(client, who))
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def open_link(client, who, token, role="hr"):
-    return client.get(f"/api/shared/{token}", headers=headers(client, who, role))
+def open_link(client, who, token):
+    return client.get(f"/api/shared/{token}", headers=headers(client, who))
 
 
 def hr_chat_with_a_restricted_and_a_public_answer(client):
@@ -486,8 +484,6 @@ def test_a_shared_chat_withholds_answers_a_lower_role_cant_read(client):
     assert bonus["question"] == BONUS_Q and bonus["copy"] is None
     assert seen["withheld"] == 1
     assert "March" not in r.text and "bonus.md" not in r.text
-    # An HR member viewing the app as public is treated as public.
-    assert "March" not in open_link(client, "ada", link["token"], role="public").text
 
 
 def test_a_shared_answer_shows_only_it_and_its_question(client):
@@ -509,8 +505,10 @@ def test_a_share_never_shows_more_than_its_sharer_may_see_now(client):
     members_store.set_role("hana", "hr", "default")
     assert "March" in open_link(client, "ada", link["token"]).text
 
-    # Shared while viewing the app as public: shared as public.
-    link = share(client, "hana", cid, role="public")
+    # Shared while public: shared as public, even after a promotion back to HR.
+    members_store.set_role("hana", "public", "default")
+    link = share(client, "hana", cid)
+    members_store.set_role("hana", "hr", "default")
     assert "March" not in open_link(client, "ada", link["token"]).text
 
     # A sharer who has left the workspace: the link is dead.

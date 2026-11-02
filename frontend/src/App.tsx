@@ -54,7 +54,7 @@ const SIDEBAR_RAIL = { ...SIDEBAR_OPEN, "--field-pane": "var(--sidebar-width-ico
 // top bar but a phone's. Signed out, it sends people to the sign-in page, and back here
 // once they're in.
 export default function App() {
-  const { user, role, leftOnPurpose } = useAuth()
+  const { user, leftOnPurpose } = useAuth()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpenState] = useState(storedOpen)
   const setSidebarOpen = useCallback((open: boolean) => {
@@ -85,8 +85,8 @@ export default function App() {
     )
   }
 
-  // Only an HR or admin account gets HR; it can also "view as" public. Everyone else is public.
-  const activeRole: Role = user.role !== "public" ? role : "public"
+  // An HR or admin account reads as HR; everyone else as public.
+  const role: Role = user.role !== "public" ? "hr" : "public"
 
   return (
     <IndexStatusProvider>
@@ -112,7 +112,7 @@ export default function App() {
           per step and a glow from the composer while the assistant works). */}
       {!onChat && <AppBackdrop />}
       {/* ⌘K: search chats and go anywhere; ⌘⇧O new chat; ⌘/ the shortcuts; ⌘B the sidebar. */}
-      <CommandPalette user={user} role={activeRole} chatAt={chatAt} />
+      <CommandPalette user={user} role={role} chatAt={chatAt} />
       <SidebarEvents />
       {/* The product tour: by itself on a first sign-in, or from the account menu. */}
       <ProductTour chatAt={chatAt} />
@@ -151,7 +151,7 @@ export default function App() {
             data-print={onChat ? "flow" : "hide"}
           >
             <LazyPage>
-              <ChatView role={activeRole} />
+              <ChatView role={role} />
             </LazyPage>
           </div>
           {/* Every other screen (routes.tsx). */}

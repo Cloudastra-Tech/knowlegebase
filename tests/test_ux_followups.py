@@ -71,10 +71,6 @@ def test_only_an_admin_sees_the_error_text_everyone_sees_why(env, monkeypatch,  
     assert "credentials" not in staff["message"]
     admin = env.client.get("/api/index/status", headers=env.login(w)).json()
     assert admin["reason"] == "no_ai_key" and "Missing credentials" in admin["error"]
-    # An admin viewing the app as a public user is a public user here too.
-    as_public = env.client.get("/api/index/status",
-                               headers={**env.login(w), "X-Role": "public"}).json()
-    assert as_public["error"] is None
 
 
 def test_a_retry_waiting_says_why_without_the_raw_text(env, jobs_paused):  # noqa: F811
@@ -108,11 +104,9 @@ def test_admins_read_their_own_workspaces_jobs(env, monkeypatch, jobs_paused):  
     assert index["details"] == {"full": True}
     assert "secret-export" not in r.text
 
-    # Admins only: a member, or an admin viewing the app as public, can't.
+    # Admins only: a member can't.
     assert env.client.get("/api/admin/jobs",
                           headers=env.login(w, "staff")).status_code == 403
-    assert env.client.get("/api/admin/jobs",
-                          headers={**env.login(w), "X-Role": "public"}).status_code == 403
 
 
 # ---- Members SCIM manages ------------------------------------------------------------------
@@ -259,13 +253,13 @@ def test_a_conversation_exports_as_markdown(client):  # noqa: F811
     # Each answer's footnotes are numbered apart from the others': [^2-1], not [^1].
     assert "[^2-1]" in text and "\n[^2-1]: " in text and "[^1]" not in text
 
-    # Viewing the app as public, the restricted answer is left out, as on screen.
-    public = client.get(f"/api/conversations/{cid}/export",
-                        headers=headers(client, "hana", "public")).text
-    assert "March" not in public and "This answer is hidden" in public
     # Only its owner can.
     assert client.get(f"/api/conversations/{cid}/export",
                       headers=headers(client, "ada")).status_code == 404
+    # Demoted, the restricted answer is left out, as on screen.
+    members_store.set_role("hana", "public", "default")
+    public = client.get(f"/api/conversations/{cid}/export", headers=headers(client, "hana")).text
+    assert "March" not in public and "This answer is hidden" in public
 
 
 def test_continue_in_my_chats_copies_only_what_the_viewer_may_see(client):  # noqa: F811

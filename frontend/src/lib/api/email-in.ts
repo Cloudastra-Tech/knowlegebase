@@ -10,7 +10,7 @@ export interface EmailIn {
   address: string | null // ask@<workspace>.<domain>, once the domain is set
   provider: "postmark"
   webhook_url: string // where the provider posts inbound mail (credentials go in front)
-  can_manage: boolean // an admin, viewing the app as HR / Admin
+  can_manage: boolean // an admin
   updated_by: string | null
   updated_at: number | null
 }

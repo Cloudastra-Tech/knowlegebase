@@ -58,7 +58,6 @@ export const chatApi = {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.token}`,
-        "X-Role": session.role,
       },
       body: JSON.stringify({
         question,
@@ -107,7 +106,7 @@ export const chatApi = {
   chatModels: () => request<ChatModels>("/models"),
 
   // A cited passage with the text around it; 404 when it's gone from the index or
-  // the role the app is viewed as can't see it.
+  // the account's role can't see it.
   passage: (chunkId: string) => request<Passage>(`/passages/${seg(chunkId)}`),
 
   // The signed-in person's chats (most recently used first) and their folders.

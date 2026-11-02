@@ -6,8 +6,7 @@ document has an ACL; this only puts the two together for these callers.
 
     viewer_of(member)       a member's Viewer NOW, from their account as it is
                             (None: no member, or turned off). HR / Admin read as
-                            hr; the "view as public" switch is the browser's, and a
-                            digest has no browser
+                            hr
     Acls(ws).now(doc_key)   the ACL a document has NOW, as the index tags it: an
                             upload's picked one or its folder's level; a synced
                             file's source ACL (permissions.connector_acls) or its

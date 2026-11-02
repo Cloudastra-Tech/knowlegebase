@@ -100,7 +100,7 @@ def test_the_api_and_one_off_questions_are_logged_too(client, fresh_default):
 
 
 def test_a_refused_question_is_logged_with_why(client, fresh_default):
-    ask(client, "pat", SALARY, role="public")
+    ask(client, "pat", SALARY)
     (row,) = logged()
     assert (row["outcome"], row["block_reason"], row["sources"]) == (
         "blocked", "restricted_topic", [])
@@ -228,19 +228,19 @@ def test_the_text_logged_follows_the_workspace_mode(client, fresh_default, mode,
 
 
 def test_everyone_can_read_how_their_questions_are_logged(client, fresh_default):
-    r = client.get("/api/question-log/settings", headers=headers(client, "pat", "public"))
+    r = client.get("/api/question-log/settings", headers=headers(client, "pat"))
     assert r.json() == {"mode": "redacted", "days": 90, "logged": True}
     client.put("/api/admin/question-log/settings", json={"mode": "metadata", "days": 30},
                headers=headers(client, "ada"))
-    r = client.get("/api/question-log/settings", headers=headers(client, "pat", "public"))
+    r = client.get("/api/question-log/settings", headers=headers(client, "pat"))
     assert r.json() == {"mode": "metadata", "days": 30, "logged": False}
 
 
 def test_only_admins_change_the_logging_and_only_to_known_values(client, fresh_default):
     body = {"mode": "full", "days": 90}
-    for who, role in (("hana", "hr"), ("pat", "public"), ("ada", "public")):
+    for who in ("hana", "pat"):
         r = client.put("/api/admin/question-log/settings", json=body,
-                       headers=headers(client, who, role))
+                       headers=headers(client, who))
         assert r.status_code == 403, who
     for bad in ({"mode": "everything", "days": 90}, {"mode": "full", "days": 7}):
         r = client.put("/api/admin/question-log/settings", json=bad,
@@ -555,11 +555,10 @@ def test_restricted_sources_are_not_listed_for_roles_that_cant_see_them(docs_roo
 
 
 # ---- The API, CSV export ---------------------------------------------------------------------
-def test_insights_are_for_hr_and_admins_viewing_as_hr(client, fresh_default, docs_root):
+def test_insights_are_for_hr_and_admins(client, fresh_default, docs_root):
     ask(client, "pat", "What is the refund policy?")
-    for who, role, status in (("hana", "hr", 200), ("ada", "hr", 200), ("pat", "public", 403),
-                              ("ada", "public", 403)):
-        r = client.get("/api/admin/insights", headers=headers(client, who, role))
+    for who, status in (("hana", 200), ("ada", 200), ("pat", 403)):
+        r = client.get("/api/admin/insights", headers=headers(client, who))
         assert r.status_code == status, who
     body = client.get("/api/admin/insights", headers=headers(client, "hana")).json()
     assert body["totals"]["questions"] == 1 and len(body["daily"]) == 30

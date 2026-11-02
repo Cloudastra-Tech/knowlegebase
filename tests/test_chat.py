@@ -534,7 +534,7 @@ def client(fakes):
 
 def stream(client, token, question):
     r = client.post("/api/chat/stream", json={"question": question},
-                    headers={"Authorization": f"Bearer {token}", "X-Role": "public"})
+                    headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
     chunks = [c for c in r.text.split("\n\n") if c]
@@ -568,7 +568,7 @@ def test_a_prompt_set_not_to_search_is_answered_without_it(client, fakes):
         def run(token, prompt_id):
             r = client.post("/api/chat/stream", json={"question": "What is the refund policy?",
                                                       "prompt_id": prompt_id},
-                            headers={"Authorization": f"Bearer {token}", "X-Role": "public"})
+                            headers={"Authorization": f"Bearer {token}"})
             assert r.status_code == 200
             return json.loads(r.text.strip().split("\n\n")[-1][len("data: "):])
 
@@ -598,8 +598,7 @@ def test_a_prompt_set_not_to_search_skips_only_the_search(client, toxicity, ques
                                   "asker-one", search=False)
     try:
         r = client.post("/api/chat/stream", json={"question": question, "prompt_id": direct["id"]},
-                        headers={"Authorization": f"Bearer {client.tokens[0]}",
-                                 "X-Role": "public"})
+                        headers={"Authorization": f"Bearer {client.tokens[0]}"})
         done = json.loads(r.text.strip().split("\n\n")[-1][len("data: "):])
         assert done["answer"] == safety.CANT_HELP and done["state"] == "blocked"
         assert not toxicity.calls.of("retrieve") and not toxicity.calls.of("agent")
@@ -642,8 +641,7 @@ def test_a_dropped_stream_stops_the_work(client, fakes):
                  "query_string": b"", "root_path": "", "client": ("127.0.0.1", 5000),
                  "server": ("testserver", 80),
                  "headers": [(b"host", b"testserver"), (b"content-type", b"application/json"),
-                             (b"authorization", f"Bearer {client.tokens[0]}".encode()),
-                             (b"x-role", b"public")]}
+                             (b"authorization", f"Bearer {client.tokens[0]}".encode())]}
         await api.app(scope, receive, send)
 
     asyncio.run(drive())
@@ -668,7 +666,7 @@ class FailingAgentModel(FakeAgentModel):
 def test_the_one_shot_chat_says_plainly_when_openai_fails(client, fakes, monkeypatch):
     monkeypatch.setattr(agent, "ChatOpenAI", lambda **kwargs: FailingAgentModel(fakes=fakes))
     r = client.post("/api/chat", json={"question": "What is the refund policy?"},
-                    headers={"Authorization": f"Bearer {client.tokens[0]}", "X-Role": "public"})
+                    headers={"Authorization": f"Bearer {client.tokens[0]}"})
     assert r.status_code == 502, r.text
     assert r.json() == {"detail": "The assistant couldn't answer just now "
                                   "(APIConnectionError). Please try again in a moment."}
@@ -682,6 +680,6 @@ def test_the_one_shot_chat_says_plainly_when_there_is_no_openai_key(client, monk
     monkeypatch.setattr(agent, "ChatOpenAI", ChatOpenAI)
     state.agents.clear()
     r = client.post("/api/chat", json={"question": "What is the refund policy?"},
-                    headers={"Authorization": f"Bearer {client.tokens[0]}", "X-Role": "public"})
+                    headers={"Authorization": f"Bearer {client.tokens[0]}"})
     assert r.status_code == 502, r.text
     assert r.json()["detail"].startswith("The assistant couldn't answer just now (OpenAIError)")
