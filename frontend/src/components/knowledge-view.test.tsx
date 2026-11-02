@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest"
 import { MemoryRouter } from "react-router"
 
 import { KnowledgeView } from "@/components/knowledge-view"
-import { session } from "@/lib/api"
 import { json, mockApi, withProviders } from "@/test/render"
 
 const ITEMS = [
@@ -29,8 +28,7 @@ const ITEMS = [
 ]
 
 describe("KnowledgeView", () => {
-  it("shows what the server lists, asked as the viewed role", async () => {
-    session.setRole("public")
+  it("shows what the server lists", async () => {
     const fetch = mockApi({
       "GET /api/knowledge": { workspace: "acme", items: ITEMS, outline: true },
     })
@@ -51,8 +49,7 @@ describe("KnowledgeView", () => {
     expect(screen.getByText("3 chunks")).toBeInTheDocument()
     expect(screen.getByText("Not indexed")).toBeInTheDocument()
     expect(screen.getByText(/Outline wiki is searched live/)).toBeInTheDocument()
-    const headers = new Headers(fetch.mock.calls[0][1]?.headers)
-    expect(headers.get("X-Role")).toBe("public")
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).has("X-Role")).toBe(false)
 
     // Filtering happens here, without asking the server again.
     await userEvent.setup().type(screen.getByPlaceholderText("Search by name…"), "leave")

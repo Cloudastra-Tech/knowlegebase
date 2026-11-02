@@ -42,7 +42,7 @@ def env(monkeypatch, tmp_path):
                                        auth.hash_password("correct-horse"), self.ws, "admin")
             r = self.client.post("/api/auth/login", json={"username": f"admin@{self.ws}.example",
                                                           "password": "correct-horse"})
-            return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+            return {"Authorization": f"Bearer {r.json()['token']}"}
 
         def text(self, provider, name):
             with open(f"data/workspaces/{self.ws}/docs/connectors/{provider}/{name}",

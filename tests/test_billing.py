@@ -91,7 +91,7 @@ class Org:
         r = self.client.post("/api/auth/login", json={"username": f"{who}@{self.domain}",
                                                       "password": PASSWORD})
         assert r.status_code == 200, r.text
-        return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+        return {"Authorization": f"Bearer {r.json()['token']}"}
 
     def plan(self, plan_id, **fields):
         billing_store.save_subscription(self.ws, plan=plan_id, **{"status": "active", **fields})
@@ -206,7 +206,7 @@ def test_a_workspace_without_a_subscription_is_never_limited(client, billing_on)
                                "admin")
     r = client.post("/api/auth/login", json={"username": f"admin@{ws}.example",
                                              "password": PASSWORD})
-    h = {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
     assert client.post("/api/admin/sign-in/scim/tokens", headers=h).status_code == 200
     view = client.get("/api/billing", headers=h).json()
     assert view["on"] is True and view["managed"] is False and view["plan"] is None

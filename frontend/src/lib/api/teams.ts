@@ -10,7 +10,7 @@ export type TeamsUnknownUsers = "refuse" | "public"
 
 export interface TeamsApp {
   status: TeamsStatus
-  can_manage: boolean // an admin, viewing the app as HR / Admin
+  can_manage: boolean // an admin
   central_available: boolean // this server has its own (multi-tenant) bot set up
   mode: TeamsMode
   app_id: string | null // the workspace's own bot

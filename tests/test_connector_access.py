@@ -42,11 +42,11 @@ def env(monkeypatch, tmp_path):
     return TestClient(api.app), ws
 
 
-def login(client, ws, name, role="hr"):
+def login(client, ws, name):
     r = client.post("/api/auth/login", json={"username": f"{name}@{ws}.example",
                                              "password": "correct-horse"})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": role}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def connect_notion(ws):
@@ -125,19 +125,17 @@ def test_synced_files_are_hr_only_until_an_admin_opens_them_to_everyone(env):
     assert knowledge(client, staff) == {}
 
 
-@pytest.mark.parametrize("name, x_role, status", [
-    ("staff", "hr", 403),          # a public member (the header can't raise them)
-    ("admin", "public", 403),      # an admin viewing the app as a public user
-    ("hr", "public", 403),
-    ("hr", "hr", 200),             # HR manages integrations, so it sets this too
-    ("admin", "hr", 200),
+@pytest.mark.parametrize("name, status", [
+    ("staff", 403),                # a public member
+    ("hr", 200),                   # HR manages integrations, so it sets this too
+    ("admin", 200),
 ])
-def test_only_hr_and_admins_set_who_can_ask(env, name, x_role, status):
+def test_only_hr_and_admins_set_who_can_ask(env, name, status):
     import integrations_store
     client, ws = env
     connect_notion(ws)
     r = client.put("/api/integrations/notion/access", json={"access": "everyone"},
-                   headers=login(client, ws, name, x_role))
+                   headers=login(client, ws, name))
     assert r.status_code == status, r.text
     expected = "everyone" if status == 200 else "restricted"
     assert integrations_store.access_of(integrations_store.get(ws, "notion")) == expected
@@ -238,18 +236,19 @@ def test_outline_status_follows_the_role(outline, monkeypatch):
     import members_store
     monkeypatch.setenv("OUTLINE_MIN_ROLE", "hr")
     client = TestClient(api.app)
-    members_store.set_password("wiki-reader@default.example", "Reader",
-                               auth.hash_password("correct-horse"), "default", "admin")
-    token = client.post("/api/auth/login", json={"username": "wiki-reader@default.example",
-                                                 "password": "correct-horse"}).json()["token"]
+    for name, role in (("wiki-admin", "admin"), ("wiki-reader", "public")):
+        members_store.set_password(f"{name}@default.example", name,
+                                   auth.hash_password("correct-horse"), "default", role)
 
-    def live(x_role):
-        headers = {"Authorization": f"Bearer {token}", "X-Role": x_role}
+    def live(name):
+        token = client.post("/api/auth/login", json={"username": f"{name}@default.example",
+                                                     "password": "correct-horse"}).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
         items = client.get("/api/integrations", headers=headers).json()["integrations"]
         return next(i for i in items if i["id"] == "outline")["live_search"]
 
-    assert live("hr") is True
-    assert live("public") is False
+    assert live("wiki-admin") is True
+    assert live("wiki-reader") is False
 
 
 def test_a_synced_outline_wiki_replaces_the_live_tool(outline):

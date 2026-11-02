@@ -6,9 +6,6 @@ import type { Role, User } from "@/lib/api"
 // apart from the provider so Fast Refresh can hot-reload that component file.
 export interface AuthValue {
   user: User | null
-  // The role the app is viewed as. Only an HR or admin account can view it as "hr".
-  role: Role
-  setRole: (role: Role) => void
   // Signed in: with a new token, or (password sign-in) one already stored.
   signedIn: (user: User, token?: string) => void
   // Signed out. onPurpose: they chose to, so they land on the landing page rather
@@ -25,11 +22,11 @@ export function useAuth() {
   return auth
 }
 
-// What the app is viewed as: an HR or admin account picks (the navbar's "View as");
-// everyone else is public.
-export function useActiveRole(): Role {
-  const { user, role } = useAuth()
-  return user && user.role !== "public" ? role : "public"
+// What the signed-in account may read: "hr" for an HR or admin account, else "public".
+// Only an admin changes it (Members, SCIM, the sign-in group rules).
+export function useRole(): Role {
+  const { user } = useAuth()
+  return user && user.role !== "public" ? "hr" : "public"
 }
 
 // Inside the signed-in app (App.tsx), where there always is a user.

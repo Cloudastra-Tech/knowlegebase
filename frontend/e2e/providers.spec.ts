@@ -17,7 +17,6 @@ async function backToDefault(page: Page) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${localStorage.getItem("kb_token")}`,
-        "X-Role": "hr",
       },
       body: JSON.stringify({ chat_provider: "default", api_keys: { anthropic: null } }),
     })

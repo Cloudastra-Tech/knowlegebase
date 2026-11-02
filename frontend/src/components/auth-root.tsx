@@ -9,7 +9,6 @@ import {
   session,
   setForbiddenHandler,
   setUnauthorizedHandler,
-  type Role,
   type User,
 } from "@/lib/api"
 import { AuthContext, type AuthValue } from "@/lib/auth-context"
@@ -25,23 +24,11 @@ export function AuthRoot() {
   const [user, setUser] = useState<User | null>(null)
   // /sso swaps its one-time code for a session itself (routes.tsx).
   const [checking, setChecking] = useState(() => !!session.token && location.pathname !== "/sso")
-  const [role, setRoleState] = useState<Role>(() => {
-    // Back from a connector's consent screen: the result is on an HR screen.
-    const params = new URLSearchParams(location.search)
-    if (location.pathname === "/integrations" && (params.has("connected") || params.has("error")))
-      session.setRole("hr")
-    return session.role
-  })
   const [leftOnPurpose, setLeftOnPurpose] = useState(false)
   const current = useRef<User | null>(null)
   useEffect(() => {
     current.current = user
   }, [user])
-
-  const setRole = useCallback((next: Role) => {
-    session.setRole(next)
-    setRoleState(next)
-  }, [])
 
   const signedIn = useCallback(
     (u: User, token?: string) => {
@@ -77,6 +64,8 @@ export function AuthRoot() {
         .me()
         .then((u) => {
           if (session.token !== token) return       // signed out meanwhile
+          // A new role reads different documents and chats: load everything again.
+          if (current.current && current.current.role !== u.role) void queryClient.invalidateQueries()
           setUser(u)
         })
         .catch((err) => {
@@ -93,7 +82,7 @@ export function AuthRoot() {
     const onVisible = () => document.visibilityState === "visible" && recheck()
     document.addEventListener("visibilitychange", onVisible)
     return () => document.removeEventListener("visibilitychange", onVisible)
-  }, [signedOut])
+  }, [signedOut, queryClient])
 
   // Restore the session after a page refresh.
   useEffect(() => {
@@ -125,8 +114,8 @@ export function AuthRoot() {
   }, [checking, signedOut]) // `checking` only ever goes from true to false: once, on load
 
   const value = useMemo<AuthValue>(
-    () => ({ user, role, setRole, signedIn, signedOut, leftOnPurpose }),
-    [user, role, setRole, signedIn, signedOut, leftOnPurpose],
+    () => ({ user, signedIn, signedOut, leftOnPurpose }),
+    [user, signedIn, signedOut, leftOnPurpose],
   )
 
   if (checking) {

@@ -10,20 +10,19 @@ import {
   SettingsSkeleton,
 } from "@/components/settings/settings-section"
 import { Button } from "@/components/ui/button"
-import { useActiveRole, useUser } from "@/lib/auth-context"
+import { useUser } from "@/lib/auth-context"
 import { keptFor } from "@/lib/chat-history"
 import { queries } from "@/lib/queries"
 import { timeAgo } from "@/lib/utils"
 
 // Settings › Chats: how long this workspace keeps chats, and whether they may be
-// shared by link. Everyone sees it; an admin viewing the app as HR changes it
+// shared by link. Everyone sees it; an admin changes it
 // (ChatSettingsDialog).
 export function ChatsSettings() {
   const user = useUser()
-  const role = useActiveRole()
   const settings = useQuery(queries.chatSettings())
   const [open, setOpen] = useState(false)
-  const canChange = user.role === "admin" && role === "hr"
+  const canChange = user.role === "admin"
   const data = settings.data
 
   return (

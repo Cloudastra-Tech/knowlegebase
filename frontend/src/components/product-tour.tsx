@@ -8,7 +8,7 @@ import { useLocation, useNavigate, useNavigationType } from "react-router"
 import { Button } from "@/components/ui/button"
 import { useSidebar } from "@/components/ui/sidebar"
 import { onboarding, type Onboarding, type Tours } from "@/lib/api"
-import { useActiveRole, useUser } from "@/lib/auth-context"
+import { useUser } from "@/lib/auth-context"
 import { useChatState } from "@/lib/chat-bridge"
 import { ease } from "@/lib/motion"
 import { queries } from "@/lib/queries"
@@ -183,7 +183,6 @@ interface View {
 
 export function ProductTour({ chatAt }: { chatAt: string }) {
   const user = useUser()
-  const role = useActiveRole()
   const { isMobile, setOpenMobile } = useSidebar()
   const location = useLocation()
   const navigationType = useNavigationType()
@@ -199,7 +198,7 @@ export function ProductTour({ chatAt }: { chatAt: string }) {
   const [moving, setMoving] = useState(false) // the cut-out glides (a step change)
   const [, setViewport] = useState(0) // the window resized: the anchors move
 
-  const ctx: TourContext = { admin: user.role === "admin" && role === "hr", phone: isMobile }
+  const ctx: TourContext = { admin: user.role === "admin", phone: isMobile }
   // What the async steps below read, kept current.
   const live = useRef({ ctx, chatAt, path: location.pathname, view, answering })
   useLayoutEffect(() => {

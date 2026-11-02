@@ -32,7 +32,6 @@ const CHAT_SETTINGS = {
 
 function signedIn(user: User, more: Record<string, unknown> = {}) {
   session.setToken("tok")
-  session.setRole(user.role === "public" ? "public" : "hr")
   return mockApi({
     ...more,
     "GET /api/auth/me": user,
@@ -84,14 +83,13 @@ describe("the account menu", () => {
     expect(within(menu).queryByText(/Chats are kept/)).not.toBeInTheDocument()
   })
 
-  it("adds View as for an admin (the admin tour is in Take the tour), and nothing else", async () => {
+  it("gives an admin the same menu (the admin tour is in Take the tour), and nothing else", async () => {
     signedIn({ ...ADMIN, billing: BILLING })
     renderApp("/knowledge")
     await userEvent.setup().click(await screen.findByRole("button", { name: /^Account,\s*Ada Admin/ }))
     await screen.findByRole("menuitem", { name: "Settings" })
-    expect(menuItems().map((t) => t?.replace(/(Ctrl|⌘)\/$/, "").replace(/HR \/ Admin$/, ""))).toEqual([
+    expect(menuItems().map((t) => t?.replace(/(Ctrl|⌘)\/$/, ""))).toEqual([
       "Settings",
-      "View as",
       "Appearance",
       "Keyboard shortcuts",
       "Take the tour",
@@ -151,7 +149,7 @@ describe("the Settings screen", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/general"))
   })
 
-  it("lets an admin viewing as HR change the chat settings; a member only reads them", async () => {
+  it("lets an admin change the chat settings; a member only reads them", async () => {
     signedIn(MEMBER)
     renderApp("/settings/chats")
     expect(await screen.findByText("For 1 year")).toBeInTheDocument()

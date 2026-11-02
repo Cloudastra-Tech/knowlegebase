@@ -76,7 +76,7 @@ def new_workspace():
 def login(client, username):
     r = client.post("/api/auth/login", json={"username": username, "password": PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 # ---- Operators sign in -------------------------------------------------------------------
@@ -176,7 +176,7 @@ def support_session(client, op, ws):
         return r.status_code
     r = client.post("/api/auth/sso/exchange", json={"code": r.json()["code"]})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def test_support_only_with_the_admins_grant_and_every_call_is_audited(client, idp):

@@ -596,8 +596,8 @@ function Overview({
   )
 }
 
-// /admin/insights: how the assistant is used and where it falls short (HR and admins,
-// viewing as HR; only admins change the logging or the test set).
+// /admin/insights: how the assistant is used and where it falls short (HR and admins;
+// only admins change the logging or the test set).
 export function InsightsView({
   tab,
   canEdit,

@@ -72,7 +72,7 @@ def login(client, w, name="admin"):
     r = client.post("/api/auth/login", json={"username": f"{name}@{w}.example",
                                              "password": PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def add(client, h, events, url=HOOK_URL):

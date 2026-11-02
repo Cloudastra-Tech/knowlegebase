@@ -50,6 +50,12 @@ async function settle(page: Page) {
   await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0, { timeout: 10_000 })
 }
 
+// axe on a page that's still moving: a fade passes through low contrast on its way in,
+// so a finding counts only if it's still there once that fade could have settled.
+async function settledClean(page: Page) {
+  await expect.poll(() => serious(page), { timeout: 6_000, intervals: [250, 500, 1_000] }).toEqual([])
+}
+
 test("the landing page has no serious accessibility problems", async ({ page }) => {
   for (const size of [DESKTOP, PHONE]) {
     await page.setViewportSize(size)
@@ -59,7 +65,7 @@ test("the landing page has no serious accessibility problems", async ({ page }) 
     for (const id of ["answer", "access", "privacy", "sources", "start"]) {
       await page.locator(`#${id}`).scrollIntoViewIfNeeded()
     }
-    expect(await serious(page)).toEqual([])
+    await settledClean(page)
     expect(await fitsWidth(page)).toBe(true)
 
     // No tabs: each section's states are steps you scroll through.
@@ -70,17 +76,17 @@ test("the landing page has no serious accessibility problems", async ({ page }) 
     // heading resolved.
     await centreStep(page, "answer", "eng")
     await page.waitForTimeout(1800)
-    expect(await serious(page)).toEqual([])
+    await settledClean(page)
     await centreStep(page, "access", "Hira")
     await page.waitForTimeout(1500)
     await centreStep(page, "privacy", "local")
     await page.waitForTimeout(800)
-    expect(await serious(page)).toEqual([])
+    await settledClean(page)
     await page.locator("#sources [data-source]").first().focus()
     await expect(page.locator("#sources").getByText("example", { exact: true })).toBeVisible()
     await page.locator("#start h2").scrollIntoViewIfNeeded()
     await page.waitForTimeout(1500)
-    expect(await serious(page)).toEqual([])
+    await settledClean(page)
     expect(await fitsWidth(page)).toBe(true)
   }
 })

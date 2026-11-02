@@ -159,20 +159,55 @@ test("recent chats are under the composer, and one opens from there", async ({ p
   await expect(page.getByRole("dialog", { name: "Search chats" })).toBeVisible()
 })
 
+// Animations on the composer or a box holding it (its row, which the first question
+// moves), in the page.
+const composerAnimations = `document.getAnimations()
+  .filter((a) => a.effect && a.effect.target && a.effect.target.contains(document.querySelector('[data-drift="composer"]')))`
+// Until they've finished: the composer where it comes to rest. The fake model can
+// answer before a 240ms move is over, more so on a busy machine.
+const composerAtRest = (page: Page) =>
+  page.evaluate(`Promise.all(${composerAnimations}.map((a) => a.finished.catch(() => {}))).then(() => 0)`)
+
 test("sending moves the composer down in one short move, and the question pins to the top", async ({ page }) => {
   await signIn(page, MEMBER)
   const before = await composerBox(page)
   const box = page.getByRole("textbox", { name: "Your question" })
   await box.fill("How many days of paid annual leave do employees get?")
+  // The move, frame by frame: where the composer is drawn and every animation on it,
+  // from the moment Enter is pressed until it's at rest. Its shape, not its timing.
+  await page.evaluate(`(() => {
+    const seen = new Set()
+    const track = (window.__move = { frames: [], durations: [], on: true })
+    const frame = () => {
+      if (!track.on) return
+      const r = document.querySelector('[data-drift="composer"]').getBoundingClientRect()
+      track.frames.push([r.x, r.y])
+      for (const a of ${composerAnimations}) {
+        if (!seen.has(a)) { seen.add(a); track.durations.push(a.effect.getTiming().duration) }
+      }
+      requestAnimationFrame(frame)
+    }
+    frame()
+  })()`)
   await box.press("Enter")
-  // The move: one transform animation on the composer's row, 240ms at most.
-  const moves = (await page.evaluate(`document.getAnimations()
-    .filter((a) => a.effect && a.effect.target && a.effect.target.contains(document.querySelector('[data-drift="composer"]')))
-    .map((a) => a.effect.getTiming().duration)`)) as number[]
-  expect(moves.length).toBeLessThanOrEqual(1)
-  for (const d of moves) expect(d).toBeLessThanOrEqual(250)
   await expect(conversation(page).getByRole("button", { name: "Copy" })).toHaveCount(1, { timeout: 20_000 })
+  await composerAtRest(page)
   const after = await composerBox(page)
+  const move = (await page.evaluate(`(() => { window.__move.on = false; return window.__move })()`)) as {
+    frames: [number, number][]
+    durations: number[]
+  }
+  // One transform animation on the composer's row, 240ms at most (as declared, not
+  // as timed: a busy machine draws it in fewer frames).
+  expect(move.durations.length).toBeLessThanOrEqual(1)
+  for (const d of move.durations) expect(d).toBeLessThanOrEqual(250)
+  // One move: straight down, never back up or sideways, from where it was to where it
+  // rests.
+  const ys = move.frames.map(([, y]) => y)
+  expect(ys[0]).toBeCloseTo(before.y, 0)
+  expect(ys[ys.length - 1]).toBeCloseTo(after.y, 0)
+  for (let i = 1; i < ys.length; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1] - 0.5)
+  for (const [x] of move.frames) expect(Math.abs(x - before.x)).toBeLessThanOrEqual(0.5)
   // Down only: nothing sideways.
   expect(after.x).toBe(before.x)
   expect(after.width).toBe(before.width)
@@ -185,6 +220,7 @@ test("sending moves the composer down in one short move, and the question pins t
 
   // A second question is pinned to the top, the composer staying where it is.
   await ask(page, "How many days of sick leave do employees get?")
+  await composerAtRest(page)
   const again = await composerBox(page)
   expect(Math.abs(again.y - after.y)).toBeLessThan(2)
   const second = (await conversation(page).getByText("How many days of sick leave do employees get?").first().boundingBox()) as Box

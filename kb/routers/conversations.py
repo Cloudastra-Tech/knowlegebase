@@ -106,7 +106,7 @@ def search_conversations(q: str = Query("", max_length=200), limit: int = Query(
 @router.post("/api/conversations")
 def create_conversation(body: NewConversationIn, user=Depends(current_user),
                         role=Depends(current_role), audit=audited("conversation.create")):
-    """A new, empty conversation under the role the app is viewed as now, in one of
+    """A new, empty conversation under the asker's role now, in one of
     the asker's spaces or none."""
     title = " ".join((body.title or "").split())[:store.TITLE_CHARS] or None
     if body.space_id:

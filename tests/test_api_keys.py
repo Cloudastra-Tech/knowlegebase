@@ -59,7 +59,7 @@ def kb(env, monkeypatch):  # noqa: F811
         if who == "hr":
             r = env.client.post("/api/auth/login", json={"username": f"hr@{w}.example",
                                                          "password": "correct-horse"})
-            h = {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+            h = {"Authorization": f"Bearer {r.json()['token']}"}
         return h
 
     def key(w, who="admin", scopes=ALL, kind="personal", **extra):
@@ -276,7 +276,7 @@ def test_a_service_key_acts_as_a_public_user_only(kb):
     boss = kb.client.post("/api/auth/login", json={"username": f"boss@{w}.example",
                                                    "password": "correct-horse"}).json()["token"]
     r = kb.client.patch(f"/api/admin/members/admin@{w}.example", json={"role": "hr"},
-                        headers={"Authorization": f"Bearer {boss}", "X-Role": "hr"})
+                        headers={"Authorization": f"Bearer {boss}"})
     assert r.status_code == 200, r.text
     assert kb.client.get("/api/v1/sources", headers=bearer(key)).status_code == 401
 

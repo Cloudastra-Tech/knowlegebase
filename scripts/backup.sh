@@ -24,7 +24,8 @@
 #   CHROMA_VOLUME             Docker volume holding the index (default <project>_chroma_data)
 #   CHROMA_DIR                or a plain folder instead of a volume (no Docker needed)
 #   KB_IMAGE                  image used to read the volume / run Python when the host
-#                             has no python3 (default cloudastra-knowledgebase)
+#                             has no python3 (default: the image the app container runs
+#                             now, by id, else cloudastra-knowledgebase:latest)
 #   BACKUP_AGE_RECIPIENT      encrypt to this age public key (age1...), or
 #   BACKUP_GPG_RECIPIENT      to this gpg key; the private key stays OFF this server
 #   BACKUP_RCLONE_REMOTE      off-site copy, e.g. b2:kb-backups/prod (rclone config'd)
@@ -67,10 +68,23 @@ APP_DIR="$(realpath -m "${APP_DIR:-$SCRIPTS/..}")"
 BACKUP_DIR="$(realpath -m "${BACKUP_DIR:-/var/backups/knowlegebase}")"
 KEY_BACKUP_DIR="$(realpath -m "${KEY_BACKUP_DIR:-$HOME/kb-integrations-key}")"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
-KB_IMAGE="${KB_IMAGE:-cloudastra-knowledgebase}"
+KB_IMAGE="${KB_IMAGE:-}"
 project="${COMPOSE_PROJECT_NAME:-$(basename "$APP_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')}"
 CHROMA_VOLUME="${CHROMA_VOLUME:-${project}_chroma_data}"
 [[ -d "$APP_DIR" ]] || die "no app folder at $APP_DIR"
+
+# The image to run a helper container from: KB_IMAGE, else the one the app runs now, by
+# id (on a shared host an image prune can take the :latest tag away), else :latest.
+kb_image() {
+    local image="$KB_IMAGE" running=""
+    if [[ -z "$image" ]]; then
+        running="$(cd "$APP_DIR" && docker compose ps -q knowledgebase 2>/dev/null | head -n 1)" || running=""
+        if [[ -n "$running" ]]; then
+            image="$(docker inspect -f '{{.Image}}' "$running" 2>/dev/null)" || image=""
+        fi
+    fi
+    printf '%s' "${image:-cloudastra-knowledgebase}"
+}
 
 # Python for the SQLite steps: the host's, else the app image's (same paths mounted).
 py() {
@@ -78,7 +92,7 @@ py() {
         python3 "$SCRIPTS/sqlite_tool.py" "$@"
     else
         docker run --rm -i --entrypoint python -v "$SCRIPTS:$SCRIPTS:ro" -v "$APP_DIR:$APP_DIR" \
-            -v "$BACKUP_DIR:$BACKUP_DIR" "$KB_IMAGE" "$SCRIPTS/sqlite_tool.py" "$@"
+            -v "$BACKUP_DIR:$BACKUP_DIR" "$(kb_image)" "$SCRIPTS/sqlite_tool.py" "$@"
     fi
 }
 
@@ -116,7 +130,7 @@ if [[ -n "${CHROMA_DIR:-}" ]]; then
 elif command -v docker >/dev/null 2>&1 && docker volume inspect "$CHROMA_VOLUME" >/dev/null 2>&1; then
     say "copying the search index (volume $CHROMA_VOLUME)"
     docker run --rm --entrypoint tar -v "$CHROMA_VOLUME:/v:ro" -v "$stage:/out" \
-        "$KB_IMAGE" -C /v -cf /out/chroma.tar .
+        "$(kb_image)" -C /v -cf /out/chroma.tar .
     chroma="volume $CHROMA_VOLUME"
 else
     say "WARNING: no search index found (volume $CHROMA_VOLUME); the archive won't have one"

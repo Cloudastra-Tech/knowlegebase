@@ -14,8 +14,8 @@ in the search index carries an ACL: the principals that may read it.
     nobody              held by no one: an ACL whose every grant failed to map
                         (Chroma takes no empty lists)
 
-A VIEWER is the set of principals someone holds, with the role (public / hr)
-the app is viewed as. Anything that takes a viewer also takes a bare role, which
+A VIEWER is the set of principals someone holds, with their account's role
+(public / hr). Anything that takes a viewer also takes a bare role, which
 means that role's own principals only: "public" is [everyone], "hr" adds
 [group:hr]. So code and tests from before groups keep their meaning, and a
 Slack channel, answered "as public", is exactly [everyone].
@@ -47,7 +47,7 @@ def domain(name):
 
 
 class Viewer(frozenset):
-    """The principals someone holds, and the role the app is viewed as."""
+    """The principals someone holds, and their account's role."""
 
     def __new__(cls, principals=(), role="public"):
         self = super().__new__(cls, {EVERYONE, *principals})

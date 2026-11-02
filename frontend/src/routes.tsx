@@ -50,14 +50,14 @@ import {
 //   /s/:token          a chat or answer shared by someone in their workspace
 //   /passages/:chunkId one cited passage (where a Slack answer's source links)
 //   /extension/connect ?redirect=: the browser extension signing in (chrome.identity)
-//   /documents, /integrations        HR and admins, viewing the app as HR
+//   /documents, /integrations        HR and admins
 //                      (/documents?draft=<id>: one of the assistant's drafts)
 //                      (not /docs: that is FastAPI's API reference, api.py)
 //   /admin/sign-in, /admin/members, /admin/groups, /admin/activity, /admin/api,
 //   /admin/webhooks, /admin/data   admins (the Access screen's tabs; Groups: who
 //                      may see content; Data: retention, export, support, delete)
 //   /admin/insights, /admin/insights/not-found, /admin/insights/feedback
-//                      HR and admins, viewing the app as HR
+//                      HR and admins
 //   /admin/verified    verified answers (?from_message, ?from_gap, ?answer)   HR and admins
 //   /admin/assistant   the assistant's settings and glossary   admins
 //   /invite/:token     accept an invite (signed in or not)

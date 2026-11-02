@@ -369,7 +369,8 @@ host, user, key and `known_hosts` as environment secrets. The job then runs
 `main` is production and only moves by promotion:
 
 1. Features merge into `dev` (squash; CI runs `backend`, `frontend`, `e2e`,
-   `docker`, `scan`).
+   `docker`, `scan` on the PR, not again on the merge). CI also runs on PRs into
+   `main` and on every push to `main`.
 2. **Promote**: when the owner says so, a PR from `dev` into `main`, merged with a
    merge commit (not squash, so the two histories don't drift).
 3. **Release PR**: on every push to `main`, release-please
@@ -992,8 +993,8 @@ added, or after verification and CASA)
 1. With `GMAIL_SYNC=on`: account menu → *Settings* → *Connections* → *Connect your Gmail*;
    untick the Gmail permission on Google's screen: it says the permission is
    missing. Connect again with it: choose labels; threads with them sync.
-2. Ask about an email as that member: it's cited. Sign in as an admin viewing as
-   HR: the same question finds nothing; Knowledge, Integrations, Insights and the
+2. Ask about an email as that member: it's cited. Sign in as an admin: the
+   same question finds nothing; Knowledge, Integrations, Insights and the
    audit log show no mailbox, no label names, no subjects.
 3. Remove the label from a thread, sync: it's deleted. Leave the connection for
    over a week: the history id is too old and a full listing runs.

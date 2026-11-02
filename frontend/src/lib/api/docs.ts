@@ -56,7 +56,7 @@ export const docsApi = {
   // PDFs need the auth header, so fetch them as a blob instead of a plain link.
   async downloadDoc(d: Doc) {
     const res = await fetch(`/api${docPath(d)}`, {
-      headers: { Authorization: `Bearer ${session.token}`, "X-Role": session.role },
+      headers: { Authorization: `Bearer ${session.token}` },
     })
     if (!res.ok) throw new ApiError(res.status, "Download failed")
     const url = URL.createObjectURL(await res.blob())

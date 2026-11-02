@@ -77,7 +77,7 @@ def is_restricted(messages):
 
 def _opened(token, viewer, viewer_role):
     """(share, its conversation, readers) for the link `token` opened by `viewer`
-    (a signed-in user, viewing the app as viewer_role). readers: the viewer and
+    (a signed-in user, with the role viewer_role). readers: the viewer and
     the sharer, each with their principals now, at the lower of their role now
     and the role it was shared as. Raises 404 / 410."""
     ws = ws_of(viewer)
@@ -124,8 +124,8 @@ def continue_share(token, viewer, viewer_role):
 
 
 def open_share(token, viewer, viewer_role):
-    """The link `token` as `viewer` (a signed-in user, viewing the app as
-    viewer_role) may see it. Raises 404 / 410. An answer shows only if BOTH the
+    """The link `token` as `viewer` (a signed-in user, with
+    the role viewer_role) may see it. Raises 404 / 410. An answer shows only if BOTH the
     viewer (their principals now) and the sharer (theirs now, at the lower of
     their role now and the role it was shared as) may read it."""
     share, conv, readers = _opened(token, viewer, viewer_role)

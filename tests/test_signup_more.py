@@ -97,7 +97,7 @@ def m365_sign_up(name, client=None):
 def exchange(client, location):
     token = client.post("/api/auth/sso/exchange",
                         json={"code": location.split("code=")[1]}).json()["token"]
-    return {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ---- Microsoft 365 -----------------------------------------------------------------------
@@ -221,7 +221,7 @@ def test_a_founder_signs_up_with_email_and_a_dns_record(mail_and_dns, signup_on)
     ws = members_store.workspace_for_domain(domain)
     assert (user["workspace"], user["role"], user["username"]) == (ws, "admin",
                                                                    f"founder@{domain}")
-    h = {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
     assert client.get("/api/auth/me", headers=h).json()["workspace"] == ws
     assert billing_store.is_owner(ws, f"founder@{domain}")
     # The link is used up; the founder signs in with their password from now on.

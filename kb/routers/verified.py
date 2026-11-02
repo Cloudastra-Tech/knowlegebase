@@ -1,6 +1,6 @@
 """Verified answers (kb/services/verified.py): the admin screen's list, editor and
 review queue, and the drafts "Save as verified answer" (a chat answer) and "Add a
-verified answer" (a content gap) start from. HR and admins, viewing the app as HR.
+verified answer" (a content gap) start from. HR and admins.
 
 Every change is audited by what kind of change it was and the answer's id, never
 its text: answers are the workspace's content."""

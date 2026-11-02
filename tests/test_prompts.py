@@ -31,7 +31,7 @@ def workspace(client):
                                    ws, role)
         token = client.post("/api/auth/login", json={"username": f"{name}@{ws}.example",
                                                       "password": PASSWORD}).json()["token"]
-        out[name] = {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+        out[name] = {"Authorization": f"Bearer {token}"}
     out["ws"] = ws
     return out
 
@@ -71,9 +71,6 @@ def test_workspace_prompts_are_kept_by_admins(client):
     h = workspace(client)
     other = workspace(client)
     assert client.post("/api/prompts", headers=h["pat"],
-                       json={"title": "T", "body": "B", "workspace": True}).status_code == 403
-    as_public = {**h["admin"], "X-Role": "public"}            # an admin viewing as public
-    assert client.post("/api/prompts", headers=as_public,
                        json={"title": "T", "body": "B", "workspace": True}).status_code == 403
     r = client.post("/api/prompts", headers=h["admin"],
                     json={"title": "Customer reply", "body": "Draft a reply to {{customer}}.",

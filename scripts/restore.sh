@@ -15,14 +15,25 @@
 # and every table's row count and the document file counts are checked against
 # the MANIFEST written at backup time. Exit status is non-zero on any mismatch.
 #
-# Settings: KB_IMAGE (default cloudastra-knowledgebase) runs Python when the host
-# has no python3.
+# Settings: KB_IMAGE runs Python when the host has no python3 (default: the image the
+# app container runs now, by id, else cloudastra-knowledgebase:latest).
 
 set -Eeuo pipefail
 umask 077
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KB_IMAGE="${KB_IMAGE:-cloudastra-knowledgebase}"
+KB_IMAGE="${KB_IMAGE:-}"
+# As backup.sh: by id, since an image prune on a shared host can take :latest away.
+kb_image() {
+    local image="$KB_IMAGE" running=""
+    if [[ -z "$image" ]]; then
+        running="$(cd "$SCRIPTS/.." && docker compose ps -q knowledgebase 2>/dev/null | head -n 1)" || running=""
+        if [[ -n "$running" ]]; then
+            image="$(docker inspect -f '{{.Image}}' "$running" 2>/dev/null)" || image=""
+        fi
+    fi
+    printf '%s' "${image:-cloudastra-knowledgebase}"
+}
 say() { printf '[restore] %s\n' "$*"; }
 die() { printf '[restore] ERROR: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -51,7 +62,7 @@ py() {
         python3 "$SCRIPTS/sqlite_tool.py" "$@"
     else
         docker run --rm -i --entrypoint python -v "$SCRIPTS:$SCRIPTS:ro" -v "$target:$target" \
-            "$KB_IMAGE" "$SCRIPTS/sqlite_tool.py" "$@"
+            "$(kb_image)" "$SCRIPTS/sqlite_tool.py" "$@"
     fi
 }
 

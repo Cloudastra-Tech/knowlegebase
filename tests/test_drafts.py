@@ -186,7 +186,6 @@ def test_a_draft_from_a_group_document_stays_with_that_group(setup):
     assert {s["doc_key"] for s in d["sources"]} == {"restricted/board.txt", "restricted/pay.txt"}
     assert sorted(d["audience"]) == sorted([[board], ["group:hr"]])
     other = setup.login(ws, "hr2")
-    other["X-Role"] = "hr"
     assert d["id"] not in [x["id"] for x in setup.client.get("/api/drafts", headers=other)
                            .json()["drafts"]]
     assert setup.client.get(f"/api/drafts/{d['id']}", headers=other).status_code == 404

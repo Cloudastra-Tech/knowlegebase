@@ -64,8 +64,8 @@ def provider(monkeypatch):
     return fake
 
 
-def bearer(token, role="hr"):
-    return {"Authorization": f"Bearer {token}", "X-Role": role}
+def bearer(token):
+    return {"Authorization": f"Bearer {token}"}
 
 
 def password_token(client, username):
@@ -96,16 +96,18 @@ def error_of(location):
 
 
 @pytest.mark.parametrize("username, x_role, status", [
-    ("admin", "hr", 200),
-    ("admin", "public", 403),      # HR viewing the app as a public user
-    ("staff", "hr", 403),          # the header must not grant HR
-    ("legacy", "hr", 403),         # no role on file means public, not HR
-    ("boss", "hr", 200),           # admin can do everything HR can
-    ("boss", "public", 403),
+    ("admin", None, 200),
+    ("admin", "public", 200),      # the old "view as" header changes nothing now
+    ("staff", None, 403),
+    ("staff", "hr", 403),          # ...and never granted HR
+    ("legacy", None, 403),         # no role on file means public, not HR
+    ("boss", None, 200),           # admin can do everything HR can
 ])
 def test_hr_screens_follow_the_account_role_not_the_header(env, username, x_role, status):
-    token = password_token(env, username)
-    assert env.get("/api/docs", headers=bearer(token, x_role)).status_code == status
+    headers = bearer(password_token(env, username))
+    if x_role:
+        headers["X-Role"] = x_role
+    assert env.get("/api/docs", headers=headers).status_code == status
 
 
 @pytest.mark.parametrize("name, claims, role", [
