@@ -1,11 +1,10 @@
 // Thin client for the FastAPI backend (api.py). Vite proxies /api -> :8010.
-// The session (bearer token + the role the app is viewed as) and request(), which
-// every domain module (auth.ts, docs.ts, ...) goes through.
+// The session (the bearer token) and request(), which every domain module (auth.ts,
+// docs.ts, ...) goes through.
 
-import type { Access, Role } from "@/lib/api/types"
+import type { Access } from "@/lib/api/types"
 
 const TOKEN_KEY = "kb_token"
-const ROLE_KEY = "kb_role"
 
 function storageGet(key: string) {
   try {
@@ -26,16 +25,13 @@ function storageSet(key: string, value: string | null) {
 
 export const session = {
   token: storageGet(TOKEN_KEY),
-  role: (storageGet(ROLE_KEY) as Role | null) ?? "hr",
   setToken(token: string | null) {
     this.token = token
     storageSet(TOKEN_KEY, token)
   },
-  setRole(role: Role) {
-    this.role = role
-    storageSet(ROLE_KEY, role)
-  },
 }
+// Left by the old "View as" menu; the role is the account's now.
+storageSet("kb_role", null)
 
 export class ApiError extends Error {
   status: number
@@ -82,7 +78,6 @@ export async function download(path: string): Promise<{ blob: Blob; filename: st
 async function send(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
   if (session.token) headers.set("Authorization", `Bearer ${session.token}`)
-  headers.set("X-Role", session.role)
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json")
   }

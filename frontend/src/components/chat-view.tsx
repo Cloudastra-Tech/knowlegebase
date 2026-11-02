@@ -99,6 +99,7 @@ import { CHOOSE_SPACE, FOCUS_COMPOSER, OPEN_SEARCH, setThinking } from "@/lib/ch
 import { startersFrom } from "@/lib/chat-starters"
 import { dur, ease, usePrefersReducedMotion } from "@/lib/motion"
 import { queries } from "@/lib/queries"
+import { ROLE_LABEL } from "@/lib/roles"
 import { isChatPath } from "@/lib/routes"
 import { spaceLabel } from "@/lib/spaces"
 import { cn } from "@/lib/utils"
@@ -590,7 +591,7 @@ export function ChatView({ role }: { role: Role }) {
             id: e.id,
             conversation: null,
             notice:
-              "You're viewing the app with a different role now, so this question started a new chat.",
+              "Your role has changed, so this question started a new chat.",
             messages: [
               { key: questionKey, id: e.user_message_id, role: "user", text: q, noSearch },
               ...s.messages.filter((m) => m.key === key),
@@ -772,9 +773,9 @@ export function ChatView({ role }: { role: Role }) {
     onFork: fork,
     onBranch: showBranch,
     onFollowup: (question) => ask(question),
-    // HR and admins, viewing as HR: start a verified answer from this one (PL-27).
+    // HR and admins: start a verified answer from this one (PL-27).
     onVerify:
-      role === "hr" && account.role !== "public"
+      role === "hr"
         ? (m) => m.id && navigate(`/admin/verified?from_message=${encodeURIComponent(m.id)}`)
         : undefined,
     busy: loading,
@@ -788,7 +789,7 @@ export function ChatView({ role }: { role: Role }) {
     : firstRun && welcome.suggestions.length
       ? welcome.suggestions
       : startersFrom(knowledge.data?.items)
-  const offerSample = firstRun && role === "hr" && account.role !== "public"
+  const offerSample = firstRun && role === "hr"
   const outline = knowledge.data?.outline ?? false
   const empty = messages.length === 0 && !opening
   const lastUser = [...messages].reverse().find((m) => m.role === "user")
@@ -1104,7 +1105,7 @@ export function ChatView({ role }: { role: Role }) {
             data-print="hide"
             className="mx-auto w-full max-w-3xl shrink-0 px-9 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs text-pretty text-muted-foreground"
           >
-            Searching as <span className="font-medium">{role === "hr" ? "HR / Admin" : "Public user"}</span>
+            Searching as <span className="font-medium">{ROLE_LABEL[account.role]}</span>
             <LoggingNotice inline />
           </p>
         )}

@@ -51,7 +51,7 @@ def new_workspace():
 def login(client, username, password=PASSWORD):
     r = client.post("/api/auth/login", json={"username": username, "password": password})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 @pytest.fixture

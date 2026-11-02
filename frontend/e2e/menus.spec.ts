@@ -57,7 +57,7 @@ test("on a tall window the Admin group is open", async ({ page }) => {
   await expect(nav.getByRole("link", { name: "Verified" })).toBeVisible()
 })
 
-test("an admin's account menu fits a short window, with View as and Appearance beside it", async ({ page }) => {
+test("an admin's account menu fits a short window, with Appearance beside it", async ({ page }) => {
   await page.setViewportSize(SHORT)
   await signIn(page, ADMIN)
   await page.getByRole("button", { name: /^Account, / }).click()
@@ -70,27 +70,22 @@ test("an admin's account menu fits a short window, with View as and Appearance b
   const scrolls = `(() => { const m = document.querySelector('[role="menu"]'); return m.scrollHeight > m.clientHeight })()`
   expect(await page.evaluate(scrolls)).toBe(false)
 
-  // Each submenu opens on top of the page, not clipped inside the glass menu.
-  for (const [trigger, item] of [
-    ["Appearance", "Light"],
-    [/^View as/, "Public user"],
-  ] as const) {
-    await page.getByRole("menuitem", { name: trigger }).hover()
-    const radio = page.getByRole("menuitemradio", { name: item })
-    await expect(radio).toBeVisible()
-    expect(await onTop(page, "menuitemradio", (await radio.boundingBox())!)).toContain(item)
-  }
+  // The submenu opens on top of the page, not clipped inside the glass menu.
+  await page.getByRole("menuitem", { name: "Appearance" }).hover()
+  const radio = page.getByRole("menuitemradio", { name: "Light" })
+  await expect(radio).toBeVisible()
+  expect(await onTop(page, "menuitemradio", (await radio.boundingBox())!)).toContain("Light")
 })
 
 // Short, as ChatGPT's and Claude.ai's: everything personal is in Settings. The tour is
 // one row (an admin picks theirs in its submenu).
-test("the account menu is short: who you are, Settings, View as for an admin, Appearance, the tour, Sign out", async ({
+test("the account menu is short: who you are, Settings, Appearance, the tour, Sign out", async ({
   page,
 }) => {
   await page.setViewportSize(DESKTOP)
   for (const [account, expected] of [
     [MEMBER, ["Settings", "Appearance", "Keyboard shortcuts", "Take the tour", "Sign out"]],
-    [ADMIN, ["Settings", "View as", "Appearance", "Keyboard shortcuts", "Take the tour", "Sign out"]],
+    [ADMIN, ["Settings", "Appearance", "Keyboard shortcuts", "Take the tour", "Sign out"]],
   ] as const) {
     await page.context().clearCookies()
     await page.goto("/login")
@@ -100,7 +95,7 @@ test("the account menu is short: who you are, Settings, View as for an admin, Ap
     const menu = page.getByRole("menu")
     await expect(menu.getByText(account.email)).toBeVisible()
     const items = (await menu.getByRole("menuitem").allTextContents()).map((t) =>
-      t.replace(/(Ctrl|⌘)\/$/, "").replace(/(HR \/ Admin|Public)$/, "").trim(),
+      t.replace(/(Ctrl|⌘)\/$/, "").trim(),
     )
     expect(items).toEqual(expected)
     // Keyboard shortcuts opens the list of them; Settings opens Settings.
@@ -114,14 +109,13 @@ test("the account menu is short: who you are, Settings, View as for an admin, Ap
   }
 })
 
-test("on a phone the account menu has its View as and theme in place, inside the screen", async ({ page }) => {
+test("on a phone the account menu has its theme in place, inside the screen", async ({ page }) => {
   await page.setViewportSize(PHONE)
   await signIn(page, ADMIN)
   await page.getByRole("button", { name: "Open menu" }).click()
   await page.getByRole("button", { name: /^Account, / }).click()
   const menu = page.getByRole("menu")
   // No submenu beside it (no room on a phone): the choices are in the menu.
-  await expect(menu.getByRole("menuitemradio", { name: "Public user" })).toBeVisible()
   await expect(menu.getByRole("menuitemradio", { name: "Light" })).toBeVisible()
   const box = (await menu.boundingBox())!
   expect(box.y).toBeGreaterThanOrEqual(0)

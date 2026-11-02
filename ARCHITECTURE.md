@@ -179,8 +179,8 @@ workspace's **role source** (the one provider with group rules); signing in
 through another provider leaves the role alone. Admin from groups the role
 source hasn't sent in 30 days (configurable) expires, except for the last admin.
 Your role is looked up again on **every request**, so taking someone's HR role
-away works straight away. The website can *lower* it (an HR user can "view as
-public"), but it can never *raise* it — the server decides.
+away works straight away. Nothing the browser sends changes it: only an admin
+does (Members, SCIM or the group rules).
 
 ---
 
@@ -358,7 +358,7 @@ away ("‹ 1 / 2 ›"). "Branch in new chat" copies the path into a new conversa
 One rule covers every way an answer can be read again: `visible_to(role, message)`
 (`kb/services/conversations.py`) compares the reader's role **now** with the
 highest access level of everything the model read for that answer. It applies to
-the owner's own chat (after a demotion, or "view as public"), to search, to Copy,
+the owner's own chat (after a demotion), to search, to Copy,
 and to share links:
 
 - **Search** (`conversation_search`, SQLite FTS5) keeps each row's access level,

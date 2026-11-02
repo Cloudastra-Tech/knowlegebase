@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { ChevronsUpDown, Compass, Eye, Keyboard, LogOut, Settings, SunMoon } from "lucide-react"
+import { ChevronsUpDown, Compass, Keyboard, LogOut, Settings, SunMoon } from "lucide-react"
 import { Link } from "react-router"
 
 import { ThemeMenu } from "@/components/theme-menu"
@@ -11,8 +11,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuSub,
@@ -21,9 +19,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
-import { api, type Role } from "@/lib/api"
+import { api } from "@/lib/api"
 import { useAuth, useUser } from "@/lib/auth-context"
 import { MOD_KEY, OPEN_SHORTCUTS } from "@/lib/chat-events"
+import { ROLE_LABEL } from "@/lib/roles"
 import { startTour, type TourId } from "@/lib/tour"
 
 const initialsOf = (name: string) =>
@@ -69,27 +68,22 @@ function MenuGroup({
 }
 
 // The foot of the app's sidebar: who's signed in (the avatar, the name, the workspace
-// and the role the app is viewed as), opening the account menu, short as ChatGPT's and
-// Claude.ai's: who you are, Settings (everything personal: settings-view.tsx), View as
-// (HR and admin accounts), Appearance (the theme and Reduce effects), the keyboard
-// shortcuts, the product tour (and the admin one, for admins viewing as HR), and Sign
-// out. It's opened many times a day, so it opens as every menu does and nothing more.
+// and the account's role), opening the account menu, short as ChatGPT's and
+// Claude.ai's: who you are, Settings (everything personal: settings-view.tsx),
+// Appearance (the theme and Reduce effects), the keyboard shortcuts, the product tour
+// (and the admin one, for admins), and Sign out. It's opened many times a day, so it opens as every menu does and nothing more.
 // Only the avatar in the collapsed rail.
 export function AccountMenu() {
   const user = useUser()
-  const { role, setRole, signedOut } = useAuth()
+  const { signedOut } = useAuth()
   const { isMobile, state, setOpenMobile } = useSidebar()
 
-  // Only an HR or admin account gets HR; it can also "view as" public.
-  const canAdmin = user.role !== "public"
-  const activeRole: Role = canAdmin ? role : "public"
   const initials = initialsOf(user.name) || "?"
-  const roleLabel = activeRole === "hr" ? "HR / Admin" : canAdmin ? "Public" : "Member"
   const email = user.username.includes("@") ? user.username : `@${user.username}`
   // Settings opened from the phone's sheet closes it.
   const close = () => isMobile && setOpenMobile(false)
   // The tours (components/product-tour.tsx): the admin one shows admin screens.
-  const adminTour = user.role === "admin" && activeRole === "hr"
+  const adminTour = user.role === "admin"
   const tour = (id: TourId) => {
     close()
     startTour(id)
@@ -121,7 +115,7 @@ export function AccountMenu() {
                 <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <span className="truncate">{user.workspace}</span>
                   <Badge variant="mono" className="h-4 px-1.5">
-                    {roleLabel}
+                    {ROLE_LABEL[user.role]}
                   </Badge>
                 </span>
               </span>
@@ -146,27 +140,6 @@ export function AccountMenu() {
                   <Settings /> Settings
                 </Link>
               </DropdownMenuItem>
-              {canAdmin && (
-                <MenuGroup
-                  inline={isMobile}
-                  heading="View as"
-                  className="w-44"
-                  trigger={
-                    <>
-                      <Eye />
-                      <span className="flex-1">View as</span>
-                      <span className="text-xs text-muted-foreground">
-                        {activeRole === "hr" ? "HR / Admin" : "Public"}
-                      </span>
-                    </>
-                  }
-                >
-                  <DropdownMenuRadioGroup value={role} onValueChange={(v) => setRole(v as Role)}>
-                    <DropdownMenuRadioItem value="hr">HR / Admin</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="public">Public user</DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </MenuGroup>
-              )}
               <MenuGroup
                 inline={isMobile}
                 className="w-52"

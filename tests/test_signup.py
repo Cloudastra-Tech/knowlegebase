@@ -83,8 +83,7 @@ def test_a_founder_creates_a_workspace_with_google_workspace(google, signup_on):
     assert location.startswith("/#sso?welcome=1&code=")
     token = client.post("/api/auth/sso/exchange",
                         json={"code": location.split("code=")[1]}).json()["token"]
-    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}",
-                                             "X-Role": "hr"}).json()
+    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
     assert (me["username"], me["workspace"], me["role"]) == (
         "founder@signup-corp.example", "signup-corp", "admin")
     # The domain is verified for the new workspace: colleagues are found by it.

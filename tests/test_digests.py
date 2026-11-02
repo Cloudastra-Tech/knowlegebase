@@ -63,7 +63,7 @@ def login(client, w, name):
     r = client.post("/api/auth/login", json={"username": f"{name}@{w}.example",
                                              "password": PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def upload(client, h, access, name, text, acl=None):

@@ -75,8 +75,7 @@ def env(monkeypatch, tmp_path):
             r = self.client.post("/api/auth/login", json={"username": f"{name}@{w}.example",
                                                           "password": "correct-horse"})
             assert r.status_code == 200, r.text
-            return {"Authorization": f"Bearer {r.json()['token']}",
-                    "X-Role": "hr" if name == "admin" else "public"}
+            return {"Authorization": f"Bearer {r.json()['token']}"}
 
         def wait(self, w, expect="idle"):
             from kb.services import indexing
@@ -439,7 +438,7 @@ def test_only_admins_rebuild_the_whole_index(env):
     w = env.workspace(("public", "a.txt", "Alpha handbook."))
     members_store.set_password(f"hr@{w}.example", "HR", auth.hash_password("correct-horse"), w,
                                "hr")
-    hr = {**env.login(w, "hr"), "X-Role": "hr"}
+    hr = {**env.login(w, "hr")}
     assert env.client.post("/api/reindex?full=true", headers=hr).status_code == 403
     assert env.client.post("/api/reindex", headers=hr).status_code == 200      # a re-index
     env.wait(w)

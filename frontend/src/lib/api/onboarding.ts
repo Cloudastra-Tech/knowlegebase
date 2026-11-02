@@ -52,7 +52,7 @@ export interface Onboarding {
   suggestions: string[] // questions from titles they may read (only on the first run)
   sample: SampleDocs
   tours?: Tours
-  checklist?: Checklist // admins viewing as HR
+  checklist?: Checklist // admins
 }
 
 export const onboardingApi = {

@@ -5,7 +5,6 @@ import { MemoryRouter } from "react-router"
 
 import { AssistantMessage, type AnswerActions, type Message } from "@/components/chat-answer"
 import { KnowledgeView } from "@/components/knowledge-view"
-import { session } from "@/lib/api"
 import { mockApi, withProviders } from "@/test/render"
 
 // Verified answers in the chat (C18) and source rules on the Knowledge screen (PL-28).
@@ -70,7 +69,6 @@ const ITEM = {
 
 describe("source rules on the Knowledge screen", () => {
   it("blocks a document from its row and lists the rule", async () => {
-    session.setRole("hr")
     let rules: object[] = []
     const fetch = mockApi({
       "GET /api/knowledge": () => ({ workspace: "acme", items: [ITEM], outline: false, rules }),
@@ -102,8 +100,7 @@ describe("source rules on the Knowledge screen", () => {
     expect(await screen.findByRole("heading", { name: "Source rules" })).toBeInTheDocument()
   })
 
-  it("shows no rule controls to someone viewing as public", async () => {
-    session.setRole("public")
+  it("shows no rule controls to a public member", async () => {
     mockApi({ "GET /api/knowledge": { workspace: "acme", items: [ITEM], outline: false } })
     render(
       withProviders(

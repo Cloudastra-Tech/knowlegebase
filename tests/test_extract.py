@@ -163,7 +163,7 @@ def test_the_upload_endpoint_takes_the_new_types_and_checks_them(monkeypatch, tm
     client = TestClient(api.app)
     token = client.post("/api/auth/login", json={"username": f"admin@{ws}.example",
                                                  "password": "correct-horse"}).json()["token"]
-    headers = {"Authorization": f"Bearer {token}", "X-Role": "hr"}
+    headers = {"Authorization": f"Bearer {token}"}
     r = client.post("/api/docs/upload", headers=headers, data={"access": "public"}, files=[
         ("files", ("plan.docx", make_docx(["Q3 plan"]), DOCX)),
         ("files", ("deck.pptx", make_pptx([["Slide"]]), "application/octet-stream")),

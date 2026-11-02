@@ -95,7 +95,7 @@ describe("the chat", () => {
     // One heading; how answers work is behind the (i), who you search as is the line
     // at the foot of the page.
     expect(screen.getByRole("heading", { level: 2, name: "Ask your company docs" })).toBeInTheDocument()
-    expect(screen.getByText(/Searching as/)).toHaveTextContent("Searching as Public user")
+    expect(screen.getByText(/Searching as/)).toHaveTextContent("Searching as Public")
     expect(screen.queryByText(/Answers come from/)).not.toBeInTheDocument()
     await userEvent.setup().click(screen.getByRole("button", { name: "How answers work" }))
     expect(await screen.findByText(/Answers come from your company's documents, with/)).toBeInTheDocument()

@@ -345,7 +345,6 @@ def test_a_passage_opens_for_who_may_see_it(env):  # noqa: F811
 
     # Restricted: HR / Admin only. A public asker can't tell it from a missing one.
     assert get(pay, staff).status_code == 404
-    assert get(pay, {**admin, "X-Role": "public"}).status_code == 404
     assert get(pay, admin).json()["text"].startswith("Teachers are paid")
     assert get("0" * 32, staff).status_code == 404
     # Another workspace's members never reach this one's index.

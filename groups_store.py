@@ -290,7 +290,7 @@ def verified_domains(workspace):
 
 def principals_for(workspace, username, role):
     """The Viewer someone is (access.py): everyone, themselves, the built-in hr
-    group when viewing the app as HR / Admin, their groups, and their email's
+    group for an HR or admin account (role "hr"), their groups, and their email's
     domain when the workspace has verified it."""
     username = (username or "").strip().lower()
     held = {access.user(username)} if username else set()

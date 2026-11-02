@@ -10,7 +10,7 @@ export type SlackUnknownUsers = "refuse" | "public"
 
 export interface SlackApp {
   status: SlackStatus
-  can_manage: boolean // an admin, viewing the app as HR / Admin
+  can_manage: boolean // an admin
   central_available: boolean // this server has its own Slack app set up
   mode: SlackMode
   client_id: string | null // the workspace's own app

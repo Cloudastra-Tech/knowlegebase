@@ -27,10 +27,10 @@ def client():
     return TestClient(api.app, follow_redirects=False)
 
 
-def login(client, username, role="hr"):
+def login(client, username):
     r = client.post("/api/auth/login", json={"username": username, "password": PASSWORD})
     assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": role}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 @pytest.fixture

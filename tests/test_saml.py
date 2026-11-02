@@ -105,7 +105,7 @@ def client():
 @pytest.fixture(scope="module")
 def admin(client):
     r = client.post("/api/auth/login", json={"username": "saml-admin", "password": "correct-horse"})
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 @pytest.fixture(scope="module")
@@ -144,7 +144,7 @@ def finish(client, location):
     if not location.startswith("/#sso?code="):
         return location
     r = client.post("/api/auth/sso/exchange", json={"code": location.split("code=")[1]})
-    return {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
 def sign_in(client, conn, idp, email="pat@samlco.example", **answer):
@@ -364,7 +364,7 @@ def test_only_this_workspaces_admin_changes_it(client, conn):
                                "other-co", "admin")
     r = client.post("/api/auth/login", json={"username": "other-admin",
                                              "password": "correct-horse"})
-    other = {"Authorization": f"Bearer {r.json()['token']}", "X-Role": "hr"}
+    other = {"Authorization": f"Bearer {r.json()['token']}"}
     path = f"/api/admin/sign-in/saml-connections/{conn['id']}"
     assert client.patch(path, headers=other, json={"enabled": False}).status_code == 404
     assert client.patch(f"/api/admin/sign-in/connections/{conn['id']}", headers=other,

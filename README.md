@@ -108,8 +108,8 @@ Open **http://localhost:5173**, sign in, and ask: *"What is the refund policy?"*
 
 What you see depends on your account's **role**. Everyone gets **Chat** and
 **Knowledge**; HR / Admin accounts also get **Documents** and **Integrations**, can
-search restricted files, and can switch to *View as: Public user* to see what
-others see. The role comes from your account, never from the browser.
+and search restricted files. The role comes from your account, never from the
+browser; an admin changes it under Access > Members.
 
 > Want to use your own files? Add them on the **Documents** screen (they're
 > re-indexed automatically), or drop them into `docs/` and run `python ingest.py`.

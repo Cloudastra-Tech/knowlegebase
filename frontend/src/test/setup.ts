@@ -47,6 +47,5 @@ afterEach(() => {
   vi.restoreAllMocks()
   // Signed out again: the session lives in memory as well as in localStorage.
   session.setToken(null)
-  session.setRole("hr")
   localStorage.clear()
 })

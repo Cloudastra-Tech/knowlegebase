@@ -56,7 +56,7 @@ Point to the layers:
 
 ## 3. DEMO PART A — It answers from our documents
 
-**View as: Public user** (the role menu in the header — only HR accounts have it)
+Sign in as a **member** (a public account)
 
 Ask:
 ```
@@ -120,7 +120,7 @@ What is the teacher's salary?
 > "A public user can't see salaries. Two things protect this: a **permission filter**
 > that won't even search the salary file, and a **guardrail** that blocks the question."
 
-Now **switch View as back to: HR / Admin** and ask the **same question**:
+Now **sign out and sign in as an HR / Admin account**, and ask the **same question**:
 ```
 What is the teacher's salary?
 ```
