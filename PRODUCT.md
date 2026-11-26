@@ -30,7 +30,7 @@ Answers are grounded in the company's own documents and always cited; restricted
 
 - Multi-tenant: workspaces, verified email domains, per-workspace identity providers, one role-source provider per workspace.
 - No email sending infrastructure yet (no verification or invite emails).
-- **Open decision:** the landing page says "No shared, multi-tenant SaaS" and "Runs on your own server"; the product is now also offered as a multi-company hosted instance. The landing copy has not been reconciled.
+- Offered as a multi-company hosted instance. The landing page no longer says "No shared, multi-tenant SaaS" (removed in b7fa6f9), so that open decision is closed.
 - **Being built:** self-serve workspace sign-up for new companies (first admin, workspace, guided sign-in setup). Before this, workspaces were only created on the server.
 
 ## Brand Commitments
